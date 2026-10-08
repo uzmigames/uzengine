@@ -1030,7 +1030,11 @@ LightingOutput main(FSInput input) {
         // ── 4. Sky SH (fallback when no GI source provides data) ─────────
         // @ref Ramamoorthi & Hanrahan 2001 — L2 SH for diffuse irradiance
         if (!irradianceFromGI) {
-            irradiance = EvalSH_L2(N, skyIrradianceSH);
+            // The sky SH is projected in the cubemap's frame (+Y up; sh_projection.cpp walks the DX face
+            // directions), so the normal is converted like every other cubemap read (split-sum item,
+            // 2026-10-08: with the world normal every surface read the irradiance of the direction with y and
+            // z swapped — an upward normal got the horizon's grey instead of the sky's blue).
+            irradiance = EvalSH_L2(WorldToCubemap(N), skyIrradianceSH);
 
 #ifdef UZ_BINDLESS
             if (IsSHZero(skyIrradianceSH)
@@ -1079,16 +1083,20 @@ LightingOutput main(FSInput input) {
         float r4 = roughness * roughness * roughness * roughness;
         R = normalize(lerp(R, N, r4));
 
-        // @ref Three.js PMREMGenerator roughnessToMip — piecewise non-linear mapping
-        // Three.js CubeUV PMREM maps roughness to LOD index using breakpoints:
-        //   r=0→LOD0, r=0.21→LOD4, r=0.305→LOD5, r=0.4→LOD6, r=0.8→LOD7, r=1.0→LOD8
-        // Our cubemap extracted from PMREM has LOD 0→mip 0, etc. The PMREM atlas
-        // stores each LOD at progressively higher roughness prefilter levels.
-        // Since the atlas encodes roughness non-linearly, we remap to match:
-        // @ref Filament perceptualRoughnessToLod: r*(2-r) — quadratic, similar shape
-        // Scale by 1.2 to push roughness=0.4 from mip 4.5 closer to mip 5.4 (face=18px).
-        float maxMip = float(prefilteredMipLevels - 1);
-        float mipLevel = clamp(roughness * (2.0 - roughness) * maxMip * 1.2, 0.0, maxMip);
+        // The mip the bake wrote for this roughness. The engine's own bake (IBLBaker::BakeEnvironment)
+        // prefilters mip m at roughness m / (mips - 1), so the read is linear in roughness. A PMREM
+        // environment (bit 8 of prefilteredMipLevels, set by SetPMREMEnvironment) keeps the curve
+        // written for Three.js CubeUV atlases, whose LODs follow non-linear roughness breakpoints
+        // (r=0→LOD0, r=0.21→LOD4, r=0.305→LOD5, r=0.4→LOD6, r=0.8→LOD7, r=1.0→LOD8; the quadratic
+        // r*(2-r), @ref Filament perceptualRoughnessToLod, scaled by 1.2 to push r=0.4 to mip 5.4).
+        // Until the split-sum item (2026-10-08) the curve was applied to the engine's bake too, so
+        // roughness 0.5 read a mip baked for 0.9 and the rough metals of the reflection reference
+        // came out 3-5 x the integral of the BRDF over the environment.
+        float maxMip = float((prefilteredMipLevels & 0xFFu) - 1u);
+        const bool prefilteredIsPmrem = (prefilteredMipLevels & 0x100u) != 0u;
+        float mipLevel = prefilteredIsPmrem
+            ? clamp(roughness * (2.0 - roughness) * maxMip * 1.2, 0.0, maxMip)
+            : clamp(roughness * maxMip, 0.0, maxMip);
         float3 radiance = float3(0, 0, 0);
         float2 envBRDF = float2(0, 0);
 #ifdef UZ_BINDLESS
@@ -1389,7 +1397,7 @@ LightingOutput main(FSInput input) {
         float3 reflectedColor = float3(0, 0, 0);
 #ifdef UZ_BINDLESS
         TextureCube<float4> prefTexT = ResourceDescriptorHeap[gBufIndices.iblPrefilteredSrvIdx];
-        reflectedColor = prefTexT.SampleLevel(linearSampler, WorldToCubemap(R_glass), roughness * float(prefilteredMipLevels - 1)).rgb;
+        reflectedColor = prefTexT.SampleLevel(linearSampler, WorldToCubemap(R_glass), roughness * float((prefilteredMipLevels & 0xFFu) - 1u)).rgb;
 #endif
 
         // @ref Walter 2007 — Snell's law refraction direction via HLSL refract()
@@ -1406,7 +1414,7 @@ LightingOutput main(FSInput input) {
         // Sample environment in the view-through direction (what's behind the glass).
         // Use a slight roughness mip to soften the transmitted image (frosted glass effect
         // that visually separates it from the sharp background).
-        float transmitMip = max(roughness, 0.15) * float(prefilteredMipLevels - 1);
+        float transmitMip = max(roughness, 0.15) * float((prefilteredMipLevels & 0xFFu) - 1u);
         refractedColor = prefTexT.SampleLevel(linearSampler, WorldToCubemap(-V), transmitMip).rgb;
 #endif
 

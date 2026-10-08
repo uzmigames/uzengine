@@ -210,7 +210,8 @@ bool IrradianceProbeGrid::CaptureFromSkyCubemap(IRHICommandList* cmdList,
     const SHCoefficients skySH =
         ProjectCubemapToSH(m_device, cmdList, skyCubemap, faceSize);
 
-    FillFromSkySH(skySH);
+    // Projected in the cubemap's frame (+Y up); the probes are evaluated with the world normal.
+    FillFromSkySH(SHCubemapToWorld(skySH));
     return true;
 }
 

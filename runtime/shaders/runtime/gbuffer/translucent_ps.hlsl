@@ -236,7 +236,7 @@ float4 main(PSInput input) : SV_Target {
 
                 // Translucent blur: sample at higher mip for internal light scattering.
                 // @constants mipLevels-1 = max mip, translucentBlur = 2.0 base + roughness
-                float translucentMip = 1.0 + roughnessMultiplier * float(prefilteredMipLevels - 1);
+                float translucentMip = 1.0 + roughnessMultiplier * float((prefilteredMipLevels & 0xFFu) - 1u);   // bit 8 = PMREM flag
                 refractionColor = prefTex.SampleLevel(linearSampler, WorldToCubemap(exitRay), translucentMip).rgb
                                 * skyLightIntensity * skyTint;
             }

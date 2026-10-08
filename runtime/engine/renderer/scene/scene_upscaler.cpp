@@ -114,6 +114,7 @@ bool SceneRenderer::SetHDRIEnvironment(uint32_t equirectSrvIndex, uint32_t cubem
 
     m_iblResult = bakeResult;
     m_hdriActive = true;
+    m_prefilteredIsPmrem = false;   // the engine's bake: linear roughness per mip
 
     // Rebuild env map importance sampler from HDRI cubemap
     if (m_envMapSampler) {
@@ -216,6 +217,7 @@ bool SceneRenderer::SetPMREMEnvironment(const TextureLoadResult& result) {
     m_iblResult.prefilteredSrvIndex = pmremResult.srvIndex;
     m_iblResult.prefilteredTexture  = pmremResult.cubemap;
     m_hdriActive = true;
+    m_prefilteredIsPmrem = true;    // the PMREM's LODs: the Three.js roughness curve (per-frame bit 8)
 
     // Step 5: Rebuild env map importance sampler
     if (m_envMapSampler) {

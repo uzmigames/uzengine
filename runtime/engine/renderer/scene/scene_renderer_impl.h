@@ -172,6 +172,7 @@
     RHITextureHandle m_hdriCubemap;            ///< Cubemap converted from HDRI equirect (owned, must destroy).
     uint32_t m_hdriCubemapSrv = UINT32_MAX;    ///< SRV for the HDRI cubemap.
     bool m_hdriActive = false;                 ///< True when using external HDRI instead of procedural sky.
+    bool m_prefilteredIsPmrem = false;         ///< The bound prefiltered cubemap is a PMREM (Three.js roughness curve), not the engine's linear bake.
 
     // ── Reflection Probes ────────────────────────────────────────────────
     ReflectionProbeRenderer m_reflectionProbes;   ///< Per-probe cubemap capture, IBL bake, and GPU upload.

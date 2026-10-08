@@ -798,6 +798,13 @@ void PostFrameAtmosphereBake(
                    ctx.envMapSampler->GetLuminanceMip0Srv(),
                    ctx.envMapSampler->GetTotalLuminance());
         }
+        // Diagnostics (split-sum item): with a region dump active, the prefiltered specular mips the bake just
+        // wrote, as equirects beside the environment dump (`prefiltered_mip<N>.f32`), for a CPU prefilter check.
+        if (ctx.envMapSampler->HasDumpDirectory() && ctx.iblResult->prefilteredSrvIndex != UINT32_MAX) {
+            for (uint32_t mip = 0; mip < IBLBaker::kPrefilteredMipLevels; ++mip) {
+                ctx.envMapSampler->DumpRadiance(ctx.iblResult->prefilteredSrvIndex, mip, "prefiltered_mip" + std::to_string(mip));
+            }
+        }
     }
 
     // SH projection from sky cubemap

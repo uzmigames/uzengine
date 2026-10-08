@@ -1,0 +1,6 @@
+{
+  "status": "completed",
+  "createdAt": "2026-10-08T14:43:38.203Z",
+  "updatedAt": "2026-10-08T15:51:20.000Z",
+  "resolution": "done 2026-10-08: the split-sum read the engine's linear bake with the Three.js PMREM mip curve (roughness 0.5 read a mip baked for 0.9), the sky SH was evaluated in the world frame and packed with UE5's signs on a Ramamoorthi basis (the irradiance field rotated 180 deg about the cube z axis), the lower-hemisphere injection wrote the red L2 band; now linear mip for the bake (PMREM keeps the curve, bit 8), EvalSH_L2(WorldToCubemap(N)), the packing's own signs, SHCubemapToWorld for the light probe volume, 3 gtests, prefiltered-mip dumps; test_split_sum.py 7/10 (P1 1.31 / 2.33 from 3.26 / 4.85, the rest the N = V = R assumption at grazing incidence with the engine matching its model at 0.967 / 0.994; box tops against E / pi [1.03, 1.02, 0.98] from 10.2 / 5.6 / 3.0; the bake's mips 1.00; Sponza direct identical)"
+}

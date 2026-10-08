@@ -289,7 +289,9 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     // because SetPMREMEnvironment/SetHDRIEnvironment update m_iblResult
     // during that loop and we need the updated values in the PerFrameCB.
     perFrame.brdfLutSrvIndex     = m_brdfLutSrvIndex;
-    perFrame.prefilteredMipLevels = IBLBaker::kPrefilteredMipLevels;
+    // Low byte: the mip count. Bit 8: the prefiltered cubemap bound is a PMREM (its LODs follow the
+    // Three.js roughness curve; the engine's own bake is linear in roughness) — split-sum item, 2026-10-08.
+    perFrame.prefilteredMipLevels = IBLBaker::kPrefilteredMipLevels | (m_prefilteredIsPmrem ? 0x100u : 0u);
 
 
     // ── Environment Map Importance Sampling (MIS) ─────────────────────
@@ -430,28 +432,22 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
         };
     }
 
-    // Lower hemisphere contribution: when lowerHemisphereIsBlack=false, add
-    // a uniform color from below the horizon into the SH coefficients.
-    // L0 band (coeffs[0].w=R, [1].w=G, [2].w=B) receives the constant term;
-    // L1 Z-band (coeffs[3]) receives a negative bias to push irradiance downward.
+    // Lower hemisphere contribution: when lowerHemisphereIsBlack=false, a uniform radiance L below the
+    // horizon. Its cosine-weighted irradiance over pi is exactly L * (1 - n.up) / 2 (a hemisphere light),
+    // which the packed L0 + L1 terms carry as is: EvalSH_L2 returns dot(coeffs[c].xyz, n) + coeffs[c].w.
+    // The packed SH lives in the cubemap's frame (+Y up, like sh_projection.cpp's face directions and
+    // the normal the lighting converts with WorldToCubemap), so the slope goes into the y term.
+    // Until the split-sum item (2026-10-08) the constant term carried Y00 / 2 of the colour (3.5 x too
+    // little) and the slope was written into coeffs[3].xyz, the red channel's L2 band.
     // @ref Ramamoorthi 2001 "An Efficient Representation for Irradiance Environment Maps"
-    // SH basis: Y00 = 0.2821, Y10_z = 0.4886 (Z-up: vertical direction).
     if (!lowerHemisphereIsBlack) {
-        const float Y00 = 0.2820947918f;    // 1 / (2 * sqrt(PI))
-        const float Y10 = 0.4886025119f;    // sqrt(3) / (2 * sqrt(PI))
-        // Add lower hemisphere as a half-sphere contribution: L0 + negative L1_Z.
-        // L0 adds uniform color; negative L1_Z biases it toward the lower hemisphere.
-        const float halfWeight = 0.5f;  // Lower hemisphere is half the sphere
-        // L0 contribution: Y00 * color * halfWeight
-        perFrame.skyIrradianceSH[0].w += lowerHemisphereColor.x * Y00 * halfWeight * shScale;
-        perFrame.skyIrradianceSH[1].w += lowerHemisphereColor.y * Y00 * halfWeight * shScale;
-        perFrame.skyIrradianceSH[2].w += lowerHemisphereColor.z * Y00 * halfWeight * shScale;
-        // L1 Z contribution: negative Y10 to push light downward (Z-up = vertical)
-        // coeffs[3] = L1 band: .x=R_L1m1, .y=G_L1m1, .z=B_L1m1, .w = packed L10_R
-        // In our compact packed SH format, L1_Z is in coeffs[3].x/y/z
-        perFrame.skyIrradianceSH[3].x -= lowerHemisphereColor.x * Y10 * halfWeight * shScale;
-        perFrame.skyIrradianceSH[3].y -= lowerHemisphereColor.y * Y10 * halfWeight * shScale;
-        perFrame.skyIrradianceSH[3].z -= lowerHemisphereColor.z * Y10 * halfWeight * shScale;
+        const float halfWeight = 0.5f;
+        perFrame.skyIrradianceSH[0].w += lowerHemisphereColor.x * halfWeight * shScale;
+        perFrame.skyIrradianceSH[1].w += lowerHemisphereColor.y * halfWeight * shScale;
+        perFrame.skyIrradianceSH[2].w += lowerHemisphereColor.z * halfWeight * shScale;
+        perFrame.skyIrradianceSH[0].y -= lowerHemisphereColor.x * halfWeight * shScale;
+        perFrame.skyIrradianceSH[1].y -= lowerHemisphereColor.y * halfWeight * shScale;
+        perFrame.skyIrradianceSH[2].y -= lowerHemisphereColor.z * halfWeight * shScale;
     }
 
     // Log SH L0 coefficient once to diagnose shadow darkness.
@@ -939,7 +935,9 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
                 SHCoefficients skySH{};
                 std::memcpy(&skySH.coeffs[0], &perFrame.skyIrradianceSH[0],
                             sizeof(SHCoefficients));
-                m_lightProbeGrid.FillFromSkySH(skySH);
+                // The per-frame sky SH lives in the cubemap's frame (+Y up) and the deferred lighting
+                // evaluates the probe volume with the world normal, so the seed is converted once here.
+                m_lightProbeGrid.FillFromSkySH(SHCubemapToWorld(skySH));
                 m_lightProbeGrid.UploadToGpu();
                 vol.needsRebuild = false;
             }

@@ -45,6 +45,7 @@ HDRI_VARIANT = 'hdri'                                # block B.5b: the chrome fl
 HDRI_CUBEMAP = 'textures/ballroom_2k.pmrem.ktx2'
 WARM_VARIANT = 'warm'                                # block B.5c: a coloured sun (the sky capture per channel)
 WARM_SUN_COLOUR = (1.0, 0.7, 0.4)
+HDRI_ROUGH_VARIANTS = {'hdri-rough30': 0.3, 'hdri-rough50': 0.5}   # split-sum item: rough metal floors under the PMREM
 BOXES = {
     'red':   (((-350.0, 150.0, 0.0), (-250.0, 250.0, 100.0)), (0.8, 0.15, 0.1)),
     'green': (((-50.0, 350.0, 0.0), (50.0, 500.0, 150.0)), (0.15, 0.7, 0.15)),
@@ -151,6 +152,8 @@ def generate():
     variants = [(key, f'Reflection reference (metal floor, roughness {rough})', rough, None, (1.0, 1.0, 1.0)) for key, rough in FLOOR_VARIANTS.items()]
     variants.append((HDRI_VARIANT, 'Reflection reference (chrome floor, PMREM environment)', FLOOR_ROUGHNESS, HDRI_CUBEMAP, (1.0, 1.0, 1.0)))
     variants.append((WARM_VARIANT, 'Reflection reference (chrome floor, warm sun)', FLOOR_ROUGHNESS, None, WARM_SUN_COLOUR))
+    for key, rough in HDRI_ROUGH_VARIANTS.items():
+        variants.append((key, f'Reflection reference (metal floor, roughness {rough}, PMREM environment)', rough, HDRI_CUBEMAP, (1.0, 1.0, 1.0)))
     for key, title, rough, hdri, sun_colour in variants:
         scene = variant_scene(key)
         path = os.path.join(CONTENT, 'scenes', f'{scene}.uzscene')

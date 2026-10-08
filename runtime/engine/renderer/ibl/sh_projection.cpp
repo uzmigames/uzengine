@@ -181,8 +181,8 @@ static float CubemapTexelSolidAngle(float u, float v)
 /// The packing bakes in diffuse convolution (cosine lobe) scaling so that
 /// the shader only needs dot products with the normal to reconstruct irradiance.
 ///
-/// Standard SetupSkyIrradianceEnvironmentMapConstantsFromSkyIrradiance()
-/// exactly (ReflectionEnvironment.cpp).
+/// UE5's SetupSkyIrradianceEnvironmentMapConstantsFromSkyIrradiance()
+/// (ReflectionEnvironment.cpp) with the signs of this file's basis (see the body).
 ///
 /// # Arguments
 /// * `shR`, `shG`, `shB` — Raw SH coefficients per color channel (9 each).
@@ -192,53 +192,61 @@ static void PackSHToCompactFormat(const float shR[9], const float shG[9],
 {
     const float sqrtPI = std::sqrt(kPI);
 
+    // E / pi = sum_l (A_l / pi) L_lm Y_lm(n) with A0 = pi, A1 = 2 pi / 3, A2 = pi / 4, the convolution
+    // folded into the basis constants: c0 = Y00, c1 = (2/3) 0.488603, c2 = (1/4) 1.092548,
+    // c3 = (1/4) 0.315392, c4 = (1/4) 0.546274. The raw coefficients come from EvaluateSHBasis above
+    // (Ramamoorthi's order and signs: sh[1] ~ y, sh[2] ~ z, sh[3] ~ x, sh[5] ~ yz, sh[7] ~ xz, all
+    // positive), so every sign here is positive. UE5's packing negates sh[1], sh[3], sh[5] and sh[7]
+    // because UE5's SHBasisFunction3 defines those four basis functions with a minus sign; its signs
+    // copied onto this basis (until the split-sum item, 2026-10-08) flipped the x and y slopes and the
+    // yz and xz bands, which is the irradiance field rotated 180 degrees about the cube's z axis: an
+    // upward normal read the ground's irradiance and a sideways one the opposite side's.
     const float c0 = 1.0f / (2.0f * sqrtPI);                 // 0.282095
     const float c1 = std::sqrt(3.0f) / (3.0f * sqrtPI);      // 0.325735
     const float c2 = std::sqrt(15.0f) / (8.0f * sqrtPI);     // 0.273137
     const float c3 = std::sqrt(5.0f) / (16.0f * sqrtPI);     // 0.078848
     const float c4 = 0.5f * c2;                               // 0.136569
 
-    // RED channel L0+L1
-    out[0].x = -c1 * shR[3];
-    out[0].y = -c1 * shR[1];
-    out[0].z =  c1 * shR[2];
-    out[0].w =  c0 * shR[0] - c3 * shR[6];
-
-    // GREEN channel L0+L1
-    out[1].x = -c1 * shG[3];
-    out[1].y = -c1 * shG[1];
-    out[1].z =  c1 * shG[2];
-    out[1].w =  c0 * shG[0] - c3 * shG[6];
-
-    // BLUE channel L0+L1
-    out[2].x = -c1 * shB[3];
-    out[2].y = -c1 * shB[1];
-    out[2].z =  c1 * shB[2];
-    out[2].w =  c0 * shB[0] - c3 * shB[6];
-
-    // RED channel L2
-    out[3].x =  c2 * shR[4];
-    out[3].y = -c2 * shR[5];
-    out[3].z =  3.0f * c3 * shR[6];
-    out[3].w = -c2 * shR[7];
-
-    // GREEN channel L2
-    out[4].x =  c2 * shG[4];
-    out[4].y = -c2 * shG[5];
-    out[4].z =  3.0f * c3 * shG[6];
-    out[4].w = -c2 * shG[7];
-
-    // BLUE channel L2
-    out[5].x =  c2 * shB[4];
-    out[5].y = -c2 * shB[5];
-    out[5].z =  3.0f * c3 * shB[6];
-    out[5].w = -c2 * shB[7];
-
-    // Y2,2 term
+    const float* sh[3] = {shR, shG, shB};
+    for (int c = 0; c < 3; ++c) {
+        // L0 + L1: dot(out[c], (x, y, z, 1)); the constant carries Y20's "- 1" as well.
+        out[c].x = c1 * sh[c][3];
+        out[c].y = c1 * sh[c][1];
+        out[c].z = c1 * sh[c][2];
+        out[c].w = c0 * sh[c][0] - c3 * sh[c][6];
+        // L2: dot(out[3 + c], (xy, yz, zz, zx))
+        out[3 + c].x = c2 * sh[c][4];
+        out[3 + c].y = c2 * sh[c][5];
+        out[3 + c].z = 3.0f * c3 * sh[c][6];
+        out[3 + c].w = c2 * sh[c][7];
+    }
+    // Y2,2: out[6].xyz * (xx - yy)
     out[6].x = c4 * shR[8];
     out[6].y = c4 * shG[8];
     out[6].z = c4 * shB[8];
     out[6].w = 1.0f;
+}
+
+SHCoefficients SHCubemapToWorld(const SHCoefficients& cube)
+{
+    // The packed polynomial E(x, y, z) = P.xyz . n + P.w + Q . (xy, yz, zz, zx) + R (xx - yy) evaluated
+    // at (x, z, y), re-expressed in the same basis with xx + yy + zz = 1:
+    //   yy = 1/2 - zz/2 - (xx - yy)/2,   xx - zz = 1/2 - 3 zz/2 + (xx - yy)/2.
+    // Applying the map twice gives the input back (the swap is an involution).
+    SHCoefficients w = cube;
+    for (int c = 0; c < 3; ++c) {
+        const Vec4 P = cube.coeffs[c];
+        const Vec4 Q = cube.coeffs[3 + c];
+        const float R = (c == 0) ? cube.coeffs[6].x : (c == 1) ? cube.coeffs[6].y : cube.coeffs[6].z;
+        w.coeffs[c]     = {P.x, P.z, P.y, P.w + 0.5f * Q.z + 0.5f * R};
+        w.coeffs[3 + c] = {Q.w, Q.y, -0.5f * Q.z - 1.5f * R, Q.x};
+        const float Rw = -0.5f * Q.z + 0.5f * R;
+        if (c == 0)      w.coeffs[6].x = Rw;
+        else if (c == 1) w.coeffs[6].y = Rw;
+        else             w.coeffs[6].z = Rw;
+    }
+    w.coeffs[6].w = cube.coeffs[6].w;
+    return w;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

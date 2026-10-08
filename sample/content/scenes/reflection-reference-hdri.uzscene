@@ -35,9 +35,9 @@
         "light": {
           "type": "directional",
           "color": [
-            1,
-            1,
-            1
+            1.0,
+            1.0,
+            1.0
           ],
           "intensity": 10,
           "cast_shadows": true,

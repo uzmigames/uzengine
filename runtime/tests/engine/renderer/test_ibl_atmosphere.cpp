@@ -28,6 +28,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <algorithm>
 #include <cstddef>
 #include <cstring>
 #include <vector>
@@ -836,3 +837,127 @@ TEST(PerFrameCB_IBL, MemcpyRoundTrip) {
 // CB structs, ECS components, and pass root constants are covered in
 // test_ibl_atmosphere_cb.cpp (split to respect the 1500-line file limit).
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SHProjection — the packed SH evaluates to E / pi in the cubemap's frame
+// (split-sum item, 2026-10-08: the packing carried UE5's signs on a basis
+// without them, so an upward normal read the ground's irradiance)
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace {
+
+// deferred_lighting_ps.hlsl's EvalSH_L2 on the CPU.
+Vec3 EvalPackedSH(const SHCoefficients& sh, float x, float y, float z) {
+    const float n[4]  = {x, y, z, 1.0f};
+    const float vb[4] = {x * y, y * z, z * z, z * x};
+    const float vc    = x * x - y * y;
+    float out[3];
+    for (int c = 0; c < 3; ++c) {
+        const Vec4& a = sh.coeffs[c];
+        const Vec4& b = sh.coeffs[3 + c];
+        out[c] = a.x * n[0] + a.y * n[1] + a.z * n[2] + a.w * n[3]
+               + b.x * vb[0] + b.y * vb[1] + b.z * vb[2] + b.w * vb[3];
+    }
+    out[0] += sh.coeffs[6].x * vc;
+    out[1] += sh.coeffs[6].y * vc;
+    out[2] += sh.coeffs[6].z * vc;
+    return Vec3{out[0], out[1], out[2]};
+}
+
+// A cubemap of radiance 1 where the texel direction satisfies `lit` and 0 elsewhere
+// (sh_projection.cpp's face directions: +X, -X, +Y, -Y, +Z, -Z, row 0 at the top).
+template <typename Pred>
+std::vector<float> CubemapWhere(uint32_t faceSize, Pred lit) {
+    std::vector<float> px(static_cast<size_t>(faceSize) * faceSize * 4u * 6u, 0.0f);
+    for (uint32_t face = 0; face < 6; ++face) {
+        for (uint32_t y = 0; y < faceSize; ++y) {
+            for (uint32_t x = 0; x < faceSize; ++x) {
+                const float s = 2.0f * ((static_cast<float>(x) + 0.5f) / static_cast<float>(faceSize)) - 1.0f;
+                const float t = 2.0f * ((static_cast<float>(y) + 0.5f) / static_cast<float>(faceSize)) - 1.0f;
+                float d[3] = {0.0f, 0.0f, 0.0f};
+                switch (face) {
+                    case 0:  d[0] = 1.0f;  d[1] = -t;    d[2] = -s;    break;
+                    case 1:  d[0] = -1.0f; d[1] = -t;    d[2] = s;     break;
+                    case 2:  d[0] = s;     d[1] = 1.0f;  d[2] = t;     break;
+                    case 3:  d[0] = s;     d[1] = -1.0f; d[2] = -t;    break;
+                    case 4:  d[0] = s;     d[1] = -t;    d[2] = 1.0f;  break;
+                    default: d[0] = -s;    d[1] = -t;    d[2] = -1.0f; break;
+                }
+                const float len = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+                const float v = lit(d[0] / len, d[1] / len, d[2] / len) ? 1.0f : 0.0f;
+                float* p = &px[(static_cast<size_t>(face * faceSize + y) * faceSize + x) * 4u];
+                p[0] = v; p[1] = v; p[2] = v; p[3] = 1.0f;
+            }
+        }
+    }
+    return px;
+}
+
+SHCoefficients ProjectWhere(uint32_t faceSize, const std::vector<float>& px) {
+    const float* faces[6];
+    for (int f = 0; f < 6; ++f) {
+        faces[f] = px.data() + static_cast<size_t>(f) * faceSize * faceSize * 4u;
+    }
+    return ProjectCubemapToSH(faces, faceSize);
+}
+
+}  // namespace
+
+TEST(SHProjection, UpperHemisphere_IrradianceIsHalfOnePlusUp) {
+    // Radiance 1 over the hemisphere y > 0 (the cube's up): E / pi = (1 + n.y) / 2 exactly, and that
+    // hemisphere's L2 band is zero, so the packed SH reproduces it up to the texel grid.
+    const uint32_t faceSize = 32u;
+    const SHCoefficients sh = ProjectWhere(faceSize, CubemapWhere(faceSize, [](float, float y, float) { return y > 0.0f; }));
+    const Vec3 up    = EvalPackedSH(sh, 0.0f, 1.0f, 0.0f);
+    const Vec3 down  = EvalPackedSH(sh, 0.0f, -1.0f, 0.0f);
+    const Vec3 sideX = EvalPackedSH(sh, 1.0f, 0.0f, 0.0f);
+    const Vec3 sideZ = EvalPackedSH(sh, 0.0f, 0.0f, -1.0f);
+    EXPECT_NEAR(up.x, 1.0f, 0.03f);
+    EXPECT_NEAR(down.x, 0.0f, 0.03f);
+    EXPECT_NEAR(sideX.x, 0.5f, 0.03f);
+    EXPECT_NEAR(sideZ.y, 0.5f, 0.03f);
+    EXPECT_NEAR(up.y, up.x, 1e-5f);
+    EXPECT_NEAR(up.z, up.x, 1e-5f);
+}
+
+TEST(SHProjection, CapAroundEachAxis_IrradiancePeaksTowardIt) {
+    // A cap of radiance 1 around each axis (half-angle 37 degrees, E / pi = 0.36 facing it): the packed
+    // SH is largest for the normal facing the cap and near zero for the opposite one. Pins the sign of
+    // every L1 term and, through the off-axis texels of the caps, of the yz and xz bands.
+    const uint32_t faceSize = 32u;
+    const float axes[6][3] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+    for (const auto& a : axes) {
+        const SHCoefficients sh = ProjectWhere(faceSize, CubemapWhere(faceSize, [&](float x, float y, float z) {
+            return x * a[0] + y * a[1] + z * a[2] > 0.8f;
+        }));
+        const Vec3 toward = EvalPackedSH(sh, a[0], a[1], a[2]);
+        const Vec3 away   = EvalPackedSH(sh, -a[0], -a[1], -a[2]);
+        EXPECT_NEAR(toward.x, 0.36f, 0.06f) << "axis " << a[0] << "," << a[1] << "," << a[2];
+        EXPECT_GT(toward.x, 4.0f * std::max(away.x, 0.0f)) << "axis " << a[0] << "," << a[1] << "," << a[2];
+    }
+}
+
+TEST(SHProjection, CubemapToWorld_SwapsYAndZ) {
+    // The world-frame SH evaluated with a world normal equals the cube-frame SH evaluated with y and z
+    // swapped (WorldToCubemap), for an environment with every band populated; and the map is its own
+    // inverse.
+    const uint32_t faceSize = 32u;
+    const SHCoefficients cube = ProjectWhere(faceSize, CubemapWhere(faceSize, [](float x, float y, float z) {
+        return (0.3f * x + 0.8f * y + 0.5f * z) > 0.6f || y < -0.9f;
+    }));
+    const SHCoefficients world = SHCubemapToWorld(cube);
+    const float dirs[5][3] = {{0, 0, 1}, {0, 1, 0}, {1, 0, 0}, {0.6f, 0.0f, 0.8f}, {-0.48f, 0.6f, -0.64f}};
+    for (const auto& d : dirs) {
+        const Vec3 w = EvalPackedSH(world, d[0], d[1], d[2]);
+        const Vec3 c = EvalPackedSH(cube, d[0], d[2], d[1]);
+        EXPECT_NEAR(w.x, c.x, 1e-4f) << "dir " << d[0] << "," << d[1] << "," << d[2];
+        EXPECT_NEAR(w.y, c.y, 1e-4f);
+        EXPECT_NEAR(w.z, c.z, 1e-4f);
+    }
+    const SHCoefficients back = SHCubemapToWorld(world);
+    for (int i = 0; i < 7; ++i) {
+        EXPECT_NEAR(back.coeffs[i].x, cube.coeffs[i].x, 1e-5f) << "coeffs[" << i << "]";
+        EXPECT_NEAR(back.coeffs[i].y, cube.coeffs[i].y, 1e-5f);
+        EXPECT_NEAR(back.coeffs[i].z, cube.coeffs[i].z, 1e-5f);
+        EXPECT_NEAR(back.coeffs[i].w, cube.coeffs[i].w, 1e-5f);
+    }
+}
