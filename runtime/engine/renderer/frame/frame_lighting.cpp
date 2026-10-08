@@ -159,7 +159,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
     RegisterSSRPasses(rgBuilder, ctx);
     
     // ── Env MIS temporal accumulation (render graph compute pass) ───────
-    if (ctx.perFrame.sdfReflectionsEnabled == 0
+    if (ctx.perFrame.sdfReflectionsEnabled == 0 && m_envMisEnabled
         && m_envMISPass && m_envMISPass->IsInitialized()
         && m_envMapSampler && m_envMapSampler->IsReady()) {
 
@@ -180,6 +180,10 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                 misParams.envCubemapSrvIdx = m_hdriActive ? m_hdriCubemapSrv : m_skyCubemapSrv;
                 misParams.frameIndex       = ctx.frameIndex;
                 misParams.temporalAlpha    = 0.05f;
+                misParams.perFrameBuffer   = ctx.perFrameAlloc.bufferHandle;
+                misParams.perFrameOffset   = ctx.perFrameAlloc.offsetBytes;
+                misParams.perFrameCpu      = ctx.perFrameAlloc.cpuPtr;
+                misParams.perFrameSize     = ctx.perFrameAlloc.sizeBytes;
 
                 m_envMISPass->Execute(cmd, *m_envMapSampler, misParams);
             });

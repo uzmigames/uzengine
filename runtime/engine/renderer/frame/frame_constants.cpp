@@ -76,6 +76,8 @@ static auto* cv_TonemapBlackClip   = UZ_CVAR_FLOAT("r.Tonemap.BlackClip", 0.f, "
 static auto* cv_TonemapWhiteClip   = UZ_CVAR_FLOAT("r.Tonemap.WhiteClip", 0.04f, "ACES white clip", 0.f, 1.f);
 static auto* cv_MipBias            = UZ_CVAR_FLOAT("r.MipBias", 0.f, "Global mipmap LOD bias", -4.f, 4.f);
 static auto* cv_SdfReflections = UZ_CVAR_INT("r.GI.Reflections", 0, "Trace scene reflections through the global distance field", 0, 1);
+static auto* cv_EnvMIS = UZ_CVAR_BOOL("r.EnvMIS", true,
+    "Environment-MIS specular on smooth metals (replaces the split-sum term by its coverage; off = split-sum only). Inactive while r.GI.Reflections is on.");
 static auto* cv_SdfFinalGather = UZ_CVAR_INT("r.GI.FinalGather", 0, "Gather diffuse illumination from surface hemisphere rays", 0, 1);
 static auto* cv_SdfDiffuseSamples = UZ_CVAR_INT("r.GI.FinalGather.Samples", 8, "Cosine-weighted rays per diffuse surface gather", 1, 32);
 // Diagnostic candidate (ledger H-31): how the gather's sample set is rotated from frame to frame.
@@ -291,6 +293,11 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
 
 
     // ── Environment Map Importance Sampling (MIS) ─────────────────────
+    m_envMisEnabled = cv_EnvMIS->value;
+    if (m_envMapSampler && !m_regionDumpDir.empty()) {
+        // Diagnostics: the sampler dumps the environment it builds from beside the region dump.
+        m_envMapSampler->SetDumpDirectory(m_regionDumpDir);
+    }
     if (m_envMapSampler && m_envMapSampler->IsReady()) {
         perFrame.envSamplerAliasSrv       = m_envMapSampler->GetAliasSrv();
         perFrame.envSamplerLumMip0Srv     = m_envMapSampler->GetLuminanceMip0Srv();
@@ -299,7 +306,7 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
         perFrame.envSamplerLumWidth       = m_envMapSampler->GetLuminanceWidth();
         perFrame.envSamplerLumHeight      = m_envMapSampler->GetLuminanceHeight();
     }
-    if (m_envMISPass && m_envMISPass->IsInitialized()) {
+    if (m_envMISPass && m_envMISPass->IsInitialized() && m_envMisEnabled) {
         perFrame.envMisAccumulatedSrv = m_envMISPass->GetAccumulatedSrv();
     }
 

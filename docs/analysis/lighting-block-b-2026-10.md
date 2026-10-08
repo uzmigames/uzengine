@@ -20,7 +20,8 @@ sweep.
 | B.5 layered reflections (Hi-Z after the GBuffer, the SSR chain in order, SSR before the BRDF) | 9f1be63f (07/10) | `lighting-block-b-05-layered-reflections.md` | `test_layered_reflections.py` 7/7 |
 | B.6 DDGI dedup, second bounce, TLAS reuse | edfd7942 (07/10) | `lighting-block-b-06-ddgi-dedup.md` | `test_ddgi_dedup.py` 6/6 (+ `test_gi_energy_gpu.ps1`) |
 | B.7 clustered light lists, 512 / 128 lights, the light parameters | 58340259, 794b632f (07/10) | `lighting-block-b-07-clustered-lights.md` | `test_clustered_lights.py` 8/9 (C2 at 0.505 × against the 0.5 × gate) |
-| B.4c the depth prepass (side item of B.5, after the block closed) | (07/10) | `lighting-block-b-04c-depth-prepass.md` | `test_depth_prepass.py` 5/5 |
+| B.4c the depth prepass (side item of B.5, after the block closed) | 5470d37f (07/10) | `lighting-block-b-04c-depth-prepass.md` | `test_depth_prepass.py` 5/5 |
+| B.5b the environment-MIS specular (side item of B.5, after the block closed) | (08/10) | `lighting-block-b-05b-env-mis.md` | `test_env_mis.py` 8/9 (E1 reads the sky capture's √3, a finding of its own) |
 
 ## What the block changed, in one paragraph each
 
@@ -57,6 +58,16 @@ sweep.
   own clear). It is now the GBuffer pass in a depth-only mode with the colour pass testing `Equal`:
   bit-identical G-buffers, the overdraw stack's GBuffer 0.180 → 0.054 ms, and
   `r.DepthPrepass` defaulting to the cheaper configuration on Sponza (0).
+- **Environment-MIS specular (B.5b, after the block closed).** The estimate that replaces the split-sum
+  specular on smooth metals was black: the compute dispatch never bound the per-frame constants, the
+  estimator ran one sampling strategy with the weights of two, the pdf lacked sin(theta), the pass
+  claimed every lit pixel (dielectrics lost their split-sum specular), the sampler's directions were
+  in the cube's Y-up frame, and the alias table's accept test had no precision left (the environment
+  was sampled uniformly). Now a two-strategy MIS estimate with the frame converted, blended by
+  coverage: the chrome floor matches F × its environment to 0.008, the roughness 0.3 / 0.5 floors the
+  CPU integral to a ratio of 0.991 / 0.992, the chrome floor under a PMREM to 0.029. Found on the
+  way: the sky cubemap capture is √3 brighter than the sky pass (white sun), a decision item; the
+  sample sphere mesh renders inside-out; the split-sum path reads 3-5 × the integral on rough metals.
 - **Local lights.** The deferred lighting looped over every light in every pixel and ignored the
   components' falloff exponent, scales and source radius. A compute pass assigns the lights to a
   32-pixel × 24-slice cluster grid whose depth range follows the lights; the pixel evaluates its
@@ -87,9 +98,16 @@ sweep.
 - B.3: the cold / warm residual on one ROI, ~10 ms of main-thread work per bake start, no cache eviction.
 - B.4: height fog + froxel combination, density unit, temporal reprojection, local lights in the fog.
 - B.4b: the march has no dither or temporal filter, sun only.
-- B.5: the environment-MIS specular is black on smooth metals in scenes without an HDRI (own item,
-  B.5b); the depth prepass: done after the block closed (B.4c); the SDF reflection layer has no
-  denoiser; the `r.SSR.*` CVars are registered twice.
+- B.5: the environment-MIS specular: done after the block closed (B.5b; open there: no history
+  reprojection, `OnResize` never called, the captured sun disc counted twice); the depth prepass: done
+  after the block closed (B.4c); the SDF reflection layer has no denoiser; the `r.SSR.*` CVars are
+  registered twice.
+- Found in B.5b, decision pending: the sky cubemap capture scales the sun by the length of the
+  illuminance vector (√3 × the per-channel value of a white sun), so every image-based term reflects a
+  sky √3 brighter than the rendered one; the one-line fix changes every atmosphere scene's ambient,
+  Sponza's calibrated look included. Also found: `sphere.uzmesh` renders inside-out (content), and the
+  split-sum (prefiltered) specular reads 3-5 × the CPU integral on the roughness 0.3 / 0.5 metal floors
+  (the estimate reads 1.0 ×): the prefiltered path's level on rough metals is an item of its own.
 - B.6: no Chebyshev test inside the indirect term, no DDGI probe relocation, the DDGI level with the
   second bounce against a ground truth (the SDF cache and the gather leave the Camera C interior
   nearly black, the DDGI path lights it).

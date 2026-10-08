@@ -83,7 +83,7 @@ the envelope, with the direct light as the gate that matters; the sweep reads 7/
 
 ## Still open
 
-- Side finding: the environment-MIS specular is black on smooth metals in every scene without an HDRI (the chrome sphere of `chrome_test` renders as a black disc; the mirror floor shows nothing of the sky with SSR off) although the env-map sampler builds its alias table from a sky cubemap with a positive luminance; its history, cubemap or temporal path is wrong. Own item.
+- Side finding: the environment-MIS specular is black on smooth metals in every scene without an HDRI (the chrome sphere of `chrome_test` renders as a black disc; the mirror floor shows nothing of the sky with SSR off) although the env-map sampler builds its alias table from a sky cubemap with a positive luminance. **Done after the block closed (B.5b, `lighting-block-b-05b-env-mis.md`):** the per-frame constants were never bound for the dispatch, the estimator ran one strategy with the weights of two, the pdf lacked sin(theta), the pass claimed every lit pixel, the sampler's directions were in the cube's Y-up frame, and the alias table's accept test had no precision left; the chrome sphere's disc had a second cause, the sample sphere mesh renders inside-out.
 - The SDF reflection layer has no denoiser and the reflection capture probes of the phase2 SSR task
   (4.2) do not exist: off-screen reflections fall to the SDF gather or the prefiltered cubemap.
 - `r.SSR` stays off by default and Sponza's project keeps `r.SSR 0`: a look decision for the user

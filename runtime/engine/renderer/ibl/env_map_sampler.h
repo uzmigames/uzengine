@@ -26,6 +26,7 @@
 
 #include "rhi_types.h"
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace uz {
@@ -96,6 +97,11 @@ public:
     /// @return true if Rebuild() has been called successfully.
     [[nodiscard]] bool IsReady() const noexcept { return m_ready; }
 
+    /// Diagnostics (block B.5b): when set, every Rebuild() also writes the radiance the pyramid sampled
+    /// as an RGBA32F equirect (`<dir>/env_equirect.f32`, kPyramidWidth x kPyramidHeight, row-major) with
+    /// a `env_equirect.json` beside it. The renderer forwards the region-dump directory here.
+    void SetDumpDirectory(std::string dir) { m_dumpDir = std::move(dir); }
+
 private:
     /// Create pyramid textures (one per mip level, R32F).
     bool CreatePyramidTextures();
@@ -106,8 +112,10 @@ private:
     /// Ensure compute pipelines are compiled.
     [[nodiscard]] bool EnsurePipelines();
 
-    /// Dispatch mip 0 pass (cube → equirect luminance).
-    void DispatchMip0(IRHICommandList* cmdList, uint32_t envCubemapSrvIndex);
+    /// Dispatch mip 0 pass (cube → equirect luminance; the radiance too when colorUavIndex is set).
+    void DispatchMip0(IRHICommandList* cmdList, uint32_t envCubemapSrvIndex, uint32_t colorUavIndex);
+    /// Read the radiance equirect back and write the dump files (block B.5b diagnostics).
+    void WriteRadianceDump(RHITextureHandle colorTex, uint32_t envCubemapSrvIndex);
 
     /// Dispatch reduction passes (mip 1..N).
     void DispatchReductions(IRHICommandList* cmdList);
@@ -151,6 +159,7 @@ private:
 
     // ── State ────────────────────────────────────────────────────────────
     bool m_ready = false;
+    std::string m_dumpDir;   ///< Diagnostics dump directory (empty = no dump).
 };
 
 } // namespace uz

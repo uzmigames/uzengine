@@ -166,6 +166,7 @@
     // ── Environment Map Importance Sampling ──────────────────────────────
     std::unique_ptr<EnvMapSampler> m_envMapSampler;  ///< Alias table + luminance pyramid for MIS.
     std::unique_ptr<EnvMISPass>    m_envMISPass;     ///< Temporal accumulation pass for env MIS specular.
+    bool m_envMisEnabled = true;                     ///< r.EnvMIS, read once per frame (frame_constants.cpp).
 
     // ── HDRI environment override ────────────────────────────────────────
     RHITextureHandle m_hdriCubemap;            ///< Cubemap converted from HDRI equirect (owned, must destroy).

@@ -3,12 +3,16 @@
 /// @ref Pharr & Humphreys 2004 "Physically Based Rendering" — MIS
 /// @ref Karis 2014 "High Quality Temporal Supersampling"
 ///
-/// Dispatches a compute shader that importance-samples the environment map
-/// via the alias table, evaluates GGX BRDF with MIS balance heuristic, and
-/// accumulates results over time using exponential moving average (ping-pong).
+/// Dispatches a compute shader that estimates the specular environment term of
+/// smooth metals with two sampling strategies (the environment through the alias
+/// table, the BRDF through its visible normals) combined by the balance heuristic,
+/// and accumulates the estimate over time with an exponential moving average
+/// (ping-pong history).
 ///
-/// The accumulated result is a clean RGBA16F texture that deferred lighting
-/// reads as an additive specular contribution for metallic surfaces.
+/// The accumulated result is an RGBA16F texture: rgb the estimate, alpha its
+/// coverage; the deferred lighting blends it over the split-sum specular by that
+/// coverage (block A.3: it replaces, never adds; block B.5b: by coverage, so the
+/// pixels the estimate does not cover keep the split-sum term).
 ///
 /// # Lifetime
 /// Created and owned by SceneRenderer. Init after EnvMapSampler, Shutdown
@@ -56,6 +60,13 @@ public:
         uint32_t envCubemapSrvIdx = UINT32_MAX; ///< Environment cubemap SRV.
         uint32_t frameIndex       = 0;
         float    temporalAlpha    = 0.05f;      ///< EMA blend: 0.05 = 95% history.
+        /// The frame's PerFrameCB allocation, bound at b1 (the shader reads the camera position and
+        /// the sky light tint from it). Block B.5b: the pass never bound it; the compute root slot
+        /// held whatever the previous compute pass left there.
+        RHIBufferHandle perFrameBuffer{};
+        uint64_t        perFrameOffset = 0;
+        const void*     perFrameCpu    = nullptr;
+        uint32_t        perFrameSize   = 0;
     };
 
     /// Dispatch the env MIS compute + temporal accumulation.

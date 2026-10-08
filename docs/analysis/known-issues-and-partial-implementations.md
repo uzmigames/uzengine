@@ -658,11 +658,39 @@ stone is above it, so SSR shows nothing there by design unless the cut-off is ra
 `r.SSR.MaxRoughness`, `NumSteps`, `StartMipLevel`, `SlopeToleranceScale`, `Composite` are each
 registered twice (frame_gi_passes.cpp and frame_lighting.cpp / frame_postprocess.cpp).
 
-### Environment-MIS specular black on metals — `BUG` (side finding, block B.5)
-The environment-MIS estimate (`EnvMIS_Temporal`, block A.3) replaces the split-sum specular on smooth
-metals and comes out black in every scene without an HDRI: the chrome sphere of `chrome_test` is a
-black disc, the mirror floor of `scripts/reflection_reference.py` shows nothing of the sky with SSR off,
-although the env-map sampler builds its alias table from a sky cubemap of positive luminance. Own item.
+### Environment-MIS specular — `FIXED` 2026-10-08 (block B.5b; was "black on metals", side finding of block B.5)
+The environment-MIS estimate (`EnvMIS_Temporal`) replaces the split-sum specular on smooth metals and
+came out black in every scene without an HDRI. Six defects: the compute dispatch never bound the
+per-frame constants at b1 (camera position and sky tint were the previous compute pass's slot-1 data);
+the estimator drew environment samples only but weighted them with the balance heuristic as if a BRDF
+strategy existed (it converged to the environment half of the sum, ~0 on a mirror); the pdf lacked the
+solid angle's sin(theta); the pass wrote alpha 1 on every lit pixel while the lighting replaced the
+split-sum specular wherever alpha > 0 (every dielectric and rough metal lost its environment specular
+with `r.GI.Reflections 0`); the sampler's directions were in the cube's Y-up frame used as world
+directions (y and z swapped); and the alias table's accept test took the fractional part of
+`u.x × texelCount` with a 16-bit `u.x` (always 0: the alias was never taken, the environment was
+sampled uniformly over the even texels while the estimator divided by the luminance pdf, +25 % at
+roughness 0.5). Now: environment + visible-normal BRDF strategies with the balance heuristic, the pdf
+with sin(theta), the frame converted at the sampler's interface, the accept test on the second uniform
+with 32-bit randoms, the PerFrameCB bound, the coverage in alpha and the lighting blending by it;
+`r.EnvMIS` (default 1) switches it off. Measured (`scripts/test_env_mis.py`, 8/9): chrome
+floor against F × the dumped environment along the reflected ray, median error 0.008 (E2m PASS);
+roughness 0.3 / 0.5 metal floors against the CPU integral of the environment, median ratio 0.991 /
+0.992 (E2 PASS / PASS; the split-sum path reads 3.255 / 4.850, its own item);
+dielectric boxes keep the split-sum specular (0.0325, interior max |diff| to `r.EnvMIS 0`
+0.0e+00; E3 PASS); the chrome floor under the ballroom PMREM, median error 0.029 (E4 PASS);
+pass 0.219 ms at 1080p. E1 (the floor against the mirrored view's sky) reads ratio 1.714
+(p10 1.705, p90 1.726): the sky capture's √3 below. Open: the lighting reads the previous
+frame's estimate (one frame of latency; silhouettes under the TAA jitter), no reprojection of the
+history (the EMA smears under motion), `OnResize` never called, a captured sun disc counted twice
+(shared with the split-sum path), a fixed coverage band.
+
+### `sphere.uzmesh` renders inside-out — `BUG` (content, found 2026-10-08, block B.5b)
+In `chrome_test` the dump's visible positions on the sphere are the far hemisphere's (x median
+-51.577 cm with the camera at x = 400) and the outward normals face away from the camera
+(N·V median -0.698): back-face culling keeps the far side, so every lighting term sees a surface
+facing away. The "black disc" of block B.5's finding had this second cause. The mesh's winding or
+its import is the item; `chrome_test` cannot measure reflections until it is fixed.
 
 ### Depth prepass — `FIXED` 2026-10-07 (block B.4c; was "discarded by the GBuffer clear", block B.5)
 The prepass never wrote a depth: it rendered with the shadow vertex shader whose view-projection
@@ -770,6 +798,17 @@ reset). Full design in
 of the first frame. The sky pass now re-bakes when the sun direction (> 0.25 deg), the sky sun colour
 (> 1 %) or the angular radius change, at most once per 30 passes; each bake still stalls on `WaitIdle`
 (asynchronous bake is the follow-up). Guard: `scripts/test_sky_ibl_rebake.py`.
+
+### Sky cubemap capture √3 brighter than the sky pass — `BUG` (found 2026-10-08, block B.5b; decision pending)
+`atmosphere_renderer.cpp` scales the capture's sun by `skySunColor.Length()` (the length of the
+illuminance vector, 17.32 for a white (10, 10, 10)) while the sky pass takes the per-channel
+illuminance (`skyCB.sunIlluminance`) and the aerial perspective its x component. Measured with the
+sampler's environment dump against the mirrored view's sky along the same directions (reflection
+reference, block B.5b): the ratio sky pass / capture is 0.584 at every elevation, the shape identical.
+Every image-based term samples the capture (the prefiltered specular, the sky SH, the environment-MIS
+estimate), so metals reflect a sky √3 brighter than the one behind them. The fix is one line (the
+luminance or the per-channel value), but it changes the ambient of every atmosphere scene, Sponza's
+calibrated look included: a decision item, not changed in block B.5b.
 
 
 ### `r.AerialPerspective` — `OFF` (PARTIAL)

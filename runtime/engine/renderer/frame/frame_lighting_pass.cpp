@@ -207,7 +207,7 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
         // The env-MIS accumulation is the prefiltered-cubemap reflection path;
         // when the SDF trace supplies reflections it must stay out, or the
         // deferred pass adds a second specular term on top of the traced one.
-        lightDesc.envMisSrvIndex      = (ctx.perFrame.sdfReflectionsEnabled == 0
+        lightDesc.envMisSrvIndex      = (ctx.perFrame.sdfReflectionsEnabled == 0 && m_envMisEnabled
                                         && m_envMISPass && m_envMISPass->IsInitialized())
                                         ? m_envMISPass->GetAccumulatedSrv() : UINT32_MAX;
         lightDesc.iblPrefilteredSrvIndex = m_iblResult.prefilteredSrvIndex;

@@ -15,7 +15,9 @@ the same point.
 
 Writes sample/content/meshes/reference/reflection_*.uzmesh, sample/content/scenes/reflection-reference.uzscene,
 sample/content/scenes/reflection-reference-mirror.uzscene, scripts/reflection-reference.uzproject and
-scripts/reflection-reference-mirror.uzproject. Usage: python scripts/reflection_reference.py
+scripts/reflection-reference-mirror.uzproject. Block B.5b adds the rough metal floors (FLOOR_VARIANTS: the
+same scene with the floor at roughness 0.3 and 0.5, `reflection-reference-rough30` / `-rough50`), the
+energy references of the environment-MIS specular. Usage: python scripts/reflection_reference.py
 """
 import json
 import os
@@ -38,6 +40,9 @@ SUN_DIR = shaft.SUN_DIR
 FLOOR = ((-1500.0, -1500.0, -10.0), (1500.0, 1500.0, 0.0))
 FLOOR_F0 = 0.95                  # chrome: base colour = F0
 FLOOR_ROUGHNESS = 0.02
+FLOOR_VARIANTS = {'rough30': 0.3, 'rough50': 0.5}   # block B.5b: rough metal floors (same F0)
+HDRI_VARIANT = 'hdri'                                # block B.5b: the chrome floor under a PMREM environment
+HDRI_CUBEMAP = 'textures/ballroom_2k.pmrem.ktx2'
 BOXES = {
     'red':   (((-350.0, 150.0, 0.0), (-250.0, 250.0, 100.0)), (0.8, 0.15, 0.1)),
     'green': (((-50.0, 350.0, 0.0), (50.0, 500.0, 150.0)), (0.15, 0.7, 0.15)),
@@ -68,6 +73,14 @@ def mesh_asset(name):
     return f'meshes/reference/reflection_{name}.uzmesh'
 
 
+def variant_scene(key):
+    return f'{SCENE}-{key}'
+
+
+def variant_project(key):
+    return os.path.join(REPO, 'scripts', f'{variant_scene(key)}.uzproject')
+
+
 def _entity(name, components):
     return {'name': name, 'components': components}
 
@@ -84,7 +97,7 @@ def _mesh_entity(name, asset, colour, roughness, metallic):
 SCENE_CVARS = dict(shaft.SCENE_CVARS)
 
 
-def scene_json(with_floor: bool, eye, target, name):
+def scene_json(with_floor: bool, eye, target, name, floor_roughness=FLOOR_ROUGHNESS, hdri=None):
     ents = [
         _entity('Sun', {'transform': {'position': [0, 0, 0], 'rotation': [-SUN_ELEVATION, 0, 0], 'scale': [1, 1, 1]},
                         'light': {'type': 'directional', 'color': [1, 1, 1], 'intensity': 10, 'cast_shadows': True,
@@ -94,10 +107,11 @@ def scene_json(with_floor: bool, eye, target, name):
         _entity('Sky', {'transform': {'position': [0, 0, 0]}, 'sky_atmosphere': {'sun_illuminance': [10, 10, 10]}}),
         _entity('SkyLight', {'transform': {'position': [0, 0, 0]},
                              'sky_light': {'intensity': 1.0, 'light_color': [1, 1, 1], 'indirect_lighting_intensity': 1.0,
-                                           'min_occlusion': 0.0, 'lower_hemisphere_is_black': True}}),
+                                           'min_occlusion': 0.0, 'lower_hemisphere_is_black': True,
+                                           **({'cubemap_path': hdri} if hdri else {})}}),
     ]
     if with_floor:
-        ents.append(_mesh_entity('MirrorFloor', mesh_asset('floor'), (FLOOR_F0, FLOOR_F0, FLOOR_F0), FLOOR_ROUGHNESS, 1.0))
+        ents.append(_mesh_entity('MirrorFloor', mesh_asset('floor'), (FLOOR_F0, FLOOR_F0, FLOOR_F0), floor_roughness, 1.0))
     for key, (_, colour) in BOXES.items():
         ents.append(_mesh_entity(key.capitalize(), mesh_asset(key), colour, BOX_ROUGHNESS, 0.0))
     return {'name': name, 'version': '1.0', 'cvars': dict(SCENE_CVARS), 'entities': ents}
@@ -132,6 +146,17 @@ def generate():
         with open(project, 'w', encoding='utf-8') as fh:
             json.dump(project_json(scene, title), fh, indent=2)
         written.append(project)
+    variants = [(key, f'Reflection reference (metal floor, roughness {rough})', rough, None) for key, rough in FLOOR_VARIANTS.items()]
+    variants.append((HDRI_VARIANT, 'Reflection reference (chrome floor, PMREM environment)', FLOOR_ROUGHNESS, HDRI_CUBEMAP))
+    for key, title, rough, hdri in variants:
+        scene = variant_scene(key)
+        path = os.path.join(CONTENT, 'scenes', f'{scene}.uzscene')
+        with open(path, 'w', encoding='utf-8') as fh:
+            json.dump(scene_json(True, CAMERA_EYE, CAMERA_TARGET, title, rough, hdri), fh, indent=2)
+        written.append(path)
+        with open(variant_project(key), 'w', encoding='utf-8') as fh:
+            json.dump(project_json(scene, title), fh, indent=2)
+        written.append(variant_project(key))
     return written
 
 

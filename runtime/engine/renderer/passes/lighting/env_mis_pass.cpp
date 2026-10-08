@@ -136,6 +136,12 @@ void EnvMISPass::Execute(IRHICommandList* cmdList, const EnvMapSampler& sampler,
 
     cmdList->SetPipeline(m_pipeline);
 
+    // PerFrameCB at b1 (compute root slot 1): camera position, sky light tint.
+    if (params.perFrameBuffer.IsValid()) {
+        cmdList->SetRootCBV(1, params.perFrameBuffer, params.perFrameOffset,
+                            params.perFrameCpu, params.perFrameSize);
+    }
+
     // Pack root constants (16 uint/float values)
     struct {
         uint32_t albedoIdx;

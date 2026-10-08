@@ -12,7 +12,9 @@
 ///   Output: RWTexture2D<float> current mip (UAV).
 ///   Each texel stores the sum of 4 parent texels.
 ///
-/// Root constants at b0: { envSrvIndex, outputUavIdx, inputSrvIdx, mipWidth, mipHeight }
+/// Root constants at b0: { envSrvIndex, outputUavIdx, inputSrvIdx, mipWidth, mipHeight, colorUavIndex }
+/// (colorUavIndex: pass 0 also writes the sampled radiance to this RGBA32F equirect when it is not the
+/// sentinel — the diagnostics dump of the environment the sampler saw, block B.5b.)
 /// s0: linear sampler
 
 #include "../common/constants.hlsli"
@@ -25,6 +27,9 @@ cbuffer RootConstants : register(b0) {
 #endif
     uint g_mipWidth;        ///< Output mip width in texels.
     uint g_mipHeight;       ///< Output mip height in texels.
+#ifdef UZ_BINDLESS
+    uint g_colorUavIndex;   ///< UAV of the optional equirect radiance output (0xFFFFFFFF = none).
+#endif
 };
 
 SamplerState linearSampler : register(s0);
@@ -87,6 +92,10 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     // Write to mip 0
 #ifdef UZ_BINDLESS
     RWTexture2D<float> outputMip = ResourceDescriptorHeap[g_outputUavIndex];
+    if (g_colorUavIndex != 0xFFFFFFFFu) {
+        RWTexture2D<float4> colorOut = ResourceDescriptorHeap[g_colorUavIndex];
+        colorOut[DTid.xy] = float4(rgb, 1.0);
+    }
 #else
     RWTexture2D<float> outputMip = u_outputMip;
 #endif

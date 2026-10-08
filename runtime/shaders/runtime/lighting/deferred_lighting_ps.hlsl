@@ -725,6 +725,7 @@ LightingOutput main(FSInput input) {
     float3 dbgSpecularIndirect = float3(0, 0, 0);
     float4 ssrHit = float4(0, 0, 0, 0);          // block B.5: screen-space reflection sample (rgb radiance, a confidence)
     float3 ssrSingleScatter = float3(1, 1, 1);  // block B.5: the single-scatter Fresnel term of the pixel
+    float  specOcclusionOut = 1.0;              // block B.5b: the specular occlusion the split-sum term received
     float3 dbgEmissiveAndMis = float3(0, 0, 0);
     uint   dbgPath = 0u;
     // Support of the two probe queries at this pixel (2026-09-18, followup-01 review item 2): is a
@@ -1259,6 +1260,7 @@ LightingOutput main(FSInput input) {
         float specOcclusion = (metallic > 0.5)
             ? 1.0
             : saturate(pow(NoV + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao);
+        specOcclusionOut = specOcclusion;
 
         // SSGI: add screen-space indirect diffuse if available
 #ifdef UZ_BINDLESS
@@ -1337,17 +1339,21 @@ LightingOutput main(FSInput input) {
     if (gBufIndices.envMisSrvIdx != kSentinelSrvIndex) {
         Texture2D<float4> envMisTex = ResourceDescriptorHeap[gBufIndices.envMisSrvIdx];
         float4 envMIS = envMisTex.Load(int3(px, 0));
-        // The MIS estimate is the specular environment term for the pixels it covers (metallic > 0.3,
-        // roughness < 0.7; alpha = 1 there, 0 elsewhere). It REPLACES the split-sum specular on those
-        // pixels; adding it on top counted the environment specular twice on metals (block A.3).
-        if (envMIS.a > 0.0) {
+        // The MIS estimate is the specular environment term for the pixels it covers; its alpha is the
+        // coverage (1 on metals below the roughness threshold, fading to 0 across the thresholds, 0
+        // elsewhere). It REPLACES the split-sum specular by that weight: adding it on top counted the
+        // environment specular twice on metals (block A.3), and replacing wherever alpha was non-zero
+        // took the split-sum term from every lit pixel while the pass wrote alpha 1 everywhere (block
+        // B.5b). The pass applies the sky light tint itself.
+        if (envMIS.a > 0.0 && !replayActive) {
             // Block B.5: the screen-space reflection is the first layer here too. The MIS term already
             // carries the BRDF weight, so the raw hit radiance takes the single-scatter Fresnel term before
             // the confidence blend (the same weight the split-sum path applies to its blended radiance).
-            float3 misSpecular = lerp(envMIS.rgb, ssrHit.rgb * ssrSingleScatter, ssrHit.a);
-            ambient = dbgDiffuseIndirect + misSpecular;
-            dbgSpecularIndirect = misSpecular;
-            dbgEmissiveAndMis += misSpecular;
+            float3 misSpecular = lerp(envMIS.rgb, ssrHit.rgb * ssrSingleScatter, ssrHit.a) * specOcclusionOut;
+            float3 specular = lerp(dbgSpecularIndirect, misSpecular, envMIS.a);
+            ambient = dbgDiffuseIndirect + specular;
+            dbgEmissiveAndMis += misSpecular * envMIS.a;
+            dbgSpecularIndirect = specular;
             dbgPath |= 16u;
         }
     }
