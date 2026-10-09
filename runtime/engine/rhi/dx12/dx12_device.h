@@ -30,6 +30,7 @@
 #include "dx12_guids.h"
 #include <tracy/TracyD3D12.hpp>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 // Forward-declare D3D12MA to avoid pulling the header into consumers
@@ -335,6 +336,13 @@ public:
     /// Call this when `Present()` returns `DXGI_ERROR_DEVICE_REMOVED`.
     void LogDeviceRemoved();
 
+    /// With validation on (--gpu-validation), moves the D3D12 info-queue messages stored since the last
+    /// call into the log: the first occurrence of each distinct message is logged as it arrives, and the
+    /// per-message counts are logged when the device is destroyed. Without it the messages stayed in the
+    /// queue (limit 1024) and reached the log only when a command list failed to close, so state errors
+    /// that do not break Close() were never seen. Called after every ExecuteCommandLists.
+    void DrainDebugMessages();
+
     // ── GPU Profiler (IRHIDevice overrides) ─────────────────────────────
     /// Resets the GPU timestamp query heap for a new frame.
     void GpuProfilerBeginFrame(IRHICommandList* cmdList) override;
@@ -445,6 +453,10 @@ private:
     std::string                    m_featureLevelStr;
     D3D_FEATURE_LEVEL              m_featureLevel = D3D_FEATURE_LEVEL_12_0;
     bool                           m_validationEnabled = false;
+
+    /// Distinct D3D12 debug messages seen (description -> count), see DrainDebugMessages().
+    std::unordered_map<std::string, uint32_t> m_debugMessageCounts;
+    uint64_t                       m_debugMessageTotal = 0;
 
     /// Set to true by `LogDeviceRemoved()` on first call. Once set, subsequent
     /// calls to `LogDeviceRemoved()` are no-ops to prevent log spam, and

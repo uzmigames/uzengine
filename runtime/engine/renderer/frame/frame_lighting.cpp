@@ -260,7 +260,9 @@ void SceneRenderer::RegisterPassInspectorTargets(FrameContext& ctx) {
     m_passInspector.RegisterTarget("gbuffer.depth",     m_gbuffer.depth,      m_gbuffer.depthSRV,      VisDisplayMode::Depth,     rw, rh,
                                     RHIResourceState::DepthStencilWrite);
     m_passInspector.RegisterTarget("gbuffer.velocity",  m_gbuffer.velocity,   m_gbuffer.velocitySRV,   VisDisplayMode::Velocity,  rw, rh);
-    m_passInspector.RegisterTarget("gbuffer.emissive",  m_gbuffer.emissive,   m_gbuffer.emissiveSRV,   VisDisplayMode::Color,     rw, rh);
+    // RGB statistics: RT3.a packs specular + 16 x shading model (gbuffer_ps.hlsl), not an emissive quantity.
+    m_passInspector.RegisterTarget("gbuffer.emissive",  m_gbuffer.emissive,   m_gbuffer.emissiveSRV,   VisDisplayMode::Color,     rw, rh,
+                                    RHIResourceState::ShaderResource, DumpChannel::RGB);
     // World-space position GBuffer (RGBA32F or RGBA16F xyz).
     if (m_gbuffer.positionWS.IsValid() && m_gbuffer.positionWSSRV != UINT32_MAX) {
         m_passInspector.RegisterTarget("gbuffer.position", m_gbuffer.positionWS, m_gbuffer.positionWSSRV,
@@ -361,20 +363,22 @@ void SceneRenderer::RegisterPassInspectorTargets(FrameContext& ctx) {
     // ── Lighting debug MRT targets (direct / indirect / shadow+AO) ────
     if (m_debugDirectLight.IsValid() && m_debugDirectLightSrv != UINT32_MAX) {
         m_passInspector.RegisterTarget("lighting.direct", m_debugDirectLight, m_debugDirectLightSrv,
-                                        VisDisplayMode::HDR, rw, rh);
+                                        VisDisplayMode::HDR, rw, rh, RHIResourceState::ShaderResource, DumpChannel::RGB);
     }
     if (m_debugIndirectLight.IsValid() && m_debugIndirectLightSrv != UINT32_MAX) {
         m_passInspector.RegisterTarget("lighting.indirect", m_debugIndirectLight, m_debugIndirectLightSrv,
-                                        VisDisplayMode::HDR, rw, rh);
+                                        VisDisplayMode::HDR, rw, rh, RHIResourceState::ShaderResource, DumpChannel::RGB);
     }
     if (m_debugShadowMask.IsValid() && m_debugShadowMaskSrv != UINT32_MAX) {
+        // float4(shadow, ao, 0, 1): the statistics read the shadow alone.
         m_passInspector.RegisterTarget("lighting.shadow", m_debugShadowMask, m_debugShadowMaskSrv,
-                                        VisDisplayMode::Grayscale, rw, rh);
+                                        VisDisplayMode::Grayscale, rw, rh, RHIResourceState::ShaderResource, DumpChannel::R);
     }
 
     // HDR scene color (after lighting + atmosphere, before postprocess)
+    // RGB statistics: the alpha is a constant 1 and pinned every max at 1.000 (followup-06 4.3).
     m_passInspector.RegisterTarget("hdr", m_hdrSceneColor, m_hdrSceneColorSrv,
-                                    VisDisplayMode::HDR, rw, rh);
+                                    VisDisplayMode::HDR, rw, rh, RHIResourceState::ShaderResource, DumpChannel::RGB);
 
     // DFS output
     const bool dfsEnabled = m_dfsConfig.enabled

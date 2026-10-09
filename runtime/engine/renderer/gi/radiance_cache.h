@@ -428,17 +428,20 @@ struct RadianceCacheTraceConstants {
     int32_t  historyShiftY = 0;
     int32_t  historyShiftZ = 0;
     uint32_t regionCount = 0;         ///< Change boxes below; probes inside replace their history.
-    /// World boxes where the distance field changed this frame (lo.xyz, pad / hi.xyz, pad). The
-    /// DDGI writer and probe_reach declare the 13 rows before them and ignore these.
+    /// World boxes where the distance field changed this frame (lo.xyz, pad / hi.xyz, pad). Only the
+    /// radiance-cache trace reads them; the DDGI writers (ddgi_probe_common.hlsli) declare the 13
+    /// rows before them and probe_reach_cs.hlsl the first 8.
     float    regionLo[kMaxFieldRegions][4] = {};
     float    regionHi[kMaxFieldRegions][4] = {};
 };
 
-// 176 bytes of shared trace constants, the 16-byte VFX emissive tail and the
-// 16-byte grid-recentre row. Every shader that binds this CB —
-// `radiance_cache_trace_cs.hlsl` and `ddgi_probe_update_cs.hlsl` — must declare
-// all 13 four-field rows, scalars only, or HLSL register packing shifts every
-// field past the mismatch.
+// Rows 1-11: 176 bytes of shared trace constants; row 12: the 16-byte VFX emissive
+// tail; row 13: the 16-byte grid-recentre row (followup-06 4.5; its fourth field is
+// `regionCount` since block B-02); rows 14-29: the change boxes (block B-02), 464
+// bytes in all. Every shader that binds this CB declares a prefix of it, scalars only
+// through row 13 — `radiance_cache_trace_cs.hlsl` all of it, the DDGI writers through
+// `ddgi_probe_common.hlsli` rows 1-13, `probe_reach_cs.hlsl` rows 1-8 — or HLSL
+// register packing shifts every field past the mismatch.
 static_assert(sizeof(RadianceCacheTraceConstants) == 464, "RadianceCacheTraceConstants must be 464 bytes (13 shared rows + 16 change-box rows)");
 static_assert(offsetof(RadianceCacheTraceConstants, regionCount) == 204);
 static_assert(offsetof(RadianceCacheTraceConstants, regionLo) == 208);

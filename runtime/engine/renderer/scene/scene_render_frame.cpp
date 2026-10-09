@@ -27,6 +27,7 @@
 
 // Individual includes needed by post-frame work
 #include "camera.h"
+#include "input.h"
 #include "render_graph_builder.h"
 #include "render_graph_resources.h"
 #include "sh_projection.h"
@@ -404,6 +405,15 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             m_screenshotCapture.SaveToPNG(m_screenshotPath);
         }
         m_screenshotPath.clear();
+    }
+
+    // Input frame boundary: the press/release edges and the scroll / raw deltas the message pump
+    // recorded before this frame have been read by every consumer (frame_setup.cpp snapshots at the
+    // start of the frame). It used to run inside the OverlayPass callback, which is registered only
+    // when r.ShadowDebug != 1, so under the shadow debug view the edges were never cleared and every
+    // IsKeyJustPressed toggle fired each frame (parity-06 close-out; SponzaTest has it here).
+    if (m_input) {
+        m_input->EndFrame();
     }
 }
 

@@ -622,10 +622,12 @@ TEST(HistogramRootConstants, WriteAndReadBack) {
 // AverageRootConstants — size and layout
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST(AverageRootConstants, SizeIs32Bytes) {
-    // 8 DWORDs: histLogMin(4) + histLogMax(4) + histogramSrvIdx(4) + padding(4)
-    //         + exposureBias(4) + minBrightness(4) + maxBrightness(4) + deltaTime(4)
-    EXPECT_EQ(sizeof(AverageRootConstants), 32u);
+TEST(AverageRootConstants, SizeIs56Bytes) {
+    // 14 DWORDs since block A (a13003d8, 2026-10-05: the adaptation literals became CVars):
+    // histLogMin, histLogMax, histogramSrvIdx, padding, exposureBias, minBrightness, maxBrightness,
+    // deltaTime, midGray, speedUp, speedDown, lowPercent, highPercent, adaptationLinearRange.
+    // Was SizeIs32Bytes, stale from that commit until 2026-10-09.
+    EXPECT_EQ(sizeof(AverageRootConstants), 56u);
 }
 
 TEST(AverageRootConstants, FieldOffsets) {
@@ -637,6 +639,12 @@ TEST(AverageRootConstants, FieldOffsets) {
     EXPECT_EQ(offsetof(AverageRootConstants, minBrightness),   20u);
     EXPECT_EQ(offsetof(AverageRootConstants, maxBrightness),   24u);
     EXPECT_EQ(offsetof(AverageRootConstants, deltaTime),       28u);
+    EXPECT_EQ(offsetof(AverageRootConstants, midGray),         32u);
+    EXPECT_EQ(offsetof(AverageRootConstants, speedUp),         36u);
+    EXPECT_EQ(offsetof(AverageRootConstants, speedDown),       40u);
+    EXPECT_EQ(offsetof(AverageRootConstants, lowPercent),      44u);
+    EXPECT_EQ(offsetof(AverageRootConstants, highPercent),     48u);
+    EXPECT_EQ(offsetof(AverageRootConstants, adaptationLinearRange), 52u);
 }
 
 TEST(AverageRootConstants, WriteAndReadBack) {

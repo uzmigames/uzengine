@@ -88,7 +88,7 @@ cbuffer TraceConstants : register(b2) {
     // host can write a single struct to either compute pipeline. The radiance
     // cache trace shader does not consume the VFX feed (only the DDGI atlas
     // writer in `ddgi_probe_update_cs.hlsl` does); we declare them only so
-    // the cbuffer layout matches the 208-byte CPU mirror.
+    // the cbuffer layout matches the CPU mirror (464 bytes since block B-02).
     uint  vfxEmissiveSrvIndex;
     uint  vfxEmissiveSampleCount;
     float regionBlendAlpha;    ///< Blend weight of a probe inside a change box (1 = replace, block B.2 phase 4)

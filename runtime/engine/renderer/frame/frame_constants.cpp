@@ -124,9 +124,6 @@ static auto* cv_MaterialMinGGXAlpha   = UZ_CVAR_FLOAT("r.Material.MinGGXAlpha", 
 /// or used as the sole exposure when auto-exposure is inactive.
 /// @ref UE5 default: pow(2, AutoExposureBias=1.0) = 2.0. For UzEngine's
 /// light calibration, 10.0 matches typical indoor scene brightness.
-// Exposure 3.0 — matched to the indoor calibration with Sponza skylight
-// intensity 0.35 and sun direct 18. 3.0 keeps the sun-lit walls bright
-// without washing out the deep-shadowed corners of the atrium.
 static auto* cv_Exposure           = UZ_CVAR_FLOAT("r.Exposure", 1.0f, "Manual exposure multiplier (applied on auto-exposure)", 0.01f, 100.f);
 static auto* cv_GIIntensity        = UZ_CVAR_FLOAT("r.GI.Intensity", 1.f, "GI intensity multiplier", 0.f, 10.f);
 static auto* cv_AerialPersp        = UZ_CVAR_BOOL("r.AerialPerspective", false,

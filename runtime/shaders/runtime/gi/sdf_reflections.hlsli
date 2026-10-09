@@ -278,8 +278,13 @@ float3 GatherSdfReflections(SdfReflectionScene scene, float3 position, float3 no
         // This is a biased, variance-reducing estimator: it favours dark samples
         // and its strength depends on the absolute radiance scale (1 in
         // 1/(1+luma) is in scene-radiance units). It is a firefly mitigation,
-        // not an energy-conserving mean; an exposure-relative weight and an
-        // energy check on a constant-albedo enclosure are open (followup-06 4.1).
+        // not an energy-conserving mean: in the enclosed fixture room it keeps
+        // 88 % of the plain mean's energy under a layered environment and agrees
+        // within 1 % under a uniform one (scripts/test_sdf_reflection_energy.ps1,
+        // followup-08 4.1). No exposure-relative or clamped weight was adopted:
+        // the isolated pixels that reach the output are not reflection pixels
+        // (flicker ledger H-68, also the re-test). r.GI.Reflections.HdrWeight=0
+        // gives the plain mean.
         float karisW = scene.plainMean != 0u ? 1.0 : rcp(1.0 + dot(sample, float3(0.2126, 0.7152, 0.0722)));
         radiance += weight * karisW * sample;
         totalWeight += weight * karisW;

@@ -63,6 +63,7 @@ enum class DumpChannel : uint8_t {
     G   = 2,  ///< Green only, replicated to RGB.
     B   = 3,  ///< Blue only, replicated to RGB.
     A   = 4,  ///< Alpha only, replicated to RGB.
+    RGB = 5,  ///< Red, green and blue; alpha excluded (an RGB quantity packed with an unrelated alpha).
 };
 
 /// Describes a single registered intermediate render target.

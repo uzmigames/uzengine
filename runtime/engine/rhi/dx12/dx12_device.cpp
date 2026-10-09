@@ -160,6 +160,15 @@ DX12Device::~DX12Device() {
     m_copyQueue.Reset();
     m_computeQueue.Reset();
 
+    // Debug-layer messages: drain what is left and summarise every distinct message with its count.
+    if (m_validationEnabled && m_device) {
+        DrainDebugMessages();
+        UZ_LOG(RHI, Info, "D3D12 debug layer: {} message(s), {} distinct", m_debugMessageTotal, m_debugMessageCounts.size());
+        for (const auto& [text, count] : m_debugMessageCounts) {
+            UZ_LOG(RHI, Info, "D3D12 debug summary: x{} {}", count, text);
+        }
+    }
+
     // Report live objects in debug builds before releasing device
     if (m_validationEnabled && m_device) {
         ComPtr<ID3D12DebugDevice> debugDevice;
@@ -430,6 +439,45 @@ bool DX12Device::TryLoadAgilitySdk() {
     }
 
     return true;
+}
+
+void DX12Device::DrainDebugMessages() {
+    if (!m_validationEnabled || !m_device) {
+        return;
+    }
+    ComPtr<ID3D12InfoQueue> infoQueue;
+    if (FAILED(m_device.As(&infoQueue))) {
+        return;
+    }
+    const UINT64 count = infoQueue->GetNumStoredMessages();
+    for (UINT64 i = 0; i < count; ++i) {
+        SIZE_T length = 0;
+        if (FAILED(infoQueue->GetMessage(i, nullptr, &length)) || length == 0) {
+            continue;
+        }
+        std::vector<uint8_t> storage(length);
+        auto* message = reinterpret_cast<D3D12_MESSAGE*>(storage.data());
+        if (FAILED(infoQueue->GetMessage(i, message, &length))) {
+            continue;
+        }
+        if (message->Severity == D3D12_MESSAGE_SEVERITY_INFO || message->Severity == D3D12_MESSAGE_SEVERITY_MESSAGE) {
+            continue;
+        }
+        std::string text(message->pDescription, message->DescriptionByteLength > 0 ? message->DescriptionByteLength - 1 : 0);
+        ++m_debugMessageTotal;
+        constexpr size_t kMaxDistinct = 512;   // a message whose text varies per frame cannot grow the map without bound
+        auto it = m_debugMessageCounts.find(text);
+        if (it != m_debugMessageCounts.end()) {
+            ++it->second;
+        } else if (m_debugMessageCounts.size() < kMaxDistinct) {
+            m_debugMessageCounts.emplace(text, 1u);
+            const char* severity = message->Severity == D3D12_MESSAGE_SEVERITY_CORRUPTION ? "CORRUPTION"
+                                 : message->Severity == D3D12_MESSAGE_SEVERITY_ERROR      ? "ERROR"
+                                                                                           : "WARNING";
+            UZ_LOG(RHI, Warning, "D3D12 debug {} (id {}): {}", severity, static_cast<int>(message->ID), text);
+        }
+    }
+    infoQueue->ClearStoredMessages();
 }
 
 bool DX12Device::EnableDebugLayer(bool gpuValidation) {

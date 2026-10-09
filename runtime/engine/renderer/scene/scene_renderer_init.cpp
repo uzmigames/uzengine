@@ -174,7 +174,7 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     cam.SetPosition({0.f, 200.f, -500.f});
     cam.LookAt({0.f, 0.f, 0.f}, Vec3::Up());
     m_cameraCtrl->InitFromCamera(cam);
-    m_cameraCtrl->SetMoveSpeed(5.f);  // 5 cm/s — matches Lua pbr_showcase_controller default
+    m_cameraCtrl->SetMoveSpeed(500.f);  // 500 cm/s = AppConfig::cameraMoveSpeed (the Application host sets the same)
 
     // ── Register CameraManager with Lua VM ──
     if (auto* L = uz::LuaVM::GetState()) {

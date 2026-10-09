@@ -105,6 +105,7 @@ std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICo
             case DumpChannel::G: channelFirst = 1; channelCount = 1; result.channel = "G"; break;
             case DumpChannel::B: channelFirst = 2; channelCount = 1; result.channel = "B"; break;
             case DumpChannel::A: channelFirst = 3; channelCount = 1; result.channel = "A"; break;
+            case DumpChannel::RGB: channelFirst = 0; channelCount = 3; result.channel = "RGB"; break;
             case DumpChannel::All: break;
         }
         if (channelFirst + channelCount > channels) {

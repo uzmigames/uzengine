@@ -177,6 +177,11 @@ float4 main(float4 pos : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 
     case 18: // Reflections — SSR contribution only
     {
+#ifdef UZ_BINDLESS
+        // SSR inactive this frame: frame_lighting_pass.cpp passes the sentinel, so there is no
+        // texture to load. Show "no data" (magenta) like cases 8, 9 and 16.
+        if (g_ssrSrv == 0xFFFFFFFFu) break;
+#endif
         // @ref McGuire 2014 "Efficient GPU Screen-Space Ray Tracing".
         // Displays the raw SSR resolve result (rgb=hit color, a=confidence).
         // Falls back to zero when SSR result is unavailable.

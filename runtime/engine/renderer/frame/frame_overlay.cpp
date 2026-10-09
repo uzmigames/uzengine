@@ -387,13 +387,10 @@ void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext
                 m_techPanel->Render(cmd, *m_cbRing, ctx.frameIndex);
             }
 
-            // Clear typed chars after all UI consumers have processed them.
+            // Clear typed chars after all UI consumers have processed them. The press/release
+            // edges and the scroll/raw deltas end at the end of SceneRenderer::RenderFrame, which
+            // runs whether or not this pass is registered (it is not under r.ShadowDebug 1).
             m_input->ClearTypedChars();
-            // Same boundary for the press/release edges and the scroll/raw
-            // deltas: they were recorded by the message pump before this frame
-            // and every consumer has now read them (frame_setup.cpp only
-            // snapshots at the start of the frame).
-            m_input->EndFrame();
 
             cmd->EndRenderPass();
         });

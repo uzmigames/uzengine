@@ -76,7 +76,11 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
                 m_width, m_height, ctx.bindless)) {
             m_statsOverlayInitialized = true;
         } else {
-            UZ_LOG(Renderer, Error, "SceneRenderer: failed to init stats overlay");
+            // Disable instead of retrying every frame (each retry ran End / Execute / WaitIdle / Begin
+            // and re-uploaded the fallback textures).
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to init stats overlay — disabling");
+            m_statsOverlay->Shutdown();
+            m_statsOverlay.reset();
         }
 
         // Upload 1x1 fallback textures for SM5 unconditional sampling.
@@ -186,6 +190,8 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
             UZ_LOG(Renderer, Info, "ViewportToolbar: initialized OK");
         } else {
             UZ_LOG(Renderer, Warning, "ViewportToolbar: init FAILED — toolbar disabled");
+            m_viewportToolbar->Shutdown();
+            m_viewportToolbar.reset();
         }
         ctx.cmdList->End();
         ctx.cmdList->Execute();
@@ -292,6 +298,7 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
             if (freeCam) {
                 const Camera& current = m_cameraManager->GetActiveCamera();
                 *freeCam = current; // Copy position, orientation, projection
+                m_cameraCtrl->InitFromCamera(*freeCam);   // yaw / pitch from the copied camera
             }
             m_cameraManager->PushCamera(m_editorFreeCamId);
         } else {
@@ -299,6 +306,7 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
             m_cameraManager->PopCamera();
             m_cameraManager->DestroyCamera(m_editorFreeCamId);
             m_editorFreeCamId = kInvalidCameraId;
+            m_cameraCtrl->InitFromCamera(m_cameraManager->GetActiveCamera());
         }
     }
 
@@ -332,11 +340,14 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
         }
     }
 
-    // Fallback: FlyCameraController when no ECS camera is active AND
-    // we're on the default Main camera (id=0). Non-default cameras are
-    // controlled by Lua scripts via mgr_set_position/mgr_look_at.
-    // Suppress camera when VFX editor overlay wants mouse input.
-    if (!cameraFromECS && !vfxOverlayWantsMouse && m_cameraManager->GetActiveCameraId() == 0) {
+    // FlyCameraController when no ECS camera is active AND the active camera is the default Main
+    // camera (id=0) or the editor free camera (F5). Other non-default cameras are controlled by Lua
+    // scripts via mgr_set_position/mgr_look_at. Suppressed while the VFX editor overlay wants the
+    // mouse. Until the parity-06 close-out the F5 free camera was moved by no controller.
+    if (!cameraFromECS && !vfxOverlayWantsMouse &&
+        (m_cameraManager->GetActiveCameraId() == 0 ||
+         (m_editorFreeCamId != kInvalidCameraId &&
+          m_cameraManager->GetActiveCameraId() == m_editorFreeCamId))) {
         m_cameraCtrl->Update(m_cameraManager->GetActiveCamera(), *m_input, ctx.dt);
     }
 

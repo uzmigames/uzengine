@@ -771,12 +771,12 @@ TEST_F(GIGpuTest, GDFShaderConstantStructLayout) {
     static_assert(offsetof(uz::GdfCompositeConstants, windowOrigin) == 44);
     static_assert(offsetof(uz::GdfCompositeConstants, band) == 48);
 
-    // RadianceCacheTraceConstants must be exactly 208 bytes: the 176-byte
-    // trace constants, the phase16 VFX→DDGI emissive injection row (16 bytes)
-    // and the grid-recentre history-shift row (16 bytes, phase0_sponza-followup-06
-    // item 4.5). Both HLSL mirrors declare all 13 rows.
+    // RadianceCacheTraceConstants is 464 bytes: the 176-byte trace constants, the
+    // phase16 VFX→DDGI emissive injection row (16 bytes), the grid-recentre
+    // history-shift row (16 bytes, phase0_sponza-followup-06 item 4.5) and 16
+    // change-box rows (block B-02). The DDGI mirror declares the first 13 rows.
     static_assert(sizeof(uz::RadianceCacheTraceConstants) == 464,
-        "RadianceCacheTraceConstants must be 208 bytes");
+        "RadianceCacheTraceConstants must be 464 bytes");
     static_assert(offsetof(uz::RadianceCacheTraceConstants, historyShiftX) == 192);
     static_assert(offsetof(uz::RadianceCacheTraceConstants, historyShiftZ) == 200);
 
