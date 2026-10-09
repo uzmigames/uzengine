@@ -1765,7 +1765,7 @@ depth still skipped.
 9. **Backend parity** — validate DX11 / Vulkan builds compile + boot.
 10. **Audio + Physics** — large unblocked deliverables for the next phase.
 
-### Capture reproducibility: the pre-load length chooses a persistent TAA state — `OPEN` (found 2026-10-09)
+### Capture reproducibility: the pre-load length chooses a persistent TAA state — `FIXED` 2026-10-09 (found and fixed the same day)
 **Files**: [uzengine.cpp](../../runtime/tools/uzengine.cpp) (pre-load loop), [mesh_sdf_bake_queue.cpp](../../runtime/engine/renderer/gi/mesh_sdf_bake_queue.cpp)
 
 Separate processes of one build and one configuration take 43 or 44 frames to pre-load Sponza on the Debug
@@ -1776,7 +1776,11 @@ flicker programme and the reason followup-09 and followup-14 stay open. Also mea
 the allocation layout. With the RT UV test pass failing to initialise (one 1920x1080 UAV and two descriptors
 fewer), the reflection, fog-shaft and path-tracer references moved by one code value at 1 to 997 pixels while
 the local-shadow, decal and HDRI references did not (render-graph state harness, 2026-10-09).
-Open, owner: `phase0_capture-preload-determinism`.
+**Fixed (pre-load):** in the pre-load the bake queue waits for its worker preparations and starts the bakes in
+mesh order (`r.GI.MeshSdf.PreloadWait`, default on; docs/analysis/capture-preload-determinism.md): every
+process pre-loads Sponza in 38 frames, under CPU load too, followup-09 passes 23/23 and followup-14 11/11.
+**Still open:** the allocation-layout dependence and a residual of one code value at a few pixels between
+processes, owner `phase0_frame-allocation-layout-dependence`.
 
 ### SSR exposure ratio on a linear scene colour — `OPEN` (found 2026-10-09)
 **Files**: [frame_gi_passes.cpp](../../runtime/engine/renderer/frame/frame_gi_passes.cpp), [frame_postprocess.cpp](../../runtime/engine/renderer/frame/frame_postprocess.cpp), [ssr_trace_cs.hlsl](../../runtime/shaders/runtime/postprocess/ssr_trace_cs.hlsl)

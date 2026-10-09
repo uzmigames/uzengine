@@ -450,3 +450,11 @@ other by up to 80 code values (mean 0.15), while among the 44-frame processes th
 were bit-identical in one pair and at most one code value apart in the rest. The dump changes nothing; the
 loader's thread timing chooses the state. Owner of the fix: `phase0_capture-preload-determinism` (ledger
 H-73). This task closes when that task's build gives 23/23 here.
+
+## Closed (2026-10-09)
+
+On the build with the deterministic pre-load (phase0_capture-preload-determinism): `scripts/test_region_capture.py`
+**23 passed, 0 failed** (`.screenshots/flicker-elimination/followup-closeout-20261009/f09-region-capture-fix.log`). The amended neutrality check reads: frame max 1 vs
+repeats 1, INDISTINGUISHABLE; mean up to 0.00018 code values on 5.08, INDISTINGUISHABLE and powered; window
+mean up to 0.00014 on 67.5; door and sky 0. Before the fix the same check was unpowered (processes differing
+by up to 80 code values). With `test_flicker_metrics.py` 26/26 (2026-10-09), both closing runs hold.

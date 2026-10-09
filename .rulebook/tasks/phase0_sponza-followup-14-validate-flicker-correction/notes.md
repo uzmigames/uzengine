@@ -482,3 +482,17 @@ differs by at most 4.1e-05. That process's pre-load took 43 frames, the others 4
 loader's thread timing carried by the TAA history, not a property of the configurations compared. Owner of
 the fix: `phase0_capture-preload-determinism` (ledger H-73). This task closes when that task's build gives
 11/11 here.
+
+## Closed (2026-10-09)
+
+On the build with the deterministic pre-load: `scripts/test_correction_gates.py --repeats 4` **11 passed, 0
+failed** (`.screenshots/flicker-elimination/followup-closeout-20261009/f14-correction-gates-fix.log`). Each check: the CVar defaults to 1.0; every configuration
+reproduces itself, largest of six repeat pairs default 1.19e-07, explicit1 6.76e-05, exp0 and recon1 2.88e-03
+on a mean of 3.107 (that morning 1.92e-01 / 1.92e-01 / 4.52e-02 / 4.52e-02); omitted vs 1.0 INDISTINGUISHABLE
+(between 6.8e-09..6.76e-05, within 8.7e-10..6.76e-05); exponent 0 changes the image by 6.0 % of its mean;
+exponent 0 vs ReconstructionMode=1 INDISTINGUISHABLE (between 0..2.88e-03, within 1.56e-04..2.88e-03); the
+residual falls monotonically 1.0123e-02 > 8.5771e-03 > 7.6827e-03 > 7.2631e-03 > 7.0620e-03; the TAA-off
+control has power (spread 0.12 % of its signal) and reads INDISTINGUISHABLE; the image moves towards the input
+(0.3002 -> 0.2166), the ROI energy too (0.9271 -> 0.9823), and the known cost is reproduced (1771x -> 9698x).
+The stale-gtest item holds (`PerFrameCB_IBL.*` 16/16, `PrefilteredMipLevelsDefaultMatchesTheBaker`). Item 2.3
+re-ticked; the task closes with its resolution.

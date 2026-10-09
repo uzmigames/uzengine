@@ -559,6 +559,7 @@ static uint32_t ParseRegionFields(const std::string& name) {
 /// Statistics a run reports in its manifest so a capture can be reproduced and compared.
 struct RunStats {
     uint32_t framesRendered = 0;
+    uint32_t preloadFrames = 0;      ///< Frames the scene pre-load took (capture reproducibility depends on it).
     uint32_t measuredFirst = 0;      ///< First frame included in the timing statistics.
     std::vector<float> frameMs;      ///< CPU wall time per frame from the measured window on.
     float    exposure = 0.f;
@@ -648,6 +649,7 @@ static void WriteRunManifest(const std::string& path, const uz::Config& config,
     }
     o << "  \"output_encoding\": \"screenshots: 8-bit sRGB PNG; region dump: linear HDR float32 RGB\",\n";
     o << "  \"frames\": {\"rendered\": " << stats.framesRendered
+      << ", \"preload\": " << stats.preloadFrames
       << ", \"timing_from\": " << stats.measuredFirst
       << ", \"timing_samples\": " << ms.size() << "},\n";
     o << "  \"frame_ms\": {\"mean\": " << (ms.empty() ? 0.0 : sum / ms.size())
@@ -1053,6 +1055,7 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
                 sceneRenderer.RenderFrame(cmdList, swapChain, &world, &vfs, 0.0f, frameIndex++);
                 device->WaitIdle();
                 UZ_LOG(Engine, Info, "Pre-load complete: assets ready and exposure seeded after {} frames; no partial scene presented", frameIndex);
+                runStats.preloadFrames = frameIndex;   // run manifest: frames.preload
                 break;
             }
         }

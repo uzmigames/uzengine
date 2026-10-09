@@ -52,6 +52,19 @@ then `test_region_capture.py` 23/23 and `test_correction_gates.py --repeats 4` 1
 followup-14 close-outs). Negative control: the build before shows the 43/44 split in the same 6-process
 run, or the gate reports that it could not reproduce the problem.
 
+## Gate amendment (registered 2026-10-09, before the fix's first build)
+
+The first negative-control run on the build before (45545f4e, 6 processes, unloaded) gave one length (39)
+in every process. Machine conditions move the length: under 32 CPU busy loops on every second process the same
+build split 38 / 39 (worst pair 2 code values; `.screenshots/preload-determinism/before-45545f4e-stress`). The
+dependence is worker readiness: mesh loads are 4 per frame in every run, the frames on which the bakes start
+differ (a 44-frame run had empty frames and late starts at frames 37 and 40). So the fix's gate is an
+intervention inside its own build, `scripts/test_preload_determinism.py --gate` (3 rounds, interleaved):
+A defaults; B `r.GI.MeshSdf.Diagnostic.PrepareDelayMs=30`; C `r.GI.MeshSdf.PreloadWait=0` with the same delay.
+PASS: every A and B process has one pre-load length L, every A/B screenshot pair agrees within 1 code value,
+and C differs from L in at least one process. Then the stressed run (`--stress 32`, 6 processes) gives one
+length on the fix's build, and followup-09 23/23 and followup-14 11/11.
+
 ## Impact
 - Affected specs: capture-reproducibility (new)
 - Affected code: runtime/engine/renderer/gi/mesh_sdf_bake_queue.*, scene/scene_mesh_assets.cpp,

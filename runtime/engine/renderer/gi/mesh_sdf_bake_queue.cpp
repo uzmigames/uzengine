@@ -34,6 +34,14 @@ static auto* cv_MeshSdfBakeStartsPerFrame = UZ_CVAR_INT("r.GI.MeshSdf.BakeStarts
     "Mesh distance field bakes or cache uploads started per frame", 1, 64);
 static auto* cv_MeshSdfCacheVerify = UZ_CVAR_BOOL("r.GI.MeshSdf.Diagnostic.CacheVerify", false,
     "Diagnostic: bake every cache hit again and log whether the cached volume and records are the same bits");
+// phase0_capture-preload-determinism: the pre-load waits for the worker preparations, so its length (and the
+// TAA state it leaves) does not depend on thread timing. The delay simulates a slow worker for the gate.
+static auto* cv_MeshSdfPreloadWait = UZ_CVAR_BOOL("r.GI.MeshSdf.PreloadWait", true,
+    "Scene pre-load: wait for every mesh distance field preparation and start the bakes in mesh order, so the "
+    "pre-load takes the same number of frames in every process (0: take whatever the workers have finished)");
+static auto* cv_MeshSdfPrepareDelay = UZ_CVAR_FLOAT("r.GI.MeshSdf.Diagnostic.PrepareDelayMs", 0.0f,
+    "Diagnostic: each worker sleeps this long before every distance field preparation (a slow disk or CPU)",
+    0.0f, 1000.0f);
 
 namespace uz {
 
@@ -133,6 +141,7 @@ void MeshSdfBakeQueue::Submit(MeshSdfBakeRequest&& request) {
         task.request = std::move(request);
         task.verify = cv_MeshSdfCacheVerify->value != 0.0f;
         task.useCache = m_cacheReady && cv_MeshSdfCache->value != 0.0f;   // CVars are read on the main thread only
+        task.debugDelayMs = cv_MeshSdfPrepareDelay->value;
         m_tasks.push_back(std::move(task));
         m_queuedPrepares.fetch_add(1, std::memory_order_relaxed);
     }
@@ -180,12 +189,16 @@ void MeshSdfBakeQueue::WorkerLoop() {
         }
         if (task.kind == Task::Kind::Prepare) {
             Prepared out;
+            if (task.debugDelayMs > 0.f) {
+                std::this_thread::sleep_for(std::chrono::microseconds(static_cast<int64_t>(task.debugDelayMs * 1000.f)));
+            }
             Prepare(task, out);
             {
                 std::lock_guard<std::mutex> lock(m_mutex);
                 m_completedPrepares.push_back(std::move(out));
                 m_preparing.fetch_sub(1, std::memory_order_relaxed);
             }
+            m_preparedCv.notify_all();
         } else if (task.kind == Task::Kind::Store) {
             Store(task);
         }
@@ -337,7 +350,20 @@ MeshSdfBakeQueue::ServiceStats MeshSdfBakeQueue::Service(IRHICommandList* cmdLis
     const auto ms = [](Clock::time_point a, Clock::time_point b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
     const auto t0 = Clock::now();
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::unique_lock<std::mutex> lock(m_mutex);
+        if (unthrottled && cv_MeshSdfPreloadWait->value != 0.0f) {
+            // Pre-load (nothing is presented): wait for every preparation queued or running, and start them
+            // in mesh order. Taking whatever the workers had finished made the frame on which each bake
+            // started, and so the pre-load length, depend on thread timing (43 or 44 frames on Sponza in the
+            // Debug build), and a process with the other length kept a different TAA state for hundreds of
+            // frames (phase0_capture-preload-determinism, ledger H-73). Outside the pre-load nothing waits.
+            m_preparedCv.wait(lock, [this] {
+                return m_stop.load() || (m_queuedPrepares.load(std::memory_order_relaxed) == 0
+                                         && m_preparing.load(std::memory_order_relaxed) == 0);
+            });
+            std::stable_sort(m_completedPrepares.begin(), m_completedPrepares.end(),
+                             [](const Prepared& a, const Prepared& b) { return a.meshIndex < b.meshIndex; });
+        }
         for (auto& p : m_completedPrepares) m_ready.push_back(std::move(p));
         m_completedPrepares.clear();
     }

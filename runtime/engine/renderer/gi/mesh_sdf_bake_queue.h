@@ -151,6 +151,7 @@ private:
         MeshSdfBakeRequest   request;      // Prepare
         bool                 verify = false;
         bool                 useCache = true;
+        float                debugDelayMs = 0.f;   ///< r.GI.MeshSdf.Diagnostic.PrepareDelayMs, read on the main thread
         uint64_t             key = 0;      // Store
         MeshSdfCacheHeader   header{};     // Store: filled but for compressedBytes
         std::vector<uint8_t> payload;      // Store: the raw body (volume then records); the worker compresses it
@@ -215,6 +216,8 @@ private:
     std::vector<Prepared>       m_completedPrepares;
     mutable std::mutex          m_mutex;
     std::condition_variable     m_cv;
+    /// Notified by a worker after each preparation it finishes; the pre-load waits on it (Service).
+    std::condition_variable     m_preparedCv;
     std::atomic<bool>           m_stop{false};
     std::atomic<size_t>         m_preparing{0};     ///< Prepare tasks running on workers.
     std::atomic<size_t>         m_queuedPrepares{0};

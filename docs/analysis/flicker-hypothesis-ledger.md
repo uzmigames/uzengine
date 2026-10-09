@@ -223,9 +223,11 @@ timing: 43 frames in some processes, 44 in others on the Debug build of 2cc2e85c
 length lands in a different persistent TAA state (the history clamp keeps it from decaying): up to 0.19 in
 linear radiance on the correction-gates ROI and 80 code values on the whole frame, with the TAA input
 identical. Processes with the same pre-load length agree to 4e-04, and dump on / off pairs were
-bit-identical or one code value apart. Owner: `phase0_capture-preload-determinism`. Until it lands, a
-comparison should pair processes of equal pre-load length (every run log states it) or treat the length
-as the cause of an outlier.
+bit-identical or one code value apart. Owner: `phase0_capture-preload-determinism`. **Fixed the same day:**
+in the pre-load the bake queue now waits for its workers and starts the bakes in mesh order, every process
+pre-loads Sponza in 38 frames (under CPU load too), and the correction gates' default-configuration spread fell
+from 0.192 to 1.19e-07. Captures made before that fix should pair processes of equal pre-load length (every
+run log states it; the manifest records it as `frames.preload` from the fix on).
 
 **Corrected 2026-09-15.** "The three repeats of every gate agree to ~1e-13" does not hold for every
 configuration. On pose A `rear_door`, 128 frames with the `components` fields, three processes of one

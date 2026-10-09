@@ -20,7 +20,7 @@ display code values (0..255) from the PNG:
 A mode passes when M1, M2 and M3 hold (and M4 where it applies). The report records every number,
 and the exit code is non-zero if any mode fails, so this cannot pass silently.
 
-Usage: python scripts/run_debug_view_check.py [--frames 40] [--out DIR]
+Usage: python scripts/run_debug_view_check.py [--frames 240] [--out DIR]
 """
 from __future__ import annotations
 
@@ -72,7 +72,10 @@ def measure(rgb):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--frames', type=int, default=40)
+    # The screenshot frame (frames - 1) is an absolute index and the pre-load takes no screenshots; on the
+    # Debug build Sponza pre-loads for 38-45 frames, so the old default of 40 asked for a frame inside it
+    # and no screenshot was written (2026-10-09).
+    ap.add_argument('--frames', type=int, default=240)
     ap.add_argument('--out', default=os.path.join(runner.REPO, '.screenshots', 'flicker-elimination',
                                                   '37-debug-views'))
     args = ap.parse_args()

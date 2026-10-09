@@ -451,8 +451,10 @@ Engine changes of the closure review in 8fb13fa1. Runs:
    4.12), hdr, lighting.direct and lighting.indirect RGB, lighting.shadow R, gi.gdf_cascade0 non-zero. The
    4.3 correction holds.
 3. `scripts/run_debug_view_check.py`: 7/7 at 240 frames on the 2cc2e85c and 8fb13fa1 Debug builds. The default
-   40 frames end before the Debug build finishes Sponza's distance-field bakes, so the screenshot readiness
-   gate never opens and no screenshot is written (the 40-frame run of 2026-10-09 stopped there).
+   40 frames request `--screenshot-frames 39`, an absolute frame index, and on that build the pre-load (which
+   renders until Sponza's distance fields are baked and takes no screenshots) lasted 44 frames, so the render
+   loop started after frame 39 and no screenshot was written. *(Corrected the same day: the first version said
+   the readiness gate never opened.)*
 4. GTAO-off ao fallback against the shadows view's lit level: 171 and 171 (within 2 code values). The
    fallback shows the 1.0 the lighting reads.
 5. The reflections view (debug view 18) with SSR off: 98.9 % of the frame at the tonemapped magenta (167, 0,
