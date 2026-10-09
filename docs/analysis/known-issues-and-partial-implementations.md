@@ -1765,7 +1765,7 @@ depth still skipped.
 9. **Backend parity** — validate DX11 / Vulkan builds compile + boot.
 10. **Audio + Physics** — large unblocked deliverables for the next phase.
 
-### Capture reproducibility: the pre-load length chooses a persistent TAA state — `FIXED` 2026-10-09 (found and fixed the same day)
+### Capture reproducibility: the pre-load length chooses a persistent TAA state — `FIXED` 2026-10-09 (36951b4e; found and fixed the same day)
 **Files**: [uzengine.cpp](../../runtime/tools/uzengine.cpp) (pre-load loop), [mesh_sdf_bake_queue.cpp](../../runtime/engine/renderer/gi/mesh_sdf_bake_queue.cpp)
 
 Separate processes of one build and one configuration take 43 or 44 frames to pre-load Sponza on the Debug
