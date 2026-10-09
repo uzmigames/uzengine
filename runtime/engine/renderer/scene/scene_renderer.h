@@ -569,7 +569,9 @@ public:
 
     /// Enables or disables screen-space lens flare at runtime.
     /// Default: OFF. Enable via Lua `uz.renderer.set_lens_flare_enabled(true)`.
-    void SetLensFlareEnabled(bool enabled) { m_lensFlareEnabled = enabled; }
+    /// Also sets the `r.LensFlare` CVar: ApplyCVars() re-reads the member from it
+    /// every frame, so a write to the member alone was undone on the next frame.
+    void SetLensFlareEnabled(bool enabled);
 
     /// Returns whether lens flare is currently enabled.
     [[nodiscard]] bool IsLensFlareEnabled() const { return m_lensFlareEnabled; }

@@ -1,5 +1,5 @@
-/// UzEngine Scene Renderer — Post-process passes: bloom, TAA, color grading LUT,
-/// motion blur (tile max + neighbor max + gather), DOF, tonemap, FXAA.
+/// UzEngine Scene Renderer — Post-process passes: TAA / temporal upscaler, SSR composite
+/// and copy-prev-colour, bloom, tonemap (straight to the backbuffer), region-dump readback.
 
 #include "scene_renderer.h"
 #include "region_dump_layout.h"
@@ -28,7 +28,7 @@
 // ── CVars ────────────────────────────────────────────────────────────────
 // r.SSR CVar is declared in frame_lighting.cpp (single source of truth)
 static auto* cv_SSRComposite    = UZ_CVAR_FLOAT("r.SSR.Composite", 0.0f, "Legacy additive post-TAA SSR composite (block B.5: the lighting blends SSR before the BRDF; 1 double-counts, kept as the A/B control)", 0.0f, 1.0f);
-static auto* cv_MotionBlur      = UZ_CVAR_BOOL("r.MotionBlur", true, "Motion blur");
+static auto* cv_MotionBlur      = UZ_CVAR_BOOL("r.MotionBlur", true, "Motion blur (inert: pass not wired in the current post chain)");
 static auto* cv_DOF             = UZ_CVAR_BOOL("r.DOF", false, "Depth of field (inert: pass not wired in the current post chain)");
 static auto* cv_CAS             = UZ_CVAR_BOOL("r.CAS", true, "Contrast adaptive sharpening (inert: pass not wired in the current post chain)");
 static auto* cv_TonemapOp       = UZ_CVAR_INT("r.TonemapOperator", 1,
@@ -661,8 +661,18 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
     // The full pipeline that used to follow (second bloom/tonemap, lens flare,
     // colour-grading LUT, motion blur, DOF, CAS, FXAA, LDR blit) was dead code
     // behind the unconditional return above and was removed on 2026-09-08
-    // (phase0_sponza-followup-08). Its CVars stay registered but have no effect
-    // until the passes are re-wired.
+    // (phase0_sponza-followup-08). It had not run since the shader rewrite
+    // bd4db199 (2026-03-31) put the return here; the SponzaTest reference has the
+    // same return. Its CVars stay registered but have no effect.
+    //
+    // Re-wiring those passes is not enough to bring them back: their shaders are
+    // still the rewrite's scaffolds. motion_blur_cs, motionblur_tilemax_cs,
+    // motionblur_neighbormax_cs, dof_setup_cs, dof_blur_cs, lensflare_cs and
+    // color_grading_lut_cs are one-line no-op kernels; cas_sharpen_ps and fxaa_ps
+    // copy their input unchanged. Wired as before (the C++ is in 7eea6b95^), the
+    // tonemap would display the never-written motion blur output (r.MotionBlur is
+    // on by default) and replace every colour with a sample of the never-written
+    // LUT. Implement a pass's shader before registering the pass.
 
 }
 

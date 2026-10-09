@@ -1,5 +1,5 @@
 /// UzEngine Scene Renderer — High-level configuration methods (upscaler, screen
-/// percentage, HDRI environment).
+/// percentage, lens flare toggle, HDRI environment).
 
 #include "scene_renderer.h"
 
@@ -64,6 +64,17 @@ void SceneRenderer::SetScreenPercentage(float pct) {
     if (m_device && m_width > 0 && m_height > 0) {
         Resize(m_width, m_height);
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lens Flare
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SceneRenderer::SetLensFlareEnabled(bool enabled) {
+    m_lensFlareEnabled = enabled;
+
+    // Sync CVar so ApplyCVars() doesn't overwrite this value next frame
+    CVarRegistry::Get().Set("r.LensFlare", enabled ? 1.f : 0.f);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

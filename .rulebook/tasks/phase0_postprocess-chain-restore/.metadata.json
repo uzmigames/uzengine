@@ -1,0 +1,6 @@
+{
+  "status": "completed",
+  "createdAt": "2026-10-09T00:00:00.000Z",
+  "updatedAt": "2026-10-09T11:55:32.000Z",
+  "resolution": "done 2026-10-09, re-scoped: the premise (7eea6b95 dropped CAS / motion blur / FXAA / DOF / LUT / lens flare) was false. The passes were dead behind an unconditional return since bd4db199 (2026-03-31; the SponzaTest reference has it too) and their shaders are no-op scaffolds; 7eea6b95 removed dead text. Shipped: comments and CVar descriptions that say what runs, and the Lua lens-flare setter syncing r.LensFlare. Implementing the effects needs new shaders first (user decision)."
+}

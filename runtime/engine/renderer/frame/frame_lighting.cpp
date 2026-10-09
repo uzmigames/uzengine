@@ -55,8 +55,8 @@ static auto* cv_DFS              = UZ_CVAR_BOOL("r.DFS", false,
     "shader never reads dfsOutputSrvIndex; left off so the passes are not dispatched)");
 // Fog
 // Clouds
-// Post-process (used by lighting for CAS after TAA)
-static auto* cv_CASSharpness     = UZ_CVAR_FLOAT("r.CAS.Sharpness", 0.2f, "CAS sharpening strength", 0.f, 1.f);
+// Post-process: read into m_casSharpenStrength; no CAS pass is registered (see the end of frame_postprocess.cpp)
+static auto* cv_CASSharpness     = UZ_CVAR_FLOAT("r.CAS.Sharpness", 0.2f, "CAS sharpening strength (inert: CAS pass not wired)", 0.f, 1.f);
 static auto* cv_LODBias          = UZ_CVAR_FLOAT("r.LOD.Bias", 1.f, "Global LOD bias multiplier", 0.1f, 10.f);
 // Debug
 static auto* cv_DebugView        = UZ_CVAR_BOOL("r.DebugView", false, "GBuffer debug visualization");
