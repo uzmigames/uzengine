@@ -20,6 +20,7 @@
 #include "units.h"
 #include "fly_camera_controller.h"
 #include "render_graph_resources.h"
+#include "render_graph_states.h"
 #include "shadow_atlas.h"
 #include "shadow_pass.h"
 #include "rhi.h"
@@ -163,6 +164,7 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
 
     // ── Render Graph Resource Pool ──────────────────────────────────────
     m_rgPool = std::make_unique<rg::RgResourcePool>(device);
+    m_rgStates = std::make_unique<rg::RgStateRegistry>(device);
 
     // ── Camera ──────────────────────────────────────────────────────────
     m_cameraManager = std::make_unique<CameraManager>();
@@ -1693,6 +1695,7 @@ void SceneRenderer::Shutdown() {
     if (m_pipelines)       m_pipelines->Shutdown();
     if (m_shaderMgr)       m_shaderMgr->Shutdown();
 
+    m_rgStates.reset();   // logs the observe-mode summary
     m_rgPool.reset();
     m_cameraCtrl.reset();
     m_cameraManager.reset();

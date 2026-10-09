@@ -125,7 +125,7 @@ class MaterialPipeline;
 class MaterialManager;
 struct ParticleEmitter;
 class VfxSystemInstance;
-namespace rg { class RgResourcePool; }
+namespace rg { class RgResourcePool; class RgStateRegistry; }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SceneRenderer

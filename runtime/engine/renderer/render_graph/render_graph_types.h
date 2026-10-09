@@ -117,6 +117,11 @@ struct RgResourceEntry {
 
     bool imported = false;  ///< True if the resource was imported (not owned by the graph).
     bool culled = false;    ///< True if this resource is unreferenced and will be skipped.
+    /// Imported with `ImportTracked*`: `initialState` comes from the `RgStateRegistry` at Compile.
+    bool stateTracked = false;
+    /// Sort index of the last pass whose barriers transition this resource (UINT32_MAX: none). The end
+    /// state of an imported resource is committed to the registry only when the graph transitioned it.
+    uint32_t lastBarrierSortIndex = UINT32_MAX;
 
     uint32_t firstPassIndex = UINT32_MAX; ///< Index of the first pass that touches this resource.
     uint32_t lastPassIndex = 0;           ///< Index of the last pass that touches this resource.

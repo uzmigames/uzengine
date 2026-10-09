@@ -39,6 +39,10 @@
     bool m_techPanelInitialized = false;       ///< True after TechPanel::Init() succeeds.
     CameraId m_editorFreeCamId = kInvalidCameraId;     ///< Editor free-cam ID (kInvalidCameraId = not active).
     std::unique_ptr<rg::RgResourcePool> m_rgPool;
+    /// Resource states between render graphs (render_graph_states.h). Stage 0 of
+    /// phase0_render-graph-state-registry: it records the end states and reports the explicit import
+    /// claims that disagree with them; no import takes its state from it yet.
+    std::unique_ptr<rg::RgStateRegistry> m_rgStates;
 
     // ── Fallback Textures (SM5 unconditional sampling) ────────────────────
 

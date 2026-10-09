@@ -30,6 +30,7 @@
 #include "input.h"
 #include "render_graph_builder.h"
 #include "render_graph_resources.h"
+#include "render_graph_states.h"
 #include "sh_projection.h"
 #include "profiler.h"
 #include "rhi.h"
@@ -73,6 +74,8 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
 
     // ── Begin command list ──────────────────────────────────────────────
     cmdList->Begin();
+    // The frame list's recording order is the registry's state timeline; its submits decay buffer states.
+    if (m_rgStates) m_rgStates->BindCommandList(cmdList);
 
     // ── First-frame resource warmup ─────────────────────────────────────
     // On frame 0, all textures start in Common state. Transition the core
@@ -98,6 +101,10 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         addTex(m_gbuffer.emissive, RHIResourceState::RenderTarget);
         addTex(m_gbuffer.velocity, RHIResourceState::RenderTarget);
         if (bc > 0) cmdList->ResourceBarrier(warmupBarriers, bc);
+        // Recorded, not emitted again: the registry learns the states these raw barriers set.
+        if (m_rgStates) {
+            for (uint32_t i = 0; i < bc; ++i) m_rgStates->Set(warmupBarriers[i].texture, warmupBarriers[i].stateAfter);
+        }
     }
 
     // ── Pixel Debug: clear counter buffer ────────────────────────────────
@@ -111,7 +118,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     }
 
     // ── Build render graph ─────────────────────────────────────────────
-    rg::RgBuilder rgBuilder(m_device, m_rgPool.get());
+    rg::RgBuilder rgBuilder(m_device, m_rgPool.get(), m_rgStates.get());
     rgBuilder.SetGpuProfileEnabled(m_gpuProfileEnabled);
 
     // ── Setup all per-frame state (camera, CBs, draw list, instancing) ──

@@ -309,6 +309,7 @@ void DX12CommandList::Execute() {
 
     ID3D12CommandList* lists[] = { m_cmdList.Get() };
     queue->ExecuteCommandLists(1, lists);
+    ++m_submitCount;   // GetSubmitCount: buffer states decay to common (rg::RgStateRegistry)
 
     // With --gpu-validation, the barrier / state errors the debug layer found in this list reach the log.
     m_device->DrainDebugMessages();

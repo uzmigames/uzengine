@@ -34,6 +34,7 @@
 
 #include <vector>
 #include <functional>
+#include <unordered_map>
 
 #include "render_graph_types.h"
 #include "render_graph_pass.h"
@@ -46,6 +47,7 @@ class IRHICommandList;
 namespace uz::rg {
 
 class RgResourcePool;
+class RgStateRegistry;
 
 /// Builds, compiles, and executes a frame's render graph.
 ///
@@ -62,7 +64,10 @@ public:
     /// # Arguments
     /// * `device` — RHI device for resource queries (e.g., `GetTextureDesc`). Must outlive the builder.
     /// * `pool` — Persistent resource pool for physical resource reuse. Must outlive the builder.
-    RgBuilder(IRHIDevice* device, RgResourcePool* pool);
+    /// * `states` — Persistent resource-state registry (render_graph_states.h), optional. With it, tracked
+    ///   imports take their state from it, explicit import claims are checked against it (observe mode),
+    ///   and Execute commits the end state of every imported resource the graph transitioned.
+    RgBuilder(IRHIDevice* device, RgResourcePool* pool, RgStateRegistry* states = nullptr);
 
     ~RgBuilder();
 
@@ -142,6 +147,21 @@ public:
     /// A valid `RgResourceId` referencing the imported buffer.
     [[nodiscard]] RgResourceId ImportBuffer(const char* name, RHIBufferHandle handle,
                                             RHIResourceState currentState);
+
+    /// Imports a texture whose state at graph entry the `RgStateRegistry` knows: its record (the end state
+    /// of the last graph or raw barrier that transitioned it) or, with none, its creation state. Resolved
+    /// at `Compile()`, so a registry transition recorded between this call and Compile is honoured. A
+    /// handle already imported in this graph returns that import's id: one barrier chain per resource.
+    /// Requires a registry (constructor).
+    [[nodiscard]] RgResourceId ImportTrackedTexture(const char* name, RHITextureHandle handle);
+
+    /// Imports a buffer whose state at graph entry the `RgStateRegistry` knows (Common after a submit:
+    /// buffers decay). Otherwise as `ImportTrackedTexture`.
+    [[nodiscard]] RgResourceId ImportTrackedBuffer(const char* name, RHIBufferHandle handle);
+
+    /// Explicit import claims of this graph that disagreed with the registry at Compile (observe mode;
+    /// 0 without a registry). Only imports a non-culled pass accesses are checked.
+    [[nodiscard]] uint32_t GetImportClaimMismatchCount() const { return m_claimMismatches; }
 
     // ── Pass registration ───────────────────────────────────────────────────
 
@@ -267,11 +287,25 @@ private:
     /// Acquires physical resources from the pool for all transient resources.
     void AcquirePhysicalResources();
 
+    /// Registry: tracked imports take their initial state from it (before ScheduleBarriers).
+    void ResolveTrackedImportStates();
+
+    /// Registry, observe mode: explicit claims of accessed imports that disagree with it (after culling).
+    void ObserveImportClaims();
+
+    /// Registry: the end state of every imported resource the graph transitioned (after Execute).
+    void CommitImportStates();
+
     /// Returns all transient physical resources to the pool.
     void ReleasePhysicalResources();
 
     IRHIDevice* m_device = nullptr;
     RgResourcePool* m_pool = nullptr;
+    RgStateRegistry* m_states = nullptr;
+
+    std::unordered_map<uint64_t, RgResourceId> m_importedTextureIds;  ///< Registry key -> first import.
+    std::unordered_map<uint64_t, RgResourceId> m_importedBufferIds;   ///< Registry key -> first import.
+    uint32_t m_claimMismatches = 0;
 
     std::vector<RgResourceEntry> m_resources;      ///< All virtual resources.
     std::vector<RgPass> m_passes;                  ///< All registered passes.
