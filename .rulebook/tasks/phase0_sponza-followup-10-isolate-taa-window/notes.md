@@ -247,3 +247,12 @@ this note. The text above stands as written and is corrected here.
   `PerFrameCB_Is768Bytes` was removed and `PrefilteredMipLevelsDefaultIsFive` became
   `PrefilteredMipLevelsDefaultMatchesTheBaker`. Its commit message records the filtered gtest run
   at 47/47; not re-run for this note (see `tasks.md` 2.3).
+
+## Close-out run (2026-10-09)
+
+`python scripts/test_taa_modes.py` on the Debug build of 2cc2e85c (uzengine.exe 2026-10-09 08:53, fnv1a64:c4cf401970c78226): **12 passed, 0 failed** (`.screenshots/flicker-elimination/followup-closeout-20261009/f10-taa-modes.log`).
+The three checks fixed on 2026-10-08 read: production cycles through 8 distinct offsets, none (0, 0);
+`r.TAA.BlendMode=1` uses the given `r.TAA.CurrentFrameWeight` 0.1 with a maximum deviation of 0.00e+00
+(so the CVar is live, no H-39 regression); the clamped history lies inside the recorded clip box, both
+bounds, on 100.000 % of 12 288 pixels. Item 2.3 re-ticked; the task closes with the 2026-10-08
+resolution. The optional motion repeats and the H-01b period stay with the proposed followup-15.

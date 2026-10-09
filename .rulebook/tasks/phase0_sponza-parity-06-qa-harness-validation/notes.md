@@ -310,3 +310,22 @@ Engine changes:
 
 After that, `scripts/test_editor_navigation.ps1` (CPU only) must pass all 9 `EditorNavigation` tests
 together with the input suite it compiles; that ticks 1.4.
+
+## Close-out runs (2026-10-09)
+
+Engine changes E1-E8 in 8fb13fa1 (E6 without the VFX editor overlay hunk, left out while the user's VFX work is
+in flight). Runs on the Debug build:
+
+* R1 `scripts/test_editor_navigation.ps1`: 75/75 (9 EditorNavigation + 66 input), exit 0. Item 1.4 holds.
+* R2 `test_runtime --gtest_filter=InputTest.*:InputLifecycle.*:GamepadDeadzone.*` 66/66. The full run: 89 of
+  7649 failing, all in the known pre-existing set (VFX work in progress, ShaderCrossBackend,
+  fog / sky / loader / Lua / viewport defaults) plus two unlisted ones, recorded in
+  phase0_preexisting-test-failures: ShaderPipelineMetal.* (the fixture sets no DXC compiler) and
+  AverageRootConstants.SizeIs32Bytes, stale since a13003d8 and fixed in 8fb13fa1.
+* R4 `dxc -T lib_6_8 rt_uv_test_lib.hlsl`: exit 0 with `write(closesthit, miss) : read(caller)`. The first
+  version (`read(caller, closesthit, miss) : write(closesthit, miss)`) failed with "qualified 'read' for shader
+  stage 'miss' but has no valid producer" and, built into the engine, made the RT UV test pass skip its
+  resources, which moved three references by one code value (render-graph state harness, 2026-10-09).
+* R3 (the F key under r.ShadowDebug 1) and R5 (owned by phase0_sdf-gpu-fixture-refresh) were not run.
+
+The task closes.

@@ -290,3 +290,44 @@ measurement.
   binary with that restoration the replay checks can fail on a change of scope, not of the records.
   Run 2.3 on a binary built before it; otherwise pin `r.CAS=0` in both harnesses first, confirm
   the LUT is unbound, and record both here.
+  *(Correction 2026-10-09: the premise was false. CAS, FXAA, motion blur, DOF, the lens flare and the
+  LUT pass had not run since bd4db199 (2026-03-31): they sat behind an unconditional return in
+  frame_postprocess.cpp, and the SponzaTest reference has the same return. 7eea6b95 removed dead text,
+  not passes. phase0_postprocess-chain-restore closed re-scoped with nothing restored, so the 2.3 runs
+  of 2026-10-09 ran without CAS or a LUT, as the replay assumes.)*
+
+## Close-out runs (2026-10-09)
+
+On the Debug build of 2cc2e85c (uzengine.exe 2026-10-09 08:53, fnv1a64:c4cf401970c78226), package `.screenshots/flicker-elimination/11-isolate-flicker-display-2026-10`, logs in
+`.screenshots/flicker-elimination/followup-closeout-20261009`:
+
+* `scripts/test_display_replay.py`: **8 passed, 0 failed**.
+* `scripts/run_display_study.py --no-keep-raw`: **7 passed, 1 failed**. The failure is step 5, "auto-exposure
+  leaves the linear HDR input indistinguishable from the fixed-exposure run": the max |delta| read
+  INDISTINGUISHABLE, the mean |delta| SEPARATED (between 3.3e-06..5.4e-06, within up to 2.8e-06, on a mean
+  radiance of 2.15: a uniform shift of about 2.5 parts per million).
+* The study's protocol (`indistinguishable()` docstring; this task's needs-run note: re-run once) asks for a
+  re-run before reading a failure as a change. `scripts/run_display_exposure_rerun.py` was written and
+  pre-registered before its captures: 5 interleaved processes each of fixed 1.0, auto (71.07), fixed 71.07,
+  and auto-exposure pinned at 71.07 through equal brightness clamps, with a reading fixed in advance for
+  chance, the exposure value, the auto-exposure dispatch and the per-frame swing. All four comparisons
+  passed (auto vs fixed: relative mean shift -1.8e-06; the same-configuration max spread reached 0.23 in
+  this run), reading **chance** (`exposure-rerun/exposure-rerun.json`). Step 5 is therefore not a change.
+* `report_display_study.py` wrote `report.md`. The operating-exposure bloom repeat
+  (`bloom_operating_exposure`): bloom lowers px > 40 per frame from about 1652 to about 40 in all four
+  processes, so H-16b stands with repeats and no new ledger row is needed. The reflections-off check
+  (eighth) passed: auto-exposure 71.07 to 7.31, dark radiance 0.00380 to 0.02524 (H-02b).
+* Without the engine: `test_flicker_metrics.py` 26/26, `test_region_format.py` 12/12.
+
+Two findings on the way, recorded in their owners:
+
+* **The same-configuration spread comes from the pre-load length.** Processes whose scene pre-load took 43
+  frames instead of 44 land in a different persistent TAA state (`phase0_capture-preload-determinism`,
+  ledger H-73). That is the floor every equivalence check here is judged against.
+* **SSR scales the previous frame's colour by the exposure ratio** (`frame_gi_passes.cpp`, the
+  FidelityFX SSSR pattern), but this engine's HDR target is not pre-exposed (the exposure sweep of step 3
+  leaves the records unchanged), so while auto-exposure adapts, SSR reflections are scaled by the per-frame
+  exposure change. SSR is off by default and in these runs; known-issues "SSR exposure ratio on a
+  linear scene colour".
+
+Item 2.3 re-ticked; the task closes.

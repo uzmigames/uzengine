@@ -743,3 +743,11 @@ per-ROI thresholds on the current build), followup-13 (the shadow-map update con
 and H-20b) and followup-06 (the door mechanism) place these items with this task or with the proposed
 correction task. This task closes on the same day, so whatever they name, each goes to the proposed
 `phase0_sponza-flicker-correction` with the items above.
+
+## Closed (2026-10-09)
+
+Closed with the 2026-10-08 resolution: its ledger rows (H-06c, H-18b, H-28d, H-38b, H-39b) and the
+known-issues edits were applied in 02e9cde6, and its open points went to phase0_sponza-flicker-correction
+and phase0_gi-final-gather-bias-coupling (created in 408e6f8c). The optional regression check
+`scripts/test_lighting_components.py` was not run in this close-out; it belongs to those owners before
+they re-capture with the lighting_extra records.

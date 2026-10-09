@@ -431,3 +431,22 @@ was left as written.
   engine's hash as well; the seven listed above remain the only reports without it.
 * Left before closing: `python scripts/test_region_capture.py` on the current build. Its changed checks
   3 and 5 have run only on the captures kept on 2026-10-05.
+
+## Close-out runs (2026-10-09) — the task stays open
+
+On the Debug build of 2cc2e85c (uzengine.exe 2026-10-09 08:53, fnv1a64:c4cf401970c78226): `scripts/test_region_capture.py` gave **22/23** (`.screenshots/flicker-elimination/followup-closeout-20261009/f09-region-capture.log`). The failing
+check, "at fixed exposure the dump leaves the presented image unchanged (run aggregate)", compared one
+process with the dump against one without on a fixed bound: frame 0.013 code values on 5.14, 2.5e-3 of the
+level against 1e-3, with no floor measured in this setting.
+
+The check was amended before its next run (the amendment is in the script's NEUTRALITY_REPEATS comment):
+three interleaved processes per condition, judged by the rule the programme adopted on 2026-10-08 for its
+other equivalence claims. That run (`--keep`, `.screenshots/flicker-elimination/followup-closeout-20261009/f09-region-capture-repeats.log`) gave 22/23 again:
+the dump is indistinguishable from process variation on every region, but the frame is unpowered, because
+processes of one condition differed by up to 80 code values at frames 62-64.
+
+The cause is measured: the one process whose scene pre-load took 43 frames instead of 44 differs from every
+other by up to 80 code values (mean 0.15), while among the 44-frame processes the dump-on and dump-off runs
+were bit-identical in one pair and at most one code value apart in the rest. The dump changes nothing; the
+loader's thread timing chooses the state. Owner of the fix: `phase0_capture-preload-determinism` (ledger
+H-73). This task closes when that task's build gives 23/23 here.

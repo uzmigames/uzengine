@@ -12,9 +12,10 @@ Checks, in the order the followup-09 checklist asks for them:
    control).
 4. Jitter determinism — the raw centre sample repeats with the jitter period and differs between
    neighbouring frames (so "the same jitter index gives the same image" is measured, not assumed).
-5. Instrumentation neutrality — with and without the dump the presented image is unchanged on the
-   run aggregate, over the whole frame and over each dumped rectangle; whether the two images are
-   bit-identical is reported, and the frame-time cost is reported from both manifests.
+5. Instrumentation neutrality — with and without the dump the presented image is indistinguishable
+   from process-to-process variation, over the whole frame and over each dumped rectangle, judged on
+   NEUTRALITY_REPEATS interleaved processes per condition (since 2026-10-09; one pair on a fixed
+   bound before, see NEUTRALITY_REPEATS); the frame-time cost is reported from both manifests.
 6. Missing-source guard — with `r.TAA=0` the resolve never writes its records, the files are
    flagged, and the reader refuses them instead of returning last frame's values.
 
@@ -26,6 +27,7 @@ Each check prints `ok`/`FAIL`; the exit code is non-zero if any failed.
 """
 from __future__ import annotations
 
+import itertools
 import os
 import shutil
 import sys
@@ -54,6 +56,18 @@ RECTS = [('window', 770, 150, 96, 128), ('door', 300, 500, 48, 48), ('sky', 900,
 #: the 2026-10-05 merge and A.10 builds differed by 1.5e-3 on the presented frame: numbers in the
 #: followup-09 notes, "Closing review (2026-10-08)".
 UNCHANGED_FRACTION = 1e-3
+
+#: Check 5 is judged against repeats since 2026-10-09 (followup-09 close-out, amendment registered
+#: before its run): NEUTRALITY_REPEATS processes with the dump and as many without, interleaved, by the
+#: rule the programme adopted on 2026-10-08 for its other equivalence claims (`indistinguishable()` in
+#: scripts/run_display_study.py): per region, every cross pair's max |delta| inside the repeats' own
+#: spread (INDISTINGUISHABLE), the mean |delta| not SEPARATED, and a repeat spread under
+#: NEUTRALITY_POWER of the level (else the check could not have detected anything). The single-pair
+#: aggregate against UNCHANGED_FRACTION, the rule before, failed on 2026-10-09 (Debug build of 2cc2e85c:
+#: frame 0.013 code values on 5.14, 2.5e-3 of the level) with no floor measured in this setting to
+#: judge it against; it is still printed, not judged.
+NEUTRALITY_REPEATS = 3
+NEUTRALITY_POWER = 0.02
 
 PASS, FAIL = [], []
 
@@ -124,6 +138,50 @@ def png_pair(run_a, run_b):
     if not a_all:
         return None, None
     return np.stack(a_all), np.stack(b_all)
+
+
+def png_stack(run):
+    """The screenshot frames FIRST+2..FIRST+4 of one run as (frames, h, w, 3) code values, or None."""
+    frames = []
+    for n in range(FIRST + 2, FIRST + 5):
+        p = os.path.join(run['frames_dir'], f'f_{n}.png')
+        if not os.path.exists(p):
+            return None
+        frames.append(runner.png_array(p).astype(np.int16))
+    return np.stack(frames)
+
+
+def display_neutrality_repeats(withs, withouts):
+    """Check 5 on repeated captures (NEUTRALITY_REPEATS): returns (unchanged, detail). Per region, the
+    max |delta| of every cross pair must sit inside the repeats' own spread, the mean |delta| must not
+    be SEPARATED, and the repeats' mean spread must stay under NEUTRALITY_POWER of the level (a region
+    is judged against the larger of its own level and the frame's, as in `display_neutrality`)."""
+    a = [png_stack(r) for r in withs]
+    b = [png_stack(r) for r in withouts]
+    if any(x is None for x in a + b):
+        return False, 'a run wrote no screenshot for one of the compared frames'
+    frame_level = max(float(x.mean()) for x in a + b)
+
+    def dist(p, q):
+        d = np.abs(p - q)
+        return float(d.max()), float(d.mean())
+
+    unchanged, parts = True, []
+    for name, x, y, w, h in [('frame', 0, 0, a[0].shape[2], a[0].shape[1])] + RECTS:
+        ra = [s[:, y:y + h, x:x + w] for s in a]
+        rb = [s[:, y:y + h, x:x + w] for s in b]
+        within = [dist(r[i], r[j]) for r in (ra, rb) for i, j in itertools.combinations(range(len(r)), 2)]
+        between = [dist(p, q) for p in ra for q in rb]
+        level = max(max(float(s.mean()) for s in ra + rb), frame_level)
+        v_max = crit.spread_verdict([d[0] for d in between], [d[0] for d in within])
+        v_mean = crit.spread_verdict([d[1] for d in between], [d[1] for d in within])
+        powered = max(d[1] for d in within) < NEUTRALITY_POWER * level
+        unchanged = unchanged and v_max == 'INDISTINGUISHABLE' and v_mean != 'SEPARATED' and powered
+        parts.append(f'{name}: max {max(d[0] for d in between):g} vs repeats {max(d[0] for d in within):g} '
+                     f'-> {v_max}; mean {min(d[1] for d in between):.2g}..{max(d[1] for d in between):.2g} vs '
+                     f'repeats ..{max(d[1] for d in within):.2g} on {level:.3g} -> {v_mean}'
+                     + ('' if powered else ' (no power)'))
+    return unchanged, '; '.join(parts)
 
 
 def png_delta(run_a, run_b):
@@ -233,17 +291,22 @@ def main():
         print('5. instrumentation neutrality')
         shots = f'{FIRST + 2}-{FIRST + 4}'
         fixed = {'r.TAA.JitterSequenceLength': 8, 'r.AutoExposure': 0, 'r.Exposure': 1.0}
-        with_dump = capture(work, 'shot_with', cvars=fixed, screenshot_frames=shots)
-        without = capture(work, 'shot_without', regions=None, region_first=None, region_last=None,
-                          cvars=fixed, screenshot_frames=shots)
+        withs, withouts = [], []
+        for r in range(NEUTRALITY_REPEATS):  # interleaved: a drift over the session cannot line up with one condition
+            withs.append(capture(work, f'shot_with_{r}', cvars=fixed, screenshot_frames=shots))
+            withouts.append(capture(work, f'shot_without_{r}', regions=None, region_first=None,
+                                    region_last=None, cvars=fixed, screenshot_frames=shots))
+        with_dump, without = withs[0], withouts[0]
         auto_with = capture(work, 'shot_auto_with', cvars={'r.TAA.JitterSequenceLength': 8},
                             screenshot_frames=shots)
         auto_without = capture(work, 'shot_auto_without', regions=None, region_first=None, region_last=None,
                                cvars={'r.TAA.JitterSequenceLength': 8}, screenshot_frames=shots)
 
-        unchanged, detail = display_neutrality(with_dump, without)
-        check(unchanged, 'at fixed exposure the dump leaves the presented image unchanged (run aggregate)',
-              detail)
+        unchanged, detail = display_neutrality_repeats(withs, withouts)
+        check(unchanged, 'at fixed exposure the dump leaves the presented image indistinguishable from '
+              f'process-to-process variation ({NEUTRALITY_REPEATS} processes each)', detail)
+        _, pair_detail = display_neutrality(with_dump, without)
+        print(f'       one pair on the fixed bound, the rule before 2026-10-09 (reported, not judged): {pair_detail}')
         auto_diffs = png_delta(auto_with, auto_without)
         check(bool(auto_diffs), 'auto-exposure confound measured',
               f'max channel delta with auto-exposure {auto_diffs} (dt-driven adaptation, '

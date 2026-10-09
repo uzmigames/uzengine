@@ -609,3 +609,14 @@ Neither corrected capture path has run on the GPU yet; the reanalysis is the evi
 **Process note.** The spec's "Confounded or incomplete evidence" scenario names capture alignment as
 a confound that must be recorded. The mask was aligned to the dump, not to the trajectory, and nothing
 checked one against the other. The guard above is that check.
+
+## Close-out run (2026-10-09)
+
+`python scripts/test_gdf_controls.py` on the Debug build of 2cc2e85c (uzengine.exe 2026-10-09 08:53, fnv1a64:c4cf401970c78226): **5 passed, 0 failed** (`.screenshots/flicker-elimination/followup-closeout-20261009/f13-gdf-controls.log`):
+9 recentre events on the baseline (the first at frame 85), none with `r.GI.GDF.FreezeCenter=1`, 8 with the
+phase shifted (6 on frames the baseline had none), 94.0 % of the rectangle valid while moving, and the
+negative control 1.423e-04 tracked against 6.551e-04 same-pixel (0.22x). The world-tracking checks ran on
+the moving frames taken from the run's `GdfBoundaryQA base_frame=` line (the 2026-10-08 correction), so
+the 2.2 tracking validation holds on truly moving frames. Item 2.3 re-ticked; the task closes with the
+2026-10-08 resolution. It does not close the visual flicker; the shadow-map hold control is owned by
+phase0_sponza-flicker-correction.

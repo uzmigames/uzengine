@@ -2130,3 +2130,12 @@ none of the code cited above changed.
   the per-probe median 0.9242 / 0.9317 (edfd7942 / 794b632f), against 0.9434 / 0.9404 and 0.9353 / 0.9427
   over all 832 (`scripts/gi_energy_populations.py`, which now prints that population). Still inside
   1 +- 0.10, in luminance, and still before 513e2983.
+
+## Close-out runs (2026-10-09)
+
+Without the GPU: `scripts/test_ddgi_energy.ps1` prints "DDGI energy: 20/20 checks passed; extracted from
+production writer, consumer and dispatch", exit 0, confirming tasks.md 5.3 on today's sources;
+`scripts/test_flicker_metrics.py` 26/26 (the 11 errors of 2026-09-18 and 2026-09-21 are gone with the
+`regiondump.resolve_layout` change) and `scripts/test_region_format.py` 12/12. The GPU writer-parity
+measurement after the TLAS filter belongs to `phase0_lighting-ddgi-sdf-writer-parity-head` (created
+2026-10-09), not to this task. The task closes.

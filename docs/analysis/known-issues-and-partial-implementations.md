@@ -665,9 +665,8 @@ resolve to 2e-7 is `scripts/flicker/taa_model.py`. Until 2026-10-08, three check
 `scripts/test_taa_modes.py` were weaker than stated: a jitter negative control ending in `or True`;
 a `r.TAA.BlendMode=1` check that never set `r.TAA.CurrentFrameWeight`, so it passed while that CVar
 was dead (ledger H-39); and a clip-box check that compared RGB with the lower corner only and never
-compared with `taa_clip_max`. All three are fixed and verified statically. The first GPU run of the
-fixed script is pending: **open, owner: `.rulebook/tasks/phase0_sponza-followup-10-isolate-taa-window`**
-(item 2.3 stays unticked until that run is recorded).
+compared with `taa_clip_max`. All three are fixed and verified statically, and the fixed script passed
+12/12 on the GPU on 2026-10-09 (Debug build of 2cc2e85c): **validated 2026-10-09** (followup-10 closed).
 
 **Display side, measured 2026-09-09 (followup-11).** The oscillation reaching the eye is a few per
 cent of radiance amplified by the exposure an interior needs. On the identical HDR sequence, replayed
@@ -688,9 +687,11 @@ at the real operating point, makes the bright side oscillate 11x more while crus
 bloom's effect on a count changes sign with the exposure, which inverted the 2026-09-09 package —
 ledger H-15b, H-16b, H-05b. Its harnesses, `scripts/test_display_replay.py` and
 `scripts/run_display_study.py`, asserted bit-identity between processes and were rewritten to judge
-repeated, interleaved processes against their measured spread; their run on the current build, which
-also repeats the ~67 bloom measurement, is open, owner: phase0_sponza-followup-11-isolate-flicker-display,
-item 2.3.)*
+repeated, interleaved processes against their measured spread. They ran on 2026-10-09 (Debug build of
+2cc2e85c): the replay 8/8; the study 7/8, its auto-exposure equivalence failing once on a 2.5 ppm shift and
+passing the pre-registered re-run, read as chance (`scripts/run_display_exposure_rerun.py`); at the
+operating exposure bloom lowers px > 40 from about 1652 to 40 per frame in all four processes, so H-16b
+stands with repeats. followup-11 closed 2026-10-09.)*
 
 **Which pass owns each region, measured 2026-09-09 (followup-12).** The regions reported as
 flickering are not all lit the same way, and two of them are not lit by the deferred pass at all.
@@ -1574,7 +1575,7 @@ works. No known issues.
 
 ## Input / editor navigation
 
-### Editor free camera (F5) and the input frame boundary — `OPEN` (found 2026-10-08 by the parity-06 closure review)
+### Editor free camera (F5) and the input frame boundary — `FIXED` 2026-10-09 (8fb13fa1; found 2026-10-08 by the parity-06 closure review)
 **Files**: [frame_setup.cpp](../../runtime/engine/renderer/frame/frame_setup.cpp), [frame_overlay.cpp](../../runtime/engine/renderer/frame/frame_overlay.cpp), [scene_renderer_init.cpp](../../runtime/engine/renderer/scene/scene_renderer_init.cpp)
 
 From reading the sources (not from a run):
@@ -1595,8 +1596,10 @@ From reading the sources (not from a run):
   editor (`runtime/engine/app/runtime.cpp`); the `Application` host applies
   `AppConfig::cameraMoveSpeed` (500, `application.cpp:174`).
 
-Open, owner: `phase0_sponza-parity-06-qa-harness-validation` item 1.4 (engine changes and the
-`scripts/test_editor_navigation.ps1` run in its notes.md, "Closure review (2026-10-08)").
+**Fixed in 8fb13fa1 (2026-10-09):** `InputSystem::EndFrame` runs at the end of `RenderFrame`; the
+fly controller drives the F5 free camera, with `InitFromCamera` on the push and the pop; the standalone speed is
+500 cm/s; `SetModifierState` records edges. `scripts/test_editor_navigation.ps1` passed 75/75 (9
+EditorNavigation + 66 input). parity-06 closed.
 
 ---
 
@@ -1761,3 +1764,39 @@ depth still skipped.
    fixed.
 9. **Backend parity** — validate DX11 / Vulkan builds compile + boot.
 10. **Audio + Physics** — large unblocked deliverables for the next phase.
+
+### Capture reproducibility: the pre-load length chooses a persistent TAA state — `OPEN` (found 2026-10-09)
+**Files**: [uzengine.cpp](../../runtime/tools/uzengine.cpp) (pre-load loop), [mesh_sdf_bake_queue.cpp](../../runtime/engine/renderer/gi/mesh_sdf_bake_queue.cpp)
+
+Separate processes of one build and one configuration take 43 or 44 frames to pre-load Sponza on the Debug
+build, depending on worker-thread timing, and a process with the other length lands in a different TAA
+state that persists (ledger H-73): up to 0.19 linear on the correction-gates ROI and 80 code values on the
+whole frame, while the TAA input agrees to 4e-05. It is the floor of every cross-process comparison in the
+flicker programme and the reason followup-09 and followup-14 stay open. Also measured: the frames depend on
+the allocation layout. With the RT UV test pass failing to initialise (one 1920x1080 UAV and two descriptors
+fewer), the reflection, fog-shaft and path-tracer references moved by one code value at 1 to 997 pixels while
+the local-shadow, decal and HDRI references did not (render-graph state harness, 2026-10-09).
+Open, owner: `phase0_capture-preload-determinism`.
+
+### SSR exposure ratio on a linear scene colour — `OPEN` (found 2026-10-09)
+**Files**: [frame_gi_passes.cpp](../../runtime/engine/renderer/frame/frame_gi_passes.cpp), [frame_postprocess.cpp](../../runtime/engine/renderer/frame/frame_postprocess.cpp), [ssr_trace_cs.hlsl](../../runtime/shaders/runtime/postprocess/ssr_trace_cs.hlsl)
+
+The SSR trace multiplies the previous frame's colour by `currentExposure / m_ssrPrevExposure` (the AMD
+FidelityFX SSSR pattern, which assumes a pre-exposed scene colour). This engine's HDR target is linear and
+not pre-exposed: changing `r.Exposure` leaves the TAA output unchanged (followup-11 step 3, 2026-10-09). So
+while auto-exposure adapts, every SSR hit is scaled by the per-frame exposure change (a few per cent per
+frame at the default 3 EV/s), and at a steady exposure the ratio is 1. From reading the code, not measured;
+SSR is off by default (`r.SSR` 0). Open, owner: `phase0_ssr-exposure-correction`.
+
+### Cross-frame resource states (render-graph imports and manual barriers) — `OPEN`, stage 0 done (2026-10-09)
+**Files**: [render_graph_states.h](../../runtime/engine/renderer/render_graph/render_graph_states.h), [render_graph_builder.cpp](../../runtime/engine/renderer/render_graph/render_graph_builder.cpp), [frame_setup.cpp](../../runtime/engine/renderer/frame/frame_setup.cpp)
+
+Barriers name a state the resource is not in: the graph takes each import's state on the caller's word and
+the DX12 RHI copies it verbatim, while only four resources carry their end state across frames (audit of
+2026-10-08: 80 of 89 claims confirmed). The registry's observe mode lists them on every run: the froxel
+volumes, the Light_* targets, velocity with albedo's state, the local shadow atlas, the AP volume on HDRI and
+path-traced frames, the path tracer's accumulation, the DBuffer, the first LUT and sky fills, and HDR plus the
+G-buffer after the render-loop resize (docs/analysis/render-graph-states.md). NVIDIA tolerates them; the
+D3D12 debug layer cannot run on this workstation to report them. Stage 0 (the registry, observe only) shipped
+in 9735d401; stages 1-3 (tracked imports, the missing reads, the manual barriers) are open, owner:
+`phase0_render-graph-state-registry`.

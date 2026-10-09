@@ -439,3 +439,23 @@ the "no data" magenta.*
   under `r.SSR` for the `reflections` view (the defect above).
 - `docs/engine/12-rendering/33-sdf-gi-final-gather.md`.
 - The ledger: H-68b, and the H-28b..H-72 rows that sit inside the "Results marked invalid" table.
+
+## Close-out runs (2026-10-09)
+
+Engine changes of the closure review in 8fb13fa1. Runs:
+
+1. Without the GPU: `scripts/test_rc_recentre_scroll.ps1` 42/42 and `scripts/test_sdf_reflection_firefly.ps1`
+   18/18 (spike 20 + 3 x 0.05: plain 5.038, Karis 0.377), both exit 0. Tasks.md 5.3 holds for today's sources.
+2. `scripts/verify_sponza_loading.ps1` on the 8fb13fa1 Debug build, DIAG_JSON of
+   `scripts/sponza-loading-fixed-converged.log`: gbuffer.emissive RGB 0 / 0 WARN_ZERO (no longer 0 / 16.48 /
+   4.12), hdr, lighting.direct and lighting.indirect RGB, lighting.shadow R, gi.gdf_cascade0 non-zero. The
+   4.3 correction holds.
+3. `scripts/run_debug_view_check.py`: 7/7 at 240 frames on the 2cc2e85c and 8fb13fa1 Debug builds. The default
+   40 frames end before the Debug build finishes Sponza's distance-field bakes, so the screenshot readiness
+   gate never opens and no screenshot is written (the 40-frame run of 2026-10-09 stopped there).
+4. GTAO-off ao fallback against the shadows view's lit level: 171 and 171 (within 2 code values). The
+   fallback shows the 1.0 the lighting reads.
+5. The reflections view (debug view 18) with SSR off: 98.9 % of the frame at the tonemapped magenta (167, 0,
+   167), the rest overlay text: "no data", instead of a load through the sentinel descriptor.
+
+The optional runs (4.5 vertical recentre, 4.4 long sweep, the H-68 re-test) were not made. The task closes.

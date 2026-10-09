@@ -29,3 +29,8 @@ Origin: followup-09 and parity-06 close-outs (2026-10-08): the failures every ta
 - Affected code: see the items; gates are pre-registered per item before its first run
 - Breaking change: NO until a gate passes
 - User benefit: the open points of the closed followups have an owner and a plan.
+
+**Update 2026-10-09** (full run on the Debug build of 8fb13fa1 + 9735d401: 89 of 7649 failing). Two failures were
+not listed above: `ShaderPipelineMetal.*` (4; the fixture sets no DXC compiler, "no DXC compiler set") and
+`AverageRootConstants.SizeIs32Bytes` (stale since a13003d8, block A, which grew the struct to 14 DWORDs; fixed
+in 8fb13fa1 as `SizeIs56Bytes` with the new offsets). MaterialGraph* did not fail in this run.

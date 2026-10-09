@@ -466,3 +466,19 @@ coverage" as one capture per variant (`materials.json`; the ledger's "Results ma
 the file predates the layout bug's window, see tasks.md 1.5 and ledger row H-23c); its motion rows
 `combined_exp0_aabb` and `baseline_aabb` as single runs; and the `taa_off` sentence under the
 robustness matrix as describing a removed, vacuous row.
+
+## Close-out runs (2026-10-09) — the task stays open
+
+On the Debug build of 2cc2e85c (uzengine.exe 2026-10-09 08:53, fnv1a64:c4cf401970c78226): `scripts/test_correction_gates.py --repeats 4` gave **10/11** (`.screenshots/flicker-elimination/followup-closeout-20261009/f14-correction-gates.log`).
+The failing check is the power precondition, "every configuration reproduces itself across processes to
+well under 2 %": default and explicit1 1.92e-01, exp0 and recon1 4.52e-02 (largest of 6 repeat pairs) on a
+mean of 3.107, against 0.062. Every other check passed, including the negative control.
+
+The diagnostic (four processes of the default configuration, dumps kept,
+`.screenshots/flicker-elimination/followup14-correction-gates-repeats/spread-diagnostic/diag.json`): one
+process differs from the other three, which agree to 3.9e-04. At its worst pixel (frame 237) the TAA's
+current-frame input is identical in both (7.6055) while the history differs by 0.189; anywhere, the input
+differs by at most 4.1e-05. That process's pre-load took 43 frames, the others 44. The spread is the
+loader's thread timing carried by the TAA history, not a property of the configurations compared. Owner of
+the fix: `phase0_capture-preload-determinism` (ledger H-73). This task closes when that task's build gives
+11/11 here.
