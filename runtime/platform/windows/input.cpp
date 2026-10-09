@@ -32,11 +32,13 @@ namespace uz {
 /// - Mouse position and delta left at default (will update on first move)
 void InputSystem::Init() {
     std::memset(m_keyCurrent, 0, sizeof(m_keyCurrent));
-    std::memset(m_keyPressed, 0, sizeof(m_keyPressed));
-    std::memset(m_keyReleased, 0, sizeof(m_keyReleased));
+    std::memset(m_keyPrevious, 0, sizeof(m_keyPrevious));
     std::memset(m_mouseCurrent, 0, sizeof(m_mouseCurrent));
-    std::memset(m_mousePressed, 0, sizeof(m_mousePressed));
-    std::memset(m_mouseReleased, 0, sizeof(m_mouseReleased));
+    std::memset(m_mousePrevious, 0, sizeof(m_mousePrevious));
+    std::memset(m_keyPressedEdge, 0, sizeof(m_keyPressedEdge));
+    std::memset(m_keyReleasedEdge, 0, sizeof(m_keyReleasedEdge));
+    std::memset(m_mousePressedEdge, 0, sizeof(m_mousePressedEdge));
+    std::memset(m_mouseReleasedEdge, 0, sizeof(m_mouseReleasedEdge));
     m_gamepadCurrent = {};
     m_gamepadPrevious = {};
     m_rawMouseDX = 0.f;
@@ -78,27 +80,17 @@ void InputSystem::Shutdown() {
     UZ_LOG(Input, Info, "Input system shutdown");
 }
 
-/// Snapshots state and polls gamepads.
-void InputSystem::BeginFrame() {
-    EndFrame();
-    PrepareFrame();
-}
-
-void InputSystem::EndFrame() {
+/// Publishes the frame's input: snapshot, mouse delta, gamepads. Leaves the recorded edges alone.
+void InputSystem::PrepareFrame() {
     UZ_PROFILE_FUNCTION();
 
-    std::memset(m_keyPressed, 0, sizeof(m_keyPressed));
-    std::memset(m_keyReleased, 0, sizeof(m_keyReleased));
-    std::memset(m_mousePressed, 0, sizeof(m_mousePressed));
-    std::memset(m_mouseReleased, 0, sizeof(m_mouseReleased));
+    // Keyboard snapshot
+    std::memcpy(m_keyPrevious, m_keyCurrent, sizeof(m_keyCurrent));
 
-    // Reset per-frame accumulators
-    m_scrollDelta = 0.f;
-    m_rawMouseDX = 0.f;
-    m_rawMouseDY = 0.f;
-}
+    // Mouse button snapshot
+    std::memcpy(m_mousePrevious, m_mouseCurrent, sizeof(m_mouseCurrent));
 
-void InputSystem::PrepareFrame() {
+    // Mouse delta from WM_MOUSEMOVE position
     m_mouseDX = m_mouseX - m_prevMouseX;
     m_mouseDY = m_mouseY - m_prevMouseY;
     m_prevMouseX = m_mouseX;
@@ -106,6 +98,31 @@ void InputSystem::PrepareFrame() {
 
     // Poll XInput gamepads
     PollGamepads();
+}
+
+/// Ends the frame: drops the recorded edges and the per-frame accumulators.
+void InputSystem::EndFrame() {
+    std::memset(m_keyPressedEdge, 0, sizeof(m_keyPressedEdge));
+    std::memset(m_keyReleasedEdge, 0, sizeof(m_keyReleasedEdge));
+    std::memset(m_mousePressedEdge, 0, sizeof(m_mousePressedEdge));
+    std::memset(m_mouseReleasedEdge, 0, sizeof(m_mouseReleasedEdge));
+
+    m_scrollDelta = 0.f;
+    m_rawMouseDX = 0.f;
+    m_rawMouseDY = 0.f;
+    // NOTE: m_charBuffer is NOT cleared here — it accumulates WM_CHAR events
+    // from PumpMessages() which happens BEFORE BeginFrame(). Clearing here
+    // would lose all chars typed this frame. Instead, call ClearTypedChars()
+    // after all UI consumers have processed the chars.
+}
+
+/// Snapshots state and polls gamepads.
+///
+/// The boundary is exactly where it was: the previous frame's edges and accumulators are dropped and
+/// the new snapshot is taken in one call, so every existing call site keeps its timing.
+void InputSystem::BeginFrame() {
+    EndFrame();
+    PrepareFrame();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -119,12 +136,14 @@ bool InputSystem::IsKeyDown(Key key) const {
 
 bool InputSystem::IsKeyJustPressed(Key key) const {
     uint16_t k = static_cast<uint16_t>(key);
-    return k < kMaxKeys && m_keyPressed[k];
+    // The recorded edge OR the snapshot transition: a press that also ended this frame is reported
+    // by the edge, which a comparison of two snapshots cannot see (Parity-06 item 1.4).
+    return k < kMaxKeys && (m_keyPressedEdge[k] || (m_keyCurrent[k] && !m_keyPrevious[k]));
 }
 
 bool InputSystem::IsKeyJustReleased(Key key) const {
     uint16_t k = static_cast<uint16_t>(key);
-    return k < kMaxKeys && m_keyReleased[k];
+    return k < kMaxKeys && (m_keyReleasedEdge[k] || (!m_keyCurrent[k] && m_keyPrevious[k]));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -138,12 +157,12 @@ bool InputSystem::IsMouseDown(MouseButton btn) const {
 
 bool InputSystem::IsMouseJustPressed(MouseButton btn) const {
     int b = static_cast<int>(btn);
-    return b < kMaxMouseButtons && m_mousePressed[b];
+    return b < kMaxMouseButtons && (m_mousePressedEdge[b] || (m_mouseCurrent[b] && !m_mousePrevious[b]));
 }
 
 bool InputSystem::IsMouseJustReleased(MouseButton btn) const {
     int b = static_cast<int>(btn);
-    return b < kMaxMouseButtons && m_mouseReleased[b];
+    return b < kMaxMouseButtons && (m_mouseReleasedEdge[b] || (!m_mouseCurrent[b] && m_mousePrevious[b]));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -540,24 +559,18 @@ bool InputSystem::IsActionJustPressed(const std::string& name) const {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void InputSystem::SetModifierState(bool shift, bool ctrl, bool alt, bool meta) {
+    // Through the event handlers, so an injected modifier records its press / release edge like a
+    // real key (the direct m_keyCurrent writes recorded none; parity-06 close-out, as SponzaTest).
     const auto setKey = [this](uint16_t key, bool down) {
-        if (down) OnKeyDown(key);
-        else OnKeyUp(key);
+        if (down) OnKeyDown(key); else OnKeyUp(key);
     };
-    // VK_LSHIFT = 0xA0, VK_RSHIFT = 0xA1, VK_SHIFT = 0x10
-    setKey(0xA0, shift);
-    setKey(0x10, shift);
-
-    // VK_LCONTROL = 0xA2, VK_RCONTROL = 0xA3, VK_CONTROL = 0x11
-    setKey(0xA2, ctrl);
-    setKey(0x11, ctrl);
-
-    // VK_LMENU = 0xA4, VK_RMENU = 0xA5, VK_MENU = 0x12
-    setKey(0xA4, alt);
-    setKey(0x12, alt);
-
-    // VK_LWIN = 0x5B, VK_RWIN = 0x5C
-    setKey(0x5B, meta);
+    setKey(0xA0, shift);   // VK_LSHIFT
+    setKey(0x10, shift);   // VK_SHIFT (generic)
+    setKey(0xA2, ctrl);    // VK_LCONTROL
+    setKey(0x11, ctrl);    // VK_CONTROL (generic)
+    setKey(0xA4, alt);     // VK_LMENU (Alt)
+    setKey(0x12, alt);     // VK_MENU (generic)
+    setKey(0x5B, meta);    // VK_LWIN
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -565,17 +578,20 @@ void InputSystem::SetModifierState(bool shift, bool ctrl, bool alt, bool meta) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void InputSystem::OnKeyDown(uint16_t vk) {
-    if (vk < kMaxKeys && !m_keyCurrent[vk]) {
-        m_keyPressed[vk] = true;
-        m_keyCurrent[vk] = true;
-    }
+    if (vk >= kMaxKeys)
+        return;
+    // Guarded against WM_KEYDOWN auto-repeat: holding a key must report one press, not one per repeat.
+    if (!m_keyCurrent[vk])
+        m_keyPressedEdge[vk] = true;
+    m_keyCurrent[vk] = true;
 }
 
 void InputSystem::OnKeyUp(uint16_t vk) {
-    if (vk < kMaxKeys && m_keyCurrent[vk]) {
-        m_keyReleased[vk] = true;
-        m_keyCurrent[vk] = false;
-    }
+    if (vk >= kMaxKeys)
+        return;
+    if (m_keyCurrent[vk] || m_keyPressedEdge[vk])
+        m_keyReleasedEdge[vk] = true;
+    m_keyCurrent[vk] = false;
 }
 
 void InputSystem::OnMouseMove(float x, float y) {
@@ -585,15 +601,25 @@ void InputSystem::OnMouseMove(float x, float y) {
 
 void InputSystem::OnMouseButton(MouseButton btn, bool down) {
     int b = static_cast<int>(btn);
-    if (b < kMaxMouseButtons && m_mouseCurrent[b] != down) {
-        if (down) m_mousePressed[b] = true;
-        else m_mouseReleased[b] = true;
-        m_mouseCurrent[b] = down;
-    }
+    if (b >= kMaxMouseButtons)
+        return;
+    if (down && !m_mouseCurrent[b])
+        m_mousePressedEdge[b] = true;
+    if (!down && (m_mouseCurrent[b] || m_mousePressedEdge[b]))
+        m_mouseReleasedEdge[b] = true;
+    m_mouseCurrent[b] = down;
 }
 
 void InputSystem::OnMouseScroll(float delta) {
     m_scrollDelta += delta;
+}
+
+void InputSystem::OnChar(uint16_t ch) {
+    // Accept backspace (0x08), enter/return (0x0D), escape (0x1B),
+    // and printable ASCII (0x20-0x7E).
+    if (ch == 0x08 || ch == 0x0D || ch == 0x1B || (ch >= 0x20 && ch <= 0x7E)) {
+        m_charBuffer += static_cast<char>(ch);
+    }
 }
 
 } // namespace uz

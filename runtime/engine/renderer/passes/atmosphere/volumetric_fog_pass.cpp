@@ -114,7 +114,9 @@ void VolumetricFogPass::RegisterPasses(
     CBRingAllocator& cbRing,
     PipelineLibrary* pipelines,
     bool bindless,
-    float vpWidth, float vpHeight)
+    float vpWidth, float vpHeight,
+    rg::RgResourceId shadowAtlasRes,
+    const CBAllocation& shadowAlloc)
 {
     if (!m_initialized || !bindless) return;
 
@@ -141,17 +143,20 @@ void VolumetricFogPass::RegisterPasses(
     if (injectPipeline.IsValid()) {
         rgBuilder.AddPass("FroxelFog_Inject", [=](rg::RgPassBuilder& pb) {
             pb.Write(inscatterRes, RHIResourceState::UnorderedAccess);
+            // The sun in-scatter samples the cascaded shadow atlas: declare the read so the graph
+            // orders this pass after the shadow pass (block B.4).
+            if (shadowAtlasRes.IsValid()) pb.Read(shadowAtlasRes, RHIResourceState::ShaderResource);
 
             pb.SetExecutionCallback([=](IRHICommandList* cmd, const rg::RgPassResources&) {
                 UZ_PROFILE_SCOPE("FroxelFog::Inject");
                 cmd->SetPipeline(injectPipeline);
                 cmd->SetRootCBV(2, fogAlloc.gpuAddr);
-                // Dispatch: ceil(160/8) × ceil(90/8) × 1 = 20 × 12 × 1
-                // Each thread processes all Z slices in a loop
+                if (shadowAlloc.gpuAddr != 0) cmd->SetRootCBV(kSlotShadow, shadowAlloc.gpuAddr);   // ShadowDataCB at b4
+                // Dispatch: ceil(160/8) × ceil(90/8) × ceil(64/4): one thread per froxel
                 cmd->Dispatch(
                     (kFroxelGridX + 7) / 8,
                     (kFroxelGridY + 7) / 8,
-                    1);
+                    (kFroxelGridZ + 3) / 4);
             });
         });
     }

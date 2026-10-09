@@ -17,6 +17,8 @@
 #include "d3dx12.h"
 #include "log.h"
 #include "profiler.h"
+
+#include <cstdio>  // fprintf/fflush for leak diag (bypasses spdlog async sinks)
 #include "engine/paths/paths.h"
 
 #include <cstring>
@@ -85,23 +87,32 @@ DX12Device::~DX12Device() {
         m_agilityCoreModule = nullptr;
     }
 
-    // Report any live allocations before releasing the allocator
+    // Report any live allocations before releasing the allocator.
+    //
+    // Bypasses the engine's spdlog wrapper because the named-allocation
+    // diag may be the LAST output before D3D12MA's `~NormalBlock` fires
+    // its `m_pMetadata->IsEmpty()` assertion + abort. spdlog's async
+    // sinks can drop the queued messages on abort; `fprintf` + explicit
+    // `fflush` are synchronous and survive the imminent crash.
     if (m_allocator) {
         D3D12MA::TotalStatistics stats{};
         m_allocator->CalculateStatistics(&stats);
         const auto& total = stats.Total.Stats;
         if (total.AllocationCount > 0) {
-            UZ_LOG(RHI, Warning,
-                   "D3D12MA: {} live allocations ({} bytes) at shutdown — LEAK!",
-                   total.AllocationCount, total.AllocationBytes);
+            std::fprintf(stderr,
+                "[D3D12MA-LEAK] %u live allocations (%llu bytes) at shutdown -- LEAK!\n",
+                total.AllocationCount,
+                static_cast<unsigned long long>(total.AllocationBytes));
 
             // Log per-pool live objects to identify the leak
+            static const char* kHeapNames[] = {"DEFAULT", "UPLOAD", "READBACK"};
             for (uint32_t heapType = 0; heapType < 3; ++heapType) {
                 const auto& heap = stats.HeapType[heapType].Stats;
                 if (heap.AllocationCount > 0) {
-                    static const char* kHeapNames[] = {"DEFAULT", "UPLOAD", "READBACK"};
-                    UZ_LOG(RHI, Warning, "  Heap {}: {} allocs, {} bytes",
-                           kHeapNames[heapType], heap.AllocationCount, heap.AllocationBytes);
+                    std::fprintf(stderr,
+                        "[D3D12MA-LEAK]   Heap %s: %u allocs, %llu bytes\n",
+                        kHeapNames[heapType], heap.AllocationCount,
+                        static_cast<unsigned long long>(heap.AllocationBytes));
                 }
             }
 
@@ -110,11 +121,13 @@ DX12Device::~DX12Device() {
                 auto& slots = m_texturePool.Slots();
                 for (uint32_t i = 0; i < slots.size(); ++i) {
                     if (slots[i].allocation) {
-                        UZ_LOG(RHI, Warning, "  LEAKED texture [{}]: '{}' {}x{} fmt={} ({} bytes)",
-                               i, slots[i].desc.debugName ? slots[i].desc.debugName : "(null)",
-                               slots[i].desc.width, slots[i].desc.height,
-                               static_cast<int>(slots[i].desc.format),
-                               slots[i].allocation->GetSize());
+                        std::fprintf(stderr,
+                            "[D3D12MA-LEAK]   LEAKED texture [%u]: '%s' %ux%u fmt=%d (%llu bytes)\n",
+                            i,
+                            slots[i].desc.debugName ? slots[i].desc.debugName : "(null)",
+                            slots[i].desc.width, slots[i].desc.height,
+                            static_cast<int>(slots[i].desc.format),
+                            static_cast<unsigned long long>(slots[i].allocation->GetSize()));
                     }
                 }
             }
@@ -123,12 +136,15 @@ DX12Device::~DX12Device() {
                 auto& slots = m_bufferPool.Slots();
                 for (uint32_t i = 0; i < slots.size(); ++i) {
                     if (slots[i].allocation) {
-                        UZ_LOG(RHI, Warning, "  LEAKED buffer [{}]: '{}' {} bytes",
-                               i, slots[i].desc.debugName ? slots[i].desc.debugName : "(null)",
-                               slots[i].allocation->GetSize());
+                        std::fprintf(stderr,
+                            "[D3D12MA-LEAK]   LEAKED buffer [%u]: '%s' (%llu bytes)\n",
+                            i,
+                            slots[i].desc.debugName ? slots[i].desc.debugName : "(null)",
+                            static_cast<unsigned long long>(slots[i].allocation->GetSize()));
                     }
                 }
             }
+            std::fflush(stderr);
         }
         m_allocator->Release();
         m_allocator = nullptr;
@@ -143,6 +159,15 @@ DX12Device::~DX12Device() {
     m_directQueue.Reset();
     m_copyQueue.Reset();
     m_computeQueue.Reset();
+
+    // Debug-layer messages: drain what is left and summarise every distinct message with its count.
+    if (m_validationEnabled && m_device) {
+        DrainDebugMessages();
+        UZ_LOG(RHI, Info, "D3D12 debug layer: {} message(s), {} distinct", m_debugMessageTotal, m_debugMessageCounts.size());
+        for (const auto& [text, count] : m_debugMessageCounts) {
+            UZ_LOG(RHI, Info, "D3D12 debug summary: x{} {}", count, text);
+        }
+    }
 
     // Report live objects in debug builds before releasing device
     if (m_validationEnabled && m_device) {
@@ -416,6 +441,45 @@ bool DX12Device::TryLoadAgilitySdk() {
     return true;
 }
 
+void DX12Device::DrainDebugMessages() {
+    if (!m_validationEnabled || !m_device) {
+        return;
+    }
+    ComPtr<ID3D12InfoQueue> infoQueue;
+    if (FAILED(m_device.As(&infoQueue))) {
+        return;
+    }
+    const UINT64 count = infoQueue->GetNumStoredMessages();
+    for (UINT64 i = 0; i < count; ++i) {
+        SIZE_T length = 0;
+        if (FAILED(infoQueue->GetMessage(i, nullptr, &length)) || length == 0) {
+            continue;
+        }
+        std::vector<uint8_t> storage(length);
+        auto* message = reinterpret_cast<D3D12_MESSAGE*>(storage.data());
+        if (FAILED(infoQueue->GetMessage(i, message, &length))) {
+            continue;
+        }
+        if (message->Severity == D3D12_MESSAGE_SEVERITY_INFO || message->Severity == D3D12_MESSAGE_SEVERITY_MESSAGE) {
+            continue;
+        }
+        std::string text(message->pDescription, message->DescriptionByteLength > 0 ? message->DescriptionByteLength - 1 : 0);
+        ++m_debugMessageTotal;
+        constexpr size_t kMaxDistinct = 512;   // a message whose text varies per frame cannot grow the map without bound
+        auto it = m_debugMessageCounts.find(text);
+        if (it != m_debugMessageCounts.end()) {
+            ++it->second;
+        } else if (m_debugMessageCounts.size() < kMaxDistinct) {
+            m_debugMessageCounts.emplace(text, 1u);
+            const char* severity = message->Severity == D3D12_MESSAGE_SEVERITY_CORRUPTION ? "CORRUPTION"
+                                 : message->Severity == D3D12_MESSAGE_SEVERITY_ERROR      ? "ERROR"
+                                                                                           : "WARNING";
+            UZ_LOG(RHI, Warning, "D3D12 debug {} (id {}): {}", severity, static_cast<int>(message->ID), text);
+        }
+    }
+    infoQueue->ClearStoredMessages();
+}
+
 bool DX12Device::EnableDebugLayer(bool gpuValidation) {
     UZ_PROFILE_FUNCTION();
     // Same runtime-mismatch caveat as EnableDRED(): with the Agility SDK active
@@ -448,12 +512,23 @@ bool DX12Device::EnableDebugLayer(bool gpuValidation) {
 
 bool DX12Device::CreateFactory(bool validation) {
     UZ_PROFILE_FUNCTION();
-    UINT flags = 0;
-    if (validation) {
-        flags = DXGI_CREATE_FACTORY_DEBUG;
-    }
 
+    // Try DXGI_CREATE_FACTORY_DEBUG first when validation is requested. On
+    // hosts without the DXGI Debug runtime installed (some Win11 SKUs, fresh
+    // dev images) this returns DXGI_ERROR_INVALID_CALL (0x887A0001) — fall
+    // back to flags=0 so the D3D12 debug layer (already enabled separately)
+    // still surfaces InfoQueue messages without forcing every dev to install
+    // the optional Graphics Tools feature.
+    UINT flags = validation ? DXGI_CREATE_FACTORY_DEBUG : 0u;
     HRESULT hr = CreateDXGIFactory2(flags, IID_PPV_ARGS(&m_factory));
+    if (FAILED(hr) && validation) {
+        UZ_LOG(RHI, Warning,
+               "CreateDXGIFactory2 with DXGI_CREATE_FACTORY_DEBUG failed "
+               "(hr=0x{:08X}); retrying without DXGI debug flag — D3D12 "
+               "debug layer + InfoQueue still available.",
+               static_cast<uint32_t>(hr));
+        hr = CreateDXGIFactory2(0u, IID_PPV_ARGS(&m_factory));
+    }
     if (FAILED(hr)) {
         UZ_LOG(RHI, Error, "CreateDXGIFactory2 failed, hr=0x{:08X}", static_cast<uint32_t>(hr));
         return false;
@@ -1255,7 +1330,16 @@ void DX12Device::WaitIdle() {
             UZ_LOG(RHI, Error, "WaitIdle: SetEventOnCompletion failed, hr=0x{:08X}", static_cast<uint32_t>(hr));
             return;
         }
-        WaitForSingleObject(m_idleFenceEvent, INFINITE);
+        // Watchdog: a GPU that never completes (device removed, wedged queue) used to hang the
+        // process silently in an INFINITE wait (H-71 hang, 1800 s with nothing in the log).
+        // The wait still never gives up, but every kGpuWaitWatchdogMs it says where it is.
+        uint32_t waited = 0;
+        while (WaitForSingleObject(m_idleFenceEvent, kGpuWaitWatchdogMs) == WAIT_TIMEOUT) {
+            waited += kGpuWaitWatchdogMs;
+            UZ_LOG(RHI, Error, "WaitIdle: still waiting after {} ms for fence value {} (completed {}, device removed reason 0x{:08X})",
+                   waited, m_idleFenceValue, m_idleFence->GetCompletedValue(),
+                   static_cast<uint32_t>(m_device->GetDeviceRemovedReason()));
+        }
     }
 
     // Also drain the copy queue

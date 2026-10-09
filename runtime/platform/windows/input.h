@@ -285,7 +285,7 @@ class InputSystem {
     /// Clears action mappings, releases raw input registration, and resets state.
     void Shutdown();
 
-    /// Clears latched transitions before dispatching a new frame's events.
+    /// Snapshots current state into previous state for transition detection.
     ///
     /// Must be called exactly once per frame, before the platform layer
     /// dispatches new WM_* messages. Computes mouse delta from position
@@ -293,11 +293,17 @@ class InputSystem {
     /// and polls XInput gamepads.
     void BeginFrame();
 
-    /// After event dispatch, updates mouse delta and gamepads without consuming events.
-    /// Pair with EndFrame after all input consumers; do not also call BeginFrame.
+    /// Publishes the frame's input: snapshots current state into previous, computes the mouse
+    /// delta and polls gamepads. Does NOT clear the edges recorded since the last `EndFrame()`,
+    /// so a key pressed and released inside one frame still reports both.
+    ///
+    /// `BeginFrame()` is `EndFrame()` followed by `PrepareFrame()`, which is the same boundary it
+    /// always had; call these two directly only when publishing and clearing must happen at
+    /// different points in the frame.
     void PrepareFrame();
 
-    /// Consumes keyboard/mouse transitions and scroll/raw deltas after all frame consumers.
+    /// Ends the frame: clears the recorded press/release edges and the per-frame accumulators
+    /// (scroll and raw mouse deltas). Call after every consumer has read this frame's input.
     void EndFrame();
 
     // ── Keyboard Queries ────────────────────────────────────────────────
@@ -317,7 +323,7 @@ class InputSystem {
     /// * `key` - The key to query.
     ///
     /// # Returns
-    /// Remains true until EndFrame, including a press released in the same frame.
+    /// `true` if `current[key] && !previous[key]`.
     [[nodiscard]] bool IsKeyJustPressed(Key key) const;
 
     /// Returns `true` if the key transitioned from down to up this frame.
@@ -326,7 +332,7 @@ class InputSystem {
     /// * `key` - The key to query.
     ///
     /// # Returns
-    /// Remains true until EndFrame, including a release pressed again in the same frame.
+    /// `true` if `!current[key] && previous[key]`.
     [[nodiscard]] bool IsKeyJustReleased(Key key) const;
 
     // ── Mouse Queries ───────────────────────────────────────────────────
@@ -669,19 +675,44 @@ class InputSystem {
     ///   Accumulated until the next `BeginFrame()`.
     void OnMouseScroll(float delta);
 
+    /// Called by the platform layer when a character is typed (WM_CHAR).
+    ///
+    /// Appends the character to the per-frame character buffer. Only printable
+    /// ASCII characters (0x20-0x7E) and backspace (0x08) are accepted.
+    ///
+    /// # Arguments
+    /// * `ch` - The typed character (UTF-16 code unit from WM_CHAR wParam).
+    void OnChar(uint16_t ch);
+
+    /// Returns the typed characters accumulated since the last ClearTypedChars().
+    /// Includes printable ASCII + backspace ('\b') + enter ('\r') + escape (0x1B).
+    [[nodiscard]] const std::string& GetTypedChars() const { return m_charBuffer; }
+
+    /// Clears the typed character buffer. Call AFTER all UI consumers have
+    /// processed chars for this frame (after BuildUI, not in BeginFrame).
+    void ClearTypedChars() { m_charBuffer.clear(); }
+
   private:
     // ── Keyboard State ──────────────────────────────────────────────────
     static constexpr int kMaxKeys = 256;
 
     bool m_keyCurrent[kMaxKeys] = {};
-    bool m_keyPressed[kMaxKeys] = {};
-    bool m_keyReleased[kMaxKeys] = {};
+    bool m_keyPrevious[kMaxKeys] = {};
+    /// Edges recorded as the events arrive, so a press and release inside ONE frame is not lost
+    /// between two snapshots (Parity-06 item 1.4). Cleared by `EndFrame()`.
+    bool m_keyPressedEdge[kMaxKeys] = {};
+    bool m_keyReleasedEdge[kMaxKeys] = {};
+
+    /// Per-frame typed character buffer (printable ASCII + backspace).
+    /// Cleared at the start of each `BeginFrame()`.
+    std::string m_charBuffer;
 
     // ── Mouse Button State ──────────────────────────────────────────────
     static constexpr int kMaxMouseButtons = static_cast<int>(MouseButton::Count);
     bool m_mouseCurrent[kMaxMouseButtons] = {};
-    bool m_mousePressed[kMaxMouseButtons] = {};
-    bool m_mouseReleased[kMaxMouseButtons] = {};
+    bool m_mousePrevious[kMaxMouseButtons] = {};
+    bool m_mousePressedEdge[kMaxMouseButtons] = {};
+    bool m_mouseReleasedEdge[kMaxMouseButtons] = {};
 
     // ── Mouse Position & Delta ──────────────────────────────────────────
     float m_mouseX = 0.f, m_mouseY = 0.f;

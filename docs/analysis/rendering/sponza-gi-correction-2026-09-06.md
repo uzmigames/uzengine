@@ -1,5 +1,9 @@
 # Sponza GI correction, 2026-09-06
 
+> **Origin**: `test/windows-sponza-parity @ 25cd0c5f` (`E:\SponzaTest`), ported verbatim on 2026-09-08 by `phase0_sponza-parity-06-qa-harness-validation`.
+> Paths such as `scripts/*_artifacts/`, `scripts/sponza-*.png|log|json|sha256.txt` refer to evidence that is **not in Git**; the executable identities quoted are SponzaTest builds, not this repository's.
+
+
 ## Diagnosis
 
 The Sponza problem was not an exposure preset. The checked-in `mesh_sdf_bake_cs.hlsl` and `global_sdf_composite_cs.hlsl` each contained an empty compute entry point. Their C++ callers still dispatched, reported successful baking and exposed the output resources. Therefore a compiled pipeline and a successful startup log did not establish that the scene geometry existed in the GI representation.

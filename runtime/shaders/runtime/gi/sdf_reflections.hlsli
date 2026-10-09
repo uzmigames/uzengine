@@ -5,11 +5,28 @@
 
 #include "../common/sampling.hlsli"
 #include "../lighting/ibl.hlsli"
+#include "rc_probe_guard.hlsli"   // cache probes kept near a surface do not reach behind it (followup-01)
 
 #ifndef UZ_SDF_REFLECTION_SAMPLER
 SamplerState sdfReflectionSampler : register(s2);
 #define UZ_SDF_REFLECTION_SAMPLER sdfReflectionSampler
 #endif
+#ifndef UZ_SDF_REFLECTION_WRAP_SAMPLER
+SamplerState sdfReflectionWrapSampler : register(s3);   // linear WRAP: toroidal clipmap storage (block B.2)
+#define UZ_SDF_REFLECTION_WRAP_SAMPLER sdfReflectionWrapSampler
+#endif
+
+/// Toroidal clipmap addressing (block B.2): world voxel k lives in texel k mod resolution, the
+/// voxel grid sits at multiples of the voxel size, so the texel coordinate is frac(p / (2 extent)).
+/// A point within one voxel of the window edge is treated as outside (a trilinear tap there
+/// would wrap to the far side); the next cascade covers it.
+bool SdfClipmapContains(float4 clipmap, float3 position, uint resolution) {
+    float3 local = (position - clipmap.xyz) / clipmap.w;
+    return all(abs(local) <= 1.0 - 2.0 / float(resolution));
+}
+float3 SdfClipmapUvw(float4 clipmap, float3 position) {
+    return frac(position / (2.0 * clipmap.w));
+}
 
 struct SdfReflectionScene {
     float4 clipmaps[4];
@@ -26,6 +43,11 @@ struct SdfReflectionScene {
     float3 sunDirection;
     float3 sunColor;
     float3 skyMultiplier;
+    /// 0 = Karis HDR weight (production default), 1 = plain mean. The plain mean is
+    /// the unbiased Monte-Carlo estimator; the Karis weight trades energy for
+    /// firefly suppression. `scripts/test_sdf_reflection_energy.ps1` measures the
+    /// ratio between the two on the GPU (`r.GI.Reflections.HdrWeight` in production).
+    uint plainMean;
 };
 
 /// @constants Four clipmaps; 0xffffffff invalid SRV; 65504 is the largest finite half.
@@ -34,10 +56,11 @@ float4 SampleSdfReflectionSurface(SdfReflectionScene scene, float3 position) {
     [unroll] for (uint cascade = 0; cascade < 4; ++cascade) {
         float4 clipmap = scene.clipmaps[cascade];
         if (scene.clipmapSrv[cascade] == 0xffffffffu || clipmap.w <= 0.0) continue;
-        float3 local = (position - clipmap.xyz) / clipmap.w;
-        if (any(abs(local) > 1.0)) continue;
         Texture3D<float4> volume = ResourceDescriptorHeap[scene.clipmapSrv[cascade]];
-        return volume.SampleLevel(UZ_SDF_REFLECTION_SAMPLER, local * 0.5 + 0.5, 0);
+        uint resX, resY, resZ;
+        volume.GetDimensions(resX, resY, resZ);
+        if (!SdfClipmapContains(clipmap, position, resX)) continue;
+        return volume.SampleLevel(UZ_SDF_REFLECTION_WRAP_SAMPLER, SdfClipmapUvw(clipmap, position), 0);
     }
     return float4(65504.0, 0.0, 0.0, 0.0);
 }
@@ -62,14 +85,15 @@ float2 SampleSdfRayDistances(SdfReflectionScene scene, float3 position) {
     [unroll] for (uint cascade = 0; cascade < 4; ++cascade) {
         float4 clipmap = scene.clipmaps[cascade];
         if (scene.clipmapSrv[cascade] == 0xffffffffu || clipmap.w <= 0.0) continue;
-        float3 local = (position - clipmap.xyz) / clipmap.w;
-        if (any(abs(local) > 1.0)) continue;
+        Texture3D<float4> expandedVolume = ResourceDescriptorHeap[scene.clipmapSrv[cascade]];
+        uint resX, resY, resZ;
+        expandedVolume.GetDimensions(resX, resY, resZ);
+        if (!SdfClipmapContains(clipmap, position, resX)) continue;
         if (scene.rawClipmapSrv[cascade] == 0xffffffffu) return float2(-65504.0,-65504.0);
         Texture3D<float> rawVolume = ResourceDescriptorHeap[scene.rawClipmapSrv[cascade]];
-        Texture3D<float4> expandedVolume = ResourceDescriptorHeap[scene.clipmapSrv[cascade]];
-        float3 uvw = local * 0.5 + 0.5;
-        return float2(rawVolume.SampleLevel(UZ_SDF_REFLECTION_SAMPLER, uvw, 0),
-            expandedVolume.SampleLevel(UZ_SDF_REFLECTION_SAMPLER, uvw, 0).r);
+        float3 uvw = SdfClipmapUvw(clipmap, position);
+        return float2(rawVolume.SampleLevel(UZ_SDF_REFLECTION_WRAP_SAMPLER, uvw, 0),
+            expandedVolume.SampleLevel(UZ_SDF_REFLECTION_WRAP_SAMPLER, uvw, 0).r);
     }
     return float2(65504.0,65504.0);
 }
@@ -151,12 +175,16 @@ float3 SdfReflectionIrradiance(SdfReflectionScene scene, float3 position, float3
         float weight = ((corner & 1) ? fraction.x : 1.0 - fraction.x)
                      * ((corner & 2) ? fraction.y : 1.0 - fraction.y)
                      * ((corner & 4) ? fraction.z : 1.0 - fraction.z);
-        float3 toProbe = scene.probeOrigin + float3(index) * spacing - position;
+        uint probeLinear = index.x + index.y * scene.probesPerAxis + index.z * scene.probesPerAxis * scene.probesPerAxis;
+        const float3 gridPosition = scene.probeOrigin + float3(index) * spacing;
+        const float4 guard = probes[ProbeGuardIndex(scene.probesPerAxis, probeLinear)];
+        float3 toProbe = ProbeEffectivePosition(guard, gridPosition) - position;
         float distance = length(toProbe);
         float normalWeight = distance > 0.0 ? saturate(dot(normal, toProbe / distance)) : 1.0;
         weight *= normalWeight * normalWeight;
-        uint base = (index.x + index.y * scene.probesPerAxis + index.z * scene.probesPerAxis * scene.probesPerAxis) * 7;
+        uint base = probeLinear * 7;
         if (probes[base + 6].w <= 0.0) continue;
+        if (ProbeGuardRejects(guard, gridPosition, position)) continue;
         float4 sh[7];
         [unroll] for (uint k = 0; k < 7; ++k) sh[k] = probes[base + k];
         irradiance += weight * EvalSH_L2(normal, sh);
@@ -180,15 +208,24 @@ float3 ShadeSdfReflectionHit(SdfReflectionScene scene, float3 position, float3 r
                    + SdfReflectionIrradiance(scene, origin, normal));
 }
 
-float3 TraceSdfSurfaceRadiance(SdfReflectionScene scene, float3 origin, float3 direction,
-                              uint rayKind, float3 geometricNormal) {
+/// The surface trace with its hit distance exposed: `hitT` >= 0 on a hit, -1 when the ray escaped,
+/// -2 when it exhausted the budget. `TraceSdfSurfaceRadiance` wraps this so there is one trace.
+float3 TraceSdfSurfaceRadianceIdentified(SdfReflectionScene scene, float3 origin, float3 direction,
+                                        uint rayKind, float3 geometricNormal, out float hitT) {
     float t = TraceSdfRay(scene, origin, direction, scene.traceDistance, rayKind, geometricNormal);
+    hitT = t;
     if (t >= 0.0) return ShadeSdfReflectionHit(scene, origin + direction * t, direction);
     if (t == -1.0 && scene.skySrv != 0xffffffffu) {
         TextureCube<float4> sky = ResourceDescriptorHeap[scene.skySrv];
         return sky.SampleLevel(UZ_SDF_REFLECTION_SAMPLER, float3(direction.x, direction.z, direction.y), 0).rgb * scene.skyMultiplier;
     }
     return 0.0;
+}
+
+float3 TraceSdfSurfaceRadiance(SdfReflectionScene scene, float3 origin, float3 direction,
+                              uint rayKind, float3 geometricNormal) {
+    float t;
+    return TraceSdfSurfaceRadianceIdentified(scene, origin, direction, rayKind, geometricNormal, t);
 }
 
 float3 TraceSdfReflectionRadiance(SdfReflectionScene scene, float3 origin, float3 direction) {
@@ -217,9 +254,40 @@ float3 GatherSdfReflections(SdfReflectionScene scene, float3 position, float3 no
         float3 halfVector = tangent * halfTangent.x + bitangent * halfTangent.y + reflection * halfTangent.z;
         float3 direction = reflect(-reflection, halfVector);
         float weight = saturate(dot(reflection, direction));
-        if (dot(normal, direction) <= 0.0) weight = 0.0;
-        if (weight > 0.0) radiance += weight * TraceSdfSurfaceRadiance(scene, origin, direction, 1u, geometricNormal);
-        totalWeight += weight;
+        if (weight <= 0.0) continue;
+        // A ray below the shading horizon reflects nothing, but its lobe weight
+        // stays in the denominator. Dropping it (the previous behaviour)
+        // renormalised the pixel over the surviving rays only: at grazing
+        // angles on a normal-mapped wall three of four GGX rays fall below the
+        // horizon, and the one survivor that lands on the sun-lit floor became
+        // the pixel value with a 4x inflation — the white specks on Sponza's
+        // shadowed walls. Immune to Karis weighting (one sample) and to more
+        // rays (708 -> 600 isolated pixels at 16 rays); removed only with the
+        // gather off. Counting the rejected weight is the energy-conserving
+        // choice: the masked part of the lobe is dark, not "not there".
+        if (dot(normal, direction) <= 0.0) { totalWeight += weight; continue; }
+        float3 sample = TraceSdfSurfaceRadiance(scene, origin, direction, 1u, geometricNormal);
+        // Karis HDR weight, the same estimator ssr_resolve_cs.hlsl uses. With
+        // four GGX rays per pixel and no temporal pass on this path, one ray
+        // that lands on a sun-lit surface dominated the plain mean and showed
+        // as a white pixel; at grazing angles Fresnel turned whole walls into
+        // sparkle. Dividing by the accumulated Karis weights keeps the result
+        // in linear radiance (no inverse step), as documented in the SSR
+        // resolve. A constant environment is unaffected (all weights equal).
+        // @ref Karis 2014 "High Quality Temporal Supersampling" — 1/(1+luma)
+        // This is a biased, variance-reducing estimator: it favours dark samples
+        // and its strength depends on the absolute radiance scale (1 in
+        // 1/(1+luma) is in scene-radiance units). It is a firefly mitigation,
+        // not an energy-conserving mean: in the enclosed fixture room it keeps
+        // 88 % of the plain mean's energy under a layered environment and agrees
+        // within 1 % under a uniform one (scripts/test_sdf_reflection_energy.ps1,
+        // followup-08 4.1). No exposure-relative or clamped weight was adopted:
+        // the isolated pixels that reach the output are not reflection pixels
+        // (flicker ledger H-68, also the re-test). r.GI.Reflections.HdrWeight=0
+        // gives the plain mean.
+        float karisW = scene.plainMean != 0u ? 1.0 : rcp(1.0 + dot(sample, float3(0.2126, 0.7152, 0.0722)));
+        radiance += weight * karisW * sample;
+        totalWeight += weight * karisW;
     }
     return totalWeight > 0.0 ? radiance / totalWeight : 0.0;
 }

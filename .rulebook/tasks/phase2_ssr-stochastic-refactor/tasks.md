@@ -38,7 +38,7 @@
 
 - [ ] 4.1 Extend SSR output format to `(color, confidence, hitDistance, roughness)` per pixel — enables downstream layers and NRD integration.
 - [ ] 4.2 Implement reflection capture probe system — parallax-corrected cubemap captures as Layer 2 fallback for SSR misses in enclosed environments.
-- [ ] 4.3 Implement cascade compositor — confidence-weighted blending: SSR (Layer 1) -> Reflection Captures (Layer 2) -> IBL (Layer 3), with per-pixel confidence merge.
+- [ ] 4.3 Implement cascade compositor — confidence-weighted blending: SSR (Layer 1) -> Reflection Captures (Layer 2) -> IBL (Layer 3), with per-pixel confidence merge. **Partly done in phase0_lighting-block-b-05-layered-reflections (2026-10-07): SSR blended before the BRDF over the SDF gather or the IBL by confidence; the capture-probe layer stays open.**
 - [ ] 4.4 Add r.Reflections.Method CVar — 0=IBL only, 1=SSR+IBL, 2=SSR+Probes+IBL, 3=SSR+RT+Probes+IBL (future).
 - [ ] 4.5 Design DXR hybrid dispatch interface — trace RT only for pixels where SSR confidence < threshold. No implementation until DXR backend is ready.
 

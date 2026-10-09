@@ -45,7 +45,8 @@ cbuffer HeightFogCB : register(b2) {
     float4 directionalInscatteringColor;
     float  directionalInscatteringExponent;
     float  directionalInscatteringStartDistance;
-    float  _fogPad2[2];
+    float  _fogPad2a;                 // two scalars: an array element takes a whole 16-byte row and shifted the tail by 32 bytes
+    float  _fogPad2b;
     float4 skyAtmContribColorScale;
     float  heightFogContribution;
     float  skyLightColorR, skyLightColorG, skyLightColorB;

@@ -537,7 +537,9 @@ TEST_F(SceneLoaderTest, DirectionalLightComponent_OptionalDefaultsPreserved_When
 
     auto [enttEntity, light] = *view.each().begin();
     EXPECT_TRUE(light.atmosphereSunLight);                          // default true
-    EXPECT_NEAR(light.lightSourceAngle,      1.2f,    1e-4f);       // default 1.2
+    // Engine default is the sun's real angular diameter (light_component.h; docs/analysis/hardcoded/01),
+    // not the 1.2 the SponzaTest branch assumed when this test was written.
+    EXPECT_NEAR(light.lightSourceAngle,      0.5357f, 1e-4f);
     EXPECT_EQ(light.shadowCascades,          4);                    // default 4
     EXPECT_NEAR(light.dynamicShadowDistance, 40000.f, 1e-1f);       // default 40000
 }

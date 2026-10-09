@@ -113,10 +113,10 @@
 - [x] 2.7.1 Implement — 2-layer exp fog with directional inscattering, matching UE5 HeightFogComponent. Second fog layer additive combination via CalculateLineIntegralShared, CPU precomputation of secondRayOriginTerms, HeightFogContribution AP anti-double-fogging in deferred lighting.
 
 ### 2.8 Motion Blur → task `phase3a-3.18.0-motion-blur` (existing)
-- [x] 2.8.1 Core implemented — velocity buffer pass wired (2026-03-18), per-pixel gather blur (motion_blur_cs), depth-aware weighting.
+- [ ] 2.8.1 Core implemented — velocity buffer pass wired (2026-03-18), per-pixel gather blur (motion_blur_cs), depth-aware weighting. Correction (2026-10-08): these shaders are one-line empty compute bodies since bd4db199 (2026-03-31), and no pass dispatches them since phase0_sponza-followup-08 item 4.4; motion blur and DOF are not implemented today (known-issues r.MotionBlur / r.DOF).
 
 ### 2.9 DOF → task `phase3a-3.17.0-depth-of-field` (existing)
-- [x] 2.9.1 Core implemented — CoC computation (dof_setup_cs) + disk gather bokeh blur (dof_blur_cs). Missing: recombine pass, diaphragm blades.
+- [ ] 2.9.1 Core implemented — CoC computation (dof_setup_cs) + disk gather bokeh blur (dof_blur_cs). Missing: recombine pass, diaphragm blades. Correction (2026-10-08): these shaders are one-line empty compute bodies since bd4db199 (2026-03-31), and no pass dispatches them since phase0_sponza-followup-08 item 4.4; motion blur and DOF are not implemented today (known-issues r.MotionBlur / r.DOF).
 
 ---
 
@@ -179,7 +179,7 @@
 ## 5. Visual Verification (per phase)
 
 - [x] 5.1 Phase 1 verified — GTAO active (contact darkening), emissive HDR, film grain, vignette, PCSS soft shadows. Screenshot 2026-03-24.
-- [x] 5.2 Phase 2 verified — TAA (jitter+history), SSR (Hi-Z+temporal), contact shadows, color grading LUT, auto exposure (histogram), motion blur, DOF. Screenshot 2026-03-24.
+- [x] 5.2 Phase 2 verified — TAA (jitter+history), SSR (Hi-Z+temporal), contact shadows, color grading LUT, auto exposure (histogram), motion blur, DOF. Screenshot 2026-03-24. Correction (2026-10-08): these shaders are one-line empty compute bodies since bd4db199 (2026-03-31), and no pass dispatches them since phase0_sponza-followup-08 item 4.4; motion blur and DOF are not implemented today (known-issues r.MotionBlur / r.DOF).
 - [ ] 5.3 Phase 3 complete screenshot — decals + reflection probes + LOD + instancing + lens flare.
 - [ ] 5.4 Phase 4 complete screenshot — volumetric fog + clouds + SSS + SSGI + area lights.
 - [ ] 5.5 UE5 side-by-side comparison — equivalent scene in both engines, PSNR measurement.

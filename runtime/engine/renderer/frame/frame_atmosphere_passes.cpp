@@ -29,6 +29,10 @@
 #include <memory>
 
 static auto* cv_VolFog = UZ_CVAR_BOOL("r.VolumetricFog", true, "Froxel volumetric fog");
+static auto* cv_VolFogDebug = UZ_CVAR_INT("r.VolumetricFog.Debug", 0,
+    "Froxel fog composite debug output (block B.4): 1 = (view depth cm, slice coordinate, transmittance), 2 = (raw depth, in-scatter r, g)", 0, 2);
+static auto* cv_VolFogSunShadow = UZ_CVAR_BOOL("r.VolumetricFog.SunShadow", true,
+    "Shadow the sun in-scatter of the froxel fog with the cascaded shadow maps (block B.4; 0 = unshadowed, for A/B runs)");
 
 namespace uz {
 
@@ -85,6 +89,7 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
     atmoCtx.skyCubemapUav       = m_skyCubemapUav;
     atmoCtx.skyIBLDirty         = &m_skyIBLDirty;
     atmoCtx.skyCubemapFilled    = &m_skyCubemapFilled;
+    atmoCtx.skyBakeSignature    = m_skyBakeSignature;
     atmoCtx.iblBaker            = m_iblBaker.get();
     atmoCtx.iblResult           = &m_iblResult;
     atmoCtx.brdfLutSrvIndex     = m_brdfLutSrvIndex;
@@ -143,7 +148,9 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
 
         if (foundVolFog && volFogComp) {
             VolumetricFogCB fogCB{};
-            std::memcpy(&fogCB.invViewProj, &ctx.perFrame.invViewProj, 64);
+            // Unjittered: the froxel positions must not move with the TAA jitter (block B.4).
+            const Mat4 unjitteredInvViewProj = ctx.unjitteredViewProj.Inverse();
+            std::memcpy(&fogCB.invViewProj, &unjitteredInvViewProj, 64);
             fogCB.cameraPosX     = ctx.perFrame.cameraPos.x;
             fogCB.cameraPosY     = ctx.perFrame.cameraPos.y;
             fogCB.cameraPosZ     = ctx.perFrame.cameraPos.z;
@@ -151,7 +158,12 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
             fogCB.sunDirX        = ctx.sunDir.x;
             fogCB.sunDirY        = ctx.sunDir.y;
             fogCB.sunDirZ        = ctx.sunDir.z;
-            fogCB.sunIntensity   = ctx.sunColor.Length();
+            // The colour already carries the intensity (light_renderer.cpp); before block B.4 the shader
+            // multiplied it by its own length again.
+            fogCB.sunIntensity   = 1.0f;
+            fogCB.cameraFarZ     = ctx.perFrame.farPlane;
+            fogCB.sunShadowEnabled = cv_VolFogSunShadow->value > 0.5f ? 1u : 0u;
+            fogCB.debugMode        = cv_VolFogDebug->value > 0.5f ? static_cast<uint32_t>(cv_VolFogDebug->value + 0.5f) : 0u;
             fogCB.sunColorR      = ctx.sunColor.x;
             fogCB.sunColorG      = ctx.sunColor.y;
             fogCB.sunColorB      = ctx.sunColor.z;
@@ -171,14 +183,15 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
             fogCB.emissiveR         = volFogComp->volumetricFogEmissive.x;
             fogCB.emissiveG         = volFogComp->volumetricFogEmissive.y;
             fogCB.emissiveB         = volFogComp->volumetricFogEmissive.z;
-            fogCB.farZ              = volFogComp->volumetricFogDistance * 100.0f;
+            fogCB.farZ              = volFogComp->volumetricFogDistance;   // cm, as the component documents (x100 before block B.4 sent the grid to 6.4 km)
             fogCB.fogStartDistance   = volFogComp->volumetricFogStartDistance;
             fogCB.nearFadeInDistance = volFogComp->volumetricFogNearFadeInDistance;
 
             m_volFogPass->RegisterPasses(
                 rgBuilder, ctx.hdrRes, ctx.depthRes, ctx.perFrameAlloc,
                 fogCB, *m_cbRing, ctx.pipelines,
-                ctx.bindless, ctx.renderWidth, ctx.renderHeight);
+                ctx.bindless, ctx.renderWidth, ctx.renderHeight,
+                ctx.shadowAtlasRes, ctx.shadowAlloc);
         }
     }
 

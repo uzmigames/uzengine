@@ -128,9 +128,10 @@ void PipelineLibrary::Shutdown() {
     destroyPipeline(m_apVolume);
     destroyPipeline(m_skyCubemapCapture);
     destroyPipeline(m_skyCubemapCapturePSPipeline);
-    destroyPipeline(m_depthPrepass);
-    destroyPipeline(m_depthPrepassBindless);
-    destroyPipeline(m_depthPrepassInstanced);
+    destroyPipeline(m_gbufferDepthOnly[0]);   // block B.4c
+    destroyPipeline(m_gbufferDepthOnly[1]);
+    destroyPipeline(m_gbufferEqual[0]);
+    destroyPipeline(m_gbufferEqual[1]);
     destroyPipeline(m_hizPyramid);
     destroyPipeline(m_dfsCullObjects);
     destroyPipeline(m_dfsConeTrace);
@@ -430,7 +431,8 @@ uint32_t PipelineLibrary::WarmupAll() {
     warmup(GetTransmittanceLut(), "TransmittanceLUT");
     warmup(GetSkyCubemapCapture(), "SkyCubemapCapture");
     warmup(GetSkyCubemapCapturePS(), "SkyCubemapCapturePS");
-    warmup(GetDepthPrepass(bindless), "DepthPrepass");
+    warmup(GetGBufferDepthOnly(bindless), "GBufferDepthOnly");
+    warmup(GetGBufferEqual(bindless), "GBufferEqual");
     warmup(GetHiZPyramid(), "HiZPyramid");
 
     // GPU culling and distance field shadows use compute pipelines that may
@@ -484,7 +486,6 @@ uint32_t PipelineLibrary::WarmupAll() {
         };
         warmupInstanced(GetGBufferInstanced(), "GBuffer_Instanced");
         warmupInstanced(GetShadowDepthInstanced(), "ShadowDepth_Instanced");
-        warmupInstanced(GetDepthPrepassInstanced(), "DepthPrepass_Instanced");
     }
 
     // ── Fullscreen debug ────────────────────────────────────────────────

@@ -14,10 +14,15 @@ namespace uz {
 /// Each pair uses 2 timestamp queries. Total queries per frame = `kMaxGpuTimestamps * 2`.
 static constexpr uint32_t kMaxGpuTimestamps = 64;
 
-/// Triple-buffer count for timestamp readback latency hiding.
-///
-/// Frame N writes timestamps, frame N-2 reads results (allows 2 frames of GPU latency).
-static constexpr uint32_t kProfilerFramesInFlight = 3;
+/// Ring depth of the timestamp readback: one slot more than the command-list ring (3 frames
+/// in flight, `DX12CommandList::kFramesInFlight`). At the end of frame N the slot resolved
+/// belongs to frame N-3, whose fence the CPU waited before recording frame N. A 3-deep ring
+/// resolved frame N-2 while it could still be executing (readback race, until 2026-10-05).
+static constexpr uint32_t kProfilerFramesInFlight = 4;
+/// Capacity of a pass name copied into a profiler slot, terminator included. Names are copied
+/// because a pass name may be a temporary string and because the slot is read three frames
+/// after it was recorded.
+static constexpr uint32_t kGpuProfilerNameCapacity = 48;
 
 /// A single GPU timing result resolved from a begin/end timestamp pair.
 struct GpuTimingResult {

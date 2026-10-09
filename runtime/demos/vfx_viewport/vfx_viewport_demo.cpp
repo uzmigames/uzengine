@@ -440,8 +440,8 @@ void VFXViewportDemo::OnInit() {
     if (m_trailEnabled) {
         {
             RHIBufferDesc vbDesc{};
-            vbDesc.sizeBytes = kMaxTrailVertices * 36; // sizeof(TrailVertex) = 36 bytes
-            vbDesc.stride = 36;                        // StructuredBuffer element stride
+            vbDesc.sizeBytes = kMaxTrailVertices * sizeof(TrailVertex);
+            vbDesc.stride = sizeof(TrailVertex); // StructuredBuffer element stride
             vbDesc.usage = RHIBufferUsage::StructuredBuffer;
             vbDesc.memory = RHIMemoryType::Upload;
             vbDesc.debugName = "Trail_DynamicVB";
@@ -3251,6 +3251,30 @@ void VFXViewportDemo::LoadPreset(int idx) {
     ae.spawnRate     = spawnRate;
     m_vfxPresetIndex = idx;
     ae.burstPending  = true;
+
+    // Auto-configure trail for specific presets.
+    if (auto* trail = m_trailSystem.GetComponent(m_trailHandle)) {
+        if (name == "Magic Orb") {
+            // 3-strand ribbon with blue→cyan gradient for Magic Orb effect.
+            trail->ribbonStrands = 3;
+            trail->strandSpacing = 0.06f;
+            trail->colorStart    = Vec4(0.2f, 0.4f, 1.0f, 0.9f);  // Blue
+            trail->colorEnd      = Vec4(0.0f, 0.9f, 1.0f, 0.0f);  // Cyan, faded
+            trail->widthStart    = 0.15f;
+            trail->widthEnd      = 0.01f;
+            m_trailStrandCount   = 3;
+        } else {
+            // Reset to single-strand default for other presets.
+            trail->ribbonStrands = 1;
+            trail->strandSpacing = 0.1f;
+            trail->colorStart    = Vec4(1.0f, 0.6f, 0.2f, 0.8f);
+            trail->colorEnd      = Vec4(1.0f, 0.2f, 0.05f, 0.0f);
+            trail->widthStart    = 0.3f;
+            trail->widthEnd      = 0.02f;
+            m_trailStrandCount   = 1;
+        }
+    }
+
     UZ_LOG(App, Info, "VFX: Loaded preset '{}'", name.c_str());
 }
 

@@ -10,6 +10,7 @@
 ///
 /// @ref Hillaire 2015 "Physically Based & Unified Volumetric Rendering in Frostbite"
 
+#include "../include/depth_common.hlsli"   // LinearizeDepthReversedZ
 #include "../common/constants.hlsli"
 
 struct FSInput {
@@ -50,9 +51,14 @@ cbuffer VolumetricFogCB : register(b2) {
     uint   gridY;
     uint   gridZ;
     float  extinctionScale;
-    float3 _emissive;
+    float  _emissiveR;                // scalars: a float3 here would be padded to offset 192 (C++ has 184)
+    float  _emissiveG;
+    float  _emissiveB;
     float  fogStartDistance;
     float  nearFadeInDistance;
+    float  cameraFarZ;                // camera far plane (cm): finite reversed-Z linearisation
+    uint   sunShadowEnabled;
+    uint   debugMode;                 // r.VolumetricFog.Debug: 1 = (view depth cm, slice coordinate, transmittance), 2 = (raw depth, in-scatter r, g)
 };
 
 SamplerState linearSampler : register(s0);
@@ -93,9 +99,9 @@ float4 main(FSInput input) : SV_Target
     // (Sky fog is handled separately by the height fog / atmosphere passes)
     if (depth <= 0.0001) discard;
 
-    // Linearize reversed-Z depth → view-space distance in cm
-    // reversed-Z: near=1, far=0 → linear = near / depth
-    float viewDepthCm = nearZ / max(depth, 1e-7);
+    // Linearize reversed-Z depth → view-space distance in cm with the camera's finite far plane
+    // (nearZ / depth assumes an infinite far plane: 11 % off at 10 m, 2x at 50 m with far 10000).
+    float viewDepthCm = LinearizeDepthReversedZ(depth, nearZ, cameraFarZ);   // depth_common, fixed in block B.4b
 
     // Sample integrated froxel volume
     float3 uvw = DepthToFroxelUVW(input.texcoord, viewDepthCm);
@@ -107,6 +113,8 @@ float4 main(FSInput input) : SV_Target
     float4 fogData = float4(0, 0, 0, 1); // No volumetric fog on SM5
 #endif
 
+    if (debugMode == 1u) return float4(viewDepthCm, uvw.z, fogData.a, 1.0);   // opaque: replaces the HDR pixel
+    if (debugMode == 2u) return float4(depth, fogData.r, fogData.g, 1.0);
     float3 inscattering = fogData.rgb;
     float  transmittance = fogData.a;
 

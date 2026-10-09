@@ -26,19 +26,44 @@
 
 #include "engine/vfx/core/gpu_particle_buffer.h"
 #include "engine/vfx/core/particle_budget.h"
+#include "engine/vfx/core/vfx_spawn_rate_curve.h"
+#include "engine/vfx/curves/vfx_curve.h"
+#include "engine/vfx/data_interfaces/vfx_spline_buffer.h"
+#include "engine/vfx/data_interfaces/vfx_spline_di.h"
 #include "engine/vfx/events/vfx_event.h"
+#include "engine/vfx/spawn/vfx_burst_event.h"
 #include "engine/vfx/lod/vfx_lod.h"
 #include "engine/vfx/modules/emitter_module_stack.h"
 #include "engine/vfx/parameters/vfx_parameter_store.h"
+#include "engine/vfx/stack/vfx_stack.h"
 #include "vector3.h"
 
+#include <cfloat>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace uz {
 
 class IRHIDevice;
 class MaterialInterface;
+
+// ---------------------------------------------------------------------------
+// EmitterBounds -- per-emitter dynamic AABB from GPU reduction
+// ---------------------------------------------------------------------------
+
+/// Axis-aligned bounding box computed from alive particle positions each frame
+/// via a GPU parallel reduction. Used for frustum culling and LOD screen-size
+/// significance evaluation. The bounds have 1-frame readback latency.
+///
+/// @ref Gribb & Hartmann 2001 "Fast Extraction of Viewing Frustum Planes"
+///      -- positive-vertex AABB-frustum test
+struct EmitterBounds {
+    Vec3 aabbMin = {FLT_MAX,  FLT_MAX,  FLT_MAX};   ///< World-space AABB minimum.
+    Vec3 aabbMax = {-FLT_MAX, -FLT_MAX, -FLT_MAX};   ///< World-space AABB maximum.
+    bool valid = false;                                ///< True when readback data is usable.
+    uint32_t frameAge = 0;                             ///< Frames since last successful readback.
+};
 
 // ---------------------------------------------------------------------------
 // ParticleEmitter -- GPU particle emitter ECS component (pure data + methods)
@@ -103,6 +128,38 @@ struct ParticleEmitter {
     /// @ref Lorach 2007 "Soft Particles" — depth-based alpha fade at geometry intersections.
     float softParticleFadeRange = 100.0f;
 
+    // ── Sprite Texture ────────────────────────────────────────────────────
+
+    /// Path to sprite sheet (PNG/TGA/JPEG) for textured particles.
+    /// When non-empty, the engine loads this texture during emitter sync
+    /// and binds it as a billboard sprite. Empty = procedural circle.
+    std::string spriteTexturePath;
+
+    /// Bindless SRV index for the loaded sprite texture.
+    /// Set automatically by the engine when `spriteTexturePath` is loaded.
+    /// UINT32_MAX = no sprite texture (procedural circle fallback).
+    uint32_t spriteTextureSrvIndex = UINT32_MAX;
+
+    /// Flipbook grid dimensions for sprite sheet animation.
+    /// Auto-detected from filename pattern (e.g., `_6x6_`) when using VFXMaterial,
+    /// or set explicitly here for inline emitters.
+    uint32_t flipbookRows       = 1;  ///< Rows in sprite sheet. 1 = no flipbook.
+    uint32_t flipbookCols       = 1;  ///< Columns in sprite sheet. 1 = no flipbook.
+    uint32_t flipbookTotalFrames = 1; ///< Total valid frames in the sheet.
+
+    /// Flipbook playback rate in frames per second.
+    /// Controls how fast the sprite sheet cycles through frames over the
+    /// particle's lifetime. Used by `ComputeFlipbookFrame` in the pixel shader.
+    /// 0 = lifetime-driven (one full cycle per particle lifetime, Niagara default).
+    /// >0 = fixed FPS (may cycle multiple times or clip within lifetime).
+    float flipbookFPS = 0.0f;
+
+    /// Sprite texture channel mask selector.
+    /// 0 = RGBA pass-through (default), 1 = R, 2 = G, 3 = B, 4 = A.
+    /// Non-zero values splat the chosen channel across RGB and A so single-channel
+    /// alpha sheets render as grayscale mattes.
+    uint32_t spriteChannelMask = 0;
+
     // ── Billboard Rendering Parameters ────────────────────────────────────
 
     /// Emissive multiplier (additive glow contribution). 0 = disabled.
@@ -155,6 +212,12 @@ struct ParticleEmitter {
 
     /// Blend mode: 0=AlphaBlend, 1=Additive, 2=PremulAlpha.
     uint32_t blendMode = 0;
+
+    /// One-time warning flag for `MeshSortMode::CustomAttribute` lookup
+    /// failure. Flipped to `true` after the first warning so log spam stays
+    /// bounded — authoring bug remains visible (single line per emitter)
+    /// but does not flood the log every frame at 60 Hz.
+    bool customSortWarned = false;
 
     /// Color by speed (reuses colorLifeStart/End with speed instead of age).
     uint32_t colorBySpeedEnabled = 0;
@@ -218,6 +281,22 @@ struct ParticleEmitter {
     float particleLightFlicker    = 0.0f;  ///< Flicker amplitude [0,1]. 0=steady.
     float particleLightFlickerSpeed = 5.0f;///< Flicker oscillation frequency (Hz).
 
+    // ── Warmup / Pre-warm Simulation ──────────────────────────────────
+    /// Seconds of simulation to run instantly at emitter spawn so looping
+    /// effects (smoke, fire, dust) appear fully populated from frame 1.
+    /// Default 0 = no warmup (backwards compatible).
+    float warmupTime = 0.0f;
+
+    /// Simulation granularity during warmup (seconds per tick).
+    /// Lower values produce more accurate warmup but cost more GPU time.
+    /// Default: 1/30s (~33ms per tick).
+    float warmupTickRate = 0.0333f;
+
+    /// Runtime flag: set to true after the warmup loop finishes.
+    /// Prevents re-warmup on every frame. Reset to false on hot reload.
+    bool warmupComplete = false;
+
+    // ── Emitter Lifecycle ──────────────────────────────────────────────
     /// Emitter lifecycle — auto-disable after duration (seconds). 0 = infinite.
     float emitterDuration = 0.0f;
     /// Restart count before stopping. 0 = infinite.
@@ -227,6 +306,29 @@ struct ParticleEmitter {
     /// When false, existing particles continue to simulate until they die.
     bool isEmitting = true;
 
+    /// Whether the emitter's simulation step is paused. Independent from
+    /// `isEmitting` — a paused emitter keeps its alive particles frozen
+    /// in place (sim dt forced to 0) while emitting=false would let them
+    /// continue ageing. Editor scrub / sequencer rewind use this.
+    /// Toggled by the C API `uz_vfx_pause` / `uz_vfx_resume`.
+    bool isPaused = false;
+
+    /// Per-emitter dt multiplier applied AFTER the global
+    /// `r.VFX.TimeScale`. Default 1.0 means "real-time"; 0.5 is half-
+    /// speed, 2.0 is double-speed. The cinematic / sequencer layer
+    /// drives this via `uz_vfx_set_time_scale`.
+    float timeScale = 1.0f;
+
+    /// Stable name for external tooling (`uz_vfx_seek`,
+    /// `VFXSystem::FindEmitterByName`). Empty when the emitter was
+    /// created without one — name-based lookup just skips it.
+    std::string name;
+
+    /// Pending deterministic re-warm target in seconds. 0 means no seek
+    /// is queued. Set by `Seek(t)`, cleared by `ClearPendingSeek()` once
+    /// the sim path's warmup loop finishes.
+    float pendingSeekTime = 0.0f;
+
     /// Path to the VFX graph asset that defines this emitter's behavior.
     /// Used by Lua `uz.vfx:spawn()` to match emitters by graph type.
     /// Example: "effects/fire/campfire.uzfx"
@@ -235,6 +337,43 @@ struct ParticleEmitter {
     /// Priority for budget allocation (0 = lowest, 100 = highest).
     /// Higher-priority emitters are allocated first when the budget is tight.
     uint8_t priority = 50;
+
+    /// Render sort priority (Niagara `EmitterSortPriority` parity).
+    /// Higher values render ON TOP of lower values. Equal priority falls
+    /// back to back-to-front camera-distance ordering. Negative allowed.
+    int32_t renderPriority = 0;
+
+    /// World-space override position sourced from bone / parent attach.
+    /// Written by the scene-sync layer when `VfxEmitterComponent::attachEntity`
+    /// resolves to a valid transform; left at its spawn-time value otherwise.
+    /// The spawn CS consumes this as the emitter origin each frame.
+    Vec3 attachedWorldPosition = {0.0f, 0.0f, 0.0f};
+
+    /// True when the most recent attach resolve succeeded. When false the
+    /// emitter keeps its last known `attachedWorldPosition` and falls back
+    /// to the owning SceneComponent transform in scene sync.
+    bool attachedThisFrame = false;
+
+    /// Default bone/socket name serialized into the emitter asset.
+    /// When the emitter is instantiated into a scene, this name is copied
+    /// onto `VfxEmitterComponent::attachBoneName` as a starting value — the
+    /// scene / gameplay layer still has to supply the target entity since
+    /// entity handles are placement-specific and not part of the asset.
+    std::string attachBoneNameDefault;
+
+    // ── User-declared per-particle attributes (Niagara "Parameters") ────
+
+    /// Asset-declared user attribute channels. Each entry maps to an
+    /// optional `StructuredBuffer<float>` or `StructuredBuffer<float4>` on
+    /// `buffer.sets[*].userFloat[slot]` / `.userVec4[slot]`. Slot indices
+    /// are assigned by `RegisterUserAttribute()` and surfaced via the
+    /// `slotIndex` field so modules can look up the GPU binding without
+    /// re-querying the mask.
+    ///
+    /// The list is authoritative: only declared channels are allocated,
+    /// and re-declaring an existing name is a no-op (type + default are
+    /// left alone on the runtime to avoid silent data loss on hot-reload).
+    std::vector<UserAttributeDef> userAttributes;
 
     /// Per-emitter LOD distance settings.
     /// Used by VFXSystem to evaluate LOD level each frame.
@@ -246,6 +385,14 @@ struct ParticleEmitter {
 
     /// Current LOD level (set by VFXSystem each frame, read-only for scripts).
     VFXLodLevel currentLodLevel = VFXLodLevel::Full;
+
+    /// Current spawn rate scale after smooth LOD transition [0.01, 1.0].
+    /// Interpolated toward `targetSpawnScale` each frame using `lodTransitionTime`.
+    float currentSpawnScale = 1.0f;
+
+    /// Target spawn rate scale for the current LOD level.
+    /// Set from `lodSettings.spawnRateScale[currentLodLevel]` each frame.
+    float targetSpawnScale = 1.0f;
 
     // -- Runtime State (managed by VFXSystem, do not modify directly) ---------
 
@@ -274,6 +421,12 @@ struct ParticleEmitter {
     /// when this value reaches or exceeds startDelay.
     float timeSinceRegistration = 0.0f;
 
+    /// Dynamic axis-aligned bounding box from GPU parallel reduction.
+    /// Updated each frame with 1-frame readback latency. Used by frustum
+    /// culling when `bounds.valid == true`; falls back to static sphere
+    /// estimate when invalid or `frameAge < 2`.
+    EmitterBounds bounds;
+
     /// Whether this emitter has been initialized (GPU buffers allocated).
     bool initialized = false;
 
@@ -281,9 +434,191 @@ struct ParticleEmitter {
     /// Set to true by SyncVfxEmitters, consumed by RegisterParticlePasses.
     bool needsInitialUpload = false;
 
+    /// When true, RegisterParticlePasses skips sim + render for this
+    /// emitter (phase 10.5.0 frustum cull gate). Written by
+    /// `SyncVfxEmitters` each frame based on the ECS cull hysteresis.
+    /// @ref engine/vfx/lod/vfx_frustum_cull.h
+    bool cullSuppress = false;
+
     /// Number of particles actually allocated from the budget.
     /// May be less than maxParticles if the budget was constrained.
     uint32_t allocatedFromBudget = 0;
+
+    // -- Persistent particle IDs (phase 7.4.0) -------------------------------
+
+    /// When true, spawn CS assigns each particle a monotonically increasing
+    /// 64-bit persistent identifier that survives SoA slot recycle. Required
+    /// for event payload correlation (7.3.0), cross-emitter particle reads
+    /// (7.12.0), and deterministic replay.
+    ///
+    /// Opt-in; default false so most emitters pay zero cost. Setting this
+    /// to true before `Initialize()` makes the initializer allocate a
+    /// `uint64`-per-slot SoA channel on both attribute sets.
+    ///
+    /// @ref UE5 FNiagaraEmitter::bRequiresPersistentIDs
+    bool emitsPersistentIDs = false;
+
+    /// Monotonically increasing counter used to assign persistent IDs.
+    /// Incremented by `spawnCount` each frame inside the spawn CS dispatch
+    /// setup; GPU computes `id = baseID + threadIndex`. IDs are never reused
+    /// even across slot recycle — the 64-bit space is effectively infinite.
+    ///
+    /// Lives on CPU (not GPU) to simplify persistent-state hot-reload.
+    uint64_t nextPersistentID = 1;
+
+    // -- Fixed-timestep accumulator (phase 7.8.0) ----------------------------
+
+    /// Selects how the update pass converts `frameDt` into sub-steps.
+    ///
+    /// `FrameRate` (default) runs one update CS per frame with
+    /// `dt = frameDt`, matching pre-7.8.0 behaviour. `FixedRate` runs N
+    /// dispatches per frame, each using `dt = fixedDt`, delivering
+    /// frame-rate-independent determinism for competitive multiplayer and
+    /// replay systems.
+    ///
+    /// Runtime accumulator state lives in `timestepAccumulator`; the
+    /// declaration here is the authoring intent.
+    ///
+    /// @ref UE5 UNiagaraEmitter::FixedTickDeltaTime
+    uint8_t timestepMode = 0u;   // 0=FrameRate, 1=FixedRate (see VfxTimestepMode)
+
+    /// Fixed sub-step duration in seconds. Applied only when
+    /// `timestepMode == FixedRate`. Typical values: 1/30, 1/60.
+    float fixedDt = 1.0f / 60.0f;
+
+    /// Anti-spiral clamp — maximum sub-steps per frame.
+    /// Applied only when `timestepMode == FixedRate`.
+    uint32_t maxSubSteps = 8u;
+
+    // -- Velocity inheritance + spawn curves (phase 7.20.0) ------------------
+
+    /// Fraction of the emitter's frame velocity inherited by newly spawned
+    /// particles. `0.0` (default) = spawn at rest relative to the emitter;
+    /// `1.0` = spawn matching the emitter's world-space motion. Typical
+    /// values: 0.3–0.7 for smoke trailing a vehicle, 1.0 for muzzle flashes.
+    ///
+    /// Applied additively: `initialVel = spawnVel + velocityInheritance * emitterVel`.
+    /// `emitterVel` is filled each frame via `UpdateFrameVelocity`.
+    ///
+    /// @ref UE5 FNiagaraEmitterSpawnInfo::bInheritVelocity
+    float velocityInheritance = 0.0f;
+
+    /// Last-frame world-space emitter velocity (cm/s). Refreshed each frame
+    /// by the sync pass via `UpdateFrameVelocity(newPos, dt)` and consumed
+    /// by the spawn CS to compute inherited velocity.
+    ///
+    /// Not authored — runtime state. Reset to zero on `Initialize`.
+    Vec3 emitterFrameVelocity {0.0f, 0.0f, 0.0f};
+
+    /// Last observed emitter world position. Used internally by
+    /// `UpdateFrameVelocity` to derive the frame delta.
+    Vec3 lastEmitterPosition {0.0f, 0.0f, 0.0f};
+
+    /// Whether `lastEmitterPosition` has been seeded. Prevents the first
+    /// frame from producing a huge synthetic velocity (0 -> actual pos).
+    bool emitterFrameVelocityPrimed = false;
+
+    // -- Simulation space (phase 7.7.0) --------------------------------------
+
+    /// Coordinate frame in which particles are stored and simulated.
+    ///
+    /// `WorldSpace` (default, value 0): positions + velocities are in
+    /// world-space. Matches pre-7.7.0 behaviour; effects rendered at a
+    /// fixed location regardless of emitter motion.
+    ///
+    /// `LocalSpace` (value 1): positions + velocities are in the emitter's
+    /// local frame. The billboard VS applies `worldFromLocal` at draw time
+    /// so particles follow the emitter rigidly. Gravity and external
+    /// forces are rotated into local space at integration time.
+    ///
+    /// Required for attached effects (muzzle flashes, vehicle exhaust) that
+    /// must stay anchored to fast-moving entities without trail lag.
+    ///
+    /// @ref UE5 UNiagaraEmitter::bLocalSpace
+    uint8_t simulationSpace = 0u;  // 0=WorldSpace (default), 1=LocalSpace
+
+    // -- Emitter mode (phase 7.5.0) ------------------------------------------
+
+    /// Selects the simulation strategy.
+    ///
+    /// `Stateful` (default, value 0): runs the standard spawn + update CS
+    /// pipeline. Full per-frame integration with turbulence, collision,
+    /// gravity, etc. Matches pre-7.5.0 behaviour.
+    ///
+    /// `Stateless` (value 1): skips the update CS entirely. The billboard
+    /// VS evaluates particle position from closed-form analytical motion
+    /// (see `VfxStatelessEvaluatePosition`). Restricted physics model
+    /// (initial velocity + gravity + exponential damping) but 2-4x cheaper
+    /// for dense bursts of simple ballistic particles (muzzle flashes,
+    /// spark showers).
+    ///
+    /// @ref UE5 UNiagaraStatelessEmitter.h
+    uint8_t emitterMode = 0u;  // 0=Stateful (default), 1=Stateless
+
+    /// Optional 4-point spawn-rate multiplier (normalised-time, interim
+    /// form from phase 7.20.0). Applies on top of `emissionRate` when
+    /// `enabled == true`. For the richer Niagara-parity per-second rate
+    /// curve see `spawnRateCurve` below (phase 11.7).
+    VfxSpawnRateCurve spawnRateMultiplier {};
+
+    /// Niagara-parity spawn rate curve (phase 11.7). When non-empty,
+    /// `CalculateSpawnCount(dt)` samples this curve at
+    /// `timeSinceRegistration` as an absolute **particles-per-second**
+    /// rate, overriding the constant `emissionRate`. When empty (the
+    /// default), the legacy constant-rate + optional multiplier path
+    /// applies unchanged.
+    ///
+    /// X axis: seconds since emitter registration (absolute time, not
+    /// normalised lifetime). Y axis: particles/second.
+    ///
+    /// @ref engine/vfx/curves/vfx_curve.h
+    /// @ref docs/engine/25-vfx/47-spawn-rate-curve.md
+    VFXCurve spawnRateCurve {};
+
+    /// Niagara-parity time-stamped spawn bursts (phase 11.8). Each
+    /// entry fires exactly once per emitter lifecycle at `time` seconds
+    /// after registration, adding `count` particles to that frame's
+    /// spawn total. The vector is kept sorted ascending by `time`; the
+    /// `burstCursor` field below is the index of the next-unfired entry.
+    ///
+    /// @ref engine/vfx/spawn/vfx_burst_event.h
+    /// @ref docs/engine/25-vfx/48-burst-events.md
+    std::vector<VfxBurstEvent> bursts {};
+
+    /// Index of the next-unfired entry in `bursts`. Advances monotonically
+    /// each frame until `bursts[burstCursor].time > timeSinceRegistration`.
+    /// Reset to 0 by the restart pipeline (`restartRequested`).
+    size_t burstCursor = 0u;
+
+    /// Niagara-parity 7-stage module stack (phase 11.1.0). When
+    /// `stack.IsEmpty()` (legacy / default asset), the inline config
+    /// above drives behaviour exactly as before. When populated, the
+    /// stack takes precedence — the module compositor walks each stage
+    /// and stitches module HLSL in execution order.
+    ///
+    /// @ref engine/vfx/stack/vfx_stack.h
+    /// @ref docs/engine/25-vfx/44-niagara-stack-model.md
+    VfxStack stack {};
+
+    /// Captures the new emitter position, derives the frame velocity
+    /// delta, and updates `emitterFrameVelocity`. Call once per frame
+    /// before the spawn CS dispatch. Rejects non-positive `dt`.
+    void UpdateFrameVelocity(const Vec3& newPosition, float dt) noexcept;
+
+    /// Reserves a contiguous range of `count` persistent IDs starting at the
+    /// current counter value. Advances `nextPersistentID` by `count`. The
+    /// GPU spawn CS then computes `id = baseID + threadIndex` so each
+    /// newly spawned particle receives a unique ID.
+    ///
+    /// Must only be called when `emitsPersistentIDs == true`. Passing 0
+    /// is a no-op and returns the current counter (useful as a sentinel).
+    ///
+    /// @returns the base ID for the reserved range.
+    uint64_t ReservePersistentIDRange(uint32_t count) noexcept {
+        const uint64_t base = nextPersistentID;
+        nextPersistentID += count;
+        return base;
+    }
 
     // -- Material ------------------------------------------------------------
 
@@ -297,6 +632,25 @@ struct ParticleEmitter {
     /// Module stack defining this emitter's spawn/update/render behavior.
     /// When empty (no modules), falls back to the hardcoded shaders from 3.60.0.
     EmitterModuleStack moduleStack;
+
+    // -- Spline Data Interface ------------------------------------------------
+
+    /// Author-side spline geometry consumed by `SpawnAlongSplineModule`,
+    /// `ForceTowardSplineModule`, and `FollowSplineModule`. Empty by default
+    /// (no control points) which makes the GPU upload bake zero samples and
+    /// the simulation shaders short-circuit on `cbSplinePointCount < 2`.
+    /// Gameplay code (or `SyncVfxEmitters` once the ECS `SplineComponent`
+    /// lands) writes `controlPoints` / `tension` / `looping` here.
+    /// @ref engine/vfx/data_interfaces/vfx_spline_di.h `VfxSpline`
+    VfxSpline splineSource;
+
+    /// GPU upload wrapper for `splineSource`. Lazy-created by
+    /// `DispatchVFXSimulation` on the first frame any spline module is
+    /// detected on this emitter; `RebuildAndUpload` runs once per frame
+    /// before the spawn / update CS dispatches to keep the bindless SRV
+    /// in sync with `splineSource`. Released by `Shutdown`.
+    /// @ref engine/vfx/data_interfaces/vfx_spline_buffer.h `VfxSplineBuffer`
+    VfxSplineBuffer splineBuffer;
 
     // -- Parameters -----------------------------------------------------------
 
@@ -313,7 +667,84 @@ struct ParticleEmitter {
     /// each frame during the simulation pass.
     VFXEventQueue eventQueue;
 
+    // -- Asset metadata -------------------------------------------------------
+
+    /// Tag metadata for asset-browser filter + snippet library search.
+    /// Free-form lower-case identifiers (e.g. "fire", "ambient", "magic").
+    /// Round-trips through emitter_serializer.h. Query grammar is documented
+    /// in `docs/engine/25-vfx/19-asset-tagging.md`.
+    ///
+    /// @ref UE5 NiagaraScriptBase::Tags + FAssetData metadata.
+    std::vector<std::string> tags;
+
     // -- Methods --------------------------------------------------------------
+
+    /// Registers a user-declared per-particle attribute channel.
+    ///
+    /// - Appends a copy of `def` to `userAttributes` when the name is new.
+    ///   The registered entry gets `slotIndex` auto-assigned from the next
+    ///   free slot of the matching type (`UserAttributeType::Float` or
+    ///   `UserAttributeType::Vec4`).
+    /// - If a channel with that name already exists, the registration is a
+    ///   no-op and returns the existing slot index (its type/default are
+    ///   preserved — hot-reload does not wipe live GPU state).
+    ///
+    /// # Returns
+    /// The assigned slot index (`UINT32_MAX` on failure: the per-type quota
+    /// `kMaxUserFloatAttrs` / `kMaxUserVec4Attrs` is full, or the existing
+    /// entry has a different type than the caller requested).
+    uint32_t RegisterUserAttribute(const UserAttributeDef& def);
+
+    /// Looks up a registered user attribute by name. Returns `nullptr`
+    /// when no matching declaration exists.
+    [[nodiscard]] const UserAttributeDef* FindUserAttribute(const std::string& name) const;
+
+    /// Allocates GPU structured buffers for every declaration in
+    /// `userAttributes` whose slot isn't already live in
+    /// `buffer.userFloatMask` / `buffer.userVec4Mask`.
+    ///
+    /// No-op when `userAttributes` is empty or when `buffer` is not yet
+    /// initialised. Safe to call multiple times — it only creates missing
+    /// channels and leaves existing ones untouched.
+    ///
+    /// # Returns
+    /// `true` when all declared channels have matching GPU buffers after
+    /// the call; `false` if any allocation failed.
+    [[nodiscard]] bool EnsureUserAttributeBuffers(IRHIDevice* device);
+
+    /// Requests a deterministic re-warm to `targetTime` seconds.
+    ///
+    /// Marks the emitter for reset + replay: the next sim path resets
+    /// state (alive=0, free list full, accumulators zero) then performs
+    /// `ceil(targetTime / kSeekFixedDt)` fixed-rate sim ticks before the
+    /// regular per-frame tick. Once the warmup completes the sim
+    /// dispatch calls `ClearPendingSeek()` and resumes normal operation.
+    ///
+    /// Implements the cinematic / sequencer integration described by
+    /// `phase16_vfx-scalability-cvars-sequencer` (item 1.7) — gameplay
+    /// can scrub through long-lived effects without waiting real-time.
+    ///
+    /// # Parameters
+    /// - `targetTime`: Replay duration in seconds. Negative values are
+    ///   clamped to 0 (no warmup; effectively a reset).
+    ///
+    /// # Side Effects
+    /// - Sets `buffer.needsInitialization = true` so the next sim tick
+    ///   recreates GPU bookkeeping (free-list head, alive count).
+    /// - Resets `cpuAliveCount = 0` and `spawnAccumulator = 0`.
+    /// - Sets `pendingSeekTime = max(0, targetTime)`.
+    void Seek(float targetTime) noexcept;
+
+    /// Returns the pending re-warm target in seconds; 0 means "no seek
+    /// pending" or "warmup completed". Read by the sim path each frame.
+    [[nodiscard]] float GetPendingSeekTime() const noexcept {
+        return pendingSeekTime;
+    }
+
+    /// Clears the pending seek request. Called by the sim path after the
+    /// warmup loop completes. Idempotent — safe to call when no seek
+    /// is pending.
+    void ClearPendingSeek() noexcept { pendingSeekTime = 0.0f; }
 
     /// Allocates GPU buffers from the particle budget.
     ///

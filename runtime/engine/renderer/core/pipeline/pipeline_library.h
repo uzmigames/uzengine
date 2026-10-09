@@ -141,6 +141,13 @@ public:
     /// Returns the G-Buffer Masked pipeline using the device's default bindless mode.
     [[nodiscard]] RHIPipelineHandle GetGBufferMasked();
 
+    /// Block B.4c: the depth prepass is the GBuffer pass in depth-only mode. This pipeline is the
+    /// GBuffer's vertex shader with no pixel shader and no colour targets (reversed-Z `Greater`,
+    /// depth writes); `GetGBufferEqual` is the GBuffer pipeline with `Equal` and no depth write,
+    /// used by the colour pass for the standard opaque draws the prepass wrote.
+    [[nodiscard]] RHIPipelineHandle GetGBufferDepthOnly(bool bindless);
+    [[nodiscard]] RHIPipelineHandle GetGBufferEqual(bool bindless);
+
     /// Returns the translucent forward pipeline (mesh_vs + mesh_ps, 1 HDR RT, depth read-only).
     ///
     /// Uses SrcAlpha/InvSrcAlpha blending for Porter-Duff alpha compositing.
@@ -181,6 +188,11 @@ public:
     /// # Returns
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetLighting();
+
+    /// Returns the light cull compute pipeline (`cluster_assign_cs.hlsl`, block B.7): one thread per
+    /// cluster of the view frustum, writes the indices of the point and spot lights whose range
+    /// sphere touches it; the deferred lighting evaluates those lights only.
+    [[nodiscard]] RHIPipelineHandle GetLightCull();
 
     /// Returns the PixelDebug compute pipeline (pixel_debug_cs, 1x1x1 dispatch).
     ///
@@ -245,6 +257,10 @@ public:
 
     /// Returns the shadow depth pipeline using the device's default bindless mode.
     [[nodiscard]] RHIPipelineHandle GetShadowDepth();
+
+    /// Returns the local-light shadow pipeline: the depth VS with UZ_SHADOW_LINEAR plus
+    /// `shadow_depth_linear_ps.hlsl`, which writes distance / radius to SV_Depth (block A.1).
+    [[nodiscard]] RHIPipelineHandle GetShadowDepthLinear(bool bindless);
 
     /// Returns the instanced G-Buffer pipeline (mesh_vs+UZ_INSTANCED + gbuffer_ps, 3 RT + depth).
     ///
@@ -366,33 +382,6 @@ public:
     /// Depth: disabled (no depth test or write).
     /// Render target: RGBA16Float (HDR scene color).
     [[nodiscard]] RHIPipelineHandle GetCloudComposite();
-
-    /// Returns the depth prepass pipeline (shadow_depth_vs, no pixel shader, depth-only).
-    ///
-    /// Similar to the shadow depth pipeline but WITHOUT depth bias (no slope-scaled
-    /// or constant bias) since the prepass writes to the GBuffer depth, not a shadow
-    /// atlas. Uses LessEqual comparison (reversed-Z).
-    ///
-    /// # Arguments
-    /// * `bindless` — If true, omits vertex input layout (SM6.6 path).
-    ///   Defaults to the device's bindless capability.
-    ///
-    /// # Returns
-    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
-    [[nodiscard]] RHIPipelineHandle GetDepthPrepass(bool bindless);
-
-    /// Returns the depth prepass pipeline using the device's default bindless mode.
-    [[nodiscard]] RHIPipelineHandle GetDepthPrepass();
-
-    /// Returns the instanced depth prepass pipeline (shadow_depth_vs+UZ_INSTANCED, depth-only, no bias).
-    ///
-    /// Uses `DrawIndexedInstanced` with per-instance world matrices. Only available
-    /// on SM6.6 bindless path. Identical to `GetDepthPrepass(true)` but with the
-    /// instanced vertex shader variant.
-    ///
-    /// # Returns
-    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
-    [[nodiscard]] RHIPipelineHandle GetDepthPrepassInstanced();
 
     /// Returns the Hi-Z pyramid compute pipeline (hiz_pyramid_cs.hlsl).
     ///
@@ -692,6 +681,10 @@ public:
     /// Per-voxel brute-force closest-point-on-triangle. 4x4x4 thread groups.
     [[nodiscard]] RHIPipelineHandle GetMeshSdfBake();
 
+    /// FNV-1a of the mesh SDF bake shader's bytecode (0 when unavailable): part of the mesh
+    /// SDF cache key, so a shader change invalidates the cached fields (block B.3).
+    [[nodiscard]] uint64_t GetMeshSdfBakeShaderHash();
+
     /// Returns the radiance cache trace compute pipeline (radiance_cache_trace_cs.hlsl).
     ///
     /// Per-probe ray trace through the GDF, accumulates radiance into L2 SH.
@@ -710,6 +703,29 @@ public:
     /// @ref Majercik 2019 "DDGI" — ray-traced irradiance probes
     /// @ref Microsoft DirectX-Specs "Inline Raytracing (DXR 1.1)"
     [[nodiscard]] RHIPipelineHandle GetDdgiProbeUpdate();
+
+    /// Returns the DDGI probe trace compute pipeline (`ddgi_probe_trace_cs.hlsl`, block B.6):
+    /// one thread per probe ray, writes the (radiance, hitT) and hit-info ray buffers that
+    /// `GetDdgiProbeUpdate()` integrates per atlas texel. Before it, every atlas texel traced
+    /// the probe's rays itself (292 traces of each ray).
+    [[nodiscard]] RHIPipelineHandle GetDdgiProbeTrace();
+
+    /// Returns the DDGI atlas border-fill compute pipeline (`ddgi_border_fill_cs.hlsl`):
+    /// copies each probe tile's interior into its 1-texel octahedral border after the probe
+    /// update, and clears both atlases once at creation. Without it the deferred lighting's
+    /// bilinear tap read uninitialised texels at the tile edges (followup-01, H-55).
+    [[nodiscard]] RHIPipelineHandle GetDdgiBorderFill();
+
+    /// Returns the radiance cache probe side classifier (`probe_side_cs.hlsl`, followup-01
+    /// candidate `r.GI.RadianceCache.ProbeClassification` = 1): for every probe, the nearest mesh
+    /// triangle over the scene's instances — the side the probe lies on and the direction from the
+    /// face to the probe.
+    [[nodiscard]] RHIPipelineHandle GetProbeSide();
+
+    /// Returns the radiance cache probe reachability passes (`probe_reach_cs.hlsl`, followup-01
+    /// candidate `r.GI.RadianceCache.ProbeClassification` = 3): air grid, flood fill from the camera
+    /// and the per-probe decision, one pipeline selected by a root constant.
+    [[nodiscard]] RHIPipelineHandle GetProbeReach();
 
     /// Returns the DBuffer decal render pipeline (decal_vs + decal_ps, 3 RT, no depth).
     ///
@@ -874,6 +890,23 @@ public:
     /// Blend: SrcAlpha / InvSrcAlpha.
     [[nodiscard]] RHIPipelineHandle GetParticleMeshTransparent();
 
+    /// Returns the flipbook debug pipeline (flipbook_debug_vs + flipbook_debug_ps).
+    ///
+    /// Renders a screen-space quad in the top-right corner that samples a sprite
+    /// atlas with time-based frame cycling. Used to verify atlas sampling math
+    /// independently of the particle data flow.
+    ///
+    /// Geometry: 2 triangles via SV_VertexID (Draw(6,1,0,0)), no vertex buffer.
+    /// Rasterizer: no cull.
+    /// Depth: disabled (no depth test, no depth write).
+    /// Blend: disabled (opaque overwrite).
+    /// Render target: RGBA8Unorm (backbuffer, post-tonemap).
+    /// Depth format: Unknown (no depth attachment).
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetFlipbookDebugPSO();
+
     /// Pre-creates all standard pipelines eagerly instead of on first use.
     ///
     /// Call at scene load time to avoid hitches during the first frame.
@@ -903,6 +936,7 @@ private:
     [[nodiscard]] bool EnsureDecalDeferredShaders();
     [[nodiscard]] bool EnsureTrailRibbonShaders();
     [[nodiscard]] bool EnsureParticleMeshShaders();
+    [[nodiscard]] bool EnsureFlipbookDebugShaders();
 
     // ── VFX cached shader handles ────────────────────────────────────────
     RHIShaderHandle m_particleBillboardVS       = RHIShaderHandle::Invalid();
@@ -918,6 +952,8 @@ private:
     RHIShaderHandle m_trailPS                   = RHIShaderHandle::Invalid();
     RHIShaderHandle m_particleMeshVS            = RHIShaderHandle::Invalid();
     RHIShaderHandle m_particleMeshPS            = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_flipbookDebugVS           = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_flipbookDebugPS           = RHIShaderHandle::Invalid();
 
     // ── VFX cached pipeline handles ──────────────────────────────────────
     RHIPipelineHandle m_particleBillboard          = RHIPipelineHandle::Invalid();
@@ -932,6 +968,9 @@ private:
     RHIPipelineHandle m_trailRibbon                = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_particleMeshOpaque         = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_particleMeshTransparent    = RHIPipelineHandle::Invalid();
+    bool              m_particleMeshOpaqueFailed      = false;
+    bool              m_particleMeshTransparentFailed = false;
+    RHIPipelineHandle m_flipbookDebug              = RHIPipelineHandle::Invalid();
 };
 
 } // namespace uz

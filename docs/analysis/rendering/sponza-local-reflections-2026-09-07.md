@@ -1,5 +1,9 @@
 # Sponza: reflexos locais e estabilidade da iluminação
 
+> **Origin**: `test/windows-sponza-parity @ 25cd0c5f` (`E:\SponzaTest`), ported verbatim on 2026-09-08 by `phase0_sponza-parity-06-qa-harness-validation`.
+> Paths such as `scripts/*_artifacts/`, `scripts/sponza-*.png|log|json|sha256.txt` refer to evidence that is **not in Git**; the executable identities quoted are SponzaTest builds, not this repository's.
+
+
 Atualização posterior: `sponza-loading-exposure-2026-09-07.md` documenta a correção da apresentação durante a carga, a inicialização da exposição e as novas capturas. Os resultados abaixo registram a etapa anterior.
 
 ## Resultado implementado

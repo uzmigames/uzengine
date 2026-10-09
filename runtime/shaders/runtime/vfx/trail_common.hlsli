@@ -97,24 +97,28 @@ struct TrailRootConstants {
 ///
 /// The memory layout MUST match the C++ TrailVertex struct exactly:
 ///   float3 position (12 bytes) + float u (4 bytes) + float v (4 bytes) +
-///   float4 color (16 bytes) = 36 bytes total.
+///   float4 color (16 bytes) + uint strandIndex (4 bytes) = 40 bytes total.
 ///
-/// position: World-space vertex position of the expanded ribbon quad edge.
-///           The CPU widens each anchor point perpendicular to the camera look
-///           direction by half the trail width.
+/// position:    World-space vertex position of the expanded ribbon quad edge.
+///              The CPU widens each anchor point perpendicular to the camera look
+///              direction by half the trail width.
 ///
-/// u, v:     Texture coordinates.
-///             u: normalized width across the ribbon [0=left, 1=right].
-///             v: normalized position along the trail [0=head, 1=tail].
+/// u, v:        Texture coordinates.
+///                u: normalized width across the ribbon [0=left, 1=right].
+///                v: normalized position along the trail [0=head, 1=tail].
 ///
-/// color:    RGBA per-vertex color. The CPU encodes lifetime fade in the alpha
-///           channel: alpha reaches 0 when the ribbon segment dies. The RGB
-///           tint is set by the emitter's color-over-lifetime curve.
+/// color:       RGBA per-vertex color. The CPU encodes lifetime fade in the alpha
+///              channel: alpha reaches 0 when the ribbon segment dies. The RGB
+///              tint is set by the emitter's color-over-lifetime curve.
+///
+/// strandIndex: Zero-based index of the ribbon strand (0 for single-strand trails).
+///              Used for per-strand color/width modulation in multi-strand ribbons.
 struct TrailVertexData {
-    float3 position; ///< World-space ribbon edge position.
-    float  u;        ///< Texture U: ribbon width [0=left, 1=right].
-    float  v;        ///< Texture V: arc-length along trail [0=head, 1=tail].
-    float4 color;    ///< RGBA per-vertex tint and lifetime alpha.
+    float3 position;    ///< World-space ribbon edge position.
+    float  u;           ///< Texture U: ribbon width [0=left, 1=right].
+    float  v;           ///< Texture V: arc-length along trail [0=head, 1=tail].
+    float4 color;       ///< RGBA per-vertex tint and lifetime alpha.
+    uint   strandIndex; ///< Ribbon strand index (0-based, 0 for single-strand).
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -139,10 +143,11 @@ struct TrailVertexData {
 ///             (positive = in front of camera). Stored as float4 to leverage
 ///             the free W interpolant.
 struct TrailVSOutput {
-    float4 positionCS : SV_Position; ///< Clip-space position for rasterization.
-    float2 uv         : TEXCOORD0;   ///< Scrolled (trailU, widthV) texture coords.
-    float4 color      : COLOR0;      ///< RGBA per-vertex tint and lifetime alpha.
-    float  linearDepth : TEXCOORD1;  ///< View-space linear depth (positive, metres).
+    float4 positionCS  : SV_Position; ///< Clip-space position for rasterization.
+    float2 uv          : TEXCOORD0;   ///< Scrolled (trailU, widthV) texture coords.
+    float4 color       : COLOR0;      ///< RGBA per-vertex tint and lifetime alpha.
+    float  linearDepth : TEXCOORD1;   ///< View-space linear depth (positive, metres).
+    uint   strandIndex : TEXCOORD2;   ///< Ribbon strand index (0-based). Flat interpolation.
 };
 
 #endif // TRAIL_COMMON_HLSLI

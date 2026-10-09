@@ -28,7 +28,7 @@ AAA-quality game engine embedded in VSCode, with open file formats designed for 
 | **Shadows** | 4-cascade CSM, PCSS blocker search, ESM, contact shadows, distance field shadows, static shadow cache |
 | **Lighting** | Directional + point (64) + spot (16) lights, IBL (SH L2 + env map importance sampling + prefiltered specular + VNDF), clustered shading |
 | **Atmosphere** | Bruneton sky, multi-scatter LUT, ozone, aerial perspective, height fog (2-layer + sky injection), volumetric clouds (UE5 parity), god rays |
-| **GI** | SSGI (5 compute passes: trace, spatial denoise, temporal accum, bilateral upsample, prev color reduce), SVGF denoiser (3 passes), DDGI (Majercik 2019), Brixelizer SDF voxel GI, light probe volumes (L2 SH grid) |
+| **GI** | SDF GI (mesh SDFs, global distance field, radiance cache, final gather, SDF reflections), DDGI (Majercik 2019) as the DXR option, SSGI (5 compute passes: trace, spatial denoise, temporal accum, bilateral upsample, prev color reduce), SVGF denoiser (3 passes), light probe volumes (L2 SH grid); AMD Brixelizer GI is in the tree but dormant (never constructed since 2026-04-10) |
 | **Post-Process** | TAA (variance clipping), SSR (stochastic multi-ray), GTAO (multi-bounce + bent normals), bloom (6-mip Karis smooth knee), FilmToneMap ACES, auto-exposure, DOF (near/far/sharp layers), motion blur |
 | **Anti-Aliasing** | TAA, SMAA (1x/T2x/S2x/4x), FXAA |
 | **Upscaling** | FSR 1.0 (spatial), FSR 2.x (temporal with motion vectors), DLSS |

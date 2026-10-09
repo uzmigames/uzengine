@@ -389,6 +389,8 @@ uint64_t MaterialGraph::ComputeContentHash() const {
     XXH64_update(state, &domainVal, sizeof(domainVal));
     auto shadingVal = static_cast<uint8_t>(shadingModel);
     XXH64_update(state, &shadingVal, sizeof(shadingVal));
+    // Blend mode and two-sidedness change the PSO (blend state, cull mode) and
+    // the shadow/GI occluder set, so they belong in the content hash.
     const auto blendVal = static_cast<uint8_t>(blendMode);
     XXH64_update(state, &blendVal, sizeof(blendVal));
     XXH64_update(state, &twoSided, sizeof(twoSided));
@@ -465,8 +467,8 @@ std::string MaterialGraph::ToJson() const {
     root["domain"]       = MaterialDomainToString(domain);
     root["shadingModel"] = MaterialShadingModelToString(shadingModel);
     constexpr const char* blendNames[] = {"Opaque", "Masked", "Translucent", "Additive"};
-    root["blendMode"] = blendNames[static_cast<uint8_t>(blendMode)];
-    root["twoSided"] = twoSided;
+    root["blendMode"]    = blendNames[static_cast<uint8_t>(blendMode)];
+    root["twoSided"]     = twoSided;
 
     // ── Standard PBR knobs (always serialized so authors can tweak) ───
     nlohmann::json jParams;
@@ -590,6 +592,9 @@ bool MaterialGraph::FromJson(const std::string& jsonStr, std::string* outError) 
     name = root.value("name", "");
     domain = MaterialDomainFromString(root.value("domain", "Surface").c_str());
     shadingModel = MaterialShadingModelFromString(root.value("shadingModel", "DefaultLit").c_str());
+
+    // Blend mode and two-sidedness were previously dropped on load, which made
+    // authored translucent glass render — and occlude — as opaque.
     const std::string blendName = root.value("blendMode", "Opaque");
     if (blendName == "Opaque") blendMode = MaterialGraphBlendMode::Opaque;
     else if (blendName == "Masked") blendMode = MaterialGraphBlendMode::Masked;

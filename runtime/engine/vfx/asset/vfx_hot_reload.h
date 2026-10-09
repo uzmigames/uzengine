@@ -17,6 +17,7 @@
 #include <functional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace uz {
@@ -120,10 +121,24 @@ public:
 
 private:
     /// Reloads a single VFX graph file and notifies callbacks.
+    ///
+    /// After the direct reload, also triggers reload of every descendant in
+    /// the inheritance map so parent edits propagate through the chain
+    /// (phase 8.3.0). Uses a visited set to avoid cycles.
     void ReloadGraph(const std::string& path);
 
+    /// Triggers ReloadGraph on every descendant of `parentPath` recursively.
+    /// `visited` guards against cycles or self-references.
+    void ReloadDescendants(const std::string& parentPath,
+                           std::unordered_set<std::string>& visited);
+
     /// Scans a directory recursively for .uzvfx files, recording timestamps.
+    /// Also parses each file's `"parent"` field to build the inheritance map.
     void ScanDirectory(const std::string& dir);
+
+    /// Parses the `"parent"` field out of a .uzvfx file and updates
+    /// `inheritanceMap_`. Safe to call multiple times for the same path.
+    void UpdateInheritanceLink(const std::string& normalizedPath);
 
     /// Normalizes a filesystem path (forward slashes, lowercase on Windows).
     [[nodiscard]] static std::string NormalizePath(const std::string& rawPath);
@@ -142,6 +157,12 @@ private:
 
     /// Known .uzvfx file paths being watched.
     std::vector<std::string> watchedFiles_;
+
+    /// Inheritance map: parent normalized path → list of normalized descendant
+    /// paths that reference it via the `"parent"` JSON field. Populated
+    /// during `ScanDirectory`; refreshed when a file is reloaded.
+    /// @ref docs/engine/25-vfx/20-emitter-inheritance.md
+    std::unordered_map<std::string, std::vector<std::string>> inheritanceMap_;
 };
 
 } // namespace uz

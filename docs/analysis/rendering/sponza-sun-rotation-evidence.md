@@ -1,5 +1,9 @@
 # Sponza solar rotation and sky opening evidence
 
+> **Origin**: `test/windows-sponza-parity @ 25cd0c5f` (`E:\SponzaTest`), ported verbatim on 2026-09-08 by `phase0_sponza-parity-06-qa-harness-validation`.
+> Paths such as `scripts/*_artifacts/`, `scripts/sponza-*.png|log|json|sha256.txt` refer to evidence that is **not in Git**; the executable identities quoted are SponzaTest builds, not this repository's.
+
+
 Inspected 2026-09-06. Native CPU tests use production math sources; no GPU was used for this audit.
 
 ## Confirmed rotation defect

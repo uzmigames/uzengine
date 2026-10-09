@@ -1,0 +1,37 @@
+{
+    "_comment": "Glass-tinted material for sample/content/vfx/tests/mesh_sort_shards.uzvfx. Used by the VFX inline-sort hardware-validation suite (phase16_vfx-sort-pipeline-hardware-validation). Cyan tint + low roughness gives strong specular reflection so individual mesh particles read clearly under camera motion — that is what makes the sort A/B obvious. Translucency itself is supplied by the VFX render path; this material only describes the surface response.",
+    "version": 1,
+    "name": "test_glass",
+    "domain": "Surface",
+    "shadingModel": "DefaultLit",
+    "twoSided": true,
+    "expressions": [
+        {
+            "id": 1,
+            "type": "PBROutput",
+            "inputs": [
+                { "dstPin": "BaseColor", "srcExpr": 2, "srcPin": "RGB" },
+                { "dstPin": "Metallic",  "srcExpr": 3, "srcPin": "X" },
+                { "dstPin": "Roughness", "srcExpr": 4, "srcPin": "X" }
+            ]
+        },
+        {
+            "id": 2,
+            "type": "Vector3Constant",
+            "name": "GlassTint",
+            "scalarParams": { "x": 0.45, "y": 0.78, "z": 0.92 }
+        },
+        {
+            "id": 3,
+            "type": "ScalarConstant",
+            "name": "Metallic",
+            "scalarParams": { "value": 0.0 }
+        },
+        {
+            "id": 4,
+            "type": "ScalarConstant",
+            "name": "Roughness",
+            "scalarParams": { "value": 0.08 }
+        }
+    ]
+}

@@ -87,7 +87,7 @@ bool UploadAndBindSortCB(IRHICommandList* cmd, CBRingAllocator& cbRing,
 {
     auto alloc = cbRing.Allocate(sizeof(VFXSortConstants));
     if (!alloc.cpuPtr) {
-        UZ_LOG(VFX, Error, "GPUParticleSort: CB ring allocation failed (80 bytes)");
+        UZ_LOG(VFX, Error, "GPUParticleSort: CB ring allocation failed (96 bytes)");
         return false;
     }
 
@@ -164,19 +164,30 @@ void GPUParticleSort::DispatchSort(IRHIDevice* device,
                                     IRHICommandList* cmd,
                                     RHIPipelineHandle pipeline,
                                     CBRingAllocator& cbRing,
-                                    uint32_t aliveCount,
-                                    const float* cameraPos,
-                                    const float* cameraForward,
-                                    uint32_t positionsSrvIndex)
+                                    const DispatchParams& params)
 {
     UZ_CHECKF(device != nullptr, "GPUParticleSort::DispatchSort: device is null");
     UZ_CHECKF(cmd != nullptr, "GPUParticleSort::DispatchSort: cmd is null");
     UZ_CHECKF(pipeline.IsValid(), "GPUParticleSort::DispatchSort: pipeline is invalid");
     UZ_CHECKF(IsValid(), "GPUParticleSort::DispatchSort: sort buffers not allocated");
-    UZ_CHECKF(cameraPos != nullptr, "GPUParticleSort::DispatchSort: cameraPos is null");
-    UZ_CHECKF(cameraForward != nullptr, "GPUParticleSort::DispatchSort: cameraForward is null");
+    UZ_CHECKF(params.agesSrvIndex      != 0xFFFFFFFFu,
+              "GPUParticleSort::DispatchSort: agesSrvIndex is required for alive detection");
+    UZ_CHECKF(params.lifespansSrvIndex != 0xFFFFFFFFu,
+              "GPUParticleSort::DispatchSort: lifespansSrvIndex is required for alive detection");
 
-    if (aliveCount == 0) return;
+    if (params.sortMode == GpuSortMode::ViewDepth) {
+        UZ_CHECKF(params.cameraPos != nullptr,
+                  "GPUParticleSort::DispatchSort: cameraPos required for ViewDepth");
+        UZ_CHECKF(params.cameraForward != nullptr,
+                  "GPUParticleSort::DispatchSort: cameraForward required for ViewDepth");
+        UZ_CHECKF(params.positionsSrvIndex != 0xFFFFFFFFu,
+                  "GPUParticleSort::DispatchSort: positionsSrvIndex required for ViewDepth");
+    } else if (params.sortMode == GpuSortMode::CustomAttribute) {
+        UZ_CHECKF(params.customSortKeySrvIndex != 0xFFFFFFFFu,
+                  "GPUParticleSort::DispatchSort: customSortKeySrvIndex required for CustomAttribute");
+    }
+
+    if (params.keyGenCount == 0) return;
 
     UZ_PROFILE_SCOPE("VFX::ParticleSort");
 
@@ -190,32 +201,41 @@ void GPUParticleSort::DispatchSort(IRHIDevice* device,
 
     cmd->SetPipeline(pipeline);
 
+    // ── Helper: fill the constant fields once and let phase callers patch
+    //    the per-phase-only fields (sortPhase, bitonicBlockSize, bitonicSubBlockSize).
+    const auto fillCommon = [&](VFXSortConstants& cb) {
+        cb.keyGenCount           = params.keyGenCount;
+        cb.paddedCount           = paddedCount;
+        cb.sortMode              = static_cast<uint32_t>(params.sortMode);
+        cb.cameraPosX            = params.cameraPos      ? params.cameraPos[0]      : 0.0f;
+        cb.cameraPosY            = params.cameraPos      ? params.cameraPos[1]      : 0.0f;
+        cb.cameraPosZ            = params.cameraPos      ? params.cameraPos[2]      : 0.0f;
+        cb._pad1                 = 0.0f;
+        cb.cameraForwardX        = params.cameraForward  ? params.cameraForward[0]  : 0.0f;
+        cb.cameraForwardY        = params.cameraForward  ? params.cameraForward[1]  : 0.0f;
+        cb.cameraForwardZ        = params.cameraForward  ? params.cameraForward[2]  : 1.0f;
+        cb._pad2                 = 0.0f;
+        cb.positionsSrvIndex     = params.positionsSrvIndex;
+        cb.sortKeysUavIndex      = keysUavIdx;
+        cb.sortIndicesUavIndex   = indicesUavIdx;
+        cb._pad3                 = 0;
+        cb._pad4                 = 0;
+        cb._pad5                 = 0;
+        cb.agesSrvIndex          = params.agesSrvIndex;
+        cb.lifespansSrvIndex     = params.lifespansSrvIndex;
+        cb.customSortKeySrvIndex = params.customSortKeySrvIndex;
+        cb._pad6                 = 0;
+    };
+
     // ── Phase 0: local sort + key generation ────────────────────────────
     {
         VFXSortConstants cb{};
-        cb.particleCount       = aliveCount;
+        fillCommon(cb);
         cb.sortPhase           = 0;
-        cb.paddedCount         = paddedCount;
-        cb._pad0               = 0;
-        cb.cameraPosX          = cameraPos[0];
-        cb.cameraPosY          = cameraPos[1];
-        cb.cameraPosZ          = cameraPos[2];
-        cb._pad1               = 0.0f;
-        cb.cameraForwardX      = cameraForward[0];
-        cb.cameraForwardY      = cameraForward[1];
-        cb.cameraForwardZ      = cameraForward[2];
-        cb._pad2               = 0.0f;
-        cb.positionsSrvIndex   = positionsSrvIndex;
-        cb.sortKeysUavIndex    = keysUavIdx;
-        cb.sortIndicesUavIndex = indicesUavIdx;
-        cb._pad3               = 0;
         cb.bitonicBlockSize    = 0;
         cb.bitonicSubBlockSize = 0;
-        cb._pad4               = 0;
-        cb._pad5               = 0;
 
         if (!UploadAndBindSortCB(cmd, cbRing, cb)) return;
-
         cmd->Dispatch(groupCount, 1, 1);
     }
 
@@ -228,10 +248,6 @@ void GPUParticleSort::DispatchSort(IRHIDevice* device,
     // blockSize/2 down to 1. Each (blockSize, subBlockSize) pair is one
     // dispatch.
     //
-    // The shader's comment documents this dispatch loop:
-    //   for (blockSize = 512; blockSize <= paddedCount; blockSize <<= 1)
-    //     for (subBlockSize = blockSize >> 1; subBlockSize > 0; subBlockSize >>= 1)
-    //
     // @ref Batcher 1968 "Sorting Networks and Their Applications"
     for (uint32_t blockSize = kSortGroupSize * 2;
          blockSize <= paddedCount;
@@ -242,26 +258,10 @@ void GPUParticleSort::DispatchSort(IRHIDevice* device,
              subBlockSize >>= 1)
         {
             VFXSortConstants cb{};
-            cb.particleCount       = aliveCount;
+            fillCommon(cb);
             cb.sortPhase           = 1;
-            cb.paddedCount         = paddedCount;
-            cb._pad0               = 0;
-            cb.cameraPosX          = cameraPos[0];
-            cb.cameraPosY          = cameraPos[1];
-            cb.cameraPosZ          = cameraPos[2];
-            cb._pad1               = 0.0f;
-            cb.cameraForwardX      = cameraForward[0];
-            cb.cameraForwardY      = cameraForward[1];
-            cb.cameraForwardZ      = cameraForward[2];
-            cb._pad2               = 0.0f;
-            cb.positionsSrvIndex   = positionsSrvIndex;
-            cb.sortKeysUavIndex    = keysUavIdx;
-            cb.sortIndicesUavIndex = indicesUavIdx;
-            cb._pad3               = 0;
             cb.bitonicBlockSize    = blockSize;
             cb.bitonicSubBlockSize = subBlockSize;
-            cb._pad4               = 0;
-            cb._pad5               = 0;
 
             if (!UploadAndBindSortCB(cmd, cbRing, cb)) return;
 

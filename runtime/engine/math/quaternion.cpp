@@ -29,7 +29,11 @@ Quat Quat::FromEuler(float pitch, float yaw, float roll) {
     XMVECTOR qRoll  = XMQuaternionRotationAxis(kX, roll);
     XMVECTOR qPitch = XMQuaternionRotationAxis(kY, pitch);
     XMVECTOR qYaw   = XMQuaternionRotationAxis(kZ, yaw);
-    // DirectXMath returns Q2*Q1, applying Q1 before Q2: roll, then pitch, then yaw.
+    // XMQuaternionMultiply(Q1, Q2) returns Q2*Q1 — it applies Q1 first, then Q2
+    // (DirectXMathMisc.inl:88 and the Microsoft reference). The stated order
+    // Roll(X) → Pitch(Y) → Yaw(Z) is therefore Multiply(Multiply(qRoll, qPitch), qYaw).
+    // The previous form applied yaw before pitch: the authored Sponza sun [-56,79,0]
+    // resolved to (0.1067, 0.9816, 0.1582), a 9.1° elevation instead of 56°.
     XMVECTOR q = XMQuaternionMultiply(XMQuaternionMultiply(qRoll, qPitch), qYaw);
     return Quat(q);
 }

@@ -6,7 +6,9 @@ $mesh = Join-Path $repo 'sample/content/meshes/sponza/decals_1st_floor1_dirt_dec
 $artifacts = Join-Path $PSScriptRoot 'sponza_decal_normal_repair_artifacts'
 New-Item -ItemType Directory -Force -Path $artifacts | Out-Null
 $backup = Join-Path $artifacts 'decals_1st_floor1_dirt_decal_0.original.uzmesh'
-Add-Type -Path (Join-Path $PSScriptRoot 'repair_sponza_decal_normals.cs')
+# System.Numerics must be referenced explicitly: Windows PowerShell 5.1's Add-Type
+# does not include it by default and the helper uses System.Numerics.Vector3.
+Add-Type -Path (Join-Path $PSScriptRoot 'repair_sponza_decal_normals.cs') -ReferencedAssemblies System.Numerics
 if ($Mode -eq 'Repair') {
     if (!(Test-Path -LiteralPath $backup)) {
         Copy-Item -LiteralPath $mesh -Destination $backup

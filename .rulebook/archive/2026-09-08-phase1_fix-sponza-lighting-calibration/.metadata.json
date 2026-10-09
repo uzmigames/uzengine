@@ -1,0 +1,8 @@
+{
+  "status": "archived",
+  "createdAt": "2026-04-08T08:57:36.091Z",
+  "updatedAt": "2026-04-08T08:57:36.091Z",
+  "archivedAt": "2026-09-08T14:42:43.672859+00:00",
+  "supersededBy": "phase0_sponza-parity-06-qa-harness-validation",
+  "reason": "Code items 1.1-1.4 landed in a7b0a255/6543d8cf; verification tail replaced by the sponza-parity task series."
+}

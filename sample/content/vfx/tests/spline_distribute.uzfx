@@ -1,0 +1,46 @@
+{
+  "_comment": "Demo asset for phase16_vfx-spline-data-interface item 1.11. SpawnAlongSplineModule distributes 200 sparks along a 4-control-point spline. Shipped in editor (.uzfx) schema; the production .uzvfx loader does not yet handle the `stages` array, so this asset exercises the editor deserialize path + ApplyEmitterStackToModuleStack helper.",
+  "maxParticles": 200,
+  "emissionRate": 60.0,
+  "lifetime": 3.0,
+  "blendMode": 1,
+  "initialSize": 8.0,
+  "initialColor": [1.0, 0.7, 0.2, 1.0],
+  "stages": [
+    {
+      "stage": "ParticleSpawn",
+      "modules": [
+        {
+          "type": "spawn",
+          "instanceId": "core_spawn",
+          "enabled": true
+        },
+        {
+          "type": "spawn_along_spline",
+          "instanceId": "spline_distribute",
+          "enabled": true,
+          "config": {
+            "stratified": true,
+            "jitter_radius": 6.0,
+            "tangent_offset": 0.0
+          }
+        }
+      ]
+    },
+    {
+      "stage": "Render",
+      "modules": [
+        {
+          "type": "sprite_render",
+          "instanceId": "sparks",
+          "enabled": true,
+          "config": {
+            "width": 12.0,
+            "height": 12.0,
+            "blend_mode": "additive"
+          }
+        }
+      ]
+    }
+  ]
+}

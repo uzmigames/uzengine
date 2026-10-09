@@ -17,6 +17,8 @@
 #include "rhi_types.h"
 
 #include <cstdint>
+#include "global_distance_field.h"
+#include <vector>
 
 namespace uz {
 
@@ -76,6 +78,8 @@ struct SSGIRenderParams {
     bool worldGather = false;
     bool resetHistory = false;
     uint64_t sceneRevision = 0;
+    /// World boxes where the distance field changed this frame (block B.2); read at execution.
+    const std::vector<GlobalDistanceField::ChangedRegion>* changedRegions = nullptr;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -257,6 +261,9 @@ private:
     uint64_t m_sceneRevision = 0;
     uint32_t m_lastFrame = UINT32_MAX;
     float m_previousViewProj[16] = {};
+    /// Last frame's change boxes: the gather reads the radiance cache one frame late, so the
+    /// history is rejected inside this frame's and last frame's boxes (block B.2).
+    std::vector<GlobalDistanceField::ChangedRegion> m_previousRegions;
 
     static constexpr uint32_t kThreadGroupSize = 8;
 };

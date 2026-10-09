@@ -33,7 +33,11 @@
         },
         "light": {
           "type": "directional",
-          "color": [1.0, 0.98, 0.95],
+          "color": [
+            1.0,
+            0.98,
+            0.95
+          ],
           "intensity": 10,
           "cast_shadows": true,
           "atmosphere_sun_light": true,
@@ -45,16 +49,32 @@
       "name": "Camera_A",
       "components": {
         "transform": {
-          "position": [86.0, 881.0, 159.0],
-          "rotation": [0, 0, 0],
-          "scale": [1, 1, 1]
+          "position": [
+            86.0,
+            881.0,
+            159.0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
         },
         "camera": {
           "fov": 58.51,
           "near": 5,
           "far": 10000,
           "active": true,
-          "look_at": [67.8, 784.6, 178.4]
+          "look_at": [
+            67.8,
+            784.6,
+            178.4
+          ]
         }
       }
     },
@@ -62,16 +82,32 @@
       "name": "Camera_C",
       "components": {
         "transform": {
-          "position": [-211.0, -270.0, 135.0],
-          "rotation": [0, 0, 0],
-          "scale": [1, 1, 1]
+          "position": [
+            -211.0,
+            -270.0,
+            135.0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
         },
         "camera": {
           "fov": 36.25,
           "near": 5,
           "far": 10000,
           "active": false,
-          "look_at": [-177.8, -176.1, 143.6]
+          "look_at": [
+            -177.8,
+            -176.1,
+            143.6
+          ]
         }
       }
     },
@@ -79,16 +115,32 @@
       "name": "Camera_E",
       "components": {
         "transform": {
-          "position": [-236.0, 224.0, 74.0],
-          "rotation": [0, 0, 0],
-          "scale": [1, 1, 1]
+          "position": [
+            -236.0,
+            224.0,
+            74.0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
         },
         "camera": {
           "fov": 37.22,
           "near": 5,
           "far": 10000,
           "active": false,
-          "look_at": [-192.8, 137.2, 98.4]
+          "look_at": [
+            -192.8,
+            137.2,
+            98.4
+          ]
         }
       }
     },
@@ -96,10 +148,18 @@
       "name": "Sky",
       "components": {
         "transform": {
-          "position": [0, 0, 0]
+          "position": [
+            0,
+            0,
+            0
+          ]
         },
         "sky_atmosphere": {
-          "sun_illuminance": [10.0, 10.0, 10.0]
+          "sun_illuminance": [
+            10.0,
+            10.0,
+            10.0
+          ]
         }
       }
     },
@@ -107,15 +167,27 @@
       "name": "SkyLight",
       "components": {
         "transform": {
-          "position": [0, 0, 0]
+          "position": [
+            0,
+            0,
+            0
+          ]
         },
         "sky_light": {
-          "intensity": 1.0,
-          "light_color": [1.0, 1.0, 1.0],
-          "indirect_lighting_intensity": 1.0,
+          "intensity": 1.7320508,
+          "light_color": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "indirect_lighting_intensity": 1.7320508,
           "min_occlusion": 0.01,
           "lower_hemisphere_is_black": false,
-          "lower_hemisphere_color": [0.12, 0.11, 0.1]
+          "lower_hemisphere_color": [
+            0.12,
+            0.11,
+            0.1
+          ]
         }
       }
     },
@@ -126,6 +198,14 @@
       },
       "prefab": {
         "asset": "meshes/sponza/sponza.uzprefab"
+      }
+    },
+    {
+      "name": "Controller",
+      "components": {
+        "script": {
+          "path": "scripts/fly_camera.lua"
+        }
       }
     }
   ]

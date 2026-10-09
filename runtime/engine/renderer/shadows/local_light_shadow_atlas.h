@@ -123,11 +123,21 @@ public:
 
     /// Returns the number of tiles currently allocated this frame.
     [[nodiscard]] uint32_t GetAllocatedTileCount() const { return m_nextTileIndex; }
+    /// Runtime layout (r.Shadow.LocalAtlasSize / r.Shadow.LocalTileSize, read at Init; the
+    /// kLocalShadow* constants above are their defaults).
+    [[nodiscard]] uint32_t GetAtlasSize() const { return m_atlasSize; }
+    [[nodiscard]] uint32_t GetTileSize()  const { return m_tileSize; }
+    [[nodiscard]] uint32_t GetColumns()   const { return m_columns; }
+    [[nodiscard]] uint32_t GetMaxTiles()  const { return m_maxTiles; }
 
 private:
     RHITextureHandle m_texture;
     uint32_t m_srvIndex = UINT32_MAX;
-    uint32_t m_nextTileIndex = 0; ///< Index of the next tile to allocate (0 to kMaxLocalShadowTiles).
+    uint32_t m_nextTileIndex = 0; ///< Index of the next tile to allocate (0 to m_maxTiles).
+    uint32_t m_atlasSize = kLocalShadowAtlasSize;
+    uint32_t m_tileSize  = kLocalShadowTileSize;
+    uint32_t m_columns   = kLocalShadowTileCols;
+    uint32_t m_maxTiles  = kMaxLocalShadowTiles;
 };
 
 } // namespace uz

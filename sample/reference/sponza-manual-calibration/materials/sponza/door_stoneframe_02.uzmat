@@ -1,0 +1,72 @@
+{
+    "version": 1,
+    "name": "door_stoneframe_02",
+    "domain": "Surface",
+    "shadingModel": "DefaultLit",
+    "twoSided": false,
+    "expressions": [
+        {
+            "id": 1,
+            "type": "PBROutput",
+            "inputs": [
+                {
+                    "dstPin": "BaseColor",
+                    "srcExpr": 2,
+                    "srcPin": "RGBA"
+                },
+                {
+                    "dstPin": "Metallic",
+                    "srcExpr": 3,
+                    "srcPin": "B"
+                },
+                {
+                    "dstPin": "Roughness",
+                    "srcExpr": 3,
+                    "srcPin": "G"
+                },
+                {
+                    "dstPin": "Normal",
+                    "srcExpr": 4,
+                    "srcPin": "RGBA"
+                }
+            ]
+        },
+        {
+            "id": 2,
+            "type": "TextureSample",
+            "name": "Albedo",
+            "stringParams": {
+                "texturePath": "textures/sponza/door_stoneframe_02_baseColor.png"
+            }
+        },
+        {
+            "id": 3,
+            "type": "TextureSample",
+            "name": "MetalRoughness",
+            "stringParams": {
+                "texturePath": "textures/sponza/door_stoneframe_02_metallicRoughness.png"
+            }
+        },
+        {
+            "id": 4,
+            "type": "TextureSample",
+            "name": "Normal",
+            "stringParams": {
+                "texturePath": "textures/sponza/door_stoneframe_02_normal.png"
+            }
+        }
+    ],
+    "params": {
+        "roughnessMultiplier": 0.55,
+        "metallicMultiplier": 0.0,
+        "baseColorTint": [
+            1.05,
+            1.03,
+            1.0
+        ],
+        "normalStrength": 1.0,
+        "aoMultiplier": 1.0,
+        "emissiveMultiplier": 1.0,
+        "specularMultiplier": 1.0
+    }
+}

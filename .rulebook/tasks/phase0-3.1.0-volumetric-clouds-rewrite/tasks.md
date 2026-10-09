@@ -10,7 +10,7 @@
 - [x] 0.9 Dedicated `m_cloudCmdList` member added to SceneRenderer.
 - [x] 0.10 `.claude/rules/shader-entry-point.md` — engine shaders must use `main`, not PSMain/VSMain.
 - [x] 0.11 Lens flare disabled by default (`m_lensFlareEnabled=false`), Lua toggle added.
-- [ ] 0.12 **BLOCKED**: Cloud compute dispatch causes GPU TDR. Noise bake with trivial shaders works; real Worley noise (29KB shader, 3x3x3 nested loops) crashes GPU. Weather/raymarch/temporal also crash. Root cause: likely shader instruction count or descriptor table validation under bindless root signature. Needs: rewrite noise as precomputed texture load OR optimize Worley to 2x2x2 search OR move to dedicated compute queue with async fence.
+- [x] 0.12 (verified 2026-10-08 by `scripts/test_cloud_noise_assets.py` N3 on cloud_test: 180 frames, no device removal, CloudCompute 1.30 ms, with both noise volumes loaded) **BLOCKED** (historical): Cloud compute dispatch causes GPU TDR. Noise bake with trivial shaders works; real Worley noise (29KB shader, 3x3x3 nested loops) crashes GPU. Weather/raymarch/temporal also crash. Root cause: likely shader instruction count or descriptor table validation under bindless root signature. Needs: rewrite noise as precomputed texture load OR optimize Worley to 2x2x2 search OR move to dedicated compute queue with async fence.
 
 ## Phase 0c: Cloud Render Graph Migration (moved from phase2a-2.50.0)
 - [ ] 0c.1 Register cloud compute as a proper `rgBuilder.AddPass("Cloud_Raymarch", ...)` with declared resource dependencies (depth SRV read, cloud output UAV write).
@@ -22,7 +22,7 @@
 - [ ] 0.B1 Noise shaders: `VoronoiCornerSample` had `normalize(zero)` → NaN. Fixed with rsqrt guard. But real noise still TDRs — shader too heavy for single dispatch (128^3 × 27-iteration Worley).
 - [ ] 0.B2 Noise shaders: `[unroll]` on 3x3x3 Worley loops → 29KB shader binary. Changed to `[loop]` but still TDRs.
 - [ ] 0.B3 Cloud compute dispatch on main cmdList corrupts render graph state (HDR goes white). Pre-graph dispatch tested, post-graph dispatch tested, dedicated cmdList tested — all crash or corrupt.
-- [ ] 0.B4 Need to investigate: precompute noise textures at build time (uzcook) or load from disk instead of GPU-bake at runtime.
+- [x] 0.B4 (done: loaded from disk since 8332def6 / 00331657, and reachable from uzengine.exe since phase0_clouds-noise-assets, 2026-10-08) Need to investigate: precompute noise textures at build time (uzcook) or load from disk instead of GPU-bake at runtime.
 
 ## Phase 1: Adaptive Stepping + Blue Noise Jitter
 - [ ] 1.1 Generate or integrate STBN 3D blue noise texture (128x128x64 R8_UNORM). Compute shader or embedded asset.

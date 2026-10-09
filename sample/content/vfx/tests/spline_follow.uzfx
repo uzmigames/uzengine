@@ -1,0 +1,52 @@
+{
+  "_comment": "Demo asset for phase16_vfx-spline-data-interface item 1.11. FollowSplineModule traces the spline once over the 4s lifetime: each particle starts at u=0 and ends at u=1.0 (speed=1.0). Perfect for ribbon trails / homing missiles.",
+  "maxParticles": 100,
+  "emissionRate": 25.0,
+  "lifetime": 4.0,
+  "blendMode": 2,
+  "initialSize": 14.0,
+  "initialColor": [0.95, 0.3, 0.7, 1.0],
+  "emissiveIntensity": 1.5,
+  "stages": [
+    {
+      "stage": "ParticleSpawn",
+      "modules": [
+        {
+          "type": "spawn",
+          "instanceId": "core_spawn",
+          "enabled": true
+        }
+      ]
+    },
+    {
+      "stage": "ParticleUpdate",
+      "modules": [
+        {
+          "type": "follow_spline",
+          "instanceId": "spline_follow",
+          "enabled": true,
+          "config": {
+            "speed":   1.0,
+            "loop":    false,
+            "start_u": 0.0
+          }
+        }
+      ]
+    },
+    {
+      "stage": "Render",
+      "modules": [
+        {
+          "type": "sprite_render",
+          "instanceId": "trail_head",
+          "enabled": true,
+          "config": {
+            "width":  16.0,
+            "height": 16.0,
+            "blend_mode": "premul_alpha"
+          }
+        }
+      ]
+    }
+  ]
+}

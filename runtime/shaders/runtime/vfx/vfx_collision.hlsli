@@ -102,6 +102,84 @@ float3 EstimateSurfaceNormal(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// EstimateSurfaceNormalSobel — 3x3 Sobel operator depth-based normal
+// ─────────────────────────────────────────────────────────────────────────────
+
+#ifdef VFX_COLLISION_SOBEL
+
+/// Estimates the world-space surface normal using a 3x3 Sobel operator on the
+/// depth buffer, producing smoother normals than the 4-tap cross-difference.
+///
+/// The Sobel operator applies two separable 3x3 kernels (horizontal and
+/// vertical) to the depth buffer, weighting the center row/column 2x relative
+/// to the edges. This reduces noise compared to simple central differences,
+/// especially on curved or noisy surfaces.
+///
+/// @ref Sousa 2013 "CryENGINE 3 Graphics Gems" — Sobel 3x3 depth normal
+///
+/// @param depthTexture  Scene depth buffer (R32_FLOAT or D32_FLOAT read as float).
+/// @param depthSampler  Sampler state for depth reads (point-clamp recommended).
+/// @param screenUV      [0,1]x[0,1] screen coordinate of the collision point.
+/// @param texelSize     1.0 / renderTargetDimensions (one texel in UV space).
+/// @param invViewProj   Inverse view-projection matrix for this frame.
+/// @return              Normalized world-space surface normal.
+///                      Returns float3(0,1,0) if normalization would produce NaN.
+float3 EstimateSurfaceNormalSobel(
+    Texture2D<float> depthTexture,
+    SamplerState     depthSampler,
+    float2           screenUV,
+    float2           texelSize,
+    float4x4         invViewProj)
+{
+    // Sample the 3x3 neighbourhood of depth values.
+    // Layout (UV offsets from centre):
+    //   d00 (-1,-1)  d10 (0,-1)  d20 (+1,-1)
+    //   d01 (-1, 0)  d11 (0, 0)  d21 (+1, 0)
+    //   d02 (-1,+1)  d12 (0,+1)  d22 (+1,+1)
+    float d00 = depthTexture.SampleLevel(depthSampler, screenUV + float2(-texelSize.x, -texelSize.y), 0);
+    float d10 = depthTexture.SampleLevel(depthSampler, screenUV + float2(          0.0, -texelSize.y), 0);
+    float d20 = depthTexture.SampleLevel(depthSampler, screenUV + float2( texelSize.x, -texelSize.y), 0);
+    float d01 = depthTexture.SampleLevel(depthSampler, screenUV + float2(-texelSize.x,           0.0), 0);
+    // d11 = centre, not needed for Sobel gradient
+    float d21 = depthTexture.SampleLevel(depthSampler, screenUV + float2( texelSize.x,           0.0), 0);
+    float d02 = depthTexture.SampleLevel(depthSampler, screenUV + float2(-texelSize.x,  texelSize.y), 0);
+    float d12 = depthTexture.SampleLevel(depthSampler, screenUV + float2(          0.0,  texelSize.y), 0);
+    float d22 = depthTexture.SampleLevel(depthSampler, screenUV + float2( texelSize.x,  texelSize.y), 0);
+
+    // Reconstruct world-space positions from each sample.
+    float3 p00 = ReconstructWorldPos(screenUV + float2(-texelSize.x, -texelSize.y), d00, invViewProj);
+    float3 p10 = ReconstructWorldPos(screenUV + float2(          0.0, -texelSize.y), d10, invViewProj);
+    float3 p20 = ReconstructWorldPos(screenUV + float2( texelSize.x, -texelSize.y), d20, invViewProj);
+    float3 p01 = ReconstructWorldPos(screenUV + float2(-texelSize.x,           0.0), d01, invViewProj);
+    float3 p21 = ReconstructWorldPos(screenUV + float2( texelSize.x,           0.0), d21, invViewProj);
+    float3 p02 = ReconstructWorldPos(screenUV + float2(-texelSize.x,  texelSize.y), d02, invViewProj);
+    float3 p12 = ReconstructWorldPos(screenUV + float2(          0.0,  texelSize.y), d12, invViewProj);
+    float3 p22 = ReconstructWorldPos(screenUV + float2( texelSize.x,  texelSize.y), d22, invViewProj);
+
+    // Sobel horizontal gradient (Gx): weights [-1, 0, +1] with centre row 2x.
+    //   Gx = (p20 - p00) + 2*(p21 - p01) + (p22 - p02)
+    float3 gx = (p20 - p00) + 2.0 * (p21 - p01) + (p22 - p02);
+
+    // Sobel vertical gradient (Gy): weights [-1, 0, +1] with centre column 2x.
+    //   Gy = (p02 - p00) + 2*(p12 - p10) + (p22 - p20)
+    // Note: in UV space +y = down, so we negate to get world +Y = up tangent.
+    float3 gy = -((p02 - p00) + 2.0 * (p12 - p10) + (p22 - p20));
+
+    // Cross product of the Sobel gradients gives the surface normal.
+    float3 normal = cross(gx, gy);
+    float len = length(normal);
+
+    // Guard against degenerate normals from flat/invalid depth regions.
+    if (len < 1e-8) {
+        return float3(0.0, 1.0, 0.0);
+    }
+
+    return normal / len;
+}
+
+#endif // VFX_COLLISION_SOBEL
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ScreenSpaceCollision
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -191,6 +269,15 @@ bool ScreenSpaceCollision(
         // caller having bound cbInvViewProj as a separate constant. The
         // EstimateSurfaceNormal signature takes it as a parameter; we forward
         // the cbInvViewProj constant declared in the parent shader.
+#ifdef VFX_COLLISION_SOBEL
+        surfaceNormal = EstimateSurfaceNormalSobel(
+            depthTexture,
+            depthSampler,
+            screenUV,
+            texelSize,
+            cbInvViewProj   // declared in the enclosing compute shader cbuffer
+        );
+#else
         surfaceNormal = EstimateSurfaceNormal(
             depthTexture,
             depthSampler,
@@ -198,6 +285,7 @@ bool ScreenSpaceCollision(
             texelSize,
             cbInvViewProj   // declared in the enclosing compute shader cbuffer
         );
+#endif
 
         return true;
     }
@@ -211,21 +299,31 @@ bool ScreenSpaceCollision(
 
 /// Reflects a velocity vector off a surface normal with energy loss.
 ///
-/// Standard specular reflection: `v' = v - 2*(v·n)*n`, scaled by bounceFactor.
-/// When `bounceFactor` is 1.0 the collision is perfectly elastic; 0.0 results
+/// Standard specular reflection: `v' = v - 2*(v·n)*n`, scaled by restitution.
+/// When `restitution` is 1.0 the collision is perfectly elastic; 0.0 results
 /// in a zero velocity (completely inelastic).
+///
+/// @ref Müller et al. 2006 "Position Based Dynamics" — restitution coefficients
 ///
 /// @param velocity     Pre-collision velocity (world space, any magnitude).
 /// @param normal       Unit surface normal pointing away from the surface.
 ///                     Behaviour is undefined if `normal` is not unit-length.
-/// @param bounceFactor Energy retention scalar in [0, 1].
+/// @param restitution  Coefficient of restitution (energy retention) in [0, 1].
 ///
-/// @return  Post-collision velocity. Magnitude is `|velocity| * bounceFactor`.
-float3 ReflectVelocity(float3 velocity, float3 normal, float bounceFactor)
+/// @return  Post-collision velocity. Magnitude is `|velocity| * restitution`.
+float3 ReflectVelocity(float3 velocity, float3 normal, float restitution)
 {
     float3 reflected = velocity - 2.0 * dot(velocity, normal) * normal;
-    return reflected * bounceFactor;
+    return reflected * restitution;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CollisionResponse enum values (mirrored from C++ CollisionResponse)
+// ─────────────────────────────────────────────────────────────────────────────
+// CollisionResponse::Kill   = 0  — particle dies on contact
+// CollisionResponse::Bounce = 1  — velocity reflected with restitution
+// CollisionResponse::Slide  = 2  — velocity projected onto surface plane
+// CollisionResponse::Stick  = 3  — velocity zeroed, position snapped to surface
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ProjectOntoPlane

@@ -567,10 +567,28 @@ void AddParticleSimulationPass(rg::RgBuilder& builder,
 
                 DispatchIndirectArgs(cmd, desc, emitter);
 
-                // Transition aliveCount back to UAV so the render graph's
-                // tracked exit state remains correct (the graph expects all
-                // sim-pass buffers to end in UAV).
-                {
+                // Copy aliveCount to the CPU readback ring so the editor
+                // / stats HUD can show the real live particle count.
+                // Transitions: SR → CopySrc → UAV. The indirect-args CS
+                // read aliveCount as SRV, so we move SR → CopySrc here,
+                // kick the copy, then restore UAV for the next frame.
+                if (emitter.buffer->aliveCount.IsValid()) {
+                    RHIBarrierDesc toCopy{};
+                    toCopy.buffer      = emitter.buffer->aliveCount;
+                    toCopy.stateBefore = RHIResourceState::ShaderResource;
+                    toCopy.stateAfter  = RHIResourceState::CopySrc;
+                    cmd->ResourceBarrier(&toCopy, 1);
+
+                    emitter.buffer->KickAliveReadback(cmd);
+
+                    RHIBarrierDesc toUav{};
+                    toUav.buffer      = emitter.buffer->aliveCount;
+                    toUav.stateBefore = RHIResourceState::CopySrc;
+                    toUav.stateAfter  = RHIResourceState::UnorderedAccess;
+                    cmd->ResourceBarrier(&toUav, 1);
+                } else {
+                    // No aliveCount buffer — still need to restore UAV
+                    // for the graph's tracked exit state.
                     RHIBarrierDesc barrier{};
                     barrier.buffer      = emitter.buffer->aliveCount;
                     barrier.stateBefore = RHIResourceState::ShaderResource;

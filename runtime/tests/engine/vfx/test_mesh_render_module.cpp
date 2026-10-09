@@ -4,14 +4,16 @@
 /// missing/invalid fields, GetShaderCode returns non-empty HLSL, GetName returns
 /// "mesh_render", MeshRotationMode enum string conversions (None/VelocityAligned/
 /// Random + unknown), different HLSL snippets per rotation mode, default
-/// constructor usable for ModuleRegistry, GetParameters returns 5 entries, and
-/// Execute is a no-op.
+/// constructor usable for ModuleRegistry, GetParameters returns 5 entries,
+/// Execute is a no-op, CreateGPUBuffers/DestroyGPUBuffers lifecycle, Load stores
+/// path, and maxInstances JSON parsing.
 ///
 /// No GPU hardware required — all tests are CPU-only.
 
 #include <gtest/gtest.h>
 
 #include "modules/mesh_render_module.h"
+#include "mock_rhi_device.h"
 
 #include <json.hpp>
 #include <string_view>
@@ -153,14 +155,15 @@ TEST(UZ_MeshRenderModule, GetShaderCode_AllModes_ContainMeshInstanceTransforms) 
 }
 
 // =============================================================================
-// GetParameters — 5 entries
+// GetParameters — 6 entries (scale_x/y/z, cast_shadow, rotation_mode, sort_mode)
 // =============================================================================
 
-TEST(UZ_MeshRenderModule, GetParameters_ReturnsFiveEntries) {
+TEST(UZ_MeshRenderModule, GetParameters_ReturnsSixEntries) {
     MeshRenderModule m;
     const auto params = m.GetParameters();
-    EXPECT_EQ(params.size(), 5u)
-        << "MeshRenderModule must expose exactly 5 parameters";
+    EXPECT_EQ(params.size(), 6u)
+        << "MeshRenderModule must expose exactly 6 parameters: scale_x, "
+           "scale_y, scale_z, cast_shadow, rotation_mode, sort_mode";
 }
 
 TEST(UZ_MeshRenderModule, GetParameters_ScaleX_IsFloat) {
@@ -401,7 +404,7 @@ TEST(UZ_MeshRenderModule, DefaultConstructor_ProducesValidModule) {
     MeshRenderModule m;
     EXPECT_STREQ(m.GetName(), "mesh_render");
     EXPECT_FALSE(m.GetShaderCode().empty());
-    EXPECT_EQ(m.GetParameters().size(), 5u);
+    EXPECT_EQ(m.GetParameters().size(), 6u);
 }
 
 TEST(UZ_MeshRenderModule, ExplicitConstructor_StoresConfig) {
@@ -418,4 +421,175 @@ TEST(UZ_MeshRenderModule, ExplicitConstructor_StoresConfig) {
     EXPECT_TRUE(m.GetConfig().castShadow);
     EXPECT_EQ(m.GetConfig().rotationMode, MeshRotationMode::Random);
     EXPECT_FLOAT_EQ(m.GetConfig().meshScale.x, 2.0f);
+}
+
+// =============================================================================
+// maxInstances — default value and config propagation
+// =============================================================================
+
+TEST(UZ_MeshRenderModule, DefaultConfig_MaxInstances_Is4096) {
+    MeshRenderModule m;
+    EXPECT_EQ(m.GetConfig().maxInstances, 4096u)
+        << "Default maxInstances must be 4096";
+}
+
+TEST(UZ_MeshRenderModule, ExplicitConfig_MaxInstances_Stored) {
+    MeshRenderModuleConfig cfg;
+    cfg.maxInstances = 8192;
+    MeshRenderModule m(cfg);
+    EXPECT_EQ(m.GetConfig().maxInstances, 8192u);
+}
+
+// =============================================================================
+// CreateGPUBuffers / DestroyGPUBuffers — lifecycle
+// =============================================================================
+
+TEST(UZ_MeshRenderModule, HasGPUBuffers_FalseByDefault) {
+    MeshRenderModule m;
+    EXPECT_FALSE(m.HasGPUBuffers());
+}
+
+TEST(UZ_MeshRenderModule, CreateGPUBuffers_ReturnsTrue_OnMockDevice) {
+    test::MockRHIDevice device;
+    MeshRenderModule m;
+    EXPECT_TRUE(m.CreateGPUBuffers(&device));
+    EXPECT_TRUE(m.HasGPUBuffers());
+    // 2 buffers: transforms + colors
+    EXPECT_EQ(device.buffersCreated.load(), 2u);
+    m.DestroyGPUBuffers(&device);
+}
+
+TEST(UZ_MeshRenderModule, CreateGPUBuffers_NullDevice_ReturnsFalse) {
+    MeshRenderModule m;
+    EXPECT_FALSE(m.CreateGPUBuffers(nullptr));
+    EXPECT_FALSE(m.HasGPUBuffers());
+}
+
+TEST(UZ_MeshRenderModule, CreateGPUBuffers_FailingDevice_ReturnsFalse) {
+    test::FailingMockRHIDevice device;
+    MeshRenderModule m;
+    EXPECT_FALSE(m.CreateGPUBuffers(&device));
+    EXPECT_FALSE(m.HasGPUBuffers());
+}
+
+TEST(UZ_MeshRenderModule, CreateGPUBuffers_DoubleCreate_ReturnsTrue) {
+    test::MockRHIDevice device;
+    MeshRenderModule m;
+    EXPECT_TRUE(m.CreateGPUBuffers(&device));
+    // Second call should be idempotent (logs warning, returns true).
+    EXPECT_TRUE(m.CreateGPUBuffers(&device));
+    m.DestroyGPUBuffers(&device);
+}
+
+TEST(UZ_MeshRenderModule, DestroyGPUBuffers_ClearsState) {
+    test::MockRHIDevice device;
+    MeshRenderModule m;
+    EXPECT_TRUE(m.CreateGPUBuffers(&device));
+    m.DestroyGPUBuffers(&device);
+    EXPECT_FALSE(m.HasGPUBuffers());
+    EXPECT_EQ(device.buffersDestroyed.load(), 2u);
+}
+
+TEST(UZ_MeshRenderModule, DestroyGPUBuffers_NullDevice_NoOp) {
+    MeshRenderModule m;
+    // Should not crash.
+    m.DestroyGPUBuffers(nullptr);
+    EXPECT_FALSE(m.HasGPUBuffers());
+}
+
+TEST(UZ_MeshRenderModule, GetInstanceTransformBuffer_Invalid_WhenNotCreated) {
+    MeshRenderModule m;
+    EXPECT_FALSE(m.GetInstanceTransformBuffer().IsValid());
+}
+
+TEST(UZ_MeshRenderModule, GetInstanceColorBuffer_Invalid_WhenNotCreated) {
+    MeshRenderModule m;
+    EXPECT_FALSE(m.GetInstanceColorBuffer().IsValid());
+}
+
+TEST(UZ_MeshRenderModule, GetInstanceBuffers_Valid_AfterCreate) {
+    test::MockRHIDevice device;
+    MeshRenderModule m;
+    EXPECT_TRUE(m.CreateGPUBuffers(&device));
+    EXPECT_TRUE(m.GetInstanceTransformBuffer().IsValid());
+    EXPECT_TRUE(m.GetInstanceColorBuffer().IsValid());
+    m.DestroyGPUBuffers(&device);
+}
+
+// =============================================================================
+// Load — stores path
+// =============================================================================
+
+TEST(UZ_MeshRenderModule, Load_StoresPath) {
+    test::MockRHIDevice device;
+    MeshRenderModule m;
+    m.Load("meshes/debris.uzmesh", &device);
+    EXPECT_EQ(m.GetConfig().meshPath, "meshes/debris.uzmesh");
+}
+
+TEST(UZ_MeshRenderModule, Load_NullDevice_StoresPath) {
+    MeshRenderModule m;
+    m.Load("meshes/test.uzmesh", nullptr);
+    EXPECT_EQ(m.GetConfig().meshPath, "meshes/test.uzmesh");
+}
+
+// =============================================================================
+// ParseConfig — maxInstances
+// =============================================================================
+
+TEST(UZ_MeshRenderModule_ParseConfig, MaxInstances_Parsed) {
+    const auto j = nlohmann::json::parse(R"({
+        "max_instances": 8192
+    })");
+    const auto cfg = MeshRenderModule::ParseConfig(j);
+    EXPECT_EQ(cfg.maxInstances, 8192u);
+}
+
+TEST(UZ_MeshRenderModule_ParseConfig, MaxInstances_Zero_IgnoredUsesDefault) {
+    const auto j = nlohmann::json::parse(R"({
+        "max_instances": 0
+    })");
+    const auto cfg = MeshRenderModule::ParseConfig(j);
+    EXPECT_EQ(cfg.maxInstances, 4096u)
+        << "max_instances=0 is out of range, should use default";
+}
+
+TEST(UZ_MeshRenderModule_ParseConfig, MaxInstances_Negative_IgnoredUsesDefault) {
+    const auto j = nlohmann::json::parse(R"({
+        "max_instances": -1
+    })");
+    const auto cfg = MeshRenderModule::ParseConfig(j);
+    EXPECT_EQ(cfg.maxInstances, 4096u)
+        << "Negative max_instances should use default";
+}
+
+TEST(UZ_MeshRenderModule_ParseConfig, MaxInstances_TooLarge_IgnoredUsesDefault) {
+    const auto j = nlohmann::json::parse(R"({
+        "max_instances": 2000000
+    })");
+    const auto cfg = MeshRenderModule::ParseConfig(j);
+    EXPECT_EQ(cfg.maxInstances, 4096u)
+        << "max_instances > 1048576 should use default";
+}
+
+TEST(UZ_MeshRenderModule_ParseConfig, MaxInstances_Missing_UsesDefault) {
+    const auto j = nlohmann::json::parse(R"({})");
+    const auto cfg = MeshRenderModule::ParseConfig(j);
+    EXPECT_EQ(cfg.maxInstances, 4096u);
+}
+
+TEST(UZ_MeshRenderModule_ParseConfig, MaxInstances_NotNumber_IgnoredUsesDefault) {
+    const auto j = nlohmann::json::parse(R"({
+        "max_instances": "high"
+    })");
+    const auto cfg = MeshRenderModule::ParseConfig(j);
+    EXPECT_EQ(cfg.maxInstances, 4096u);
+}
+
+TEST(UZ_MeshRenderModule, CreateGPUBuffers_ZeroMaxInstances_ReturnsFalse) {
+    test::MockRHIDevice device;
+    MeshRenderModuleConfig cfg;
+    cfg.maxInstances = 0;
+    MeshRenderModule m(cfg);
+    EXPECT_FALSE(m.CreateGPUBuffers(&device));
 }

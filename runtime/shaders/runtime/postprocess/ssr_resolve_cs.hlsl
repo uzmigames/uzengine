@@ -144,6 +144,8 @@ void main(uint3 DTid : SV_DispatchThreadID)
     float centerLum = dot(traceResult.rgb, float3(0.2126, 0.7152, 0.0722));
     float centerKarisW = rcp(1.0 + centerLum);
     float3 colorSum  = traceResult.rgb * centerKarisW;
+    // Alpha (hit confidence) is normalised by the same weight sum as the colour,
+    // so it must carry the same Karis weight or the two diverge.
     float  alphaSum  = traceResult.a * centerKarisW;
     float  weightSum = centerKarisW;
 
@@ -199,7 +201,9 @@ void main(uint3 DTid : SV_DispatchThreadID)
     float3 color = colorSum / max(weightSum, 0.001);
     float  alpha = alphaSum / max(weightSum, 0.001);
 
-    // The normalized weighted average already returns linear HDR radiance.
-    // Applying inverse compression again would amplify constant input light.
+    // No inverse Karis here: dividing by the accumulated Karis weights already
+    // undoes the per-sample compression, so the normalised average is linear HDR
+    // radiance. Decompressing a second time amplified constant input — a uniform
+    // RGB = 1 reflection resolved to ~1000.
     outputSSR[DTid.xy] = float4(color, alpha);
 }

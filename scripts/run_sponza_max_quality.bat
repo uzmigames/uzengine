@@ -18,6 +18,7 @@ echo Iluminacao indireta filtrada: 32 amostras. LOD favorece geometria mais deta
 "runtime\build\bin\uzengine.exe" ^
     --project "sample/projects/sponza.uzproject" ^
     --width 1920 --height 1080 ^
+    --adapter 0 ^
     --cvar r.RayTracing=0 ^
     --cvar r.RadianceCache=1 ^
     --cvar r.GI.RadianceCache.RaysPerProbe=64 ^

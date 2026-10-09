@@ -74,7 +74,7 @@ static void Transition(ID3D12GraphicsCommandList* list, ID3D12Resource* resource
 static bool RadianceCache(ID3D12Device* device, ID3D12DescriptorHeap* heap, ID3D12CommandQueue* queue,
         ID3D12CommandAllocator* allocator, ID3D12GraphicsCommandList* list, ID3D12RootSignature* signature,
         ID3D12Resource* global, ID3D12Resource* rawGlobal, const char* shaderPath, bool room, bool firstWrite, bool noHistory,
-        bool reflections = false, bool transformed = false, bool mixedValidity = false) {
+        bool reflections = false, bool transformed = false, bool mixedValidity = false, bool energy = false, bool energyUniform = false) {
     std::ifstream file(shaderPath, std::ios::binary);
     const std::vector<char> shader{std::istreambuf_iterator<char>(file), {}};
     if (shader.empty()) throw std::runtime_error("Radiance trace bytecode is missing");
@@ -108,6 +108,17 @@ static bool RadianceCache(ID3D12Device* device, ID3D12DescriptorHeap* heap, ID3D
         if (probe==probeIndex) continue;
         previousData[probe*28+3]=previousData[probe*28+7]=previousData[probe*28+11]=100;
         previousData[probe*28+27]=0;
+    }
+    // Reflection energy fixture: a non-uniform environment. Probe layers along z carry
+    // DC irradiance 0.05 / 1 / 20, so GGX rays that hit the floor, the walls and the
+    // ceiling return radiance two orders of magnitude apart — the regime where the
+    // Karis 1/(1+luma) weight departs from the plain mean. The uniform variant keeps
+    // the constant-1 history, where both estimators must agree exactly.
+    if (energy && !energyUniform) for (UINT probe=0;probe<totalProbes;++probe) {
+        const float layer[3]={0.05f,1.0f,20.0f};
+        const float value=layer[(probe/9)%3];
+        previousData[probe*28+3]=previousData[probe*28+7]=previousData[probe*28+11]=value;
+        previousData[probe*28+27]=1;
     }
     previous->Unmap(0,nullptr);
     struct Trace { float origin[3],spacing; UINT axis,total,rays,frame; float maximum,alpha; UINT uav,first;
@@ -168,6 +179,28 @@ static bool RadianceCache(ID3D12Device* device, ID3D12DescriptorHeap* heap, ID3D
     const auto* packed=static_cast<const float*>(mapped)+probeIndex*28; unsigned invalid=0; float maximumError=0;
     const float reflectance[3]={0.8f,0.2f,0.1f};
     for (int i=0;i<28;++i) invalid+=!std::isfinite(packed[i]);
+    if (energy) {
+        // Wrapper layout: output[k] = sum of 8 pixels x `rays` GGX rays with the Karis weight,
+        // output[8+k] = the same pixels/rays with the plain mean (k = thread 0..7).
+        const float* out=static_cast<const float*>(mapped);
+        double karis[3]{}, plain[3]{}; float pixels=0;
+        for (int k=0;k<8;++k) for (int c=0;c<3;++c) { karis[c]+=out[4*k+c]; plain[c]+=out[4*(8+k)+c]; }
+        for (int k=0;k<8;++k) pixels+=out[4*k+3];
+        unsigned bad=0; double ratio[3]{};
+        for (int c=0;c<3;++c) {
+            bad+=!std::isfinite(karis[c])||!std::isfinite(plain[c])||plain[c]<=0;
+            ratio[c]=plain[c]>0 ? karis[c]/plain[c] : 0.0;
+        }
+        bool passed=bad==0;
+        for (int c=0;c<3;++c) passed=passed && (energyUniform ? std::abs(ratio[c]-1.0)<0.01 : (ratio[c]>0.0 && ratio[c]<=1.01));
+        shReadback->Unmap(0,nullptr);
+        std::printf("%s reflection energy: history=%s pixels=%g rays_per_pixel=8 karis_over_plain=(%.4f,%.4f,%.4f) plain_mean=(%.4f,%.4f,%.4f) karis_mean=(%.4f,%.4f,%.4f) criterion=%s\n",
+            passed?"PASS":"FAIL", energyUniform?"uniform1":"layers0.05/1/20", pixels, ratio[0],ratio[1],ratio[2],
+            plain[0]/std::max(pixels,1.0f),plain[1]/std::max(pixels,1.0f),plain[2]/std::max(pixels,1.0f),
+            karis[0]/std::max(pixels,1.0f),karis[1]/std::max(pixels,1.0f),karis[2]/std::max(pixels,1.0f),
+            energyUniform?"|ratio-1|<0.01":"0<ratio<=1.01 (measurement; the loss is the result)");
+        return passed;
+    }
     if (reflections) {
         unsigned traceFailures=0;
         for (int ray=0;ray<6;++ray) {
@@ -208,6 +241,8 @@ int main(int argc, char** argv) try {
     const bool reflections=argc>1 && std::strncmp(argv[1],"--reflection-",13)==0;
     const bool mixedValidity=argc>1 && std::strstr(argv[1],"mixed-validity")!=nullptr;
     const bool transformed=reflections && std::strcmp(argv[1],"--reflection-transformed-room")==0;
+    const bool energy=reflections && std::strncmp(argv[1],"--reflection-energy",19)==0;
+    const bool energyUniform=energy && std::strcmp(argv[1],"--reflection-energy-uniform")==0;
     const bool reversed = argc > 1 && (std::strcmp(argv[1], "--reversed-winding") == 0 || std::strcmp(argv[1], "--reversed-winding-without-normals") == 0);
     const bool provideNormals = reversed && std::strcmp(argv[1], "--reversed-winding") == 0;
     const bool plane = argc > 1 && (std::strcmp(argv[1], "--two-sided-plane") == 0 || std::strcmp(argv[1], "--signed-plane") == 0);
@@ -448,5 +483,5 @@ int main(int argc, char** argv) try {
         if (failures) return 1;
         if (meshCount==2) std::printf("PASS nearest material: distant blue instance replaced by nearer red instance\n");
     }
-    return argc == 4 && !RadianceCache(device.Get(),heap.Get(),queue.Get(),allocator.Get(),list.Get(),signature.Get(),global.Get(),rawGlobal.Get(),argv[3],room,!room || roomFirstWrite,noHistory,reflections,transformed,mixedValidity) ? 1 : 0;
+    return argc == 4 && !RadianceCache(device.Get(),heap.Get(),queue.Get(),allocator.Get(),list.Get(),signature.Get(),global.Get(),rawGlobal.Get(),argv[3],room,!room || roomFirstWrite,noHistory,reflections,transformed,mixedValidity,energy,energyUniform) ? 1 : 0;
 } catch (const std::exception& exception) { std::fprintf(stderr, "ERROR: %s\n", exception.what()); return 2; }

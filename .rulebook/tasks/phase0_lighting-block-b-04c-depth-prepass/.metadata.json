@@ -1,0 +1,6 @@
+{
+  "status": "completed",
+  "createdAt": "2026-10-08T00:53:18.911Z",
+  "updatedAt": "2026-10-08T01:10:56.000Z",
+  "resolution": "done 2026-10-07, commit 5470d37f: the prepass never wrote a depth (shadow VS with an unbound view-projection, LessEqual on a reversed-Z clear, GBuffer clear); now the GBuffer pass in depth-only mode with the colour pass testing Equal; r.DepthPrepass off by default (Sponza 0.524 vs 0.514 ms), on for overdrawn scenes (stack 0.180 -> 0.054 + 0.019 ms); test_depth_prepass.py 5/5"
+}

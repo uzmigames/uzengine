@@ -4,6 +4,7 @@
 #define UZ_SSGI_SURFACE_HLSLI
 #include "../common/encoding.hlsli"
 #include "../include/depth_common.hlsli"
+#include "../common/region_dump.hlsli"
 cbuffer PerFrameCB : register(b1) {
     row_major float4x4 viewProj : packoffset(c0);
     float4 cameraPos : packoffset(c4);
@@ -30,8 +31,44 @@ cbuffer PerFrameCB : register(b1) {
     float sdfVoxelSize : packoffset(c59.y);
     uint sdfTraceSteps : packoffset(c59.z);
     uint sdfDiffuseSamples : packoffset(c60.x);
+    uint sdfSampleRotation : packoffset(c60.z);
     uint4 sdfRawClipmapSrv : packoffset(c61);
+    // Region dump (diagnostics) — the same fields the lighting PS reads, at their PerFrameCB
+    // offsets 992..1008. Both SSGI passes already bind this buffer, so the gather needs no root
+    // constants of its own to write its records.
+    uint _debugRegionUav : packoffset(c62.x);
+    uint _debugRegionSrv : packoffset(c62.y);
+    uint _debugRegionCount : packoffset(c62.z);
+    uint _debugRegionStamp : packoffset(c62.w);
+    uint _debugRegionFields : packoffset(c63.x);
 };
+
+/// True when this frame is capturing the gather group.
+bool UzGatherDumpActive() {
+    return _debugRegionUav != 0xffffffffu && _debugRegionCount != 0u
+        && (_debugRegionFields & UZ_REGION_FIELD_GATHER) != 0u;
+}
+
+/// Writes one GATHER record for a half-resolution gather pixel.
+///
+/// The rectangles are full-resolution pixels and this runs at half, so gather pixel `g` writes the
+/// four full pixels `2g + {0,1}^2` — exactly the set for which `g` is tap (0,0) of the bilateral
+/// reconstruction. Both the trace and the accumulator write through this, so their records land on
+/// the same pixels and can be read side by side.
+void UzGatherDumpHalf(uint2 gatherPixel, uint2 fullSize, uint slot, float4 value) {
+    if (!UzGatherDumpActive()) return;
+    StructuredBuffer<uint4>    rects = ResourceDescriptorHeap[_debugRegionSrv];
+    RWStructuredBuffer<float4> dump  = ResourceDescriptorHeap[_debugRegionUav];
+    for (uint r = 0u; r < _debugRegionCount; ++r) {
+        const uint4 a = rects[r * 2u];
+        const uint4 b = rects[r * 2u + 1u];
+        for (uint q = 0u; q < 4u; ++q) {
+            const uint2 fp = gatherPixel * 2u + uint2(q & 1u, q >> 1u);
+            if (any(fp >= fullSize) || !UzRegionContains(a, fp)) continue;
+            dump[UzRegionPixelBase(a, b, fp) + UzRegionGatherOffset(_debugRegionFields) + slot] = value;
+        }
+    }
+}
 /// @constants The half-resolution lattice represents full pixel 2*p. Pixel centers add 0.5.
 int2 SurfacePixel(int2 halfPixel, uint2 fullSize) { return min(halfPixel * 2, int2(fullSize) - 1); }
 float3 SurfacePosition(int2 pixel, float depth, uint2 fullSize) {

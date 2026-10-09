@@ -11,6 +11,8 @@
 #include "log.h"
 #include "profiler.h"
 
+#include <cstring>
+
 namespace uz {
 
 /// Initializes the timestamp query heap and readback buffer.
@@ -82,7 +84,9 @@ void DX12GpuProfiler::BeginFrame(ID3D12GraphicsCommandList* /*cmdList*/) {
 void DX12GpuProfiler::BeginTimestamp(ID3D12GraphicsCommandList* cmdList, const char* name) {
     if (m_timestampCount >= kMaxGpuTimestamps) return;
 
-    m_names[m_timestampCount] = name;
+    auto& dst = m_slots[m_currentFrame].names[m_timestampCount];
+    std::strncpy(dst.data(), name ? name : "?", dst.size() - 1);
+    dst[dst.size() - 1] = '\0';
 
     uint32_t baseQuery = m_currentFrame * kTimestampsPerFrame;
     uint32_t queryIdx = baseQuery + (m_timestampCount * 2);
@@ -104,6 +108,7 @@ void DX12GpuProfiler::EndTimestamp(ID3D12GraphicsCommandList* cmdList, const cha
 void DX12GpuProfiler::EndFrame(ID3D12GraphicsCommandList* cmdList) {
     UZ_PROFILE_FUNCTION();
     if (m_timestampCount == 0) {
+        m_slots[m_currentFrame].count = 0;
         m_currentFrame = (m_currentFrame + 1) % kProfilerFramesInFlight;
         return;
     }
@@ -116,6 +121,7 @@ void DX12GpuProfiler::EndFrame(ID3D12GraphicsCommandList* cmdList) {
                               baseQuery, queryCount,
                               m_readbackBuffer.Get(), destOffset);
 
+    m_slots[m_currentFrame].count = m_timestampCount;
     m_currentFrame = (m_currentFrame + 1) % kProfilerFramesInFlight;
 }
 
@@ -123,7 +129,7 @@ void DX12GpuProfiler::EndFrame(ID3D12GraphicsCommandList* cmdList) {
 // Readback & Resolution
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Reads timestamps from frame N-2 and computes millisecond deltas.
+/// Reads the timestamps of the oldest ring slot (frame N-3) and computes millisecond deltas.
 void DX12GpuProfiler::ResolveFrame() {
     UZ_PROFILE_FUNCTION();
     m_results.clear();
@@ -131,8 +137,11 @@ void DX12GpuProfiler::ResolveFrame() {
 
     if (m_gpuFrequency == 0) return;
 
-    // Read from the oldest frame (N-2 relative to current)
+    // The slot after the one just recorded is the oldest: frame N-3 with the 4-deep ring, whose
+    // fence the CPU waited before recording frame N (three command-list frames in flight).
     uint32_t readFrame = m_currentFrame;  // currentFrame was already advanced in EndFrame
+    const FrameSlot& slot = m_slots[readFrame];
+    if (slot.count == 0) return;
     uint32_t baseQuery = readFrame * kTimestampsPerFrame;
 
     uint64_t* mapped = nullptr;
@@ -147,15 +156,15 @@ void DX12GpuProfiler::ResolveFrame() {
     uint64_t frameBegin = UINT64_MAX;
     uint64_t frameEnd = 0;
 
-    for (uint32_t i = 0; i < kMaxGpuTimestamps; ++i) {
+    for (uint32_t i = 0; i < slot.count; ++i) {
         uint64_t begin = mapped[baseQuery + i * 2];
         uint64_t end   = mapped[baseQuery + i * 2 + 1];
 
-        // Skip unwritten slots (both zero)
-        if (begin == 0 && end == 0) break;
+        // Both stamps of a pair sit on one queue, so end >= begin; anything else is a torn read.
+        if (end < begin) continue;
 
         float ms = static_cast<float>(static_cast<double>(end - begin) * ticksToMs);
-        m_results.push_back({m_names[i], ms});
+        m_results.push_back({slot.names[i].data(), ms});
 
         if (begin < frameBegin) frameBegin = begin;
         if (end > frameEnd) frameEnd = end;

@@ -14,6 +14,8 @@
 
 #include <cstring>
 #include <filesystem>
+#include <functional>
+#include <thread>
 #include <iomanip>
 #include <sstream>
 
@@ -110,9 +112,19 @@ bool AssetCache::Store(uint64_t key, const std::vector<uint8_t>& data) {
 
     std::string path = EntryPath(key);
 
-    const FileResult result = FileWriteAll(path.c_str(), data.data(), data.size());
+    // Written to a temporary name and renamed into place: a crash or a concurrent reader never
+    // sees a partial entry (block B.3 stores from worker threads).
+    const std::string temp = path + "." + std::to_string(std::hash<std::thread::id>{}(std::this_thread::get_id())) + ".tmp";
+    const FileResult result = FileWriteAll(temp.c_str(), data.data(), data.size());
     if (result != FileResult::Success) {
-        UZ_LOG(Asset, Error, "Cannot write cache entry '{}': {}", path, FileResultToString(result));
+        UZ_LOG(Asset, Error, "Cannot write cache entry '{}': {}", temp, FileResultToString(result));
+        return false;
+    }
+    std::error_code ec;
+    fs::rename(temp, path, ec);
+    if (ec) {
+        UZ_LOG(Asset, Error, "Cannot rename cache entry '{}' into place: {}", temp, ec.message());
+        fs::remove(temp, ec);
         return false;
     }
 

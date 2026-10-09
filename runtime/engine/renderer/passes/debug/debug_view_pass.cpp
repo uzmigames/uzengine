@@ -41,6 +41,11 @@ void AddDebugViewPass(rg::RgBuilder& builder, const DebugViewPassDesc& desc)
         if (desc.ssrGBuffer.IsValid()) {
             pb.Read(desc.ssrGBuffer, RHIResourceState::ShaderResource);
         }
+        if (desc.directGBuffer.IsValid()) {
+            pb.Read(desc.directGBuffer,   RHIResourceState::ShaderResource);
+            pb.Read(desc.indirectGBuffer, RHIResourceState::ShaderResource);
+            pb.Read(desc.shadowGBuffer,   RHIResourceState::ShaderResource);
+        }
 
         pb.SetExecutionCallback([desc](IRHICommandList* cmd, const rg::RgPassResources& res) {
             UZ_PROFILE_SCOPE("DebugView::Execute");
@@ -70,9 +75,10 @@ void AddDebugViewPass(rg::RgBuilder& builder, const DebugViewPassDesc& desc)
 
             // ── Bind debug mode + G-Buffer SRV indices ───────────────────
             if (desc.bindless) {
-                // SM6.6: pack mode + 4 GBuffer SRV indices + 2 extended SRV indices.
-                // Shader cbuffer layout: mode, albedo, normal, depth, position, hdr, ssr.
-                const uint32_t constants[7] = {
+                // SM6.6: mode + 4 G-Buffer SRVs + hdr/ssr + the three lighting split targets +
+                // GTAO. Eleven of the sixteen 32-bit root constants the signature provides.
+                // Shader cbuffer layout must match exactly.
+                const uint32_t constants[11] = {
                     static_cast<uint32_t>(desc.mode),
                     desc.albedoSrvIndex,
                     desc.normalSrvIndex,
@@ -80,8 +86,12 @@ void AddDebugViewPass(rg::RgBuilder& builder, const DebugViewPassDesc& desc)
                     desc.positionSrvIndex,
                     desc.hdrSrvIndex,   // UINT32_MAX when unused — shader guards before load
                     desc.ssrSrvIndex,   // UINT32_MAX when unused
+                    desc.directSrvIndex,
+                    desc.indirectSrvIndex,
+                    desc.shadowSrvIndex,
+                    desc.gtaoSrvIndex,
                 };
-                cmd->SetRootConstants(kSlotRootConstants, constants, 7);
+                cmd->SetRootConstants(kSlotRootConstants, constants, 11);
             } else {
                 // SM5: push mode as a single root constant, bind textures explicitly.
                 const uint32_t modeVal = static_cast<uint32_t>(desc.mode);

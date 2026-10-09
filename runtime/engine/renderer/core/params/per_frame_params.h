@@ -92,7 +92,7 @@ struct PerFrameParams {
 
     Mat4     viewProj;                                 ///< Combined view-projection matrix.
     Vec4     cameraPos;                                ///< xyz = world-space camera position, w = unused.
-    Vec4     timeParams;                               ///< x = totalTime, y = deltaTime, z = frameCount, w = unused.
+    Vec4     timeParams;   ///< x = totalTime, y = deltaTime, z = frameCount, w = diagnostic sampling-seed                           ///< override (`r.GI.Reflections.FreezeSeed`; < 0 = use frameCount).
     Vec4     lightDir;                                 ///< xyz = direction toward primary light, w = 0.
     Vec4     lightColor;                               ///< xyz = light color * intensity, w = unused.
     Vec4     ambientColor;                             ///< xyz = ambient color, w = unused.
@@ -245,7 +245,7 @@ struct PerFrameParams {
     float    exposureLowPercent      = 10.0f;          ///< CVar r.Exposure.LowPercent
     float    exposureHighPercent     = 90.0f;          ///< CVar r.Exposure.HighPercent
     float    materialDielectricF0    = 0.04f;          ///< CVar r.Material.DielectricF0
-    float    materialMinGGXAlpha     = 0.0064f;        ///< CVar r.Material.MinGGXAlpha
+    float    materialMinGGXAlpha     = 0.0016f;        ///< CVar r.Material.MinGGXAlpha
 
     // ── Brixelizer GI (AMD FidelityFX) ────────────────────────────────
     /// SRV index for Brixelizer GI diffuse output (RGBA16F). UINT32_MAX = disabled.
@@ -291,11 +291,24 @@ struct PerFrameParams {
     uint32_t sdfReflectionTraceSteps = 96;
     float    sdfReflectionIntensity = 1.0f;
     uint32_t sdfDiffuseSamples = 0;
-    uint32_t _padSdfRaw[3] = {};
+    uint32_t sdfReflectionPlainMean = 0;   ///< 1 = GatherSdfReflections averages rays plainly (r.GI.Reflections.HdrWeight=0); 0 = Karis weight.
+    /// CVar r.GI.FinalGather.SampleRotation — 0 = radical inverse of the frame-strided seed
+           /// (shipping), 1 = Kronecker advance in the frame index (candidate, ledger H-31).
+    uint32_t sdfSampleRotation = 0;
+    uint32_t materialMapMask = 0;  ///< Diagnostic: bit0 = ignore normal maps, bit1 = ignore material AO maps (r.Material.NormalMap / .AOMap = 0).
     uint32_t sdfRawClipmapSrv[4] = {UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX};
 
     // ── Padding to next 256-byte boundary (1024 bytes) ────────────────
-    float    _padToCBEnd[8]   = {};
+    // Region dump (diagnostics: per-pixel lighting/TAA intermediates for a screen rectangle,
+    // see SceneRenderer::SetRegionDump). Carved out of the former tail padding: offsets 992..1011.
+    uint32_t debugRegionUav = UINT32_MAX;  ///< Bindless UAV of the region-dump StructuredBuffer<float4>; UINT32_MAX = off.
+    uint32_t debugRegionSrv = UINT32_MAX;  ///< Bindless SRV of the rect table (StructuredBuffer<uint4>, 2 elements per rect).
+    uint32_t debugRegionCount = 0;         ///< Number of rectangles (0 = off).
+    uint32_t debugRegionStamp = 0;         ///< Frame stamp the GPU writes into each rect footer.
+    uint32_t debugRegionFields = 0;        ///< Field-group bitmask, see shaders/runtime/common/region_dump.hlsli.
+    float    materialRoughnessOverride = -1.0f;  ///< CVar r.Material.RoughnessOverride (-1 = off, diagnostic).
+    float    materialMetallicOverride  = -1.0f;  ///< CVar r.Material.MetallicOverride (-1 = off, diagnostic).
+    uint32_t componentReplaySrv = UINT32_MAX;  ///< CVar r.GI.ComponentReplayFile buffer (diagnostic).
 
     // ── Resource handles (NOT copied to CB) ──────────────────────────────
     // These are bound by ShaderParameterBinder at their HLSL register slots.
@@ -318,7 +331,14 @@ struct PerFrameParams {
 };
 
 // Verify scalar section matches PerFrameCB exactly
+static_assert(offsetof(PerFrameParams, sdfSampleRotation) == 968);
+static_assert(offsetof(PerFrameParams, materialMapMask) == 972);
 static_assert(offsetof(PerFrameParams, sdfRawClipmapSrv) == 976);
+static_assert(offsetof(PerFrameParams, debugRegionUav) == 992);
+static_assert(offsetof(PerFrameParams, debugRegionFields) == 1008);
+static_assert(offsetof(PerFrameParams, materialRoughnessOverride) == 1012);
+static_assert(offsetof(PerFrameParams, materialMetallicOverride) == 1016);
+static_assert(offsetof(PerFrameParams, componentReplaySrv) == 1020);
 static_assert(offsetof(PerFrameParams, irradianceCubemap) == 1024,
               "PerFrameParams resource section must start at byte 1024 (after PerFrameCB-compatible scalar section)");
 

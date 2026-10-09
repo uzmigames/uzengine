@@ -1,5 +1,9 @@
 # Sponza graph-material export evidence
 
+> **Origin**: `test/windows-sponza-parity @ 25cd0c5f` (`E:\SponzaTest`), ported verbatim on 2026-09-08 by `phase0_sponza-parity-06-qa-harness-validation`.
+> Paths such as `scripts/*_artifacts/`, `scripts/sponza-*.png|log|json|sha256.txt` refer to evidence that is **not in Git**; the executable identities quoted are SponzaTest builds, not this repository's.
+
+
 Inspected 2026-09-06. Source audit uses Node.js built-in fs/path to read the prefab material_graph references and their authored JSON. Runtime build/scene validation is performed separately by the parent task.
 
 ## Confirmed integration gap

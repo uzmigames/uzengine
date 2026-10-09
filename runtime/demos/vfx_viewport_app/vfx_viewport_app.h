@@ -39,6 +39,7 @@
 #include "engine/ecs/core/entity.h"
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace uz {
@@ -47,6 +48,83 @@ class VFXViewportApp final : public Application {
 public:
     VFXViewportApp() = default;
     ~VFXViewportApp() override = default;
+
+    /// Sets the sprite texture path for all emitters (from --sprite CLI arg).
+    /// Must be called before Run(). If non-empty, the engine loads this texture
+    /// during emitter sync and binds it as a billboard sprite.
+    void SetSpriteTexturePath(const std::string& path) { m_spriteTexturePath = path; }
+
+    /// Sets flipbook grid dimensions for the sprite texture (from --flipbook CLI arg).
+    /// Only meaningful when a sprite texture is set. Rows/cols default to 1 (no flipbook).
+    void SetFlipbookGrid(uint32_t rows, uint32_t cols) {
+        m_flipbookRows = rows;
+        m_flipbookCols = cols;
+        m_flipbookTotalFrames = rows * cols;
+    }
+
+    /// Sets the flipbook playback rate in frames per second (from --flipbook-fps CLI arg).
+    /// Drives how fast the SubUV sheet cycles across the particle lifetime.
+    void SetFlipbookFPS(float fps) { m_flipbookFPS = fps; }
+
+    /// Sets the sprite texture channel mask (from --channel CLI arg).
+    /// 0=RGBA pass-through, 1=R, 2=G, 3=B, 4=A.
+    void SetSpriteChannelMask(uint32_t mask) { m_spriteChannelMask = mask; }
+
+    /// DEPRECATED — kept for ABI parity with older mains; the demo no
+    /// longer creates a `VfxSystemComponent`. Calling this is a no-op
+    /// (logged once at Warning level on first invocation). Removed in
+    /// `phase17_vfx-viewport-default-scene-no-uzvfxsys` because the
+    /// referenced `.uzvfxsys` asset was never authored.
+    void SetSystemAssetPath(const std::string& /*path*/);
+
+    /// Phase 13.5 — overrides the window dimensions for headless
+    /// screenshot capture at arbitrary resolutions.
+    void SetWindowSize(uint32_t w, uint32_t h) {
+        m_overrideWidth  = w;
+        m_overrideHeight = h;
+    }
+
+    /// Sets a single-emitter `.uzvfx` asset path (from `--vfx-asset` CLI arg).
+    /// When non-empty, `OnStart()` skips the default fireball compound +
+    /// standalone-preset scene and instead creates ONE entity with a
+    /// `VfxEmitterComponent` whose `assetPath` is this value. The engine's
+    /// `scene_vfx_sync.cpp` then resolves the path through the VFS and
+    /// instantiates the emitter via `UzfxLoader::InstantiateEmitter` —
+    /// the production code path the hardware-validation tasks need to
+    /// exercise. Path is interpreted relative to the active VFS root
+    /// (see `SetCustomVfsRoot`).
+    void SetEmitterAssetPath(const std::string& path) { m_emitterAssetPath = path; }
+
+    /// Overrides the starting preset (from `--start-preset N|name` CLI arg).
+    /// Accepts an integer index `0..kPresetCount-1` OR a string matching
+    /// one of `kPresetNames[i]` (case-insensitive). When set, `OnStart()`
+    /// applies that preset to the standalone emitter immediately instead
+    /// of the hardcoded `Fire` default. Invalid values fall back to the
+    /// hardcoded default (`Fire`) and a `[App] [warning]` is logged.
+    /// Used by the preset-validation harness
+    /// (`scripts/vfx_validate_presets.ps1`) to baseline + diff each
+    /// preset programmatically.
+    /// @ref phase17_vfx-viewport-22-preset-validation
+    void SetStartPreset(int idx) { m_startPresetIdx = idx; }
+
+    /// Resolves a preset name (case-insensitive, e.g. `"smoke"`, `"Tornado"`)
+    /// to its index in `kPresetFns[]`. Returns -1 if no match. Used by the
+    /// CLI parser in `main.cpp` to convert `--start-preset Smoke` to an
+    /// integer.
+    /// @ref phase17_vfx-viewport-22-preset-validation
+    static int PresetIndexFromName(const std::string& name);
+
+    /// Returns the total number of in-code presets (`kPresetCount`). Useful
+    /// for harness scripts iterating from 0 to N-1.
+    static int GetPresetCount();
+
+    /// Overrides the VFS root directory (from `--vfs-root` CLI arg). Useful
+    /// when loading assets that live outside the demo's bundled `content/`
+    /// or `assets/` subfolders — e.g. point at `sample/content/` to load
+    /// `vfx/tests/mesh_sort_shards.uzvfx` and have its referenced mesh +
+    /// material paths resolve against the same root. Empty = use default
+    /// resolution (`<exe_dir>/content` if exists, otherwise fallback).
+    void SetCustomVfsRoot(const std::string& path) { m_customVfsRoot = path; }
 
 protected:
     // ── Application interface ────────────────────────────────────────────
@@ -92,11 +170,101 @@ private:
     /// Current preset index for cycling.
     int m_currentPreset = 0;
 
+    /// Starting preset index from `--start-preset` CLI arg, or -1 when
+    /// not specified. Read once in `OnStart()` to override the default.
+    /// @ref phase17_vfx-viewport-22-preset-validation
+    int m_startPresetIdx = -1;
+
+    /// VFX entity used by the projectile-style animation in `OnUpdate`.
+    /// Default-initialised to invalid; populated only if a code path
+    /// chooses to drive entity-position animation. The legacy
+    /// `VfxSystemComponent` attachment was removed in
+    /// `phase17_vfx-viewport-default-scene-no-uzvfxsys` so the entity
+    /// stays invalid and the projectile path becomes a no-op until a
+    /// new owner repurposes it.
+    Entity m_vfxEntity{};
+
+    /// Projectile animation phase [0..1] — advances each frame, loops.
+    float m_projectilePhase = 0.0f;
+
     /// Pending preset switch (set by Left/Right keys or overlay).
     bool m_switchPresetPending = false;
 
     /// Pending restart (set by R/Delete or overlay button).
     bool m_restartPending = false;
+
+    // Phase 15.12 — multi-emitter demo state.
+    /// Currently-selected emitter in the System Overview. Preset cycles
+    /// apply to this slot; Add / Duplicate / Delete reorder the list.
+    int  m_activeEmitterIdx = 0;
+    /// Per-slot preset index so each emitter remembers which preset it
+    /// last loaded (used to label the emitter slot on the overview + to
+    /// re-apply the right preset after reorder).
+    std::vector<int> m_emitterPresets;
+    /// Pending multi-emitter structural ops applied during the main
+    /// update pass so ECS mutations happen at a well-defined point.
+    bool m_pendingAddEmitter    = false;
+    int  m_pendingDuplicateIdx  = -1;
+    int  m_pendingDeleteIdx     = -1;
+    int  m_pendingMoveSrc       = -1;
+    int  m_pendingMoveDst       = -1;
+
+    /// Rewrites `overlay->SetEmitterNames` from the current slot list so
+    /// the overview + tab strip reflect ECS mutations.
+    void RefreshEmitterNames();
+
+    /// Configures the Niagara-parity editor overlay
+    /// (`runtime/engine/vfx/editor/`) for both default and asset modes.
+    /// Sets visibility, layout, callbacks, and (when
+    /// `enablePresetCycling == true`) the preset name list +
+    /// `onLoadPreset` callback. In asset mode (preset cycling disabled)
+    /// the same emitter manipulation callbacks are wired so the user
+    /// can still add / duplicate / delete / reorder emitters and tune
+    /// their parameters live via the parameter inspector.
+    /// @ref phase17_vfx-viewport-overlay-asset-mode
+    void ConfigureEditorOverlay(bool enablePresetCycling);
+
+    /// Reassigns `renderPriority` on every emitter (component + runtime)
+    /// from its position in `m_emitterEntities`. Index 0 -> priority 0
+    /// (renders first / farthest back); last index -> highest priority
+    /// (renders last / on top). Call after Add / Move / Delete / Duplicate
+    /// so list order = draw order.
+    void ReassignRenderPriorities();
+
+    // ── Sprite texture (from --sprite CLI arg) ──────────────────────────
+
+    /// Path to sprite texture set via SetSpriteTexturePath().
+    std::string m_spriteTexturePath;
+
+    /// Flipbook grid dimensions set via SetFlipbookGrid().
+    uint32_t m_flipbookRows        = 1;
+    uint32_t m_flipbookCols        = 1;
+    uint32_t m_flipbookTotalFrames = 1;
+
+    /// Flipbook playback rate. 0 = lifetime-driven (one full cycle per lifetime). >0 = fixed FPS.
+    float m_flipbookFPS = 0.0f;
+
+    /// Sprite texture channel mask: 0=RGBA, 1=R, 2=G, 3=B, 4=A.
+    uint32_t m_spriteChannelMask = 0;
+
+    /// Single-emitter asset path set via `SetEmitterAssetPath`. When non-empty,
+    /// `OnStart` short-circuits the default fireball + preset-cycling scene
+    /// and creates exactly one `VfxEmitterComponent`-bearing entity that
+    /// loads this path through the production scene_vfx_sync code path.
+    std::string m_emitterAssetPath;
+
+    /// VFS root override set via `SetCustomVfsRoot`. Empty = leave Configure
+    /// to pick `<exe_dir>/content` or the engine default.
+    std::string m_customVfsRoot;
+
+    /// Window-size override (0 = use defaults). Set by `--window-size WxH`.
+    uint32_t m_overrideWidth  = 0;
+    uint32_t m_overrideHeight = 0;
+
+    /// Phase 14.14 — exponentially-smoothed FPS for the status-bar
+    /// chip. 0.1 s time constant damps hitch spikes without adding
+    /// perceptible lag.
+    float m_fpsSmoothed = 60.0f;
 };
 
 } // namespace uz

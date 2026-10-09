@@ -516,9 +516,6 @@ TEST_F(MetalDeviceTest, CreateGraphicsPipeline_NullShaders_ReturnsInvalid) {
     EXPECT_FALSE(handle.IsValid());
 }
 
-} // namespace
-
-#endif // defined(__APPLE__)
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -564,3 +561,7 @@ TEST_F(MetalDeviceTest, CreateComputePipeline_InvalidShader_Fails) {
     uz::RHIPipelineHandle pipeline = m_device->CreateComputePipeline(pipeDesc);
     EXPECT_FALSE(pipeline.IsValid());
 }
+
+} // namespace
+
+#endif // defined(__APPLE__)

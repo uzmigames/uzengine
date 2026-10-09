@@ -1,5 +1,5 @@
 /// UzEngine Scene Renderer — High-level configuration methods (upscaler, screen
-/// percentage, HDRI environment).
+/// percentage, lens flare toggle, HDRI environment).
 
 #include "scene_renderer.h"
 
@@ -67,6 +67,17 @@ void SceneRenderer::SetScreenPercentage(float pct) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Lens Flare
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SceneRenderer::SetLensFlareEnabled(bool enabled) {
+    m_lensFlareEnabled = enabled;
+
+    // Sync CVar so ApplyCVars() doesn't overwrite this value next frame
+    CVarRegistry::Get().Set("r.LensFlare", enabled ? 1.f : 0.f);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SetHDRIEnvironment
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -114,6 +125,7 @@ bool SceneRenderer::SetHDRIEnvironment(uint32_t equirectSrvIndex, uint32_t cubem
 
     m_iblResult = bakeResult;
     m_hdriActive = true;
+    m_prefilteredIsPmrem = false;   // the engine's bake: linear roughness per mip
 
     // Rebuild env map importance sampler from HDRI cubemap
     if (m_envMapSampler) {
@@ -216,6 +228,7 @@ bool SceneRenderer::SetPMREMEnvironment(const TextureLoadResult& result) {
     m_iblResult.prefilteredSrvIndex = pmremResult.srvIndex;
     m_iblResult.prefilteredTexture  = pmremResult.cubemap;
     m_hdriActive = true;
+    m_prefilteredIsPmrem = true;    // the PMREM's LODs: the Three.js roughness curve (per-frame bit 8)
 
     // Step 5: Rebuild env map importance sampler
     if (m_envMapSampler) {

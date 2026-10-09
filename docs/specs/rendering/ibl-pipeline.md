@@ -6,7 +6,7 @@ category: spec
 engine: uzengine
 theme: rendering
 created: 2026-03-17
-updated: 2026-03-17
+updated: 2026-10-08
 status: active
 author: docs-operator
 -->
@@ -105,43 +105,109 @@ The IBL bake is triggered by the sky change flag (`skyIBLDirty`). The
 The baked SRV indices and SH coefficients are forwarded to `PerFrameCB` for use by
 the deferred lighting pass.
 
-### Light Probe Volume (Author-Placed Irradiance Grid)
+**SkyLight terms on the per-frame SH (as built, 2026-10-08).** Every frame,
+`runtime/engine/renderer/frame/frame_constants.cpp` copies the baked SH into
+`PerFrameCB.skyIrradianceSH`, multiplied by
+`shScale = indirectLightingIntensity x r.SkyLight.IndirectIntensity` (`:421`, `:428-436`). When
+`lowerHemisphereIsBlack` is false, it also adds a hemisphere light of radiance
+`lowerHemisphereColor` below the horizon: `+L/2` on the constant term and `-L/2` on the up term of
+the cube frame, both times `shScale` (`:438-454`, correct since `c14215ed`). The SkyLight
+`intensity` is not applied to these coefficients.
 
-`runtime/engine/renderer/gi/irradiance_probe_grid.{h,cpp}` implements a 3D grid
-of L2 SH probes within an authored AABB driven by `LightProbeVolumeComponent`.
-Used for indoor lighting where the global sky SH is too uniform — the volume
-provides spatially-varying indirect diffuse via trilinear blend of 8 surrounding
-probes during deferred lighting.
+The SH stays in the cubemap frame (+Y up), and
+`runtime/shaders/runtime/lighting/deferred_lighting_ps.hlsl:1037` evaluates it with
+`WorldToCubemap(N)`. It has two readers:
 
-**Per-probe storage**: 7 float4 (112 bytes), matching the L2 SH packing used by
-`SkyIrradianceEnvironmentMap`. The grid is allocated as a single
-`StructuredBuffer<float4>` with `kSHFloat4PerProbe * probeCount` entries; the
-linear index is `x + y*dimX + z*dimX*dimY`.
+- the sky-SH fallback of the deferred lighting, which tints it with the sky light colour but not
+  with the intensity (`:714`). When `IsSHZero` reads the SH as empty (it tests only the red
+  channel's L1 terms, `runtime/shaders/runtime/lighting/ibl.hlsli:58-61`), as a `shScale` of 0
+  makes it, the fallback samples the irradiance cubemap instead, scaled by neither intensity
+  (`deferred_lighting_ps.hlsl:1040-1044`);
+- the seed of the inert light probe volume (below).
 
-**Initial fill** — `IrradianceProbeGrid::CaptureFromSkyCubemap(cmdList, sky, faceSize)`
-projects the sky cubemap to L2 SH via `ProjectCubemapToSH` and broadcasts the
-coefficients to every probe. Sky is positionally invariant, so spatial variation
-comes from the SDF/DXR probe-update passes (tasks 3.x / 4.x of the indoor
-lighting milestone).
+Fog and cloud ambient read the unscaled L0 term times the intensity instead
+(`runtime/engine/renderer/frame/frame_atmosphere_passes.cpp:123-125`). Section 2 of
+`docs/guides/indoor-lighting-guide.md` lists which SkyLight setting reaches which lighting path.
 
-**CB layout** — populated each frame in
-`runtime/engine/renderer/frame/frame_constants.cpp`:
+### Light Probe Volume (author-placed irradiance grid): inert
+
+> **Status (2026-10-08): inert. The volume contributes nothing to any frame.** This section was
+> corrected by the review of `phase0_indoor-lighting-system` on 2026-10-08. The version written on
+> 2026-04-07 described a `CaptureFromSkyCubemap` seed and a blend by `lpvIntensity` that the code
+> does not perform. Whether to keep the code or remove it is that task's open decision N3.
+
+`runtime/engine/renderer/gi/irradiance_probe_grid.{h,cpp}` holds a 3D grid of L2 SH probes inside
+the AABB of a `LightProbeVolumeComponent`
+(`runtime/engine/ecs/environment/light_probe_volume_component.h`). The component loads from the
+scene JSON key `light_probe_volume` (`light_probe_volume_component.cpp:15-52`).
+
+**Per-probe storage.** Each probe takes 7 float4 (112 bytes), in the packing of the sky SH above.
+The grid is one upload-heap `StructuredBuffer<float4>` with an SRV and no UAV use
+(`irradiance_probe_grid.cpp:123-145`). The linear index is `x + y*dimX + z*dimX*dimY`
+(`runtime/shaders/runtime/lighting/deferred_lighting_ps.hlsl:1005-1007`).
+
+**Seed.** `runtime/engine/renderer/frame/frame_constants.cpp:906-977` creates the grid for the
+first enabled volume only (`:975`). When the volume is loaded or created (`needsRebuild`), every
+probe receives the same coefficients: the per-frame sky SH, after the SkyLight's `shScale` and
+lower-hemisphere terms (`:428-454`), converted from the cubemap frame to the world frame by
+`FillFromSkySH(SHCubemapToWorld(skySH))` and then `UploadToGpu()` (`:936-947`). The probes
+therefore carry no spatial variation, and a later sky re-bake does not re-seed them.
+`IrradianceProbeGrid::CaptureFromSkyCubemap` (`irradiance_probe_grid.cpp:193-216`), which this
+section used to give as the initial fill, is never called.
+
+**CB layout.** The fields are filled each frame at `frame_constants.cpp:949-972`. They occupy 48
+bytes of `PerFrameCB` (`runtime/engine/renderer/core/params/constant_buffers.h:249-260`):
 
 | Field | Bytes | Purpose |
 |---|---|---|
-| `lpvEnabled` | 4 | 1 = volume active |
-| `lpvProbeBufferSrv` | 4 | Bindless SRV of probe SH buffer |
+| `lpvEnabled` | 4 | 1 = a volume is allocated |
+| `lpvProbeBufferSrv` | 4 | Bindless SRV of the probe SH buffer |
 | `lpvDimX/Y/Z` | 12 | Probes per axis |
 | `lpvOriginX/Y/Z` | 12 | World-space AABB min corner (cm) |
-| `lpvInvSizeX/Y/Z` | 12 | Pre-divided 1 / extentSize |
-| `lpvIntensity` | 4 | Probe contribution multiplier |
+| `lpvInvSizeX/Y/Z` | 12 | `1 / (extentMax - extentMin)` per axis |
+| `lpvIntensity` | 4 | Contribution multiplier. **Always 0**: hard-coded at `frame_constants.cpp:967-972` since `29c83ba5`, the commit that added these fields |
 
-`PerFrameCB` was grown 768 → 1024 bytes (4 × 256) to fit these fields plus
-forward-looking padding. Mirrored byte-for-byte in `PerFrameParams`.
+`PerFrameCB` grew from 768 to 1024 bytes (4 × 256) for these fields and the DDGI fields; the
+`static_assert` is at `constant_buffers.h:321`, and `PerFrameParams` mirrors the layout. The tail
+padding left by that growth has since been filled by region-dump and diagnostic fields (offsets
+992-1023, `constant_buffers.h:300-320`), so the buffer is full.
 
-**Shader sampling** — `deferred_lighting_ps.hlsl` performs trilinear blend of
-the 8 surrounding probes after the global sky SH and radiance cache paths,
-lerping the result into `irradiance` by `lpvIntensity`. Bindless-only path.
+**Shader sampling.** `deferred_lighting_ps.hlsl:973-1028` blends the 8 surrounding probes
+trilinearly and evaluates `EvalSH_L2` with the world normal. The block runs only when
+`_lpvIntensity > 0` (`:978`), so it never runs. Nor is the volume lerped into the irradiance after
+the sky SH and the radiance cache, as this section used to say. It is source 3 of a chain that
+takes one source per pixel (DDGI, then radiance cache, then light probe volume, then sky SH;
+`:739-754`), and once the radiance cache has produced a result it answers every pixel (`:968-969`).
+Even with a non-zero intensity, the volume would only replace the sky-SH fallback, untinted
+(`:1069-1072`).
+
+**Not implemented:**
+
+- `autoFitScene` and `autoFitPadding`, which only the serializer reads.
+- More than one volume: only the first enabled volume is used.
+- An explicit release at shutdown. The grid is freed by its destructor only
+  (`irradiance_probe_grid.cpp:25-27`; member at
+  `runtime/engine/renderer/scene/scene_renderer_impl.h:403`).
+
+No scene uses a volume: none of the 90 `.uzscene` files has `light_probe_volume`, and Sponza's
+`InteriorProbeVolume` was removed in `eb839ed9` (2026-04-07). Spatially varying indirect diffuse
+comes from the radiance cache, the SDF final gather and DDGI (`docs/specs/rendering/gi-system.md`,
+`docs/engine/12-rendering/33-sdf-gi-final-gather.md`, `docs/guides/indoor-lighting-guide.md`).
+
+**DDGI atlases.** These are the format the indoor-lighting task's item 7.2 asked this page to
+record. Both atlases cover the radiance cache's 16³ probe positions
+(`runtime/engine/renderer/gi/ddgi_system.h:62-74`; allocated at `ddgi_system.cpp:47-90`):
+
+- **Irradiance:** `RGBA16Float`, 2048 × 128, with 6 × 6 octahedral texels per probe plus a
+  1-texel border.
+- **Depth:** `RG16Float`, 4608 × 288, with 16 × 16 texels per probe plus the border. It stores the
+  mean distance and the mean squared distance, normalised by the maximum trace distance
+  (`deferred_lighting_ps.hlsl:832-841`).
+
+`ddgi_probe_update_cs.hlsl` writes both from the per-probe rays that `ddgi_probe_trace_cs.hlsl`
+traces once per frame (block B.6, `r.GI.DDGI.RayBuffers 1` by default;
+`docs/analysis/lighting-block-b-06-ddgi-dedup.md`). They are read
+with the Chebyshev visibility test at `deferred_lighting_ps.hlsl:759-880`.
 
 ### Equirectangular to Cubemap
 
@@ -197,14 +263,29 @@ the same RGBA16F 6-face cubemap consumed by `BakeEnvironment()`.
 | IBL bake triggered by sky change flag | Done |
 | IBL from HDR equirectangular file (Phase 3 artist workflow) | Planned |
 | IBL from in-scene cubemap capture actors | Planned |
-| Brixelizer GI diffuse + specular composite in deferred lighting | In Progress |
+| Brixelizer GI diffuse composite in deferred lighting | Dormant: never taken; task closed as superseded 2026-10-08 |
 
-### Brixelizer GI Integration
+### Brixelizer GI Integration (dormant)
 
-AMD FidelityFX Brixelizer GI adds spatially-varying indirect lighting (diffuse + specular) that supplements the global IBL pipeline. While IBL provides uniform ambient from the sky cubemap, Brixelizer GI provides **local** indirect light that varies based on geometry (e.g., bright near windows, dark in corridors).
+> **Status (2026-10-08): dormant; the composite below never runs.** The Brixelizer pass compiles as
+> a no-op stub (`runtime/build.zig:903-911` defines `UZ_BRIXELIZER_ENABLED` only when an MSVC-built
+> wrapper DLL exists, and nothing in the repo builds it). Its construction has been commented out
+> since 2026-04-10 (`runtime/engine/renderer/scene/scene_renderer_init.cpp:666-674`) and its dispatch
+> disabled since 2026-04-07 (`runtime/engine/renderer/frame/frame_gi_passes.cpp:387`).
+> `phase0_brixelizer-gi-integration` was closed as superseded on 2026-10-08. The engine's spatially
+> varying indirect light comes from the SDF radiance cache, the SDF final gather and SDF reflections,
+> with DDGI as the DXR option (`docs/specs/rendering/gi-system.md`,
+> `docs/engine/12-rendering/33-sdf-gi-final-gather.md`).
 
-In `deferred_lighting_ps.hlsl`, Brixelizer GI output is sampled after IBL and added to the ambient terms:
-- `diffuseAmbient += brixDiffuse × baseColor × (1 - metallic)`
-- `specularAmbient += brixSpecular × lerp(F0, 1, roughness × 0.5)`
+What the dormant branch in `deferred_lighting_ps.hlsl` (`:1298-1324`) does, for the record:
 
-The GI output SRV index is passed via `brixGIDiffuseSrv` in PerFrameCB (offset 764). Specular SRV is at `diffuseSrv + 1` by allocation convention. Gated by `r.BrixelizerGI` CVar (default: off). See `docs/specs/rendering/gi-system.md` for full Brixelizer GI specification.
+- It is gated only by the SRV index. `brixGIDiffuseSrv` (PerFrameCB offset 764) is `UINT32_MAX`
+  unless a Brixelizer pass is initialised (`frame_constants.cpp:868-872`, which does not read
+  `r.BrixelizerGI`), so the branch is never taken today.
+- When the SRV is valid and the sample's luma exceeds 0.001, it **replaces** the diffuse ambient
+  instead of adding to it: `diffuseAmbient = (1 - metallic) × brixDiffuse × baseColor` (`:1321`).
+  That would also discard the world final gather and any legacy SSGI already in `diffuseAmbient`
+  (`:1148-1150`, `:1277-1295`) and its `(1 - totalScatterDielectric)` factor (`:1246-1247`).
+- There is no specular term. The `diffuseSrv + 1` specular read was removed in `29c83ba5`, and the
+  "+1" convention does not hold: SRVs and UAVs come from one allocator
+  (`runtime/engine/rhi/dx12/dx12_texture_creation.cpp:195`, `:232`).

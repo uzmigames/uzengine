@@ -18,7 +18,9 @@
 ///     "max_points": 100,
 ///     "point_lifetime": 2.0,
 ///     "min_point_distance": 0.1,
-///     "sort_order": 0
+///     "sort_order": 0,
+///     "ribbon_strands": 1,
+///     "strand_spacing": 0.1
 /// }
 /// ```
 ///
@@ -28,6 +30,7 @@
 
 #pragma once
 
+#include "engine/vfx/trails/trail_mesh_builder.h"
 #include "vector4.h"
 
 #include <memory>
@@ -96,6 +99,28 @@ struct TrailAsset {
     /// a new point is emitted. Must be > 0. Prevents point over-population
     /// when the emitter is nearly stationary.
     float minPointDistance = 0.1f;
+
+    /// Number of parallel ribbon strands generated from the same trail points.
+    /// 1 = single flat ribbon (default). Values > 1 produce N parallel quad-strip
+    /// ribbons offset perpendicular to the camera-facing plane.
+    /// @ref Latta 2004 "Building an Advanced Particle System"
+    uint32_t ribbonStrands = 1;
+
+    /// World-space spacing between adjacent ribbon strands (metres).
+    /// Only meaningful when `ribbonStrands > 1`.
+    float strandSpacing = 0.1f;
+
+    /// V-coordinate authoring mode (phase 8.12.0).
+    /// JSON key: `"uv_mode"` — one of `"stretch"`, `"tiled"`, `"per_ribbon"`.
+    /// Defaults to `Stretch` to keep pre-8.12 trails byte-for-byte unchanged.
+    /// @ref UE5 ENiagaraRibbonUVMode
+    /// @ref docs/engine/25-vfx/29-trail-uv-modes.md
+    VfxTrailUVMode uvMode = VfxTrailUVMode::Stretch;
+
+    /// Texture repeat count along the ribbon length when `uvMode == Tiled`.
+    /// JSON key: `"tiles_per_ribbon"`. Ignored in other modes. Requires the
+    /// trail sampler to use `Wrap` addressing so V values > 1 wrap correctly.
+    float tilesPerRibbon = 1.0f;
 
     /// Rendering sort order relative to other transparent VFX.
     /// Higher values render on top of lower values.

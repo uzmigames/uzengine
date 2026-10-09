@@ -1,5 +1,9 @@
 # Sponza: carga incompleta e exposição na abertura
 
+> **Origin**: `test/windows-sponza-parity @ 25cd0c5f` (`E:\SponzaTest`), ported verbatim on 2026-09-08 by `phase0_sponza-parity-06-qa-harness-validation`.
+> Paths such as `scripts/*_artifacts/`, `scripts/sponza-*.png|log|json|sha256.txt` refer to evidence that is **not in Git**; the executable identities quoted are SponzaTest builds, not this repository's.
+
+
 ## Resultado
 
 O runtime agora prepara a geometria, os campos de distância e as texturas antes de apresentar a cena. A exposição inicial é calculada com HDR da cena completa. O preset da Sponza usa exposição 0.5, contraste 0.65 e saturação 1.0, preservando os parâmetros de transporte, sol, GI e reflexos da correção anterior.

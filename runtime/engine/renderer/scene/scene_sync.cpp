@@ -44,13 +44,20 @@ static auto* cv_LazyMeshesPerFrame = UZ_CVAR_INT(
 // Read by runtime.cpp to report in uz_frame_stats.
 std::atomic<uint32_t> g_lastSyncMeshEntityCount{0};
 
-
-
-namespace uz {
-
+/// Reads a PBR output input that resolves to a compile-time constant.
+///
+/// Returns the pin's default when the input is absent or unconnected, and
+/// `nullopt` when it is driven by an expression that is not a constant (a
+/// texture sample or a math node) — the caller must then leave the field alone
+/// instead of substituting a wrong constant.
+///
+/// The graph pipeline evaluates these nodes in its own generated shader; this
+/// mirror exists so consumers that never run that shader — the GBuffer's
+/// ordinary PBR path, the shadow pass and the distance-field occluder set —
+/// still see the authored values instead of engine fallbacks.
 static std::optional<std::array<float, 4>> GraphConstantInput(
-    const MaterialGraph& graph, const char* name, std::array<float, 4> fallback) {
-    const MatPin* input = graph.GetPBROutput().FindInput(name);
+    const uz::MaterialGraph& graph, const char* name, std::array<float, 4> fallback) {
+    const uz::MatPin* input = graph.GetPBROutput().FindInput(name);
     if (!input) return fallback;
     if (!input->IsConnected()) return input->defaultValue;
     const auto* source = graph.FindExpression(input->connectedExprId);
@@ -60,21 +67,25 @@ static std::optional<std::array<float, 4>> GraphConstantInput(
         return it != source->scalarParams.end() ? it->second : defaultValue;
     };
     switch (source->type) {
-        case MatExprType::ScalarConstant: {
+        case uz::MatExprType::ScalarConstant: {
             const float value = scalar("value");
             return std::array<float, 4>{value, value, value, value};
         }
-        case MatExprType::Vector2Constant:
+        case uz::MatExprType::Vector2Constant:
             return std::array<float, 4>{scalar("x"), scalar("y"), 0.0f, 0.0f};
-        case MatExprType::Vector3Constant:
+        case uz::MatExprType::Vector3Constant:
             return std::array<float, 4>{scalar("x"), scalar("y"), scalar("z"), 0.0f};
-        case MatExprType::Vector4Constant:
+        case uz::MatExprType::Vector4Constant:
             return std::array<float, 4>{scalar("x"), scalar("y"), scalar("z"), scalar("w")};
-        case MatExprType::ColorConstant:
+        case uz::MatExprType::ColorConstant:
             return std::array<float, 4>{scalar("r", 1.0f), scalar("g", 1.0f), scalar("b", 1.0f), 1.0f};
         default: return std::nullopt;
     }
 }
+
+
+
+namespace uz {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SyncWorldToDrawList
@@ -83,10 +94,10 @@ static std::optional<std::array<float, 4>> GraphConstantInput(
 void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
                                          IRHICommandList* cmdList,
                                          DrawList& outDrawList) {
-    m_budgetDeferredMeshCount = 0;
     if (!world) return;
 
     uint32_t drawIndex = 0;
+    m_budgetDeferredMeshCount = 0;
 
     // Per-frame mesh load budget. Once this hits zero, remaining un-loaded
     // meshes are skipped (left with meshLoaded=false) and retried next frame.
@@ -112,6 +123,8 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
             auto cacheIt = m_meshMap.find(meshComp.meshPath);
             if (cacheIt == m_meshMap.end() && meshLoadsRemaining <= 0) {
                 // Budget exhausted — defer to next frame. Leave meshLoaded=false.
+                // Continue iterating so material/texture lazy-load can still run
+                // and other already-cached meshes still get drawn.
                 ++m_budgetDeferredMeshCount;
                 continue;
             }
@@ -307,7 +320,6 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
         if (!m_meshes[meshId].IsValid()) continue;
 
         DrawCommand cmd{};
-        const MaterialGraph* graphForDraw = nullptr;
         cmd.sortKey      = SortKey::Opaque(0, 0, 0.f, drawIndex);
         cmd.worldMatrix  = sceneComp.GetWorldMatrix();
         cmd.normalMatrix = cmd.worldMatrix.NormalMatrix();
@@ -340,6 +352,11 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
                 break;
         }
 
+        // Set when this draw resolves to a material graph, so the block just
+        // before `outDrawList.Add(cmd)` can fill the ordinary PBR draw fields
+        // from the authored graph.
+        const MaterialGraph* graphForDraw = nullptr;
+
         // ── Material Graph path (.uzmat) ───────────────────────────────────
         // When a mesh has a materialGraphPath set (from scene_loader), resolve
         // the graph via MaterialManager, compile the PSO via MaterialPipeline,
@@ -363,10 +380,10 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
             if (meshComp.materialGraphId != UINT32_MAX) {
                 const auto* graph = m_materialManager->GetGraph(meshComp.materialGraphId);
                 if (graph) {
-                    graphForDraw = graph;
                     auto pso = m_materialPipeline->GetOrCreatePSO(*graph);
                     if (pso.IsValid()) {
                         cmd.materialGraphPipeline = pso;
+                        graphForDraw = graph;
 
                         // Resolve texture SRV indices for MaterialTextureCB.
                         // Use the compile result's textureSlots (ordered by translator
@@ -450,6 +467,8 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
         // 0=Opaque, 1=Masked, 2=Translucent, 3=Additive.
         // GBuffer pass skips draws where bits[0:1] >= 2 (Translucent/Additive).
         // Forward translucent pass only draws where bits[0:1] >= 2.
+        // Bit 4 (0x10) = mesh decal (a Decal-domain graph on a mesh, set below): the GBuffer pass
+        // blends it after the opaque draws; the shadow and distance-field consumers skip it.
         if (mat) {
             const uint32_t bm = static_cast<uint32_t>(mat->GetBlendMode()) & 0x3u;
             cmd.materialFlags |= bm;
@@ -540,27 +559,41 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
             cmd.materialFlags |= (kDefaultSpecU8 << 8) | (kDefaultEnvU8 << 16);
         }
 
+        // ── Ordinary draw metadata for graph-only materials ────────────────
+        // A mesh whose material is a .uzmat graph has no MaterialInterface, so
+        // the branch above left every ordinary PBR field at its fallback. The
+        // graph PSO evaluates the node network for the GBuffer, but the shadow
+        // pass, the distance-field occluder set and the deferred BRDF read this
+        // resolved metadata instead — which is why authored translucency and
+        // specular were previously invisible to all three.
         if (graphForDraw) {
             const auto& graph = *graphForDraw;
             cmd.materialFlags = (cmd.materialFlags & ~0xfu)
                 | static_cast<uint32_t>(graph.blendMode) | (graph.twoSided ? 0x8u : 0u);
             cmd.twoSided = graph.twoSided ? 1u : 0u;
+            if (graph.domain == MaterialDomain::Decal) {
+                // Mesh decal: blended into the GBuffer by the graph's opacity after the opaque
+                // draws (bit 4); not a translucent draw (the blend bits cleared), not an occluder.
+                cmd.materialFlags = (cmd.materialFlags & ~0x3u) | 0x10u;
+            }
             switch (graph.shadingModel) {
                 case MaterialShadingModel::DefaultLit: cmd.shadingModel = EShadingModel::DefaultLit; break;
-                case MaterialShadingModel::Unlit: cmd.shadingModel = EShadingModel::Unlit; break;
+                case MaterialShadingModel::Unlit:      cmd.shadingModel = EShadingModel::Unlit; break;
                 case MaterialShadingModel::Subsurface: cmd.shadingModel = EShadingModel::Subsurface; break;
             }
             cmd.materialFlags = (cmd.materialFlags & ~(0xfu << 24))
                 | (static_cast<uint32_t>(cmd.shadingModel) << 24);
-            cmd.baseColorTintR = graph.params.baseColorTint[0];
-            cmd.baseColorTintG = graph.params.baseColorTint[1];
-            cmd.baseColorTintB = graph.params.baseColorTint[2];
+            cmd.baseColorTintR     = graph.params.baseColorTint[0];
+            cmd.baseColorTintG     = graph.params.baseColorTint[1];
+            cmd.baseColorTintB     = graph.params.baseColorTint[2];
             cmd.roughnessMultiplier = graph.params.roughnessMultiplier;
-            cmd.metallicMultiplier = graph.params.metallicMultiplier;
-            cmd.normalIntensity = graph.params.normalStrength;
-            cmd.aoIntensity = graph.params.aoMultiplier;
+            cmd.metallicMultiplier  = graph.params.metallicMultiplier;
+            cmd.normalIntensity     = graph.params.normalStrength;
+            cmd.aoIntensity         = graph.params.aoMultiplier;
 
             // Graph multiplier 1 maps to the standard Specular=0.5 (F0=0.04).
+            // Packed into materialFlags bits[8:15]; the GBuffer folds it into
+            // RT3.a next to the shading-model id.
             const float graphSpecular = std::clamp(graph.params.specularMultiplier * 0.5f, 0.0f, 1.0f);
             const auto graphSpecularU8 = static_cast<uint32_t>(graphSpecular * 255.0f);
             cmd.materialFlags = (cmd.materialFlags & ~(0xffu << 8)) | (graphSpecularU8 << 8);
@@ -579,11 +612,12 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
                 if (textureIt == m_textureMap.end() || textureIt->second >= m_textures.size()) return nullptr;
                 return &m_textures[textureIt->second];
             };
+
             std::string channel;
             if (const auto* texture = textureInput("BaseColor", channel)) {
                 if (channel == "RGBA" || channel == "RGB") {
                     cmd.albedoSrvIndex = texture->srvIndex;
-                    cmd.albedoTexture = texture->handle;
+                    cmd.albedoTexture  = texture->handle;
                 }
             } else if (const auto color = GraphConstantInput(graph, "BaseColor", {1, 1, 1, 1})) {
                 cmd.baseColorTintR *= (*color)[0];
@@ -592,40 +626,42 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
             }
             if (const auto* texture = textureInput("Normal", channel)) {
                 cmd.normalSrvIndex = texture->srvIndex;
-                cmd.normalTexture = texture->handle;
+                cmd.normalTexture  = texture->handle;
             }
             if (const auto* texture = textureInput("Roughness", channel)) {
                 cmd.roughnessSrvIndex = texture->srvIndex;
-                cmd.roughnessTexture = texture->handle;
+                cmd.roughnessTexture  = texture->handle;
             } else if (const auto value = GraphConstantInput(graph, "Roughness", {0.5f, 0, 0, 0})) {
                 cmd.roughnessMultiplier *= (*value)[0];
             }
             if (const auto* texture = textureInput("AO", channel)) {
                 cmd.aoSrvIndex = texture->srvIndex;
-                cmd.aoTexture = texture->handle;
+                cmd.aoTexture  = texture->handle;
             }
             if (const auto* texture = textureInput("Metallic", channel)) {
                 if (channel == "B") {
+                    // Metallic sampled from the B channel means an ORM-packed map:
+                    // flag it (bit 2) and bind it as the AO/ORM texture.
                     cmd.materialFlags |= 0x4u;
                     cmd.aoSrvIndex = texture->srvIndex;
-                    cmd.aoTexture = texture->handle;
+                    cmd.aoTexture  = texture->handle;
                 } else if (channel == "R" || channel == "RGBA") {
                     cmd.metallicSrvIndex = texture->srvIndex;
-                    cmd.metallicTexture = texture->handle;
+                    cmd.metallicTexture  = texture->handle;
                 }
             } else if (const auto value = GraphConstantInput(graph, "Metallic", {0, 0, 0, 0})) {
                 cmd.metallicMultiplier *= (*value)[0];
                 cmd.metallicSrvIndex = m_fallbackWhiteSrvIndex;
-                cmd.metallicTexture = m_fallbackWhite;
+                cmd.metallicTexture  = m_fallbackWhite;
             }
             if (const auto value = GraphConstantInput(graph, "Opacity", {1, 1, 1, 1})) {
                 cmd.opacity = std::clamp((*value)[0], 0.0f, 1.0f);
             }
             if (static_cast<uint32_t>(graph.blendMode) >= 2u) {
                 if (const auto emission = GraphConstantInput(graph, "Emissive", {0, 0, 0, 0})) {
-                    cmd.emissiveColorR = (*emission)[0];
-                    cmd.emissiveColorG = (*emission)[1];
-                    cmd.emissiveColorB = (*emission)[2];
+                    cmd.emissiveColorR   = (*emission)[0];
+                    cmd.emissiveColorG   = (*emission)[1];
+                    cmd.emissiveColorB   = (*emission)[2];
                     cmd.emissiveIntensity = graph.params.emissiveMultiplier;
                 }
             } else {
@@ -671,9 +707,7 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
     }
 
     // ── Batch SDF bake for queued meshes ─────────────────────────────────
-    if (!m_pendingSdfBakes.empty()) {
-        FlushSdfBakes(cmdList);
-    }
+    ServiceSdfBakes(cmdList);   // starts, advances and completes the asynchronous bakes (block B.3)
 }
 
 } // namespace uz

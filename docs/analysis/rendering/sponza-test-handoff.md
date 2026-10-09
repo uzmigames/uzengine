@@ -1,5 +1,9 @@
 # Sponza lighting: handoff for Windows testing
 
+> **Origin**: `test/windows-sponza-parity @ 25cd0c5f` (`E:\SponzaTest`), ported verbatim on 2026-09-08 by `phase0_sponza-parity-06-qa-harness-validation`.
+> Paths such as `scripts/*_artifacts/`, `scripts/sponza-*.png|log|json|sha256.txt` refer to evidence that is **not in Git**; the executable identities quoted are SponzaTest builds, not this repository's.
+
+
 Branch: `test/windows-sponza-parity`. Prepared 2026-09-07. Record `git rev-parse HEAD`, GPU, driver, Windows version and shader model with each test result.
 
 This branch improves SDF diffuse lighting, local reflections, material energy, shadow bias, loading/exposure and camera navigation. It is ready for further testing, with known failures listed below. It does not establish Lumen parity.

@@ -1,5 +1,9 @@
 # Iluminação da Sponza: transporte por superfície e correção dos materiais
 
+> **Origin**: `test/windows-sponza-parity @ 25cd0c5f` (`E:\SponzaTest`), ported verbatim on 2026-09-08 by `phase0_sponza-parity-06-qa-harness-validation`.
+> Paths such as `scripts/*_artifacts/`, `scripts/sponza-*.png|log|json|sha256.txt` refer to evidence that is **not in Git**; the executable identities quoted are SponzaTest builds, not this repository's.
+
+
 Data: 2026-09-07. Escopo: melhorar a luz com a cena completamente carregada, mantendo a exposição e a direção do sol já ajustadas. Não representa paridade com Lumen.
 
 ## Causas confirmadas e correções

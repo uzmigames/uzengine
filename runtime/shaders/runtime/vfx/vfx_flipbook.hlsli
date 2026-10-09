@@ -132,9 +132,22 @@ FlipbookResult ComputeFlipbookFrame(
     float invRows = 1.0 / (float)rows;
     result.frameSize = float2(invCols, invRows);
 
-    // Continuous frame index from elapsed time and playback rate.
-    // max(age, 0) prevents negative ages from producing negative frame indices.
-    float frameFloat = max(age, 0.0) * fps;
+    // Continuous frame index.
+    // When fps > 0 (or lifetime <= 0): use age * fps (FPS-driven cycle, may repeat).
+    // When fps == 0 AND lifetime > 0: map age/lifetime → full flipbook cycle
+    //   so the particle completes exactly one cycle during its lifetime.
+    //   This matches Niagara's default SubUV behavior: one cycle per lifetime.
+    float frameFloat;
+    if (fps > 0.0) {
+        // FPS-driven mode: may cycle multiple times or clip within lifetime.
+        frameFloat = max(age, 0.0) * fps;
+    } else if (lifetime > 0.0) {
+        // Lifetime-driven mode: exactly one full cycle per particle lifetime.
+        float normalizedAge = saturate(max(age, 0.0) / lifetime);
+        frameFloat = normalizedAge * (float)(totalFrames - 1u);
+    } else {
+        frameFloat = 0.0;
+    }
 
     // Current and next frame indices, wrapping around totalFrames.
     uint frame0 = (uint)frameFloat % totalFrames;

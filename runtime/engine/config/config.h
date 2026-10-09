@@ -132,8 +132,27 @@ public:
     void FlushCvarOverrides();
 
     /// Adds a CVar override to the pending list (applied at FlushCvarOverrides).
+    /// Entries are applied in list order, so a later entry wins on a duplicate
+    /// name. Use this for command-line values.
+    /// Every override queued so far (project file, then command line), in order. Read by the
+    /// run manifest so a capture records which overrides it ran under.
+    [[nodiscard]] const std::vector<std::pair<std::string, float>>& GetPendingCvarOverrides() const {
+        return m_pendingCvarOverrides;
+    }
+
     void AddPendingCvarOverride(const std::string& name, float value) {
         m_pendingCvarOverrides.emplace_back(name, value);
+    }
+
+    /// Adds a *default-priority* CVar override — one that any explicit
+    /// `--cvar` on the command line must beat. Inserted at the front of the
+    /// pending list so every CLI entry (already queued during argument parsing,
+    /// which happens before the project file is loaded) is applied after it.
+    /// Before this existed the project block was appended after the CLI values
+    /// and silently overrode them: `--cvar r.RadianceCache=0` against a project
+    /// that sets `r.RadianceCache: 1` flushed as `0, 0, 1`.
+    void AddPendingCvarOverrideDefault(const std::string& name, float value) {
+        m_pendingCvarOverrides.emplace(m_pendingCvarOverrides.begin(), name, value);
     }
 
 private:

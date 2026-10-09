@@ -78,6 +78,7 @@ pub fn build(b: *std.Build) void {
         "engine/renderer/fog",
         "engine/renderer/scene",
         "engine/renderer/frame",
+        "engine/renderer/headless",
         "engine/renderer/passes",
         "engine/renderer/passes/geometry",
         "engine/renderer/passes/lighting",
@@ -113,22 +114,31 @@ pub fn build(b: *std.Build) void {
         "engine/vfx",
         "engine/vfx/core",
         "engine/vfx/components",
+        "engine/vfx/system",
         "engine/vfx/curves",
         "engine/vfx/modules",
         "engine/vfx/asset",
         "engine/vfx/parameters",
+        "engine/vfx/data_interfaces",
         "engine/vfx/events",
         "engine/renderer/passes/vfx",
         "engine/vfx/decals",
         "engine/vfx/trails",
         "engine/vfx/lod",
         "engine/vfx/budget",
+        "engine/vfx/baker",
+        "engine/vfx/stack",
         "engine/vfx/editor",
+        "engine/vfx/editor/undo",
         "engine/vfx/material",
+        "engine/vfx/mesh",
+        "engine/vfx/lighting",
+        "engine/physics",
         "engine/animation",
         "engine/event",
         "engine/property",
         "engine/debug",
+        "engine/ui",
         "editor/grid",
         "editor/outline",
         "editor/gizmo",
@@ -220,6 +230,17 @@ pub fn build(b: *std.Build) void {
     const embed_exe = b.addExecutable(.{ .name = "uzembed", .root_module = embed_mod });
     b.installArtifact(embed_exe);
 
+    // Clean old generated headers to prevent stale files from conflicting
+    // with renamed/moved shaders (e.g., post/ → postprocess/ migration).
+    // Note: b.addRemoveDirTree was removed in zig 0.16 — use addSystemCommand instead.
+    const clean_generated = if (target.result.os.tag == .windows)
+        b.addSystemCommand(&.{
+            "cmd", "/c",
+            "if exist build\\generated\\shaders rmdir /s /q build\\generated\\shaders",
+        })
+    else
+        b.addSystemCommand(&.{ "sh", "-c", "rm -rf build/generated/shaders" });
+
     // Run uzembed: shaders/ → build/generated/shaders/ (all subdirs)
     const run_embed = b.addRunArtifact(embed_exe);
     run_embed.addArgs(&.{
@@ -227,14 +248,8 @@ pub fn build(b: *std.Build) void {
         "--input-dir",  b.path("shaders").getPath(b),
         "--output-dir", b.path("build/generated/shaders").getPath(b),
     });
+    run_embed.step.dependOn(&clean_generated.step);
 
-    // Clean old generated headers to prevent stale files from conflicting
-    // with renamed/moved shaders (e.g., post/ → postprocess/ migration).
-    // Zig 0.16 removed Build.addRemoveDirTree — gate its use on availability.
-    if (@hasDecl(std.Build, "addRemoveDirTree")) {
-        const clean_generated = b.addRemoveDirTree(b.path("build/generated/shaders"));
-        run_embed.step.dependOn(&clean_generated.step);
-    }
 
     // ── Runtime static library ───────────────────────────────────────────
 
@@ -296,6 +311,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/renderer/raytracing", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/scene", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/frame", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/renderer/headless", cpp_flags);
     addCppDir(runtime_mod, b, "engine/job", cpp_flags);
     addCppDir(runtime_mod, b, "engine/ecs/core", cpp_flags);
     addCppDir(runtime_mod, b, "engine/ecs/scene", cpp_flags);
@@ -316,20 +332,29 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/vfx", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/core", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/components", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx/system", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/curves", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/modules", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/asset", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/parameters", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx/data_interfaces", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/events", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/decals",  cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/trails",  cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/lod",     cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/budget",  cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx/baker",   cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx/stack",   cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/editor",  cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx/editor/undo", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/material", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx/mesh",     cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx/lighting", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/physics",      cpp_flags);
     addCppDir(runtime_mod, b, "engine/animation", cpp_flags);
     addCppDir(runtime_mod, b, "engine/property", cpp_flags);
     addCppDir(runtime_mod, b, "engine/debug",    cpp_flags);
+    addCppDir(runtime_mod, b, "engine/ui",       cpp_flags);
 
     // Thirdparty — SPIRV-Reflect (C source, not C++)
     runtime_mod.addCSourceFiles(.{
@@ -725,7 +750,7 @@ pub fn build(b: *std.Build) void {
             "infback.c", "inffast.c", "inflate.c", "inftrees.c",
             "trees.c", "uncompr.c", "zutil.c",
         },
-        .flags = &.{},
+        .flags = &.{"-DZLIB_STATIC"},
     });
 
     // Thirdparty — libpng (PNG read/write, required by msdfgen ext/save-png.cpp)
@@ -750,7 +775,7 @@ pub fn build(b: *std.Build) void {
             "pngwtran.c",
             "pngwutil.c",
         },
-        .flags = &.{ "-DPNG_ARM_NEON_OPT=0", "-DPNG_STATIC" },
+        .flags = &.{ "-DPNG_ARM_NEON_OPT=0", "-DPNG_STATIC", "-DZLIB_STATIC" },
     });
 
     // Thirdparty — FreeType (font rasterization, required by msdfgen ext/import-font.cpp)
@@ -1223,6 +1248,12 @@ pub fn build(b: *std.Build) void {
     addCppDir(test_mod, b, "tests/engine/ecs", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/event", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/property", cpp_flags);
+    addCppDir(test_mod, b, "tests/engine/ui", cpp_flags);
+    // These two directories were never registered, so every test in them —
+    // including the material graph serialization suite — was compiled by
+    // nothing and run by nobody.
+    addCppDir(test_mod, b, "tests/material", cpp_flags);
+    addCppDir(test_mod, b, "tests/engine/material", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/scripting", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/vfx", cpp_flags);
     addCppDir(test_mod, b, "tests/editor", cpp_flags);
@@ -1333,10 +1364,10 @@ pub fn build(b: *std.Build) void {
     // ── Demos & Tools (Windows/DX12 only) ────────────────────────────────
 
     if (is_windows) {
-        const win_sys_libs = [_][]const u8{ "d3d12", "d3d11", "dxgi", "dxguid", "gdi32", "user32", "xinput1_4", "ole32", "shcore", "shell32", "comdlg32" };
+        const win_sys_libs = [_][]const u8{ "d3d12", "d3d11", "dxgi", "dxguid", "gdi32", "user32", "ws2_32", "dbghelp", "winmm", "xinput1_4", "ole32", "shcore", "shell32", "comdlg32" };
 
         // Helper to create a tool exe from a single .cpp
-        const tool_names = [_][]const u8{ "uzengine", "uzcook", "uzpack", "uzmesh" };
+        const tool_names = [_][]const u8{ "uzengine", "uzcook", "uzpack", "uzmesh", "uzvfxinspect", "uzvalidate" };
         for (tool_names) |tool_name| {
             const tool_mod = b.createModule(.{ .target = target, .optimize = optimize });
             tool_mod.link_libc = true;
@@ -1454,12 +1485,54 @@ pub fn build(b: *std.Build) void {
             b.path(tp ++ "luajit/src/lua51.dll"), "lua51.dll",
         ).step);
 
+        // Engine content the renderer loads at run time for every project: the cloud noise volumes
+        // (runtime/content/atmosphere, MIT data from takram/three-geospatial, notice beside them).
+        // Installed as bin/content/atmosphere so uz::ResolveEngineResource("content/atmosphere/...")
+        // finds them; nothing deployed them after the pbr_test demo's copy step went away
+        // (phase0_clouds-noise-assets).
+        b.getInstallStep().dependOn(&b.addInstallDirectory(.{
+            .source_dir = b.path("content/atmosphere"),
+            .install_dir = .bin,
+            .install_subdir = "content/atmosphere",
+        }).step);
+
         // NVIDIA DLSS SDK — nvngx_dlss.dll must be next to the exe for NGX to find it.
         // The DLSS upscaler uses LoadLibrary("_nvngx.dll") which is driver-provided,
         // but the actual DLSS model DLL must be deployed alongside the application.
         if (has_dlss) {
             b.getInstallStep().dependOn(&b.addInstallBinFile(
                 b.path(tp ++ "dlss/lib/Windows_x86_64/dev/nvngx_dlss.dll"), "nvngx_dlss.dll",
+            ).step);
+        }
+
+        // FFmpeg shared DLLs (phase0_fix-vfx-demo-launch-pipeline).
+        // The LGPL shared build from BtbN ships DLLs under thirdparty/ffmpeg/bin/.
+        // We deploy every one we find there so `uzengine.exe` /
+        // `test_runtime.exe` / demos can link at startup. Deployment is
+        // tolerant of missing files — when `setup.ps1` hasn't been re-run
+        // yet, the step silently skips the missing DLLs and the build
+        // still succeeds.
+        const ffmpeg_dlls = [_][]const u8{
+            "avcodec-62.dll",
+            "avdevice-62.dll",
+            "avfilter-11.dll",
+            "avformat-62.dll",
+            "avutil-60.dll",
+            "swresample-6.dll",
+            "swscale-9.dll",
+        };
+        for (ffmpeg_dlls) |dll| {
+            const src_path = b.fmt("{s}ffmpeg/bin/{s}", .{ tp, dll });
+            // Check whether the source file exists before adding the
+            // install step — zig's addInstallBinFile otherwise fails
+            // the build when the file is missing.
+            const abs_src = b.path(src_path).getPath(b);
+            std.Io.Dir.accessAbsolute(b.graph.io, abs_src, .{}) catch {
+                // Source not present — skip. setup.ps1 re-run needed.
+                continue;
+            };
+            b.getInstallStep().dependOn(&b.addInstallBinFile(
+                b.path(src_path), dll,
             ).step);
         }
     }

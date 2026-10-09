@@ -71,6 +71,14 @@ struct RgTextureDesc {
     uint16_t mipLevels = 1;                                    ///< Number of mip levels.
     RHIFormat format = RHIFormat::RGBA8Unorm;                  ///< Texel format.
     RHITextureUsage usage = RHITextureUsage::ShaderResource;   ///< Combined usage flags.
+
+    /// When true, the texture is a volumetric 3D texture and
+    /// `depthOrArraySize` is interpreted as depth. When false, the
+    /// texture is a 2D texture (array when `depthOrArraySize > 1`).
+    /// Added in phase 10.6.0 to enable transient 3D textures for the
+    /// volumetric renderer pipeline (phase 9.10).
+    /// @ref RHITextureDesc::is3D
+    bool is3D = false;
 };
 
 /// Describes a virtual buffer to be created by the render graph.
@@ -109,6 +117,11 @@ struct RgResourceEntry {
 
     bool imported = false;  ///< True if the resource was imported (not owned by the graph).
     bool culled = false;    ///< True if this resource is unreferenced and will be skipped.
+    /// Imported with `ImportTracked*`: `initialState` comes from the `RgStateRegistry` at Compile.
+    bool stateTracked = false;
+    /// Sort index of the last pass whose barriers transition this resource (UINT32_MAX: none). The end
+    /// state of an imported resource is committed to the registry only when the graph transitioned it.
+    uint32_t lastBarrierSortIndex = UINT32_MAX;
 
     uint32_t firstPassIndex = UINT32_MAX; ///< Index of the first pass that touches this resource.
     uint32_t lastPassIndex = 0;           ///< Index of the last pass that touches this resource.

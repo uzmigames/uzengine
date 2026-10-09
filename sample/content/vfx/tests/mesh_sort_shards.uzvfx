@@ -1,0 +1,37 @@
+{
+  "_comment": "Production-schema sibling of mesh_sort_shards.uzfx. Loaded via UzfxLoader::Instantiate -> InstantiateEmitter (sample/content/vfx/tests/). 200 transparent mesh particles using MeshRenderModule with sortMode=ViewDepth + Random rotation. Exercises the inline sort dispatch + deterministic-slot mesh CS write path. Sister-asset mesh_sort_shards.uzfx tests the editor / serializer schema (DeserializeEmitter + ApplyEmitterStackToModuleStack); this file tests the production scene_vfx_sync.cpp + UzfxLoader code path.",
+  "name": "MeshSortShards",
+  "version": 2,
+  "emitters": [
+    {
+      "name": "Shards",
+      "max_particles": 200,
+      "emission_rate": 40.0,
+      "lifetime": 5.0,
+      "looping": true,
+      "modules": {
+        "spawn": {
+          "type": "spawn",
+          "velocity": [0.0, 0.0, 200.0],
+          "spread_angle": 60.0,
+          "lifespan_min": 4.5,
+          "lifespan_max": 5.5
+        },
+        "update": [
+          { "type": "update", "gravity": [0.0, 0.0, -80.0], "drag": 0.4 },
+          { "type": "decay" }
+        ],
+        "render": {
+          "type": "mesh",
+          "mesh_path": "meshes/test_shard.uzmesh",
+          "material_path": "materials/test_glass.uzmat",
+          "scale": [3.0, 3.0, 3.0],
+          "cast_shadow": false,
+          "rotation_mode": "Random",
+          "sort_mode": "ViewDepth",
+          "max_instances": 256
+        }
+      }
+    }
+  ]
+}

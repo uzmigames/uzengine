@@ -35,5 +35,23 @@ foreach ($run in $runs) {
     $ready = @($log | Select-String 'Pre-load complete: assets ready')
     if ($ready.Count -ne 1) { throw "Scene run $($run.Name) did not finish preloading." }
     if (-not (Test-Path -LiteralPath (Join-Path $root ($prefix + '.png')))) { throw 'Screenshot missing.' }
+
+    # Diagnostic runs must show the global distance field carrying real signed
+    # distances. `gi.gdf_*` reported 0/0/0 until 2026-09-08 because the pass
+    # inspector skipped every 3D target instead of reading a Z slice, which hid
+    # exactly the failure mode the SDF GI port started from (empty stub shaders).
+    if ($run.Extra -contains '--diag') {
+        $diagLine = @($log | Select-String 'DIAG_JSON:' | Select-Object -Last 1)
+        if ($diagLine.Count -ne 1) { throw "Scene run $($run.Name) produced no DIAG_JSON line." }
+        $diag = ($diagLine[0].Line -replace '^.*DIAG_JSON:', '') | ConvertFrom-Json
+        $volumeTargets = @($diag.targets | Where-Object { $_.name -like 'gi.gdf*' })
+        if ($volumeTargets.Count -eq 0) { throw 'No gi.gdf_* diagnostic target was registered.' }
+        foreach ($t in $volumeTargets) {
+            if ([math]::Abs($t.max) -le 0.0 -and [math]::Abs($t.min) -le 0.0) {
+                throw "Diagnostic target $($t.name) read back all zeros (volume readback broken)."
+            }
+            Write-Output ("  {0}: min={1} max={2} avg={3}" -f $t.name, $t.min, $t.max, $t.avg)
+        }
+    }
     Write-Output "$($run.Name): exit 0; $($ready[0].Line)"
 }

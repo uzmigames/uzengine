@@ -24,6 +24,8 @@
 
 #include "rhi_types.h"
 #include "hlsl_material_translator.h"
+#include "material_types.h"  // EShadingModel, EBlendMode (sibling header)
+#include "vertex_layout.h"   // VertexLayoutResult (owned input layout for SM5 PSOs)
 
 #include <cstdint>
 #include <string>
@@ -35,6 +37,69 @@ namespace uz {
 class IRHIDevice;
 class ShaderPipeline;
 class MaterialGraph;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MeshVertexLayout — vertex stream layouts compatible with the particle-mesh VS
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Identifies the vertex input layout consumed by the particle-mesh vertex
+/// shader. The mesh-particle VS in `particle_mesh_vs.hlsl` indexes a
+/// `VfxMeshVertex` (Position float3 + Normal float3 + UV float2, stride 32)
+/// via `SV_VertexID`, so today there is exactly one valid layout. The enum
+/// is kept open so future layouts (skinned, packed-normal, vertex colours)
+/// can extend the resolver cache key without touching the call site.
+enum class MeshVertexLayout : uint8_t {
+    /// Standard `VfxMeshVertex`: Position (RGB32F) + Normal (RGB32F) + UV (RG32F),
+    /// 32-byte stride. Matches the `.uzmesh` LOD0 import path used by VFX.
+    VfxMesh_PosNormalUV = 0,
+
+    Count = 1, ///< Total layout count (not a valid layout).
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ParticleMaterialDesc — minimal descriptor for the particle-mesh PSO resolver
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Cache-key fields extracted from a material asset (`.uzmat`) at batch-build
+/// time. Only the four fields referenced by the spec scenarios participate in
+/// the PSO cache key; everything else is parameter data fed through bindless
+/// SRVs / per-instance constants.
+///
+/// The descriptor is a value type — copying it is cheap (16 bytes total). The
+/// caller (`frame_particles.cpp`) populates one per emitter and forwards it
+/// to `MaterialPipeline::GetParticleMeshPSO`.
+///
+/// `materialPathHash` is **not** part of the PSO cache key — two materials
+/// with identical (shadingModel, blendMode, twoSided, layout) tuples MUST
+/// share a single PSO. The hash is forwarded to the warning-dedup map so
+/// duplicate "material failed to load" warnings can be suppressed per
+/// (path × emitter) pair.
+struct ParticleMaterialDesc {
+    /// Material shading model (DefaultLit, Unlit, Subsurface, ...).
+    /// Drives the PSO cache key but does NOT yet select different shader
+    /// permutations — the particle-mesh PS treats every model as DefaultLit
+    /// today. Extending shading-model support is a future task; the cache
+    /// key already routes correctly so swapping in a permuted PS later is
+    /// a single-line change.
+    EShadingModel shadingModel = EShadingModel::DefaultLit;
+
+    /// Alpha blending mode (Opaque, Masked, Translucent, Additive, Modulate).
+    /// Each non-Modulate value maps to a distinct PSO with the corresponding
+    /// blend state and depth-write configuration. Modulate is treated as
+    /// Translucent for now (same blend factors are not exposed by the existing
+    /// PS); the spec only mandates Opaque/Translucent/Additive/Masked.
+    EBlendMode blendMode = EBlendMode::Opaque;
+
+    /// When true, the PSO disables back-face culling. Used by translucent
+    /// shards / glass / foliage where the camera can see both faces of a
+    /// thin mesh particle.
+    bool twoSided = false;
+
+    /// xxHash64 / FNV-1a hash of the material's VFS path. Used purely for
+    /// warning-dedup keying when the resolve path falls back to the engine
+    /// opaque PSO. Zero is a valid sentinel for "no path / inline material".
+    uint64_t materialPathHash = 0;
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MaterialPipeline
@@ -153,6 +218,46 @@ public:
     /// Returns true if Init() has been called successfully.
     [[nodiscard]] bool IsInitialized() const noexcept { return m_initialized; }
 
+    // ─────────────────────────────────────────────────────────────────────
+    // Particle-mesh PSO resolver (VFX mesh-particle render path)
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// Resolves a particle-mesh PSO from a material descriptor.
+    ///
+    /// The PSO is keyed by the tuple (`shadingModel`, `blendMode`, `twoSided`,
+    /// `layout`). Two emitters whose materials share the same tuple are guaranteed
+    /// to receive the **identical** `RHIPipelineHandle` (cache hit). The four
+    /// supported `EBlendMode` values (Opaque, Masked, Translucent, Additive)
+    /// map to distinct PSOs because they require different blend state and
+    /// depth-write configurations.
+    ///
+    /// On any failure to compile the underlying particle-mesh shaders the
+    /// method returns `RHIPipelineHandle::Invalid()`. The caller is expected
+    /// to detect this and fall back to `PipelineLibrary::GetParticleMeshOpaque()`
+    /// (with a one-shot warning logged at the call site) so the affected
+    /// emitter still issues a draw.
+    ///
+    /// # Arguments
+    /// * `desc`   — Material cache-key fields. See `ParticleMaterialDesc`.
+    /// * `layout` — Vertex layout consumed by the particle-mesh VS.
+    ///
+    /// # Returns
+    /// A valid `RHIPipelineHandle` on success, `RHIPipelineHandle::Invalid()`
+    /// on shader compile / PSO creation failure (errors are logged exactly
+    /// once per failure mode).
+    ///
+    /// # Thread Safety
+    /// Must be called on the render/init thread, identical to
+    /// `GetOrCreatePSO`.
+    [[nodiscard]] RHIPipelineHandle GetParticleMeshPSO(const ParticleMaterialDesc& desc,
+                                                       MeshVertexLayout layout);
+
+    /// Returns the number of unique particle-mesh PSOs currently cached.
+    /// Useful for tests asserting the cache-hit invariant.
+    [[nodiscard]] size_t GetParticleMeshCacheSize() const noexcept {
+        return m_particleMeshCache.size();
+    }
+
 private:
     /// Cached compilation result for a single material graph.
     struct CachedMaterialPSO {
@@ -182,10 +287,17 @@ private:
     /// * `vs` — Vertex shader handle (mesh_vs).
     /// * `ps` — Pixel shader handle (compiled material PS).
     /// * `bindless` — If true, omits vertex input layout.
+    /// * `twoSided` — Graph's two-sided flag: disables back-face culling.
     /// * `debugName` — Debug label for the PSO.
+    ///
+    /// The SM5 input layout points into `m_standardLayout` (a member), so the
+    /// returned descriptor stays valid for the caller's CreateGraphicsPipeline.
+    /// * `meshDecal` — The graph's domain is Decal on a mesh: the albedo target blends
+    ///   SrcAlpha / InvSrcAlpha by the graph's opacity (the AO in its alpha kept), the other
+    ///   targets are kept (Zero / One), no depth write (Sponza mesh decals, 2026-10-08).
     [[nodiscard]] RHIGraphicsPipelineDesc BuildGBufferPipelineDesc(
         RHIShaderHandle vs, RHIShaderHandle ps,
-        bool bindless, const char* debugName) const;
+        bool bindless, bool twoSided, bool meshDecal, const char* debugName) const;
 
     IRHIDevice* m_device = nullptr;
     ShaderPipeline* m_shaderPipeline = nullptr;
@@ -194,8 +306,46 @@ private:
     /// Cached mesh vertex shader handle — compiled once and reused for all material PSOs.
     RHIShaderHandle m_meshVS = RHIShaderHandle::Invalid();
 
+    /// Standard vertex input layout, owned here so that the `inputElements`
+    /// pointer handed out by BuildGBufferPipelineDesc() never refers to a
+    /// destroyed local (`VertexLayoutResult` stores the elements inline).
+    VertexLayoutResult m_standardLayout = VertexLayout::Standard();
+
     /// Map of material content hash -> compiled PSO + metadata.
     std::unordered_map<uint64_t, CachedMaterialPSO> m_cache;
+
+    // ── Particle-mesh resolver state ─────────────────────────────────────────
+
+    /// Lazy-compiled particle-mesh vertex shader handle. Compiled on the
+    /// first call to `GetParticleMeshPSO`. Same source as
+    /// `EngineShader::ParticleMeshVS` consumed by `PipelineLibrary`.
+    RHIShaderHandle m_particleMeshVS = RHIShaderHandle::Invalid();
+
+    /// Lazy-compiled particle-mesh pixel shader handle. Compiled on the
+    /// first call to `GetParticleMeshPSO`. Same source as
+    /// `EngineShader::ParticleMeshPS` consumed by `PipelineLibrary`.
+    RHIShaderHandle m_particleMeshPS = RHIShaderHandle::Invalid();
+
+    /// Sticky failure flag for the particle-mesh shader compile step.
+    /// Once set, subsequent calls short-circuit to `Invalid()` without
+    /// re-attempting compilation (mirrors `PipelineLibrary`'s
+    /// `m_particleMeshOpaqueFailed` pattern to avoid log spam).
+    bool m_particleMeshShadersFailed = false;
+
+    /// Cache of compiled particle-mesh PSOs keyed by the packed
+    /// (shadingModel, blendMode, twoSided, layout) tuple. The hash function
+    /// is `MakeParticleMeshKey` defined in the .cpp.
+    std::unordered_map<uint64_t, RHIPipelineHandle> m_particleMeshCache;
+
+    /// Compiles `m_particleMeshVS` and `m_particleMeshPS` if they are not
+    /// already valid. Returns false on failure (also sets the sticky
+    /// failure flag).
+    [[nodiscard]] bool EnsureParticleMeshShaders();
+
+    /// Builds an `RHIGraphicsPipelineDesc` for a particle-mesh PSO variant.
+    [[nodiscard]] RHIGraphicsPipelineDesc BuildParticleMeshPipelineDesc(
+        const ParticleMaterialDesc& desc, MeshVertexLayout layout,
+        const char* debugName) const;
 };
 
 } // namespace uz

@@ -120,6 +120,8 @@ private:
         uint16_t mipLevels;
         RHIFormat format;
         RHITextureUsage usage;
+        /// phase 10.6.0 — separates 2D arrays from 3D volumes in the pool.
+        bool is3D;
 
         bool operator==(const TextureKey& other) const;
     };

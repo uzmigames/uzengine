@@ -4,6 +4,10 @@
 #include <gtest/gtest.h>
 
 #include "shader_manager.h"
+// Complete types for the compilers ShaderManager owns through unique_ptr: this TU destroys a
+// ShaderManager, so the deleters are instantiated here (merge 2026-10-05).
+#include "shader_compiler.h"
+#include "shader_compiler_fxc.h"
 #include "rhi.h"
 #include "rhi_backend.h"
 

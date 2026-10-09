@@ -11,6 +11,7 @@
 ///   - RegisterOverlayPasses()   → frame/frame_overlay.cpp
 
 #include "scene_renderer.h"
+#include "passes/postprocess/auto_exposure.h"
 #include "show_flags_cvar.h"
 #include "pixel_debug.h"
 #include "raytracing/rt_manager.h"
@@ -29,6 +30,7 @@
 #include "input.h"
 #include "render_graph_builder.h"
 #include "render_graph_resources.h"
+#include "render_graph_states.h"
 #include "sh_projection.h"
 #include "profiler.h"
 #include "rhi.h"
@@ -36,6 +38,11 @@
 
 #include <cstdio>
 #include <cstring>
+#include "cvar.h"
+
+// Per-frame GPU pass log. The statistics reach the --diag report and the run manifest
+// regardless; this prints every pass every frame while the profiler runs.
+static auto* cv_GpuProfilerLog = UZ_CVAR_BOOL("r.GpuProfiler.Log", false, "Log every pass's GPU time every frame while the GPU profiler runs (--diag, --run-manifest, --gpu-profile)");
 
 namespace uz {
 
@@ -67,6 +74,8 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
 
     // ── Begin command list ──────────────────────────────────────────────
     cmdList->Begin();
+    // The frame list's recording order is the registry's state timeline; its submits decay buffer states.
+    if (m_rgStates) m_rgStates->BindCommandList(cmdList);
 
     // ── First-frame resource warmup ─────────────────────────────────────
     // On frame 0, all textures start in Common state. Transition the core
@@ -92,6 +101,10 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         addTex(m_gbuffer.emissive, RHIResourceState::RenderTarget);
         addTex(m_gbuffer.velocity, RHIResourceState::RenderTarget);
         if (bc > 0) cmdList->ResourceBarrier(warmupBarriers, bc);
+        // Recorded, not emitted again: the registry learns the states these raw barriers set.
+        if (m_rgStates) {
+            for (uint32_t i = 0; i < bc; ++i) m_rgStates->Set(warmupBarriers[i].texture, warmupBarriers[i].stateAfter);
+        }
     }
 
     // ── Pixel Debug: clear counter buffer ────────────────────────────────
@@ -105,17 +118,18 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     }
 
     // ── Build render graph ─────────────────────────────────────────────
-    rg::RgBuilder rgBuilder(m_device, m_rgPool.get());
+    rg::RgBuilder rgBuilder(m_device, m_rgPool.get(), m_rgStates.get());
     rgBuilder.SetGpuProfileEnabled(m_gpuProfileEnabled);
 
     // ── Setup all per-frame state (camera, CBs, draw list, instancing) ──
     FrameContext ctx{};
-    ctx.cmdList    = cmdList;
-    ctx.swapChain  = swapChain;
-    ctx.world      = world;
-    ctx.vfs        = vfs;
-    ctx.dt         = dt;
-    ctx.frameIndex = frameIndex;
+    ctx.cmdList       = cmdList;
+    ctx.swapChain     = swapChain;
+    ctx.world         = world;
+    ctx.vfs           = vfs;
+    ctx.dt            = dt;
+    ctx.frameIndex    = frameIndex;
+    ctx.sceneRenderer = this;
     ctx.gizmoModeRaw    = m_gizmoMode;
     ctx.gizmoSpaceRaw   = m_gizmoSpace;
     ctx.gizmoHoveredAxis = m_gizmoHoveredAxis;
@@ -204,6 +218,21 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     // graph only handles rendering (billboard draw) and barrier tracking.
     DispatchVFXSimulation(cmdList, dt, frameIndex);
 
+    // ── VFX Inline Sort (depth sort for alpha-blended emitters) ─────────
+    // Runs immediately after simulation so the post-update positions / ages
+    // are visible to the bitonic key-gen. Sprite alpha-blended emitters and
+    // mesh emitters with `sortMode != None` opt in. Mesh-instance CB and
+    // sprite VS pick up the produced sortedIndices buffer via bindless SRV.
+    DispatchVFXSort(cmdList);
+
+    // ── VFX -> DDGI emissive injection (phase16 lumen-gi-contribution) ─
+    // Walks active emitters with non-zero emissive intensity + alive
+    // particles, builds a top-N `VfxEmissiveSample` list, and uploads
+    // it via `m_vfxDDGIEmissiveFeed`. The DDGI probe-update CS reading
+    // the produced SRV is wired in the on-hardware follow-up; until
+    // then the upload is harmless data flow.
+    GatherAndUploadVfxEmissiveSamples();
+
     // ── Register render graph passes in pipeline order ──────────────────
     // SHADER DEBUG: ALL passes commented out. Uncomment one by one to find crash.
     RegisterShadowPasses(rgBuilder, ctx);
@@ -269,6 +298,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         atmoCtx.skyCubemapSrv       = m_skyCubemapSrv;
         atmoCtx.skyCubemapUav       = m_skyCubemapUav;
         atmoCtx.skyIBLDirty         = &m_skyIBLDirty;
+        atmoCtx.skyBakeSignature    = m_skyBakeSignature;
         atmoCtx.iblBaker            = m_iblBaker.get();
         atmoCtx.iblResult           = &m_iblResult;
         atmoCtx.brdfLutSrvIndex     = m_brdfLutSrvIndex;
@@ -348,16 +378,18 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     // ── End command list ────────────────────────────────────────────────
     cmdList->End();
     cmdList->Execute();
+    // Block B.3: the asynchronous mesh SDF bakes complete by this fence (direct queue, signalled
+    // after every frame's Execute, strictly increasing).
+    if (m_bakeFence) m_bakeFence->Signal(++m_bakeFenceValue);
 
     // ── GPU Profiler: resolve results from previous frame (N-2) ─────────
-    // After GPU execution, resolve the triple-buffered readback. Results
-    // lag by 2 frames due to the profiler's triple-buffered design. The
-    // first 2 frames will produce empty/zero results — this is expected.
+    // Resolve the ring slot of frame N-3, whose fence the CPU waited before recording this
+    // frame (ring depth = frames in flight + 1). The first three frames produce no results.
     if (m_gpuProfileEnabled) {
         m_device->GpuProfilerResolve();
 
         const auto& results = m_device->GpuProfilerGetResults();
-        if (!results.empty()) {
+        if (!results.empty() && cv_GpuProfilerLog->value) {
             UZ_LOG(Renderer, Info, "── GPU Profile (frame {}) ──", frameIndex);
             for (const auto& r : results) {
                 UZ_LOG(Renderer, Info, "  {:30s}  {:7.3f} ms", r.name ? r.name : "?", r.ms);
@@ -381,7 +413,15 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         }
         m_screenshotPath.clear();
     }
-    m_input->EndFrame();
+
+    // Input frame boundary: the press/release edges and the scroll / raw deltas the message pump
+    // recorded before this frame have been read by every consumer (frame_setup.cpp snapshots at the
+    // start of the frame). It used to run inside the OverlayPass callback, which is registered only
+    // when r.ShadowDebug != 1, so under the shadow debug view the edges were never cleared and every
+    // IsKeyJustPressed toggle fired each frame (parity-06 close-out; SponzaTest has it here).
+    if (m_input) {
+        m_input->EndFrame();
+    }
 }
 
 

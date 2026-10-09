@@ -741,8 +741,11 @@ MaterialCompileResult HlslMaterialTranslator::Compile(const MaterialGraph& graph
             code_ += buf; code_ += "\n";
         }
 
-        // Scene synchronization packs specularMultiplier into materialFlags;
-        // the GBuffer carries it in emissive alpha for deferred BRDF evaluation.
+        // Specular multiplier — UE5 "Specular" param — needs no code here.
+        // Scene synchronization packs it into materialFlags bits[8:15]; the
+        // GBuffer folds it into RT3.a next to the shading-model id, and the
+        // deferred pass rebuilds F0 = 0.08 * specular from it.
+        // @ref Karis 2013 — Specular = 0.5 → 0.04 baseline F0.
     }
 
     // Step 5: Wrap in function signature.

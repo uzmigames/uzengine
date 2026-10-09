@@ -190,6 +190,37 @@ namespace {
         }
     }
 
+    // -- ribbon_strands (optional, default 1) --
+    uint32_t ribbonStrands = 1;
+    if (root.contains("ribbon_strands")) {
+        if (!root["ribbon_strands"].is_number_integer()) {
+            UZ_LOG(VFX, Error, "TrailAsset: 'ribbon_strands' must be an integer");
+            return nullptr;
+        }
+        const int rawStrands = root["ribbon_strands"].get<int>();
+        if (rawStrands < 1) {
+            UZ_LOG(VFX, Error,
+                   "TrailAsset: 'ribbon_strands' must be >= 1, got {}", rawStrands);
+            return nullptr;
+        }
+        ribbonStrands = static_cast<uint32_t>(rawStrands);
+    }
+
+    // -- strand_spacing (optional, default 0.1) --
+    float strandSpacing = 0.1f;
+    if (root.contains("strand_spacing")) {
+        if (!root["strand_spacing"].is_number()) {
+            UZ_LOG(VFX, Error, "TrailAsset: 'strand_spacing' must be a number");
+            return nullptr;
+        }
+        strandSpacing = root["strand_spacing"].get<float>();
+        if (strandSpacing < 0.0f) {
+            UZ_LOG(VFX, Error,
+                   "TrailAsset: 'strand_spacing' must be >= 0, got {}", strandSpacing);
+            return nullptr;
+        }
+    }
+
     // -- sort_order (optional, default 0) --
     int sortOrder = 0;
     if (root.contains("sort_order")) {
@@ -198,6 +229,37 @@ namespace {
             return nullptr;
         }
         sortOrder = root["sort_order"].get<int>();
+    }
+
+    // -- uv_mode (optional, default "stretch") — phase 8.12.0 --
+    VfxTrailUVMode uvMode = VfxTrailUVMode::Stretch;
+    if (root.contains("uv_mode")) {
+        if (!root["uv_mode"].is_string()) {
+            UZ_LOG(VFX, Error, "TrailAsset: 'uv_mode' must be a string");
+            return nullptr;
+        }
+        const std::string uvModeStr = root["uv_mode"].get<std::string>();
+        if (!VfxTrailUVModeFromString(uvModeStr, uvMode)) {
+            UZ_LOG(VFX, Error,
+                   "TrailAsset: unknown uv_mode '{}' (expected stretch|tiled|per_ribbon)",
+                   uvModeStr);
+            return nullptr;
+        }
+    }
+
+    // -- tiles_per_ribbon (optional, default 1.0) — phase 8.12.0 --
+    float tilesPerRibbon = 1.0f;
+    if (root.contains("tiles_per_ribbon")) {
+        if (!root["tiles_per_ribbon"].is_number()) {
+            UZ_LOG(VFX, Error, "TrailAsset: 'tiles_per_ribbon' must be a number");
+            return nullptr;
+        }
+        tilesPerRibbon = root["tiles_per_ribbon"].get<float>();
+        if (tilesPerRibbon <= 0.0f) {
+            UZ_LOG(VFX, Error,
+                   "TrailAsset: 'tiles_per_ribbon' must be > 0, got {}", tilesPerRibbon);
+            return nullptr;
+        }
     }
 
     // -- Assemble the asset --
@@ -211,7 +273,11 @@ namespace {
     asset->maxPoints         = maxPoints;
     asset->pointLifetime     = pointLifetime;
     asset->minPointDistance  = minPointDistance;
+    asset->ribbonStrands     = ribbonStrands;
+    asset->strandSpacing     = strandSpacing;
     asset->sortOrder         = sortOrder;
+    asset->uvMode            = uvMode;
+    asset->tilesPerRibbon    = tilesPerRibbon;
     return asset;
 }
 

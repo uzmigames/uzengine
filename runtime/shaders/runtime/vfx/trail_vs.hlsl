@@ -106,19 +106,21 @@ TrailVSOutput main(uint vertexID : SV_VertexID) {
 #else
 /// SM5 path: vertices come from the Input Assembler via DrawIndexed.
 struct TrailVSInput {
-    float3 position : POSITION;
-    float  u        : TEXCOORD0;
-    float  v        : TEXCOORD1;
-    float4 color    : COLOR0;
+    float3 position    : POSITION;
+    float  u           : TEXCOORD0;
+    float  v           : TEXCOORD1;
+    float4 color       : COLOR0;
+    uint   strandIndex : BLENDINDICES0;
 };
 
 TrailVSOutput main(TrailVSInput ia) {
     TrailVSOutput output;
     TrailVertexData vtx;
-    vtx.position = ia.position;
-    vtx.u        = ia.u;
-    vtx.v        = ia.v;
-    vtx.color    = ia.color;
+    vtx.position    = ia.position;
+    vtx.u           = ia.u;
+    vtx.v           = ia.v;
+    vtx.color       = ia.color;
+    vtx.strandIndex = ia.strandIndex;
 #endif
 
     // ── Step 2: World -> Clip ────────────────────────────────────────────
@@ -147,6 +149,11 @@ TrailVSOutput main(TrailVSInput ia) {
     // Note: clip-space W equals view-space Z in a standard projection matrix,
     // which is positive in front of the camera (right-handed view space).
     output.linearDepth = output.positionCS.w;
+
+    // ── Step 6: Strand index pass-through ────────────────────────────────
+    // Flat interpolation — integer value identical for all fragments in a
+    // triangle. The PS can use this for per-strand color/width modulation.
+    output.strandIndex = vtx.strandIndex;
 
     return output;
 }

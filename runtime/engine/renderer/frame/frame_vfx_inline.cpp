@@ -8,6 +8,14 @@
 /// The render graph still handles rendering (billboard draw) and the necessary
 /// UAV -> SRV / IndirectArgument barrier transitions for the draw pass.
 
+// [phase0_vfx-mesh-bindless-attr-read-bug] One-shot diagnostic enablement.
+// Uncomment for the diagnostic session that traces what the GPU actually
+// has in WriteSet.positions / lifespans / ages immediately after the inline
+// sim's UAV->SR barrier (= what the mesh-instance CS bindless-reads see).
+// Stalls the CPU per-frame; do NOT leave enabled in shipping builds.
+// #define UZ_VFX_DIAG_ATTR_READBACK 1
+// #define UZ_VFX_DIAG_ALIVECOUNT 1
+
 #include "scene_renderer.h"
 
 // Umbrella headers
@@ -24,7 +32,14 @@
 #include "engine/vfx/vfx_system.h"
 #include "engine/vfx/components/particle_emitter.h"
 #include "engine/vfx/core/gpu_particle_buffer.h"
+#include "engine/vfx/core/gpu_particle_sort.h"
+#include "engine/vfx/lighting/vfx_ddgi_emissive_feed.h"
+#include "engine/vfx/lighting/vfx_ddgi_injection.h"
+#include "engine/vfx/modules/mesh_render_module.h"
+#include "engine/vfx/modules/spline_modules.h"
+#include "engine/core/cvar.h"
 
+#include <algorithm>
 #include <cstring>
 #include <cmath>
 
@@ -35,6 +50,20 @@ namespace uz {
 // ── Thread group sizes (must match HLSL [numthreads]) ──────────────────────
 static constexpr uint32_t kSpawnGroupSize  = 256;
 static constexpr uint32_t kUpdateGroupSize = 256;
+
+/// Fixed timestep for `ParticleEmitter::Seek(t)` warmup loop. Mirrors the
+/// engine's reference 60 Hz simulation rate so deterministic-scrub
+/// recordings reproduce identically against any rendering framerate.
+///
+/// Sized to balance warmup cost (longer dt = fewer ticks, faster scrub) vs.
+/// integration accuracy (shorter dt = closer to a real continuous sim).
+/// 1/60 s matches `ParticleEmitter::fixedDt` so the FixedRate timestep
+/// emitters experience no semantic discontinuity when seek-warmup hands
+/// off to the regular tick path.
+///
+/// @ref engine/vfx/components/particle_emitter.h `Seek(targetTime)`
+/// @ref .rulebook/tasks/phase16_vfx-scalability-hardware-validation
+static constexpr float kSeekFixedDt = 1.0f / 60.0f;
 
 /// Emits a UAV-to-UAV barrier on a single buffer.
 ///
@@ -89,6 +118,37 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
     const auto& emitters = activeVFX->GetActiveEmitters();
     if (emitters.empty()) return;
 
+    // ── Apply global VFX scalability (sampled by VFXSystem::Tick) ───────
+    // `r.VFX.SimulatePaused` short-circuits dt to zero so existing GPU
+    // particles freeze in place while the render path keeps drawing them.
+    // `r.VFX.TimeScale` then multiplies the (already-paused-or-not) dt
+    // before the per-emitter `timeScale` and `isPaused` filters apply.
+    // This ordering lets a sequencer pause everything globally and still
+    // run a specific emitter via direct C API control if the caller
+    // resets the per-emitter `isPaused`.
+    float globalDt = dt;
+    if (activeVFX->IsSimulationPaused()) {
+        globalDt = 0.0f;
+    } else {
+        globalDt *= activeVFX->GetTimeScale();
+    }
+
+    // `r.VFX.AllowGPUSim` — when 0 we skip the GPU compute dispatch
+    // entirely. The condition gates the early-out below so the rest of
+    // the function stays unchanged for the common (allowed) case.
+    if (!activeVFX->IsGPUSimAllowed()) {
+        static bool warnedGPUSimDisabled = false;
+        if (!warnedGPUSimDisabled) {
+            UZ_LOG(VFX, Warning,
+                   "r.VFX.AllowGPUSim=0: skipping GPU particle simulation. "
+                   "Existing alive particles will continue to render but "
+                   "will not advance. There is no CPU sim fallback yet — "
+                   "this is intended for compute-less platforms / debug.");
+            warnedGPUSimDisabled = true;
+        }
+        return;
+    }
+
     // Pipeline state objects for the three compute shaders.
     const auto spawnPSO        = m_pipelines->GetParticleSpawnCS();
     const auto updatePSO       = m_pipelines->GetParticleUpdateCS();
@@ -97,6 +157,11 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
     if (!spawnPSO.IsValid() || !updatePSO.IsValid() || !indirectArgsPSO.IsValid()) {
         return;
     }
+
+    // Replace `dt` for the rest of the function with the scaled value so
+    // every subsequent reference (spawn count, update CB, etc.) sees the
+    // post-scalability dt without further plumbing.
+    dt = globalDt;
 
     // Lazy-create a dummy dynParams buffer for emitters that don't have one.
     // This buffer is written by spawn/update shaders as RWStructuredBuffer<float4>.
@@ -240,12 +305,109 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
 #endif // UZ_VFX_DEBUG_READBACK
         }
 
-        // ── Reset aliveCount to 0 each frame ──────────────────────────
+        // ── Spline data-interface detection + per-frame upload ─────────
+        // Phase 16 hardware-validation: when an emitter's spawn / update
+        // module stack carries any `Spawn/Force/Follow` spline module the
+        // simulation shaders need a baked `VfxSplineBuffer` reachable via
+        // the bindless heap. We scan once per frame, lazy-create the
+        // upload buffer at first detection, and `RebuildAndUpload` from
+        // `emitter->splineSource` so any gameplay-side mutation of the
+        // control points is picked up without an explicit flush.
+        //
+        // Detection is per-phase: spawn detection records the first
+        // `SpawnAlongSplineModule` so the spawn CB can read its config;
+        // update detection records the first `Force/Follow` instance for
+        // each kind so both update modules can coexist on one stack.
+        //
+        // When NO spline module is present every captured pointer stays
+        // `nullptr` and the CB-fill block below skips its writes — the
+        // new CB fields keep their zero defaults and shaders short-circuit
+        // on `cbSplinePointCount < 2`. Spline-less emitters therefore see
+        // exactly the same constant buffer they had before this change.
+        const SpawnAlongSplineModule* spawnSpline   = nullptr;
+        const ForceTowardSplineModule* forceSpline   = nullptr;
+        const FollowSplineModule*      followSpline  = nullptr;
+
+        for (const auto& mod : emitter->moduleStack.spawnModules) {
+            if (!mod) continue;
+            if (auto* s = dynamic_cast<const SpawnAlongSplineModule*>(mod.get())) {
+                spawnSpline = s;
+                break;
+            }
+        }
+        for (const auto& mod : emitter->moduleStack.updateModules) {
+            if (!mod) continue;
+            if (!forceSpline) {
+                if (auto* f = dynamic_cast<const ForceTowardSplineModule*>(mod.get())) {
+                    forceSpline = f;
+                    continue;
+                }
+            }
+            if (!followSpline) {
+                if (auto* f = dynamic_cast<const FollowSplineModule*>(mod.get())) {
+                    followSpline = f;
+                }
+            }
+        }
+
+        const bool hasSplineModule =
+            spawnSpline != nullptr || forceSpline != nullptr || followSpline != nullptr;
+
+        if (hasSplineModule) {
+            // Lazy-create the GPU upload buffer the first time we detect a
+            // spline module. `kVfxSplineDefaultResolution` (64) matches the
+            // HLSL helper's expected sample count. A failed Create here is
+            // logged but non-fatal: the new CB fields stay zero and the
+            // shaders short-circuit.
+            if (!emitter->splineBuffer.IsValid()) {
+                if (!emitter->splineBuffer.Create(m_device, kVfxSplineDefaultResolution)) {
+                    UZ_LOG(VFX, Error,
+                           "DispatchVFXSimulation: VfxSplineBuffer::Create failed; "
+                           "spline modules will be inert this frame");
+                }
+            }
+
+            // Rebuild + upload once per frame. `RebuildAndUpload` rebuilds
+            // the arc-length table on the CPU and memcpys baked
+            // `VfxSplinePoint` samples into the upload-heap buffer; it is
+            // a no-op (returns true) when `splineSource.controlPoints` has
+            // fewer than 2 entries.
+            if (emitter->splineBuffer.IsValid()) {
+                if (!emitter->splineBuffer.RebuildAndUpload(emitter->splineSource, m_device)) {
+                    UZ_LOG(VFX, Warning,
+                           "DispatchVFXSimulation: VfxSplineBuffer::RebuildAndUpload failed; "
+                           "spline shaders will see stale or empty samples this frame");
+                }
+            }
+        }
+
+        // ── Per-tick dispatch body ─────────────────────────────────────
+        // Runs alive-count-reset + spawn + update + indirect-args for ONE
+        // simulation step. Called once per regular frame, OR multiple
+        // times during a `Seek(t)` warmup. Captures local emitter state
+        // by reference (capture-default `[&]`) so seek-warmup ticks see
+        // the same descriptor / buffer setup as the regular tick.
+        //
+        // `tickDt`        — dt for this tick (scaled by emitter pause/time).
+        // `tickFrameIndex` — frame number used for spawn-RNG variation.
+        //                    Incremented per warmup tick so each iteration
+        //                    rolls fresh randoms instead of duplicating.
+        // `restoreToCommonAfterTick` — when true, emit state-restore
+        //                    barriers at end of tick so the next tick
+        //                    sees the same start state. Used by the seek
+        //                    warmup (multiple ticks per cmdlist). The
+        //                    regular per-frame tick passes `false` so
+        //                    the buffers remain in (UAV/IndirectArgument)
+        //                    for the render graph import which follows.
+        auto dispatchOneTick = [&](float tickDt, uint32_t tickFrameIndex,
+                                   bool restoreToCommonAfterTick) {
+        // ── Reset aliveCount to 0 per tick ────────────────────────────
         // The spawn and update shaders atomically increment aliveCount.
-        // Without resetting to 0 each frame, the counter grows unbounded
+        // Without resetting to 0 each tick, the counter grows unbounded
         // and the free list eventually exhausts (particles stop spawning).
-        // This matches the standalone demo's per-frame aliveCount reset.
-        // Reset aliveCount to 0 via CopyBuffer (matches standalone pattern).
+        // This matches the standalone demo's per-frame aliveCount reset
+        // and is required EVERY tick during the seek warmup loop, not
+        // just once per frame.
         // DX12 implicit state promotion handles Common→CopyDst for the copy.
         // CopyDst→UAV barrier after so spawn CS can InterlockedAdd.
         if (gpuBuf.aliveCountStaging.IsValid()) {
@@ -258,11 +420,21 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
             cmdList->ResourceBarrier(&b, 1);
         }
 
+        // ── Per-emitter dt (pause + time-scale) ────────────────────────
+        // Apply the per-emitter `isPaused` and `timeScale` after the global
+        // `r.VFX.SimulatePaused` / `r.VFX.TimeScale` filters at the top of
+        // this function. A paused emitter sees dt=0 (alive particles freeze
+        // in place); time-scale scales the residual dt linearly. The same
+        // value is consumed by `CalculateSpawnCount` (spawn rate) and the
+        // update CS (age / position advance), so a slow-mo emitter is
+        // visually slow-mo across both spawn AND update.
+        float emitterDt = emitter->isPaused ? 0.0f : (tickDt * emitter->timeScale);
+
         // ── Spawn dispatch ─────────────────────────────────────────────
         // Check start delay for compound effects (delayed sub-emitters).
         const bool delayActive = emitter->startDelay > 0.0f
                                 && emitter->timeSinceRegistration < emitter->startDelay;
-        const uint32_t spawnCount = delayActive ? 0 : emitter->CalculateSpawnCount(dt);
+        const uint32_t spawnCount = delayActive ? 0 : emitter->CalculateSpawnCount(emitterDt);
 
         // cpuAliveCount is already updated inside CalculateSpawnCount().
 
@@ -293,8 +465,8 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         spawnCBData.initialColor[2]   = emitter->initialColor.z;
         spawnCBData.initialColor[3]   = emitter->initialColor.w;
 
-        spawnCBData.dt                = dt;
-        spawnCBData.frameNumber       = frameIndex;
+        spawnCBData.dt                = emitterDt;
+        spawnCBData.frameNumber       = tickFrameIndex;
         spawnCBData.spawnCount        = spawnCount;
         spawnCBData.maxParticles      = gpuBuf.capacity;
 
@@ -308,6 +480,7 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         spawnCBData.sizesUavIndex           = m_device->GetBufferUAVIndex(writeSet.sizes);
         spawnCBData.colorsUavIndex          = m_device->GetBufferUAVIndex(writeSet.colors);
         spawnCBData.rotationsUavIndex       = m_device->GetBufferUAVIndex(writeSet.rotations);
+        spawnCBData.subImageIndicesUavIndex = m_device->GetBufferUAVIndex(writeSet.subImageIndices);
         spawnCBData.freeListHeadUavIndex    = m_device->GetBufferUAVIndex(gpuBuf.freeListHead);
         spawnCBData.aliveCountUavIndex      = m_device->GetBufferUAVIndex(gpuBuf.aliveCount);
 
@@ -315,32 +488,95 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         spawnCBData.spawnShape        = emitter->spawnShape;
         spawnCBData.spawnOnSurface    = 0;
 
+        // Flipbook total frames for SubImageIndex computation in spawn shader.
+        spawnCBData.flipbookTotalFrames = emitter->flipbookTotalFrames;
+
         // Dynamic params UAV -- use positions UAV as fallback to prevent
         // writes to descriptor 0 (which corrupts the descriptor ring).
         // Use dedicated dummy buffer — CANNOT use positions/sizes (spawn
         // writes dynamicParams[idx] which would overwrite that attribute).
         spawnCBData.dynamicParamsUavIndex = m_device->GetBufferUAVIndex(m_vfxDummyDynParams);
 
+        // User-declared per-particle attributes (Niagara "Parameters" parity).
+        // Each declared slot publishes a bindless UAV to the spawn CS, which
+        // writes the declared default into every newly allocated particle.
+        for (const auto& ua : emitter->userAttributes) {
+            if (ua.slotIndex == UINT32_MAX) continue;
+            if (ua.type == UserAttributeType::Float) {
+                const uint32_t slot = ua.slotIndex;
+                if (slot < kMaxUserFloatAttrs &&
+                    writeSet.userFloat[slot].IsValid()) {
+                    spawnCBData.userFloatUav[slot] =
+                        m_device->GetBufferUAVIndex(writeSet.userFloat[slot]);
+                    spawnCBData.userFloatDefault[slot] = ua.defaultFloat;
+                }
+            } else {
+                const uint32_t slot = ua.slotIndex;
+                if (slot < kMaxUserVec4Attrs &&
+                    writeSet.userVec4[slot].IsValid()) {
+                    spawnCBData.userVec4Uav[slot] =
+                        m_device->GetBufferUAVIndex(writeSet.userVec4[slot]);
+                    float* dst = (slot == 0)
+                        ? spawnCBData.userVec4Default0
+                        : spawnCBData.userVec4Default1;
+                    dst[0] = ua.defaultVec4.x;
+                    dst[1] = ua.defaultVec4.y;
+                    dst[2] = ua.defaultVec4.z;
+                    dst[3] = ua.defaultVec4.w;
+                }
+            }
+        }
+
+        // ── Spline data-interface fields (spawn CB) ────────────────────
+        // Filled only when this emitter carries a `SpawnAlongSplineModule`.
+        // The shared SRV/count/length triple comes from `splineBuffer` so
+        // the spawn CS can address the bindless buffer; per-module config
+        // copies the author-side defaults verbatim. When `spawnSpline` is
+        // null every field stays at the struct default (0) and the spawn
+        // shader gates on `cbSplinePointCount >= 2`.
+        if (spawnSpline && emitter->splineBuffer.IsValid()) {
+            spawnCBData.cbSplineSrvIndex   = emitter->splineBuffer.GetBindlessSrvIndex(m_device);
+            spawnCBData.cbSplinePointCount = emitter->splineBuffer.pointCount;
+            spawnCBData.cbSplineTotalLength = emitter->splineBuffer.totalLength;
+
+            const auto& cfg = spawnSpline->GetConfig();
+            spawnCBData.cbSplineSpawnStratified    = cfg.stratified ? 1u : 0u;
+            spawnCBData.cbSplineSpawnJitterRadius  = cfg.jitterRadius;
+            spawnCBData.cbSplineSpawnTangentOffset = cfg.tangentOffset;
+        }
+
         const CBAllocation spawnAlloc = m_cbRing->Allocate(sizeof(spawnCBData));
         if (!spawnAlloc.cpuPtr) {
             UZ_LOG(VFX, Warning,
                    "DispatchVFXSimulation: CB ring full, skipping emitter (spawn)");
-            continue;
+            return;  // abort this tick; inside dispatchOneTick lambda
         }
         std::memcpy(spawnAlloc.cpuPtr, &spawnCBData, sizeof(spawnCBData));
 
         if (spawnCount > 0) {
-            // Transition WriteSet attributes Common→UAV before compute writes.
-            // Uses Common as before-state every frame (matches standalone demo).
-            // DX12 buffer state decay means buffers return to Common after
-            // the command list finishes execution, regardless of last explicit state.
+            // Transition WriteSet attributes (ShaderResource | Common)→UAV
+            // before compute writes. The end-of-tick barrier in the regular
+            // per-frame path leaves these buffers in `ShaderResource` state
+            // (so the downstream RG mesh-instance-CS bindless reads see
+            // valid data); the seek-warmup-tick path leaves them in
+            // `Common`. The first tick of any frame thus sees one of two
+            // states — both must transition cleanly to UAV. We use the
+            // first frame's `Common` state for the initial pre-init upload,
+            // and `ShaderResource` for steady-state.
             {
                 const auto& ws = gpuBuf.WriteSet();
                 RHIBarrierDesc uavBarriers[7] = {};
                 uint32_t ub = 0;
                 auto addUav = [&](RHIBufferHandle buf) {
                     uavBarriers[ub].buffer = buf;
-                    uavBarriers[ub].stateBefore = RHIResourceState::Common;
+                    // Steady-state: previous frame ended with SRV. First
+                    // frame: previous state was Common (pre-init). DX12
+                    // accepts a state-transition where the actual state
+                    // matches `stateBefore`; we set the steady-state path
+                    // (SRV→UAV). The first frame's pre-init upload puts
+                    // buffers in CopyDst→UAV via `UploadInitialState` so
+                    // the SRV→UAV barrier is the correct ongoing pattern.
+                    uavBarriers[ub].stateBefore = RHIResourceState::ShaderResource;
                     uavBarriers[ub].stateAfter  = RHIResourceState::UnorderedAccess;
                     ++ub;
                 };
@@ -386,7 +622,7 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         updateCBData.gravity[0]  = emitter->gravity.x;
         updateCBData.gravity[1]  = emitter->gravity.y;
         updateCBData.gravity[2]  = emitter->gravity.z;
-        updateCBData.dt          = dt;
+        updateCBData.dt          = emitterDt;
         updateCBData.damping     = 1.0f - emitter->damping;
 
         // Process ALL particle slots so the shader handles particles at
@@ -406,7 +642,8 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         updateCBData.lifespansSrvIndex  = m_device->GetBufferSRVIndex(writeSet.lifespans);
         updateCBData.sizesSrvIndex      = m_device->GetBufferSRVIndex(writeSet.sizes);
         updateCBData.colorsSrvIndex     = m_device->GetBufferSRVIndex(writeSet.colors);
-        updateCBData.rotationsSrvIndex  = m_device->GetBufferSRVIndex(writeSet.rotations);
+        updateCBData.rotationsSrvIndex       = m_device->GetBufferSRVIndex(writeSet.rotations);
+        updateCBData.subImageIndicesSrvIndex = m_device->GetBufferSRVIndex(writeSet.subImageIndices);
 
         updateCBData.positionsUavIndex  = m_device->GetBufferUAVIndex(writeSet.positions);
         updateCBData.velocitiesUavIndex = m_device->GetBufferUAVIndex(writeSet.velocities);
@@ -414,7 +651,8 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         updateCBData.lifespansUavIndex  = m_device->GetBufferUAVIndex(writeSet.lifespans);
         updateCBData.sizesUavIndex      = m_device->GetBufferUAVIndex(writeSet.sizes);
         updateCBData.colorsUavIndex     = m_device->GetBufferUAVIndex(writeSet.colors);
-        updateCBData.rotationsUavIndex  = m_device->GetBufferUAVIndex(writeSet.rotations);
+        updateCBData.rotationsUavIndex       = m_device->GetBufferUAVIndex(writeSet.rotations);
+        updateCBData.subImageIndicesUavIndex = m_device->GetBufferUAVIndex(writeSet.subImageIndices);
 
         // Shared buffers (not double-buffered).
         updateCBData.freeListUavIndex       = m_device->GetBufferUAVIndex(gpuBuf.freeList);
@@ -472,6 +710,9 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         updateCBData.rotationOverLifeStart  = emitter->rotationOverLifeStart;
         updateCBData.rotationOverLifeEnd    = emitter->rotationOverLifeEnd;
 
+        // Flipbook total frames for SubImageIndex computation in update shader.
+        updateCBData.flipbookTotalFrames    = emitter->flipbookTotalFrames;
+
         // Kill volumes (buffer-based, default disabled with count=0).
         updateCBData.killVolumeSrvIndex     = m_device->GetBufferSRVIndex(m_vfxKillVolumeBuffer);
         updateCBData.activeKillVolumeCount  = 0; // No active kill volumes by default
@@ -480,11 +721,40 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         updateCBData.deathEventBufferUavIndex = m_device->GetBufferUAVIndex(m_vfxDeathEventBuffer);
         updateCBData.deathEventCountUavIndex  = m_device->GetBufferUAVIndex(m_vfxDeathEventCountBuffer);
 
+        // ── Spline data-interface fields (update CB) ───────────────────
+        // The shared SRV/count/length triple is published whenever EITHER
+        // a `ForceTowardSplineModule` or a `FollowSplineModule` is on the
+        // update stack — both modules share the same baked buffer. Each
+        // module's config block stays zero when only the other is present
+        // (the shader paths gate on per-module sentinels: stiffness > 0
+        // for force, speed != 0 for follow). When neither module is on
+        // the stack every field stays default-zero and the update CS
+        // short-circuits on `cbSplinePointCount < 2`.
+        if ((forceSpline != nullptr || followSpline != nullptr) &&
+            emitter->splineBuffer.IsValid()) {
+            updateCBData.cbSplineSrvIndex    = emitter->splineBuffer.GetBindlessSrvIndex(m_device);
+            updateCBData.cbSplinePointCount  = emitter->splineBuffer.pointCount;
+            updateCBData.cbSplineTotalLength = emitter->splineBuffer.totalLength;
+
+            if (forceSpline) {
+                const auto& cfg = forceSpline->GetConfig();
+                updateCBData.cbSplineForceStiffness       = cfg.stiffness;
+                updateCBData.cbSplineForceMaxAccel        = cfg.maxAcceleration;
+                updateCBData.cbSplineForceAttractDistance = cfg.attractDistance;
+            }
+            if (followSpline) {
+                const auto& cfg = followSpline->GetConfig();
+                updateCBData.cbSplineFollowSpeed  = cfg.speed;
+                updateCBData.cbSplineFollowLoop   = cfg.loop ? 1u : 0u;
+                updateCBData.cbSplineFollowStartU = cfg.startU;
+            }
+        }
+
         const CBAllocation updateAlloc = m_cbRing->Allocate(sizeof(updateCBData));
         if (!updateAlloc.cpuPtr) {
             UZ_LOG(VFX, Warning,
                    "DispatchVFXSimulation: CB ring full, skipping emitter (update)");
-            continue;
+            return;  // abort this tick; inside dispatchOneTick lambda
         }
         std::memcpy(updateAlloc.cpuPtr, &updateCBData, sizeof(updateCBData));
 
@@ -515,20 +785,724 @@ void SceneRenderer::DispatchVFXSimulation(IRHICommandList* cmdList,
         // ── UAV -> IndirectArgument barrier ─────────────────────────────
         TransitionIndirectArgs(cmdList, gpuBuf);
 
-        // NOTE: No UAV→SRV barrier here. The standalone demo does NOT transition
-        // write-set to SRV after compute. DX12 implicit state decay handles the
-        // Common→UAV→Common lifecycle. The billboard reads via ResourceDescriptorHeap
-        // (bindless) which works regardless of tracked state on NVIDIA.
+        // ── Per-tick state-restore barriers (warmup only) ───────────────
+        // When this tick is part of a multi-tick seek warmup, return
+        // every buffer to Common so the NEXT tick sees the same start
+        // state as tick 1. Skipped on the regular per-frame tick because
+        // the render graph import expects (UAV / IndirectArgument) — the
+        // states the regular code path leaves the buffers in.
+        if (restoreToCommonAfterTick) {
+            const auto& ws = gpuBuf.WriteSet();
+            RHIBarrierDesc back[12] = {};
+            uint32_t bn = 0;
+            auto addBack = [&](RHIBufferHandle buf, RHIResourceState before, RHIResourceState after) {
+                if (!buf.IsValid()) return;
+                back[bn].buffer      = buf;
+                back[bn].stateBefore = before;
+                back[bn].stateAfter  = after;
+                ++bn;
+            };
+            // Attribute buffers: end in ShaderResource so the next tick's
+            // spawn barrier (ShaderResource→UAV) and any downstream
+            // bindless SRV reads (mesh-instance CS) see a uniform state.
+            addBack(ws.positions,  RHIResourceState::UnorderedAccess, RHIResourceState::ShaderResource);
+            addBack(ws.velocities, RHIResourceState::UnorderedAccess, RHIResourceState::ShaderResource);
+            addBack(ws.ages,       RHIResourceState::UnorderedAccess, RHIResourceState::ShaderResource);
+            addBack(ws.lifespans,  RHIResourceState::UnorderedAccess, RHIResourceState::ShaderResource);
+            addBack(ws.sizes,      RHIResourceState::UnorderedAccess, RHIResourceState::ShaderResource);
+            addBack(ws.colors,     RHIResourceState::UnorderedAccess, RHIResourceState::ShaderResource);
+            addBack(ws.rotations,  RHIResourceState::UnorderedAccess, RHIResourceState::ShaderResource);
+            // Free-list / alive-count / indirect args: keep their UAV /
+            // IndirectArgument states (the seek-warmup loop expects these
+            // back to Common, but the regular per-frame path doesn't run
+            // this block — only the warmup loop does).
+            addBack(gpuBuf.freeList,             RHIResourceState::UnorderedAccess, RHIResourceState::Common);
+            addBack(gpuBuf.aliveCount,           RHIResourceState::UnorderedAccess, RHIResourceState::Common);
+            addBack(gpuBuf.indirectDrawArgs,     RHIResourceState::IndirectArgument, RHIResourceState::Common);
+            addBack(gpuBuf.indirectDispatchArgs, RHIResourceState::IndirectArgument, RHIResourceState::Common);
+            if (bn > 0) cmdList->ResourceBarrier(back, bn);
+        }
 
         // Mark buffer as having completed a full simulation cycle.
         // The render graph import in RegisterParticlePasses will use
         // steady-state resource states from this point forward.
         gpuBuf.hasCompletedCycle = true;
+
+#if defined(UZ_VFX_DIAG_ALIVECOUNT)
+        // ── Diagnostic: readback aliveCount + freeListHead per tick ────
+        // Temporary instrumentation for phase0_vfx-mesh-particle-visibility-debug.
+        // Reads back the GPU-side aliveCount (post spawn+update increments)
+        // and the freeListHead (post spawn decrements) and logs them at
+        // Info level. Use this to discriminate root cause hypothesis (a)
+        // garbage-SRV-reads vs (b) indirect-args-not-propagating: if
+        // aliveCount stays > 0 each frame but the screenshot shows zero
+        // instances, the spawn/update path is fine and the bug is in the
+        // mesh-instance-CS / indirect-args interaction.
+        //
+        // Cost: per-tick WaitIdle stalls the frame for ~ms; do NOT enable
+        // in shipping builds. Enable via -DUZ_VFX_DIAG_ALIVECOUNT in the
+        // zig build (or add the macro inline for one-shot debugging).
+        if (gpuBuf.aliveCount.IsValid() && gpuBuf.freeListHead.IsValid())
+        {
+            // 1. Create ReadBack buffers (one per value of interest).
+            RHIBufferDesc rbDesc{};
+            rbDesc.sizeBytes = sizeof(uint32_t);
+            rbDesc.usage     = RHIBufferUsage::CopyDst;
+            rbDesc.memory    = RHIMemoryType::Readback;
+
+            rbDesc.debugName = "VFX_Diag_AliveCount_RB";
+            RHIBufferHandle rbAlive = m_device->CreateBuffer(rbDesc);
+            rbDesc.debugName = "VFX_Diag_FreeListHead_RB";
+            RHIBufferHandle rbHead  = m_device->CreateBuffer(rbDesc);
+
+            // Mesh-output readbacks: meshInstanceCount + indirect-args
+            // InstanceCount field (offset 4 into meshIndirectDrawArgs).
+            // These were filled by the PREVIOUS frame's render-graph
+            // mesh-instance-CS pass (this frame's pass hasn't run yet).
+            // Capturing previous-frame values is fine for diagnose: we
+            // want to see if ANY frame produces non-zero instances.
+            const bool hasMeshOutputs =
+                gpuBuf.meshInstanceCount.IsValid() &&
+                gpuBuf.meshIndirectDrawArgs.IsValid();
+            rbDesc.debugName = "VFX_Diag_MeshInstanceCount_RB";
+            RHIBufferHandle rbMeshCount = hasMeshOutputs
+                ? m_device->CreateBuffer(rbDesc) : RHIBufferHandle::Invalid();
+            rbDesc.debugName = "VFX_Diag_IndirectInstanceCount_RB";
+            RHIBufferHandle rbIndirectInstCount = hasMeshOutputs
+                ? m_device->CreateBuffer(rbDesc) : RHIBufferHandle::Invalid();
+            rbDesc.debugName = "VFX_Diag_IndirectIndexCount_RB";
+            RHIBufferHandle rbIndirectIndexCount = hasMeshOutputs
+                ? m_device->CreateBuffer(rbDesc) : RHIBufferHandle::Invalid();
+
+            if (rbAlive.IsValid() && rbHead.IsValid()) {
+                // 2. State -> CopySrc for the source buffers.
+                RHIBarrierDesc srcBars[4] = {};
+                uint32_t bn = 0;
+                auto addCopySrc = [&](RHIBufferHandle buf, RHIResourceState before) {
+                    if (!buf.IsValid()) return;
+                    srcBars[bn].buffer      = buf;
+                    srcBars[bn].stateBefore = before;
+                    srcBars[bn].stateAfter  = RHIResourceState::CopySrc;
+                    ++bn;
+                };
+                addCopySrc(gpuBuf.aliveCount,           RHIResourceState::UnorderedAccess);
+                addCopySrc(gpuBuf.freeListHead,         RHIResourceState::UnorderedAccess);
+                if (hasMeshOutputs) {
+                    addCopySrc(gpuBuf.meshInstanceCount,    RHIResourceState::UnorderedAccess);
+                    addCopySrc(gpuBuf.meshIndirectDrawArgs, RHIResourceState::IndirectArgument);
+                }
+                cmdList->ResourceBarrier(srcBars, bn);
+
+                // 3. Copy.
+                cmdList->CopyBuffer(gpuBuf.aliveCount,   0, rbAlive, 0, sizeof(uint32_t));
+                cmdList->CopyBuffer(gpuBuf.freeListHead, 0, rbHead,  0, sizeof(uint32_t));
+                if (hasMeshOutputs) {
+                    cmdList->CopyBuffer(gpuBuf.meshInstanceCount, 0, rbMeshCount, 0, sizeof(uint32_t));
+                    // IndexCountPerInstance @ offset 0 — written by thread 0 of
+                    // the mesh CS. If this is the meshIndexCount value (e.g. 12
+                    // for the tetrahedron), thread 0 ran. If 0, CS didn't dispatch.
+                    cmdList->CopyBuffer(gpuBuf.meshIndirectDrawArgs, 0,
+                                        rbIndirectIndexCount, 0, sizeof(uint32_t));
+                    // InstanceCount @ offset 4 — written by alive-particle loop.
+                    cmdList->CopyBuffer(gpuBuf.meshIndirectDrawArgs, sizeof(uint32_t),
+                                        rbIndirectInstCount, 0, sizeof(uint32_t));
+                }
+
+                // 4. Restore source buffers to original state.
+                bn = 0;
+                auto addRestore = [&](RHIBufferHandle buf, RHIResourceState after) {
+                    if (!buf.IsValid()) return;
+                    srcBars[bn].buffer      = buf;
+                    srcBars[bn].stateBefore = RHIResourceState::CopySrc;
+                    srcBars[bn].stateAfter  = after;
+                    ++bn;
+                };
+                addRestore(gpuBuf.aliveCount,           RHIResourceState::UnorderedAccess);
+                addRestore(gpuBuf.freeListHead,         RHIResourceState::UnorderedAccess);
+                if (hasMeshOutputs) {
+                    addRestore(gpuBuf.meshInstanceCount,    RHIResourceState::UnorderedAccess);
+                    addRestore(gpuBuf.meshIndirectDrawArgs, RHIResourceState::IndirectArgument);
+                }
+                cmdList->ResourceBarrier(srcBars, bn);
+
+                // 5. End command list, execute, wait, map, log, destroy.
+                cmdList->End();
+                cmdList->Execute();
+                m_device->WaitIdle();
+
+                uint32_t aliveVal = 0;
+                uint32_t headVal  = 0;
+                uint32_t meshCountVal = 0;
+                uint32_t indirectInstVal = 0;
+                if (auto* p = static_cast<uint32_t*>(m_device->MapBuffer(rbAlive))) {
+                    aliveVal = *p; m_device->UnmapBuffer(rbAlive);
+                }
+                if (auto* p = static_cast<uint32_t*>(m_device->MapBuffer(rbHead))) {
+                    headVal = *p; m_device->UnmapBuffer(rbHead);
+                }
+                if (hasMeshOutputs && rbMeshCount.IsValid()) {
+                    if (auto* p = static_cast<uint32_t*>(m_device->MapBuffer(rbMeshCount))) {
+                        meshCountVal = *p; m_device->UnmapBuffer(rbMeshCount);
+                    }
+                }
+                if (hasMeshOutputs && rbIndirectInstCount.IsValid()) {
+                    if (auto* p = static_cast<uint32_t*>(m_device->MapBuffer(rbIndirectInstCount))) {
+                        indirectInstVal = *p; m_device->UnmapBuffer(rbIndirectInstCount);
+                    }
+                }
+                uint32_t indirectIdxVal = 0;
+                if (hasMeshOutputs && rbIndirectIndexCount.IsValid()) {
+                    if (auto* p = static_cast<uint32_t*>(m_device->MapBuffer(rbIndirectIndexCount))) {
+                        indirectIdxVal = *p; m_device->UnmapBuffer(rbIndirectIndexCount);
+                    }
+                }
+
+                UZ_LOG(VFX, Info,
+                       "[DIAG] '{}' alive={} head={} mesh={{instCount={} idxPerInst={} indirectInst={}}} cap={}",
+                       emitter->graphPath.empty() ? "<inline>" : emitter->graphPath,
+                       aliveVal, headVal, meshCountVal, indirectIdxVal, indirectInstVal, gpuBuf.capacity);
+
+                // 6. Re-begin command list so the rest of the frame can keep recording.
+                cmdList->Begin();
+
+                m_device->DestroyBuffer(rbAlive);
+                m_device->DestroyBuffer(rbHead);
+                if (rbMeshCount.IsValid())        m_device->DestroyBuffer(rbMeshCount);
+                if (rbIndirectInstCount.IsValid()) m_device->DestroyBuffer(rbIndirectInstCount);
+                if (rbIndirectIndexCount.IsValid()) m_device->DestroyBuffer(rbIndirectIndexCount);
+            }
+        }
+#endif // UZ_VFX_DIAG_ALIVECOUNT
+        };  // dispatchOneTick lambda
+
+        // ── Seek warmup loop ──────────────────────────────────────────
+        // Consume any `pendingSeekTime` queued by `ParticleEmitter::Seek(t)`
+        // by running fixed-rate sim ticks with `dt = kSeekFixedDt` BEFORE
+        // the regular per-frame tick. Each warmup tick increments the
+        // frame number so spawn-RNG produces fresh randoms instead of
+        // duplicating the same particles every iteration.
+        //
+        // The work is capped per frame by `r.VFX.Seek.MaxTicksPerFrame`:
+        // long scrubs (e.g. 30 s = 1800 ticks at 1/60 s) split across
+        // multiple frames so a single Seek() doesn't stall the GPU
+        // pipeline. The remaining seconds roll over via decremented
+        // `pendingSeekTime`; the next frame resumes the warmup until
+        // it fully drains.
+        //
+        // @ref .rulebook/tasks/phase16_vfx-scalability-hardware-validation
+        // @ref engine/vfx/components/particle_emitter.h `Seek(targetTime)`
+        if (emitter->GetPendingSeekTime() > 0.0f) {
+            const float remaining = emitter->GetPendingSeekTime();
+            const uint32_t totalTicks = static_cast<uint32_t>(
+                std::ceil(remaining / kSeekFixedDt));
+
+            // Read CVar each frame so console / hot-reload tweaks take
+            // effect on the next seek without restarting the engine.
+            // Default 256 = 4.27 s of sim work at 60 Hz; clamped to 1
+            // so a misconfigured 0 doesn't deadlock long scrubs.
+            auto& cvars = CVarRegistry::Get();
+            const int  maxTicksRaw = cvars.GetInt(
+                "r.VFX.Seek.MaxTicksPerFrame", 256);
+            const uint32_t maxThisFrame = static_cast<uint32_t>(
+                std::max(1, maxTicksRaw));
+            const uint32_t ticksThisFrame = std::min(totalTicks, maxThisFrame);
+
+            for (uint32_t i = 0; i < ticksThisFrame; ++i) {
+                // Frame number salt: outer frameIndex shifted by i so
+                // spawn-RNG sees a fresh seed each warmup tick. The
+                // multiplier (1u << 16) avoids collisions with the
+                // regular tick's frameIndex within reasonable run lengths.
+                const uint32_t tickFrameNumber =
+                    frameIndex + (i + 1u) * (1u << 16);
+                // restoreToCommonAfterTick=true so the next tick (warmup
+                // or regular) sees the buffers in Common.
+                dispatchOneTick(kSeekFixedDt, tickFrameNumber,
+                                /*restoreToCommonAfterTick=*/true);
+            }
+
+            if (ticksThisFrame >= totalTicks) {
+                // Warmup completed in full — clear the pending request.
+                emitter->ClearPendingSeek();
+            } else {
+                // Hit the per-frame budget; decrement the pending time
+                // by exactly what we consumed and resume on the next
+                // frame. Floating-point error converges to zero across
+                // long scrubs because every tick uses the same kSeekFixedDt.
+                const float consumed = static_cast<float>(ticksThisFrame) * kSeekFixedDt;
+                const float leftover = (remaining > consumed) ? (remaining - consumed) : 0.0f;
+                emitter->pendingSeekTime = leftover;
+            }
+        }
+
+        // ── Regular per-frame tick ────────────────────────────────────
+        // Always runs, with the (possibly globally-scaled) frame dt.
+        // restoreToCommonAfterTick=false so the buffers remain in
+        // (UAV / IndirectArgument) for the render graph import that
+        // follows in `RegisterParticlePasses`.
+        dispatchOneTick(dt, frameIndex, /*restoreToCommonAfterTick=*/false);
+
+        // [phase0_vfx-mesh-particle-visibility-debug] UAV→ShaderResource for
+        // attribute buffers — explicit transition (DX12 implicit-promote does
+        // NOT trigger for buffers freshly written via UAV; bindless SRV access
+        // through ResourceDescriptorHeap[] then returns garbage / NaN, which
+        // produces clip-space-filling triangles that occlude the entire
+        // viewport). The next frame's spawn dispatch barrier (line ~555)
+        // transitions ShaderResource→UnorderedAccess to write again.
+        //
+        // KNOWN INCOMPLETE — phase0_vfx-mesh-bindless-attr-read-bug:
+        // This barrier is necessary but NOT sufficient. The
+        // bindless SRV read in the mesh-instance CS still returns zero
+        // even with the UAV→SR transition + an explicit UAV-flush
+        // barrier (tested 2026-04-30 on the DX12 backend). The
+        // CPU-side `CopyBuffer` readback (`UZ_VFX_DIAG_ATTR_READBACK`)
+        // sees the spawn-written data correctly, but the in-shader
+        // bindless read does not. Investigating via PIX/RenderDoc is
+        // the next step (descriptor heap state inspection).
+        {
+            const auto& ws = gpuBuf.WriteSet();
+            RHIBarrierDesc attrBarriers[7] = {};
+            uint32_t bn = 0;
+            auto addBar = [&](RHIBufferHandle buf) {
+                if (!buf.IsValid()) return;
+                attrBarriers[bn].buffer      = buf;
+                attrBarriers[bn].stateBefore = RHIResourceState::UnorderedAccess;
+                attrBarriers[bn].stateAfter  = RHIResourceState::ShaderResource;
+                ++bn;
+            };
+            addBar(ws.positions);
+            addBar(ws.velocities);
+            addBar(ws.ages);
+            addBar(ws.lifespans);
+            addBar(ws.sizes);
+            addBar(ws.colors);
+            addBar(ws.rotations);
+            if (bn > 0) cmdList->ResourceBarrier(attrBarriers, bn);
+        }
+
+#if defined(UZ_VFX_DIAG_ATTR_READBACK)
+        // ── Diagnostic: per-frame readback of WriteSet attribute buffers ───
+        // Phase 1.1 of phase0_vfx-mesh-bindless-attr-read-bug.
+        //
+        // Reads back positions[0..3], lifespans[0..3], ages[0..3] from the
+        // WriteSet immediately AFTER the inline UAV→ShaderResource
+        // transition above and BEFORE the render graph executes the
+        // mesh-instance CS pass. The values logged here are what the GPU
+        // actually has in memory right after spawn+update wrote them.
+        //
+        // Discriminator:
+        //   • Sane values close to (0, 0, 0..150) cm  → spawn/update writes
+        //     are correct, the bindless read inside the mesh CS is the bug
+        //     (RG state corruption / UAV write hazard / per-emitter ordering
+        //     hypotheses 1-3).
+        //   • Garbage values > 1000 / NaN              → spawn or update
+        //     writes garbage (worldPosition or attach.resolved hypothesis 4).
+        //   • Mixed (some sane, some garbage)         → buffer ping-pong
+        //     mismatch — WriteSet/ReadSet got swapped between sim and read.
+        //
+        // Cost: per-frame WaitIdle stalls the CPU for ~ms; do NOT enable in
+        // shipping builds. Enable via -DUZ_VFX_DIAG_ATTR_READBACK in the zig
+        // build OR by adding `#define UZ_VFX_DIAG_ATTR_READBACK 1` at the top
+        // of this file for a one-shot debugging session.
+        if (gpuBuf.WriteSet().positions.IsValid() &&
+            gpuBuf.WriteSet().lifespans.IsValid() &&
+            gpuBuf.WriteSet().ages.IsValid())
+        {
+            const auto& ws = gpuBuf.WriteSet();
+
+            // Read the WHOLE buffer so we don't miss the active region —
+            // spawn pops from the END of the free-list (slot indices
+            // count down from `capacity-1`), so the first few slots are
+            // always empty until late in steady-state. Reading the full
+            // buffer + scanning client-side for non-zero entries is
+            // essential for catching the actually-spawned particles.
+            const uint32_t kReadCount = gpuBuf.capacity;
+
+            // 1. Create per-attribute readback buffers sized for the full SoA.
+            RHIBufferDesc rbPosDesc{};
+            rbPosDesc.sizeBytes = static_cast<uint64_t>(kReadCount) *
+                                  sizeof(float) * 4;  // float4 stride
+            rbPosDesc.usage     = RHIBufferUsage::CopyDst;
+            rbPosDesc.memory    = RHIMemoryType::Readback;
+            rbPosDesc.debugName = "VFX_DiagAttr_Pos_RB";
+            RHIBufferHandle rbPos = m_device->CreateBuffer(rbPosDesc);
+
+            RHIBufferDesc rbScalarDesc{};
+            rbScalarDesc.sizeBytes = static_cast<uint64_t>(kReadCount) *
+                                     sizeof(float);
+            rbScalarDesc.usage     = RHIBufferUsage::CopyDst;
+            rbScalarDesc.memory    = RHIMemoryType::Readback;
+            rbScalarDesc.debugName = "VFX_DiagAttr_Lifespan_RB";
+            RHIBufferHandle rbLifespan = m_device->CreateBuffer(rbScalarDesc);
+            rbScalarDesc.debugName = "VFX_DiagAttr_Age_RB";
+            RHIBufferHandle rbAge = m_device->CreateBuffer(rbScalarDesc);
+
+            if (rbPos.IsValid() && rbLifespan.IsValid() && rbAge.IsValid())
+            {
+                // 2. Transition source buffers ShaderResource → CopySrc.
+                RHIBarrierDesc srcBars[3] = {};
+                srcBars[0].buffer      = ws.positions;
+                srcBars[0].stateBefore = RHIResourceState::ShaderResource;
+                srcBars[0].stateAfter  = RHIResourceState::CopySrc;
+                srcBars[1].buffer      = ws.lifespans;
+                srcBars[1].stateBefore = RHIResourceState::ShaderResource;
+                srcBars[1].stateAfter  = RHIResourceState::CopySrc;
+                srcBars[2].buffer      = ws.ages;
+                srcBars[2].stateBefore = RHIResourceState::ShaderResource;
+                srcBars[2].stateAfter  = RHIResourceState::CopySrc;
+                cmdList->ResourceBarrier(srcBars, 3);
+
+                cmdList->CopyBuffer(ws.positions, 0, rbPos, 0,
+                                    rbPosDesc.sizeBytes);
+                cmdList->CopyBuffer(ws.lifespans, 0, rbLifespan, 0,
+                                    rbScalarDesc.sizeBytes);
+                cmdList->CopyBuffer(ws.ages, 0, rbAge, 0,
+                                    rbScalarDesc.sizeBytes);
+
+                RHIBarrierDesc restoreBars[3] = {};
+                restoreBars[0].buffer      = ws.positions;
+                restoreBars[0].stateBefore = RHIResourceState::CopySrc;
+                restoreBars[0].stateAfter  = RHIResourceState::ShaderResource;
+                restoreBars[1].buffer      = ws.lifespans;
+                restoreBars[1].stateBefore = RHIResourceState::CopySrc;
+                restoreBars[1].stateAfter  = RHIResourceState::ShaderResource;
+                restoreBars[2].buffer      = ws.ages;
+                restoreBars[2].stateBefore = RHIResourceState::CopySrc;
+                restoreBars[2].stateAfter  = RHIResourceState::ShaderResource;
+                cmdList->ResourceBarrier(restoreBars, 3);
+
+                cmdList->End();
+                cmdList->Execute();
+                m_device->WaitIdle();
+
+                std::vector<float> posData(kReadCount * 4);
+                std::vector<float> lifespanData(kReadCount);
+                std::vector<float> ageData(kReadCount);
+                if (auto* p = static_cast<float*>(m_device->MapBuffer(rbPos))) {
+                    std::memcpy(posData.data(), p, posData.size() * sizeof(float));
+                    m_device->UnmapBuffer(rbPos);
+                }
+                if (auto* p = static_cast<float*>(m_device->MapBuffer(rbLifespan))) {
+                    std::memcpy(lifespanData.data(), p, lifespanData.size() * sizeof(float));
+                    m_device->UnmapBuffer(rbLifespan);
+                }
+                if (auto* p = static_cast<float*>(m_device->MapBuffer(rbAge))) {
+                    std::memcpy(ageData.data(), p, ageData.size() * sizeof(float));
+                    m_device->UnmapBuffer(rbAge);
+                }
+
+                // Scan: count alive (lifespan > 0), find min/max position
+                // magnitude, sample first 3 alive slots, sample first 3 dead
+                // slots (lifespan == 0) to see if they have garbage pos.
+                uint32_t aliveSeen = 0;
+                float minPosMag = 1.0e30f;
+                float maxPosMag = 0.0f;
+                int firstAliveIdx[3] = { -1, -1, -1 };
+                int firstDeadIdx[3]  = { -1, -1, -1 };
+                int nAlive = 0;
+                int nDead  = 0;
+                for (uint32_t i = 0; i < kReadCount; ++i) {
+                    const float life = lifespanData[i];
+                    if (life > 0.0f) {
+                        ++aliveSeen;
+                        const float px = posData[i*4 + 0];
+                        const float py = posData[i*4 + 1];
+                        const float pz = posData[i*4 + 2];
+                        const float mag = std::sqrt(px*px + py*py + pz*pz);
+                        if (mag < minPosMag) minPosMag = mag;
+                        if (mag > maxPosMag) maxPosMag = mag;
+                        if (nAlive < 3) firstAliveIdx[nAlive++] = static_cast<int>(i);
+                    } else if (nDead < 3) {
+                        firstDeadIdx[nDead++] = static_cast<int>(i);
+                    }
+                }
+
+                UZ_LOG(VFX, Info,
+                       "[DIAG-ATTR f={}] '{}' cpuAlive={} gpuAliveSeen={} cap={} "
+                       "posMagRange=[{:.2f}, {:.2f}]",
+                       frameIndex,
+                       emitter->graphPath.empty() ? "<inline>" : emitter->graphPath,
+                       emitter->cpuAliveCount, aliveSeen, gpuBuf.capacity,
+                       (aliveSeen > 0) ? minPosMag : 0.0f, maxPosMag);
+
+                for (int k = 0; k < nAlive; ++k) {
+                    const int i = firstAliveIdx[k];
+                    UZ_LOG(VFX, Info,
+                           "[DIAG-ATTR f={}]   ALIVE slot[{}] pos=({:.2f}, {:.2f}, {:.2f}) "
+                           "life={:.3f} age={:.3f}",
+                           frameIndex, i,
+                           posData[i*4 + 0], posData[i*4 + 1], posData[i*4 + 2],
+                           lifespanData[i], ageData[i]);
+                }
+                for (int k = 0; k < nDead; ++k) {
+                    const int i = firstDeadIdx[k];
+                    UZ_LOG(VFX, Info,
+                           "[DIAG-ATTR f={}]   DEAD  slot[{}] pos=({:.2f}, {:.2f}, {:.2f}) "
+                           "life={:.3f} age={:.3f}",
+                           frameIndex, i,
+                           posData[i*4 + 0], posData[i*4 + 1], posData[i*4 + 2],
+                           lifespanData[i], ageData[i]);
+                }
+
+                cmdList->Begin();
+
+                m_device->DestroyBuffer(rbPos);
+                m_device->DestroyBuffer(rbLifespan);
+                m_device->DestroyBuffer(rbAge);
+            }
+        }
+#endif // UZ_VFX_DIAG_ATTR_READBACK
     }
 
     if (m_gpuProfileEnabled) {
         m_device->GpuProfilerEndTimestamp(cmdList, "VFX_InlineSimulation");
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DispatchVFXSort — bitonic depth sort for emitters that need back-to-front
+//                   rendering. Runs inline after DispatchVFXSimulation.
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SceneRenderer::DispatchVFXSort(IRHICommandList* cmdList) {
+    UZ_PROFILE_FUNCTION();
+
+    VFXSystem* activeVFX = m_vfxSystemOverride ? m_vfxSystemOverride : m_vfxSystem.get();
+    if (!activeVFX || !activeVFX->IsInitialized()) return;
+
+    const auto& emitters = activeVFX->GetActiveEmitters();
+    if (emitters.empty()) return;
+
+    const auto sortPSO = m_pipelines->GetParticleSortCS();
+    if (!sortPSO.IsValid()) return;
+
+    if (m_gpuProfileEnabled) {
+        m_device->GpuProfilerBeginTimestamp(cmdList, "VFX_InlineSort");
+    }
+
+    // Camera vectors for ViewDepth keys. Captured once per frame; the sort
+    // dispatch reads them as float[3].
+    const Vec3 camPos = m_cameraManager->GetActiveCamera().GetPosition();
+    const Vec3 camFwd = m_cameraManager->GetActiveCamera().GetForward();
+    const float camPosArr[3] = { camPos.x, camPos.y, camPos.z };
+    const float camFwdArr[3] = { camFwd.x, camFwd.y, camFwd.z };
+
+    constexpr uint32_t kBlendModeAlphaBlend = 0u;
+
+    for (auto* emitter : emitters) {
+        if (!emitter || !emitter->initialized) continue;
+        if (emitter->cullSuppress) continue;
+        if (emitter->needsInitialUpload) continue;
+
+        auto& gpuBuf = emitter->buffer;
+        if (!gpuBuf.IsValid() || !gpuBuf.sort.IsValid()) continue;
+        if (emitter->cpuAliveCount == 0) continue;
+
+        // ── Resolve sort mode + key source for this emitter ─────────────
+        // Sprite emitters (no MeshRenderModule, or one we don't recognise)
+        // auto-sort when blendMode == AlphaBlend and skip otherwise.
+        // Mesh emitters consult MeshRenderModule::sortMode.
+        bool        needsSort = false;
+        GpuSortMode gpuSortMode = GpuSortMode::ViewDepth;
+        uint32_t    customSortKeySrv = 0xFFFFFFFFu;
+
+        const auto* renderModule = emitter->moduleStack.renderModule.get();
+        const bool isMesh = renderModule != nullptr &&
+                            std::strcmp(renderModule->GetName(), "mesh_render") == 0;
+
+        if (isMesh) {
+            const auto* meshModule = static_cast<const MeshRenderModule*>(renderModule);
+            const auto& meshConfig = meshModule->GetConfig();
+            switch (meshConfig.sortMode) {
+            case MeshSortMode::None:
+                needsSort = false;
+                break;
+            case MeshSortMode::ViewDepth:
+                needsSort = true;
+                gpuSortMode = GpuSortMode::ViewDepth;
+                break;
+            case MeshSortMode::CustomAttribute: {
+                // Resolve `customSortAttribute` -> Float user-attribute slot
+                // -> structured buffer SRV. CustomAttribute requires a Float
+                // (Vec4 is rejected because the sort_cs reads scalar floats).
+                // If anything fails, downgrade to None and warn once per
+                // emitter so the authoring bug is visible without spamming.
+                needsSort = true;
+                gpuSortMode = GpuSortMode::CustomAttribute;
+
+                const UserAttributeDef* attr = nullptr;
+                if (!meshConfig.customSortAttribute.empty()) {
+                    attr = emitter->FindUserAttribute(meshConfig.customSortAttribute);
+                }
+
+                bool resolved = false;
+                if (attr != nullptr &&
+                    attr->type == UserAttributeType::Float &&
+                    attr->slotIndex < kMaxUserFloatAttrs) {
+                    const auto& userFloatBuf =
+                        gpuBuf.WriteSet().userFloat[attr->slotIndex];
+                    if (userFloatBuf.IsValid()) {
+                        customSortKeySrv = m_device->GetBufferSRVIndex(userFloatBuf);
+                        resolved = (customSortKeySrv != UINT32_MAX);
+                    }
+                }
+
+                if (!resolved) {
+                    if (!emitter->customSortWarned) {
+                        UZ_LOG(VFX, Warning,
+                               "Emitter sort_mode=CustomAttribute references "
+                               "user attribute '{}' that is not declared as a "
+                               "Float channel or has no GPU buffer; sort "
+                               "downgraded to None for this emitter",
+                               meshConfig.customSortAttribute);
+                        emitter->customSortWarned = true;
+                    }
+                    needsSort = false;
+                }
+                break;
+            }
+            }
+        } else {
+            // Sprite path: sort iff alpha-blended.
+            needsSort = (emitter->blendMode == kBlendModeAlphaBlend);
+            gpuSortMode = GpuSortMode::ViewDepth;
+        }
+
+        if (!needsSort) continue;
+
+        // ── Resolve bindless SRV indices for the sort dispatch ──────────
+        const auto& readSet = gpuBuf.WriteSet();
+        const uint32_t positionsSrv = m_device->GetBufferSRVIndex(readSet.positions);
+        const uint32_t agesSrv      = m_device->GetBufferSRVIndex(readSet.ages);
+        const uint32_t lifespansSrv = m_device->GetBufferSRVIndex(readSet.lifespans);
+
+        if (positionsSrv == UINT32_MAX || agesSrv == UINT32_MAX ||
+            lifespansSrv == UINT32_MAX) {
+            UZ_LOG(VFX, Warning,
+                   "DispatchVFXSort: emitter has invalid SRV indices "
+                   "(pos={}, ages={}, lifespans={}); skipping",
+                   positionsSrv, agesSrv, lifespansSrv);
+            continue;
+        }
+
+        // ── Run the sort over `capacity` slots so alive detection covers
+        // every potentially-alive particle (free-list scatter pattern).
+        GPUParticleSort::DispatchParams sp{};
+        sp.sortMode              = gpuSortMode;
+        sp.keyGenCount           = gpuBuf.capacity;
+        sp.cameraPos             = camPosArr;
+        sp.cameraForward         = camFwdArr;
+        sp.positionsSrvIndex     = positionsSrv;
+        sp.agesSrvIndex          = agesSrv;
+        sp.lifespansSrvIndex     = lifespansSrv;
+        sp.customSortKeySrvIndex = customSortKeySrv;
+
+        gpuBuf.sort.DispatchSort(m_device, cmdList, sortPSO, *m_cbRing, sp);
+
+        // Transition sortIndices UAV -> ShaderResource so the
+        // mesh-instance CS's bindless SRV read of sortedIndices sees
+        // the freshly-sorted data. Without this, the bindless read
+        // returns the previous frame's UAV state (or zero on first
+        // frame) and every alive thread maps to particleIdx=0 (which
+        // is unspawned for the LIFO free-list pattern), making the
+        // dead-particle check fire for ALL threads -> instCount=0 and
+        // no draw.
+        // @ref phase0_vfx-mesh-bindless-attr-read-bug
+        {
+            RHIBarrierDesc bar{};
+            bar.buffer      = gpuBuf.sort.sortIndices;
+            bar.stateBefore = RHIResourceState::UnorderedAccess;
+            bar.stateAfter  = RHIResourceState::ShaderResource;
+            cmdList->ResourceBarrier(&bar, 1);
+        }
+    }
+
+    if (m_gpuProfileEnabled) {
+        m_device->GpuProfilerEndTimestamp(cmdList, "VFX_InlineSort");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GatherAndUploadVfxEmissiveSamples — feeds emissive particles into DDGI.
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Phase 16 lumen-gi-contribution. Walks the active emitter list, produces a
+// VfxEmissiveSample per emitter that has both alive particles AND non-zero
+// emissive intensity, then forwards the result to `m_vfxDDGIEmissiveFeed`
+// for top-N selection + GPU upload.
+//
+// Two CVars gate the gather:
+//   * `r.VFX.DDGIInjection`           — master switch (default 1).
+//   * `r.VFX.DDGIInjection.MaxEmitters` — hard cap on the number of
+//     emitters considered, clamped to the feed's `kMaxSamples`.
+//
+// The DDGI probe-update CS reading the produced buffer is wired in
+// `phase16_vfx-lumen-gi-hardware-validation`. Until that lands, the feed
+// still uploads the buffer every frame so the hardware-side wiring only
+// has to add the SRV bind on the probe-update CS side.
+
+void SceneRenderer::GatherAndUploadVfxEmissiveSamples()
+{
+    UZ_PROFILE_FUNCTION();
+
+    if (!m_vfxDDGIEmissiveFeed.IsInitialized()) return;
+
+    auto& cvars = CVarRegistry::Get();
+    const bool enabled = cvars.GetBool("r.VFX.DDGIInjection", true);
+    if (!enabled) {
+        m_vfxDDGIEmissiveFeed.Reset();
+        return;
+    }
+
+    VFXSystem* activeVFX = m_vfxSystemOverride ? m_vfxSystemOverride : m_vfxSystem.get();
+    if (!activeVFX || !activeVFX->IsInitialized()) {
+        m_vfxDDGIEmissiveFeed.Reset();
+        return;
+    }
+
+    const auto& emitters = activeVFX->GetActiveEmitters();
+    if (emitters.empty()) {
+        m_vfxDDGIEmissiveFeed.Reset();
+        return;
+    }
+
+    const uint32_t requestedCap = static_cast<uint32_t>(std::max(0,
+        cvars.GetInt("r.VFX.DDGIInjection.MaxEmitters",
+                     static_cast<int>(VfxDDGIEmissiveFeed::kMaxSamples))));
+    const uint32_t emitterCap = std::min(requestedCap,
+                                          VfxDDGIEmissiveFeed::kMaxSamples);
+
+    // Build a CPU-side staging vector of candidate samples. The feed's
+    // UploadFrame already runs top-N selection, so we can over-produce
+    // here and let it sort.
+    VfxEmissiveSample staging[VfxDDGIEmissiveFeed::kMaxSamples];
+    uint32_t produced = 0;
+
+    for (auto* emitter : emitters) {
+        if (produced >= emitterCap) break;
+        if (!emitter || !emitter->initialized) continue;
+
+        const float emissive = emitter->emissiveIntensity;
+        if (emissive <= 0.0f)            continue;
+        if (emitter->cpuAliveCount == 0) continue;
+
+        // Build a virtual point-light approximation via the shared
+        // helper so the math stays in lockstep with the unit tests.
+        const Vec3 colorRgb {
+            emitter->initialColor.x,
+            emitter->initialColor.y,
+            emitter->initialColor.z
+        };
+        staging[produced] = VfxDDGIBuildSampleForEmitter(
+            emitter->worldPosition,
+            colorRgb,
+            emissive,
+            emitter->cpuAliveCount,
+            emitter->maxParticles,
+            emitter->spawnRadius);
+        ++produced;
+    }
+
+    m_vfxDDGIEmissiveFeed.UploadFrame(staging, produced);
 }
 
 } // namespace uz

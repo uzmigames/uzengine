@@ -310,7 +310,8 @@ TEST(ShaderParamLightingCB, PointLightDataSize) {
 }
 
 TEST(ShaderParamLightingCB, MaxPointLights) {
-    EXPECT_EQ(kMaxPointLights, 64u);
+    EXPECT_EQ(kMaxPointLights, 512u);   // block B.7: 64 -> 512 (clustered light lists)
+    EXPECT_EQ(kMaxSpotLights, 128u);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -616,9 +617,10 @@ TEST(ShadowDataParams, HLSLGenerationContainsShadowAtlas) {
 // LightingParams — metadata correctness
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST(LightingParams, MetadataCBSizeIs5632) {
+TEST(LightingParams, MetadataCBSizeIs43264) {
     const auto& meta = LightingParams::GetMetadata();
-    EXPECT_EQ(meta.cbSize, 5632u);
+    EXPECT_EQ(meta.cbSize, 43264u);   // block B.7: 512 point + 128 spot lights + the cluster parameters
+    EXPECT_EQ(meta.cbSize, sizeof(LightingCB));
     EXPECT_EQ(meta.cbSize % 256, 0u);
 }
 

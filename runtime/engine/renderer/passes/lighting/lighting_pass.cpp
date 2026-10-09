@@ -41,6 +41,13 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
         pb.Read(desc.depthGBuffer,    RHIResourceState::ShaderResource);
         pb.Read(desc.positionGBuffer, RHIResourceState::ShaderResource);
         pb.Read(desc.emissiveGBuffer, RHIResourceState::ShaderResource);
+        // The lighting split targets are written as SV_Target1..3 below. Declaring them lets the
+        // graph transition them to ShaderResource for whoever reads them next (the debug view).
+        if (desc.debugDirectResource.IsValid()) {
+            pb.Write(desc.debugDirectResource,   RHIResourceState::RenderTarget);
+            pb.Write(desc.debugIndirectResource, RHIResourceState::RenderTarget);
+            pb.Write(desc.debugShadowResource,   RHIResourceState::RenderTarget);
+        }
         if (desc.shadowAtlasResource.IsValid()) {
             pb.Read(desc.shadowAtlasResource, RHIResourceState::ShaderResource);
         }

@@ -140,7 +140,8 @@ cbuffer VFXUpdateConstants : register(b1) {
     uint     sizesSrvIndex;        ///< StructuredBuffer<float> sizes.               48
     uint     colorsSrvIndex;       ///< StructuredBuffer<float4> colors.             52
     uint     rotationsSrvIndex;    ///< StructuredBuffer<float> rotations.           56
-    uint     _padSrv0;             ///<                                              60
+    /// @ref Niagara SubImageIndex module — per-particle flipbook channel (read).
+    uint     subImageIndicesSrvIndex; ///< StructuredBuffer<float> subImageIndices.  60
 
     // ── Bindless Descriptor Indices: WRITE set (UAV) ────────────────────── offset 64
     uint     positionsUavIndex;    ///< RWStructuredBuffer<float4> positions.        64
@@ -151,7 +152,8 @@ cbuffer VFXUpdateConstants : register(b1) {
     uint     sizesUavIndex;        ///< RWStructuredBuffer<float> sizes.             80
     uint     colorsUavIndex;       ///< RWStructuredBuffer<float4> colors.           84
     uint     rotationsUavIndex;    ///< RWStructuredBuffer<float> rotations.         88
-    uint     _padUav0;             ///<                                              92
+    /// @ref Niagara SubImageIndex module — per-particle flipbook channel (write).
+    uint     subImageIndicesUavIndex; ///< RWStructuredBuffer<float> subImageIndices. 92
 
     // ── Bindless Descriptor Indices: Shared Buffers ─────────────────────── offset 96
     uint     freeListUavIndex;     ///< RWStructuredBuffer<uint> free_list.          96
@@ -257,7 +259,8 @@ cbuffer VFXUpdateConstants : register(b1) {
     float    pointForceZ;                ///< Force center Z (world units, cm).         324
     float    pointForceStrength;         ///< Force magnitude (m/s^2). >0=attract, <0=repel. 328
     float    pointForceRadius;           ///< Max influence radius (world units).       332
-    uint     _padPF0;                    ///< Alignment padding.                         336
+    /// @ref Niagara SubImageIndex module — SubUV frame count for index computation.
+    uint     flipbookTotalFrames;        ///< Total SubUV frames for subImageIndex calc. 336
     uint     _padPF1;                    ///< Alignment padding.                         340
 
     // ── Procedural Terrain Collision (Task 4.21.0) ──────────────────────── offset 344
@@ -283,6 +286,28 @@ cbuffer VFXUpdateConstants : register(b1) {
     uint     _padCollEvt1;              ///< Alignment padding.                           372
     uint     _padCollEvt2;              ///< Alignment padding.                           376
     uint     _padCollEvt3;              ///< Alignment padding.                           380
+
+    // ── Spline Data Interface (phase16 hardware-validation) ───────────── offset 384
+    // Mirrors `ParticleUpdateConstants` in particle_simulation_pass.h. Zero
+    // defaults when the emitter has no `ForceTowardSplineModule` /
+    // `FollowSplineModule`; the update CS gates spline work on
+    // `cbSplinePointCount >= 2`.
+    uint     cbSplineSrvIndex;             ///< Bindless SRV — VfxSplineBuffer.   384
+    uint     cbSplinePointCount;           ///< Valid sample count (>= 2).        388
+    float    cbSplineTotalLength;          ///< Arc-length total (cm).            392
+
+    // ForceTowardSplineModule (zero when not present).
+    float    cbSplineForceStiffness;        ///< Spring stiffness (1/s^2).         396
+    float    cbSplineForceMaxAccel;         ///< Hard cap on force (cm/s^2).       400
+    float    cbSplineForceAttractDistance;  ///< Cull radius; 0 = no cull.         404
+
+    // FollowSplineModule (zero when not present).
+    float    cbSplineFollowSpeed;           ///< Per-lifetime u-advance scale.     408
+    uint     cbSplineFollowLoop;            ///< 0=clamp, 1=wrap.                  412
+    float    cbSplineFollowStartU;          ///< Initial u offset in [0,1].        416
+    float    _cbSplineUpdatePad0;           ///< 16-byte alignment pad.            420
+    float    _cbSplineUpdatePad1;           ///<                                   424
+    float    _cbSplineUpdatePad2;           ///<                                   428
 #endif
 };
 
@@ -499,6 +524,12 @@ void main(uint3 dtid : SV_DispatchThreadID)
 #ifdef UZ_BINDLESS
     if (curlStrength > 0.0f) {
         float3 curlForce = AnimatedCurlNoise(pos, totalTime, curlSpeed, curlFrequency);
+        // Safety: the raw finite-difference curl can spike near simplex
+        // cell boundaries. Sanitize and clamp before integration.
+        if (any(isnan(curlForce)) || any(isinf(curlForce))) {
+            curlForce = float3(0, 0, 0);
+        }
+        curlForce = clamp(curlForce, -1.0f, 1.0f);
         vel += curlForce * curlStrength * dt;
     }
 
@@ -611,8 +642,32 @@ void main(uint3 dtid : SV_DispatchThreadID)
     }
 #endif // UZ_BINDLESS
 
+    // ── Velocity safety net ────────────────────────────────────────────
+    // Final guard before position integration. Any force above that
+    // produced a NaN/Inf, or an overflowing magnitude, would otherwise
+    // teleport the particle to an unrenderable coordinate within one
+    // frame. Clamp to a reasonable max speed (cm/s) and neutralize
+    // non-finite components.
+    if (any(isnan(vel)) || any(isinf(vel))) {
+        vel = float3(0, 0, 0);
+    }
+    const float kMaxSpeed = 10000.0f; // 100 m/s cap — large enough for any effect
+    const float velLen = length(vel);
+    if (velLen > kMaxSpeed) {
+        vel *= (kMaxSpeed / velLen);
+    }
+
     // ── Integrate position (explicit Euler) ─────────────────────────────
     pos += vel * dt;
+
+    // ── Position safety net ────────────────────────────────────────────
+    // If the integrated position is still non-finite, snap back to origin
+    // so the particle continues simulating instead of rendering at a
+    // location that makes it disappear (NaN positions get culled).
+    if (any(isnan(pos)) || any(isinf(pos))) {
+        pos = float3(0, 0, 0);
+        vel = float3(0, 0, 0);
+    }
 
     // ── Orbit around emitter origin (additive position override) ─────────
     // Directly sets a circular orbit position additive to the integrated position.
@@ -903,6 +958,23 @@ void main(uint3 dtid : SV_DispatchThreadID)
     sizesOut[threadIdx]      = size;
     colorsOut[threadIdx]     = color;
     rotationsOut[threadIdx]  = rotation;
+
+    // ── SubImageIndex: Niagara-style per-particle flipbook channel ───────
+    // Writes normAge * (totalFrames - 1) so the VS can read a float index
+    // directly and compute atlas UVs without re-deriving age interpolants.
+    // This is the authoritative signal for flipbook cycling — it replaces
+    // age-based math in the VS/PS which was susceptible to interpolant
+    // flow issues between the simulation and rendering passes.
+    /// @ref Niagara SubImageIndex module — per-particle sub-UV animation
+#ifdef UZ_BINDLESS
+    // Guard: 0xFFFFFFFF is the only sentinel meaning "unbound". Index 0 IS valid.
+    if (subImageIndicesUavIndex != 0xFFFFFFFFu) {
+        RWStructuredBuffer<float> subImagesOut = ResourceDescriptorHeap[subImageIndicesUavIndex];
+        // Fixed 30 fps playback: subImageIndex grows linearly with age.
+        // The VS wraps with modulo, so cycling continues past totalFrames.
+        subImagesOut[threadIdx] = max(age, 0.0f) * 30.0f;
+    }
+#endif
 
     // ── Dynamic material parameters (Task 4.14.0) ──────────────────────
     // Read from previous frame, evolve .x to normalizedAge (useful for shader

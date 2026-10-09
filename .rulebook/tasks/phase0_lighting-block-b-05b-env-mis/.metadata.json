@@ -1,0 +1,6 @@
+{
+  "status": "completed",
+  "createdAt": "2026-10-08T10:50:04.809Z",
+  "updatedAt": "2026-10-08T11:42:30.000Z",
+  "resolution": "done 2026-10-08, commit ea13ab21: six defects in the environment-MIS specular (unbound per-frame constants, one sampling strategy with the weights of two, pdf without sin(theta), alpha 1 on every lit pixel, the cube Y-up frame used as world, a 16-bit random that disabled the alias table); now a two-strategy estimate blended by coverage, r.EnvMIS; test_env_mis.py 8/9 (E1 reads the sky capture sqrt(3), a decision item recorded in known-issues; sphere.uzmesh renders inside-out; the split-sum path reads 3-5 x the integral on rough metals)"
+}

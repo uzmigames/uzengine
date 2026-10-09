@@ -11,6 +11,8 @@
 
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <queue>
 
 UZ_DECLARE_LOG_CATEGORY(Renderer);
@@ -172,7 +174,8 @@ void EnvMapSampler::DestroyPyramidTextures() {
 
 // ─── GPU dispatch ───────────────────────────────────────────────────────────
 
-void EnvMapSampler::DispatchMip0(IRHICommandList* cmdList, uint32_t envCubemapSrvIndex) {
+void EnvMapSampler::DispatchMip0(IRHICommandList* cmdList, uint32_t envCubemapSrvIndex,
+                                 uint32_t colorUavIndex, uint32_t sampleMip) {
     auto& mip0 = m_mipLevels[0];
 
     // Transition mip 0 to UAV
@@ -184,15 +187,17 @@ void EnvMapSampler::DispatchMip0(IRHICommandList* cmdList, uint32_t envCubemapSr
 
     cmdList->SetPipeline(m_mip0Pipeline);
 
-    // Root constants: envSrvIndex, outputUavIdx, inputSrvIdx (unused), mipWidth, mipHeight
-    uint32_t rootConstants[5] = {
+    // Root constants: envSrvIndex, outputUavIdx, inputSrvIdx (unused), mipWidth, mipHeight, colorUavIdx, sampleMip
+    uint32_t rootConstants[7] = {
         envCubemapSrvIndex,
         mip0.uavIndex,
         0, // unused for mip 0
         mip0.width,
-        mip0.height
+        mip0.height,
+        colorUavIndex,
+        sampleMip
     };
-    cmdList->SetRootConstants(0, rootConstants, 5);
+    cmdList->SetRootConstants(0, rootConstants, 7);
     cmdList->SetDescriptorTable(4, mip0.uavIndex);
 
     cmdList->Dispatch(
@@ -222,15 +227,17 @@ void EnvMapSampler::DispatchReductions(IRHICommandList* cmdList) {
         barrier.stateAfter  = RHIResourceState::UnorderedAccess;
         cmdList->ResourceBarrier(&barrier, 1);
 
-        // Root constants: envSrvIndex (unused), outputUavIdx, inputSrvIdx, mipWidth, mipHeight
-        uint32_t rootConstants[5] = {
+        // Root constants: envSrvIndex (unused), outputUavIdx, inputSrvIdx, mipWidth, mipHeight, no colour, mip 0
+        uint32_t rootConstants[7] = {
             0, // unused
             curr.uavIndex,
             prev.srvIndex,
             curr.width,
-            curr.height
+            curr.height,
+            UINT32_MAX,
+            0u
         };
-        cmdList->SetRootConstants(0, rootConstants, 5);
+        cmdList->SetRootConstants(0, rootConstants, 7);
         cmdList->SetDescriptorTable(4, curr.uavIndex);
 
         cmdList->Dispatch(
@@ -459,6 +466,106 @@ bool EnvMapSampler::BuildAndUploadAliasTable() {
     return true;
 }
 
+// ─── Diagnostics dump (block B.5b) ─────────────────────────────────────────
+
+void EnvMapSampler::WriteRadianceDump(RHITextureHandle colorTex, uint32_t envCubemapSrvIndex,
+                                      const std::string& baseName, uint32_t sampleMip) {
+    const uint32_t width = kPyramidWidth, height = kPyramidHeight;
+    const uint32_t rowBytes = width * 4 * sizeof(float);
+    const uint32_t alignedRowPitch = (rowBytes + 255) & ~255u;
+
+    RHIBufferDesc readbackDesc;
+    readbackDesc.sizeBytes = static_cast<uint64_t>(alignedRowPitch) * height;
+    readbackDesc.usage     = RHIBufferUsage::CopyDst;
+    readbackDesc.memory    = RHIMemoryType::Readback;
+    readbackDesc.debugName = "EnvMapSampler_Readback_Radiance";
+    auto readbackBuf = m_device->CreateBuffer(readbackDesc);
+
+    auto cmdList = m_device->CreateCommandList();
+    cmdList->Begin();
+    RHIBarrierDesc toCopySrc;
+    toCopySrc.texture     = colorTex;
+    toCopySrc.stateBefore = RHIResourceState::UnorderedAccess;
+    toCopySrc.stateAfter  = RHIResourceState::CopySrc;
+    cmdList->ResourceBarrier(&toCopySrc, 1);
+    cmdList->CopyTextureToBuffer(colorTex, 0, readbackBuf, 0, alignedRowPitch, 0);
+    cmdList->End();
+    cmdList->Execute();
+    m_device->WaitIdle();
+
+    std::error_code ec;
+    std::filesystem::create_directories(m_dumpDir, ec);
+    const std::string binPath  = m_dumpDir + "/" + baseName + ".f32";
+    const std::string jsonPath = m_dumpDir + "/" + baseName + ".json";
+    const auto* mapped = static_cast<const uint8_t*>(m_device->MapBuffer(readbackBuf));
+    bool ok = mapped != nullptr;
+    if (ok) {
+        std::ofstream out(binPath, std::ios::binary);
+        for (uint32_t row = 0; row < height && out; ++row) {
+            out.write(reinterpret_cast<const char*>(mapped + static_cast<size_t>(row) * alignedRowPitch), rowBytes);
+        }
+        ok = static_cast<bool>(out);
+        m_device->UnmapBuffer(readbackBuf);
+    }
+    m_device->DestroyBuffer(readbackBuf);
+    if (ok) {
+        std::ofstream js(jsonPath);
+        js << "{\n  \"file\": \"" << baseName << ".f32\",\n  \"format\": \"rgba32f row-major equirect in cubemap space (u = phi / 2pi, v = theta / pi; the pole is the cube's +Y; world Z-up maps to it by swapping y and z)\",\n"
+           << "  \"width\": " << width << ",\n  \"height\": " << height
+           << ",\n  \"total_luminance\": " << m_totalLuminance
+           << ",\n  \"source_cubemap_srv\": " << envCubemapSrvIndex
+           << ",\n  \"source_mip\": " << sampleMip << "\n}\n";
+        ok = static_cast<bool>(js);
+    }
+    if (ok) {
+        UZ_LOG(Renderer, Info, "EnvMapSampler: radiance equirect dumped to {}", binPath);
+    } else {
+        UZ_LOG(Renderer, Error, "EnvMapSampler: radiance dump to {} failed", binPath);
+    }
+}
+
+bool EnvMapSampler::DumpRadiance(uint32_t cubemapSrvIndex, uint32_t mip, const std::string& baseName) {
+    if (m_dumpDir.empty() || cubemapSrvIndex == UINT32_MAX) return false;
+    if (!EnsurePipelines()) return false;
+    if (m_mipLevels.empty() && !CreatePyramidTextures()) return false;   // the pass writes the luminance mip too
+
+    RHITextureDesc colorDesc;
+    colorDesc.width     = kPyramidWidth;
+    colorDesc.height    = kPyramidHeight;
+    colorDesc.format    = RHIFormat::RGBA32Float;
+    colorDesc.usage     = RHITextureUsage::UnorderedAccess | RHITextureUsage::ShaderResource | RHITextureUsage::CopySrc;
+    colorDesc.debugName = "EnvMap_RadianceDump";
+    RHITextureHandle colorTex = m_device->CreateTexture(colorDesc);
+    if (!colorTex.IsValid()) return false;
+    const uint32_t colorUav = m_device->GetTextureUAVIndex(colorTex);
+
+    auto cmdList = m_device->CreateCommandList();
+    cmdList->Begin();
+    RHIBarrierDesc toUav;
+    toUav.texture     = colorTex;
+    toUav.stateBefore = RHIResourceState::Common;
+    toUav.stateAfter  = RHIResourceState::UnorderedAccess;
+    cmdList->ResourceBarrier(&toUav, 1);
+    // The luminance mip 0 is a scratch here: back to UAV for the pass and to SRV afterwards (DispatchMip0's own
+    // barriers assume Common -> UAV -> SRV, which holds right after CreatePyramidTextures; after a Rebuild the
+    // texture sits in ShaderResource, so step it back first).
+    if (m_ready) {
+        RHIBarrierDesc lumToCommon;
+        lumToCommon.texture     = m_mipLevels[0].texture;
+        lumToCommon.stateBefore = RHIResourceState::ShaderResource;
+        lumToCommon.stateAfter  = RHIResourceState::Common;
+        cmdList->ResourceBarrier(&lumToCommon, 1);
+    }
+    DispatchMip0(cmdList, cubemapSrvIndex, colorUav, mip);
+    cmdList->End();
+    cmdList->Execute();
+    m_device->WaitIdle();
+
+    WriteRadianceDump(colorTex, cubemapSrvIndex, baseName, mip);
+    m_device->DestroyTexture(colorTex);
+    return true;
+}
+
 // ─── Main rebuild entry point ───────────────────────────────────────────────
 
 bool EnvMapSampler::Rebuild(uint32_t envCubemapSrvIndex) {
@@ -467,11 +574,34 @@ bool EnvMapSampler::Rebuild(uint32_t envCubemapSrvIndex) {
     if (!EnsurePipelines()) return false;
     if (!CreatePyramidTextures()) return false;
 
+    // Diagnostics: the radiance the pyramid samples, dumped after the build (block B.5b)
+    RHITextureHandle colorTex;
+    uint32_t colorUav = UINT32_MAX;
+    if (!m_dumpDir.empty()) {
+        RHITextureDesc colorDesc;
+        colorDesc.width     = kPyramidWidth;
+        colorDesc.height    = kPyramidHeight;
+        colorDesc.format    = RHIFormat::RGBA32Float;
+        colorDesc.usage     = RHITextureUsage::UnorderedAccess
+                            | RHITextureUsage::ShaderResource
+                            | RHITextureUsage::CopySrc;
+        colorDesc.debugName = "EnvMap_RadianceDump";
+        colorTex = m_device->CreateTexture(colorDesc);
+        if (colorTex.IsValid()) colorUav = m_device->GetTextureUAVIndex(colorTex);
+    }
+
     // ── GPU: build luminance pyramid ────────────────────────────────────
     auto cmdList = m_device->CreateCommandList();
     cmdList->Begin();
 
-    DispatchMip0(cmdList, envCubemapSrvIndex);
+    if (colorTex.IsValid()) {
+        RHIBarrierDesc toUav;
+        toUav.texture     = colorTex;
+        toUav.stateBefore = RHIResourceState::Common;
+        toUav.stateAfter  = RHIResourceState::UnorderedAccess;
+        cmdList->ResourceBarrier(&toUav, 1);
+    }
+    DispatchMip0(cmdList, envCubemapSrvIndex, colorUav, 0u);
     DispatchReductions(cmdList);
 
     cmdList->End();
@@ -479,7 +609,14 @@ bool EnvMapSampler::Rebuild(uint32_t envCubemapSrvIndex) {
     m_device->WaitIdle();
 
     // ── CPU: readback + alias table ─────────────────────────────────────
-    if (!BuildAndUploadAliasTable()) return false;
+    if (!BuildAndUploadAliasTable()) {
+        if (colorTex.IsValid()) m_device->DestroyTexture(colorTex);
+        return false;
+    }
+    if (colorTex.IsValid()) {
+        WriteRadianceDump(colorTex, envCubemapSrvIndex, "env_equirect", 0u);
+        m_device->DestroyTexture(colorTex);
+    }
 
     m_ready = true;
     UZ_LOG(Renderer, Info,

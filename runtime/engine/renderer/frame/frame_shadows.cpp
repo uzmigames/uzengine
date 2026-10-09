@@ -23,7 +23,9 @@ namespace uz {
 /// Per-cascade shadow constant buffer — mirrors the one in shadow_pass.cpp.
 /// Contains only the light-space view-projection matrix, bound at root slot 3.
 struct ShadowCB {
-    Mat4 viewProj;
+    Mat4  viewProj;
+    float lightPosX = 0.f, lightPosY = 0.f, lightPosZ = 0.f; ///< Local tiles: the light the linear depth is measured from.
+    float lightRadius = 0.f;                                 ///< Local tiles: distance / radius is what the tile stores.
 };
 
 void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
@@ -48,7 +50,9 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
     // (backward compatible behavior).
     //
     // EShadowDepthCacheMode — determines static vs dynamic shadow rendering
-    if (!m_meshes.empty()) {
+    // No directional light: no cascades to render (the lighting shader reads cascadeCount 0 and
+    // the sun colour is zero). Local light shadows below do not depend on the sun.
+    if (!m_meshes.empty() && ctx.lightData.hasDirectionalLight) {
         // Use the shadow cache status computed earlier (before SetupShadowFrame).
         const bool shadowCacheActive = ctx.shadowCacheEnabled;
 
@@ -66,7 +70,7 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
             for (uint32_t i = 0; i < totalCascadeCount; ++i) {
                 cascadeModes[i] = m_shadowCacheManager.UpdateCache(
                     lightId, i, cascades[i], ctx.sunDir, lightUp,
-                    kShadowResolution, ctx.frameIndex);
+                    m_shadowAtlas.GetResolution(), ctx.frameIndex);
                 if (cascadeModes[i] == ShadowCacheMode::StaticPrimitivesOnly
                     || cascadeModes[i] == ShadowCacheMode::Uncached) {
                     needStaticRerender = true;
@@ -89,7 +93,7 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
                 desc.cascades[ci] = cascades[ci];
             }
             desc.cascadeCount     = totalCascadeCount;
-            desc.atlasResolution  = kShadowResolution;
+            desc.atlasResolution  = m_shadowAtlas.GetResolution();
             desc.farShadowLodBias = ctx.shadowFrame.config.farShadowLodBias;
         };
 
@@ -207,6 +211,10 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
                             for (uint32_t di = 0; di < commands.size(); ++di) {
                                 const auto& drawCmd = commands[di];
 
+                                // Translucent/additive materials (materialFlags
+                                // bits[0:1] >= 2) and mesh decals (bit 4) are not occluders.
+                                if ((drawCmd.materialFlags & 0x3u) >= 2u || (drawCmd.materialFlags & 0x10u) != 0u) continue;
+
                                 // Only static/stationary primitives
                                 if (drawCmd.mobility == EMobility::Movable) continue;
 
@@ -244,7 +252,6 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
                                 }
 
                                 // Render this primitive
-                                if ((drawCmd.materialFlags & 0x3u) >= 2u) continue;
                                 if (drawCmd.meshId >= scrollingDesc.meshCount) continue;
                                 const GPUMesh& mesh = scrollingDesc.meshes[drawCmd.meshId];
                                 if (!mesh.IsValid()) continue;
@@ -333,7 +340,10 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
             "LocalShadowAtlas", m_localShadowAtlas.GetTexture(), RHIResourceState::ShaderResource);
 
         const auto localAtlasTex = m_localShadowAtlas.GetTexture();
-        const auto localShadowPipeline = pipelines->GetShadowDepth(bindless);
+        // Linear-distance variant: the Camera-built light projections are reversed-Z while the
+        // CSM convention (Less, clear 1.0, LESS comparison) is standard-Z; storing distance / radius
+        // makes the tile independent of either (shadow_depth_linear_ps.hlsl, block A.1).
+        const auto localShadowPipeline = pipelines->GetShadowDepthLinear(bindless);
         const auto* shadowCBData = reinterpret_cast<const ShadowDataCB*>(ctx.shadowAlloc.cpuPtr);
 
         // Build per-tile data for the lambda capture.
@@ -343,15 +353,24 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
         struct LocalTileData {
             uint32_t viewportX, viewportY, viewportSize;
             Mat4     viewProj;
+            float    lightPosX, lightPosY, lightPosZ, radius;
         };
         std::vector<LocalTileData> tileData(totalLocalShadowEntries);
         for (uint32_t si = 0; si < totalLocalShadowEntries; ++si) {
-            const uint32_t col = si % kLocalShadowTileCols;
-            const uint32_t row = si / kLocalShadowTileCols;
-            tileData[si].viewportX    = col * kLocalShadowTileSize;
-            tileData[si].viewportY    = row * kLocalShadowTileSize;
-            tileData[si].viewportSize = kLocalShadowTileSize;
+            const uint32_t col = si % m_localShadowAtlas.GetColumns();
+            const uint32_t row = si / m_localShadowAtlas.GetColumns();
+            tileData[si].viewportX    = col * m_localShadowAtlas.GetTileSize();
+            tileData[si].viewportY    = row * m_localShadowAtlas.GetTileSize();
+            tileData[si].viewportSize = m_localShadowAtlas.GetTileSize();
             tileData[si].viewProj     = shadowCBData->localShadows[si].viewProj;
+            tileData[si].lightPosX    = shadowCBData->localShadows[si].lightPosX;
+            tileData[si].lightPosY    = shadowCBData->localShadows[si].lightPosY;
+            tileData[si].lightPosZ    = shadowCBData->localShadows[si].lightPosZ;
+            tileData[si].radius       = shadowCBData->localShadows[si].radius;
+            tileData[si].lightPosX    = shadowCBData->localShadows[si].lightPosX;
+            tileData[si].lightPosY    = shadowCBData->localShadows[si].lightPosY;
+            tileData[si].lightPosZ    = shadowCBData->localShadows[si].lightPosZ;
+            tileData[si].radius       = shadowCBData->localShadows[si].radius;
         }
 
         const DrawList* localDrawListPtr = &ctx.drawList;
@@ -373,8 +392,11 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
                                         IRHICommandList* cmd, const rg::RgPassResources& res) {
                 UZ_PROFILE_SCOPE("LocalShadowDepth::Execute");
 
-                // Clear the entire local shadow atlas to 0.0 (reversed-Z far = max distance = no occlusion)
-                cmd->ClearDepthStencil(localAtlasTex, 0.0f, 0);
+                // Clear to 1.0 = distance / radius of "nothing closer than the range". Tiles store
+                // linear distance and are tested with Less, like the CSM atlas. (Cleared to 0.0 until
+                // 2026-10-05: with Less no caster could pass, and the LESS comparison then read
+                // every spot pixel as shadowed.)
+                cmd->ClearDepthStencil(localAtlasTex, 1.0f, 0);
 
                 const auto& commands = localDrawListPtr->GetCommands();
                 uint32_t totalDrawCalls = 0;
@@ -412,7 +434,11 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
 
                     // Bind per-tile shadow CB (viewProj matrix) at slot 3
                     ShadowCB shadowCb{};
-                    shadowCb.viewProj = tile.viewProj;
+                    shadowCb.viewProj    = tile.viewProj;
+                    shadowCb.lightPosX   = tile.lightPosX;
+                    shadowCb.lightPosY   = tile.lightPosY;
+                    shadowCb.lightPosZ   = tile.lightPosZ;
+                    shadowCb.lightRadius = tile.radius;
                     CBAllocation shadowCbAlloc = localCbRing->Allocate(sizeof(ShadowCB));
                     if (shadowCbAlloc.cpuPtr == nullptr) {
                         cmd->EndRenderPass();
@@ -425,7 +451,8 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
                     // Draw all scene geometry into this tile
                     uint32_t lastBoundMeshId = UINT32_MAX;
                     for (const auto& drawCmd : commands) {
-                        if ((drawCmd.materialFlags & 0x3u) >= 2u) continue;
+                        // Translucent/additive materials and mesh decals are not occluders.
+                        if ((drawCmd.materialFlags & 0x3u) >= 2u || (drawCmd.materialFlags & 0x10u) != 0u) continue;
                         if (drawCmd.meshId >= localMeshCount) continue;
                         const GPUMesh& mesh = localMeshes[drawCmd.meshId];
                         if (!mesh.IsValid()) continue;

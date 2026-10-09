@@ -88,8 +88,9 @@ The GPU frequency is queried once at init via `ID3D12CommandQueue::GetTimestampF
 | Parameter | Value |
 |-----------|-------|
 | Max timestamp pairs per frame | 64 (`kMaxGpuTimestamps`) |
-| Readback latency | 2 frames |
-| Frame buffers | 3 (`kProfilerFramesInFlight`) |
+| Readback latency | 3 frames: the slot resolved at the end of frame N belongs to frame N-3, whose fence the CPU waited before recording frame N |
+| Ring slots | 4 (`kProfilerFramesInFlight` = command-list frames in flight + 1; a 3-deep ring resolved frame N-2 while it could still execute, until 2026-10-05) |
+| Pass name | copied into the slot (`kGpuProfilerNameCapacity` 48), so a slot is labelled with its own frame's passes |
 | Precision | Nanoseconds (GPU-dependent) |
 | Overhead | ~2 timestamp queries per profiled scope (~negligible) |
 
@@ -98,15 +99,15 @@ The GPU frequency is queried once at init via `ID3D12CommandQueue::GetTimestampF
 | Aspect | UE5 | Godot | UzEngine |
 |--------|-----|-------|----------|
 | GPU timing | `FGPUProfiler` integrated with Render Dependency Graph | No built-in (use RenderDoc) | `DX12GpuProfiler` (per-pass timestamps) |
-| Readback strategy | Multi-frame ring buffer, 4+ frames latency | N/A | Triple-buffered, 2 frames latency |
-| Integration | Automatic via RDG pass system | Manual | Manual `BeginTimestamp`/`EndTimestamp` |
-| Output | Unreal Insights timeline + CSV | N/A | Log + `GetResults()` vector |
+| Readback strategy | Multi-frame ring buffer, 4+ frames latency | N/A | 4-slot ring, 3 frames latency, resolved after the frame's fence |
+| Integration | Automatic via RDG pass system | Manual | Automatic: `RgBuilder::Execute` brackets every render-graph pass; scopes outside the graph (RT build, cloud compute, atmosphere bake, VFX) call the device profiler directly |
+| Output | Unreal Insights timeline + CSV | N/A | `--diag` report `timing` (mean / min / max ms and samples per pass, `_frame` span), `--run-manifest` `gpu_ms`, per-frame log with `r.GpuProfiler.Log` |
 
-**Future**: When the Render Graph is implemented (section 12), GPU timestamps will be automatically inserted around each render pass — no manual `BeginTimestamp`/`EndTimestamp` calls needed.
+**Done** (2026-10-05, lighting block B item 1): the render graph inserts the timestamps around every pass, `uzengine.exe --diag` enables the profiler and reports the statistics of its measured window (`--timing-first`, default = after the first quarter of the diagnostic run), and `--run-manifest` / `--gpu-profile` enable it too. Guard: `scripts/test_diag_timing.py`.
 
 ## Rules
 
 1. **ALWAYS** pair `BeginTimestamp`/`EndTimestamp` — unpaired timestamps produce garbage results
 2. **ALWAYS** call `ResolveFrame()` only after the corresponding fence has completed — mapping an in-flight readback buffer is undefined behavior
 3. **NEVER** profile more than 64 scopes per frame — exceeding `kMaxGpuTimestamps` silently drops timestamps
-4. **ALWAYS** use string literals for timestamp names — the pointer is stored, not copied
+4. **ALWAYS** use string literals for render-graph pass names — `RgBuilder::AddPass` stores the pointer (the profiler itself copies the name into its slot since 2026-10-05, but the graph still reads the pointer at execution)

@@ -278,9 +278,9 @@ void ParseCameraComponent(World& world,
 /// Returns the first present key between a snake_case and a camelCase alias,
 /// or nullptr when neither exists. Scene files use snake_case; engine tooling
 /// may emit camelCase.
-static const char* FindLightKey(const nlohmann::json& comp,
-                                const char* snake,
-                                const char* camel) {
+[[nodiscard]] const char* FindLightKey(const nlohmann::json& comp,
+                                       const char* snake,
+                                       const char* camel) {
     if (comp.contains(snake)) return snake;
     if (camel != nullptr && comp.contains(camel)) return camel;
     return nullptr;
@@ -294,6 +294,11 @@ static const char* FindLightKey(const nlohmann::json& comp,
 /// diameter), `shadow_cascades`, `cascade_distribution_exponent`, and
 /// `dynamic_shadow_distance`. Absent fields keep component defaults.
 /// Unknown keys emit a warning (likely a typo that would silently no-op).
+///
+/// These were previously dropped on load: Sponza authors
+/// `light_source_angle: 0.53` (the sun's real angular diameter) and silently
+/// got the 1.2 degree component default, so every PCSS penumbra was more than
+/// twice as wide as authored.
 void ApplyDirectionalLightFields(DirectionalLightComponent& light,
                                   const nlohmann::json& comp) {
     light.color     = ReadVec3(comp, "color", 1.f, 1.f, 1.f);
@@ -352,6 +357,12 @@ void ApplyPointLightFields(PointLightComponent& light,
     light.range            = ReadFloat(comp, "range",     10.f);
     light.castShadows      = ReadBool(comp, "castShadows", false);
     light.pointShadowBias  = ReadFloat(comp, "shadowBias", 0.5f);
+    // Block B.7: the parameters the lighting shader now honours.
+    light.useInverseSquaredFalloff = ReadBool(comp, "useInverseSquaredFalloff", true);
+    light.lightFalloffExponent     = ReadFloat(comp, "falloffExponent", 8.f);
+    light.sourceRadius             = ReadFloat(comp, "sourceRadius", 0.f);
+    light.specularScale            = ReadFloat(comp, "specularScale", 1.f);
+    light.diffuseScale             = ReadFloat(comp, "diffuseScale", 1.f);
 }
 
 /// Parses a `"spot"` light sub-object into the given component.
@@ -366,6 +377,11 @@ void ApplySpotLightFields(SpotLightComponent& light,
     light.outerAngleDeg = ReadFloat(comp, "outerAngle", 45.f);
     light.castShadows   = ReadBool(comp, "castShadows", false);
     light.spotShadowBias = ReadFloat(comp, "shadowBias", 0.5f);
+    // Block B.7: the parameters the lighting shader now honours.
+    light.useInverseSquaredFalloff = ReadBool(comp, "useInverseSquaredFalloff", true);
+    light.lightFalloffExponent     = ReadFloat(comp, "falloffExponent", 8.f);
+    light.specularScale            = ReadFloat(comp, "specularScale", 1.f);
+    light.diffuseScale             = ReadFloat(comp, "diffuseScale", 1.f);
 }
 
 /// Parses the `"light"` component JSON and emplaces the appropriate light type.
@@ -1237,6 +1253,11 @@ nlohmann::json SerializeEntity(const World& world, entt::entity enttEntity) {
         lightJson["range"]       = light->range;
         lightJson["castShadows"] = light->castShadows;
         lightJson["shadowBias"]  = light->pointShadowBias;
+        lightJson["useInverseSquaredFalloff"] = light->useInverseSquaredFalloff;
+        lightJson["falloffExponent"] = light->lightFalloffExponent;
+        lightJson["sourceRadius"] = light->sourceRadius;
+        lightJson["specularScale"] = light->specularScale;
+        lightJson["diffuseScale"] = light->diffuseScale;
         components["light"] = std::move(lightJson);
 
         nlohmann::json transform;
@@ -1257,6 +1278,10 @@ nlohmann::json SerializeEntity(const World& world, entt::entity enttEntity) {
         lightJson["outerAngle"]  = light->outerAngleDeg;
         lightJson["castShadows"] = light->castShadows;
         lightJson["shadowBias"]  = light->spotShadowBias;
+        lightJson["useInverseSquaredFalloff"] = light->useInverseSquaredFalloff;
+        lightJson["falloffExponent"] = light->lightFalloffExponent;
+        lightJson["specularScale"] = light->specularScale;
+        lightJson["diffuseScale"] = light->diffuseScale;
         components["light"] = std::move(lightJson);
 
         nlohmann::json transform;

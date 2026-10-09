@@ -1,5 +1,5 @@
 /// UzEngine Scene Renderer — Mesh asset loading (LoadMesh, QueueMeshLoad,
-/// RegisterProceduralMesh, FlushSdfBakes, DestroyAssets).
+/// RegisterProceduralMesh, QueueSdfBake, ServiceSdfBakes, DestroyAssets).
 ///
 /// Mesh loading uses deferred uploads: `UploadMeshDeferred()` records copy
 /// commands on the command list but does NOT execute/WaitIdle. Staging buffers
@@ -9,7 +9,6 @@
 #include "scene_renderer.h"
 
 #include "mesh.h"
-#include "vertex.h"
 #include "gpu_mesh.h"
 #include "upload_context.h"
 #include "vfs.h"
@@ -18,19 +17,65 @@
 #include "profiler.h"
 #include "gi/mesh_sdf_baker.h"
 #include "pipeline_library.h"
+#include "vertex.h"
 #include "cvar.h"
 
 #include <fstream>
-#include <algorithm>
-#include <cstddef>
 #include <string>
+#include <algorithm>
+#include <chrono>
+#include <cstddef>
+#include <cstring>
+#include <filesystem>
 
-namespace uz {
-
+// Mesh distance-field baking parameters. Both take effect at bake time, so a
+// scene reload is required after changing them. TwoSided produces an unsigned
+// field: Sponza is split into open material partitions whose winding disagrees
+// with its vertex normals, and a nearest-face sign cannot define an interior
+// for such a surface — it classified free space as solid.
 static auto* cv_MeshSdfTwoSided = UZ_CVAR_BOOL("r.GI.MeshSdf.TwoSided", false,
     "Unsigned mesh distance fields for open surfaces (requires scene reload)");
 static auto* cv_MeshSdfResolution = UZ_CVAR_INT("r.GI.MeshSdf.Resolution", 32,
     "Mesh distance field voxels per axis (requires scene reload)", 1, 128);
+
+namespace uz {
+
+// Mesh SDF bakes queued per frame when SDF GI is switched on after the meshes loaded (block B.3):
+// each one re-reads its mesh from disk on the main thread.
+static constexpr uint32_t kSdfRetriggerPerFrame = 2;
+
+/// Reads a CPU mesh the way LoadMesh does: built-in primitives, then the VFS (pak mode), then the
+/// file system (dev mode). Invalid when the path is unknown or the file does not parse.
+static Mesh LoadCpuMeshByPath(const std::string& path, IVFS* vfs) {
+    // Built-in primitives: "builtin:cube", "builtin:sphere"
+    Mesh cpuMesh{};
+    if (path.size() > 8 && path.compare(0, 8, "builtin:") == 0) {
+        const std::string primitive = path.substr(8);
+        if (primitive == "cube") {
+            cpuMesh = MeshBuilder::CreateCube(0.5f, 8);
+        } else if (primitive == "sphere") {
+            cpuMesh = MeshBuilder::CreateSphere(0.5f, 64, 64);
+        } else {
+            UZ_LOG(Renderer, Error, "SceneRenderer: unknown builtin mesh: '{}'", primitive);
+        }
+        return cpuMesh;
+    }
+    // Try VFS first (pak mode), then fall back to filesystem (dev mode).
+    if (vfs && vfs->Exists(path)) {
+        std::vector<uint8_t> data = vfs->Read(path);
+        if (!data.empty()) {
+            cpuMesh = uz::LoadMeshFromMemory(data, path);
+        }
+        return cpuMesh;
+    }
+    // Resolve to absolute path for filesystem access
+    const bool isAbsolute = !path.empty() && (path[0] == '/' || path[0] == '\\' ||
+                             (path.size() > 1 && path[1] == ':'));
+    const std::string resolvedPath = (vfs && !isAbsolute)
+        ? vfs->ResolvePath(path)
+        : path;
+    return uz::LoadMesh(resolvedPath);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Asset Loading — Meshes (deferred upload, flushed in batch)
@@ -44,36 +89,7 @@ uint32_t SceneRenderer::LoadMesh(const std::string& path, IVFS* vfs,
         return it->second;
     }
 
-    // Built-in primitives: "builtin:cube", "builtin:sphere"
-    Mesh cpuMesh{};
-    if (path.size() > 8 && path.compare(0, 8, "builtin:") == 0) {
-        const std::string primitive = path.substr(8);
-        if (primitive == "cube") {
-            cpuMesh = MeshBuilder::CreateCube(0.5f, 8);
-        } else if (primitive == "sphere") {
-            cpuMesh = MeshBuilder::CreateSphere(0.5f, 64, 64);
-        } else {
-            UZ_LOG(Renderer, Error, "SceneRenderer: unknown builtin mesh: '{}'", primitive);
-            return UINT32_MAX;
-        }
-    } else {
-        // Try VFS first (pak mode), then fall back to filesystem (dev mode).
-        if (vfs && vfs->Exists(path)) {
-            std::vector<uint8_t> data = vfs->Read(path);
-            if (!data.empty()) {
-                cpuMesh = uz::LoadMeshFromMemory(data, path);
-            }
-        } else {
-            // Resolve to absolute path for filesystem access
-            const bool isAbsolute = !path.empty() && (path[0] == '/' || path[0] == '\\' ||
-                                     (path.size() > 1 && path[1] == ':'));
-            const std::string resolvedPath = (vfs && !isAbsolute)
-                ? vfs->ResolvePath(path)
-                : path;
-
-            cpuMesh = uz::LoadMesh(resolvedPath);
-        }
-    }
+    Mesh cpuMesh = LoadCpuMeshByPath(path, vfs);
     if (!cpuMesh.IsValid()) {
         UZ_LOG(Renderer, Error, "SceneRenderer: failed to load mesh: '{}'", path);
         return UINT32_MAX;
@@ -92,25 +108,14 @@ uint32_t SceneRenderer::LoadMesh(const std::string& path, IVFS* vfs,
     m_meshMap[path] = index;
     m_deferredMeshUploads.push_back(std::move(deferred));  // move staging ownership
 
-    // ── Queue SDF bake for GI system (deferred — runs after mesh upload flush) ──
-    // Only standard-format meshes with valid geometry are eligible for SDF baking.
-    // Skip entirely when SDF GI is not enabled — FlushSdfBakes() does a hard
-    // device WaitIdle per batch, which freezes the main thread for hundreds of
-    // milliseconds when loading scenes with many meshes (e.g. Sponza). The
-    // SDF bake can be re-triggered later if SDF GI is toggled on.
-    // Read counts/stride from the header BEFORE moving the vectors (header is not moved).
+    // ── Queue the SDF bake (asynchronous, cached — block B.3) ──
+    // Only standard-format meshes with valid geometry are eligible. When SDF GI is off the CPU
+    // mesh is dropped here; switching it on later re-reads the meshes by path (ServiceSdfBakes).
     if (m_sdfGiEnabled
         && cpuMesh.header.vertexFormat == MeshVertexFormat::Standard
         && cpuMesh.GetVertexCount() > 0 && cpuMesh.GetIndexCount() >= 3)
     {
-        PendingSdfBake sdfBake;
-        sdfBake.meshIndex    = index;
-        sdfBake.vertexCount  = cpuMesh.GetVertexCount();
-        sdfBake.vertexStride = cpuMesh.header.vertexStride;
-        sdfBake.indexCount   = cpuMesh.GetIndexCount();
-        sdfBake.vertexData   = std::move(cpuMesh.vertexData);
-        sdfBake.indexData    = std::move(cpuMesh.indexData);
-        m_pendingSdfBakes.push_back(std::move(sdfBake));
+        QueueSdfBake(index, cpuMesh);
     }
 
     UZ_LOG(Renderer, Info, "SceneRenderer: loaded mesh '{}' (id={}, {} vertices, {} indices)",
@@ -186,13 +191,17 @@ uint32_t SceneRenderer::RegisterProceduralMesh(Mesh&& mesh, const std::string& k
 // ─────────────────────────────────────────────────────────────────────────────
 
 bool SceneRenderer::IsSceneFullyLoaded() const {
+    // Budget-deferred meshes, batched mesh uploads, pending SDF bakes and
+    // in-flight async slots were all invisible to this check: it reported
+    // "loaded" while Sponza's ceiling was still streaming (task 05 evidence:
+    // screenshot at 14:29:40, last mesh at 14:29:41).
     if (m_budgetDeferredMeshCount > 0) return false;
     if (!m_deferredMeshUploads.empty()) return false;
-    if (!m_pendingSdfBakes.empty()) return false;
+    if (m_sdfBakeQueue && m_sdfBakeQueue->InFlight() > 0) return false;
+    if (!m_asyncPendingSlots.empty()) return false;
     if (!m_pendingMeshPaths.empty()) return false;
     if (!m_pendingProceduralMeshes.empty()) return false;
     if (!m_pendingTexturePaths.empty()) return false;
-    if (!m_asyncPendingSlots.empty()) return false;
     if (m_asyncDecoder && m_asyncDecoder->PendingCount() > 0) return false;
     if (!m_deferredDecoded.empty()) return false;
     if (m_textureBatchCount > 0) return false;
@@ -203,76 +212,109 @@ bool SceneRenderer::IsSceneFullyLoaded() const {
 
 bool SceneRenderer::IsSceneFullyLoadedDebug() const {
     UZ_LOG(Renderer, Debug,
+           "IsSceneFullyLoaded (readiness extras): budgetDeferredMeshes={}, meshUploads={}, sdfBakes={}, asyncSlots={}",
+           m_budgetDeferredMeshCount, m_deferredMeshUploads.size(), m_sdfBakeQueue ? m_sdfBakeQueue->InFlight() : size_t{0}, m_asyncPendingSlots.size());
+    UZ_LOG(Renderer, Debug,
            "IsSceneFullyLoaded: meshPaths={}, procMeshes={}, texPaths={}, asyncPending={}, "
-           "deferred={}, batch={}, copyUploads={}, copyFence={}, budgetDeferredMeshes={}, "
-           "meshUploads={}, sdfBakes={}, asyncSlots={}",
+           "deferred={}, batch={}, copyUploads={}, copyFence={}",
            m_pendingMeshPaths.size(), m_pendingProceduralMeshes.size(),
            m_pendingTexturePaths.size(),
            m_asyncDecoder ? m_asyncDecoder->PendingCount() : 0,
            m_deferredDecoded.size(), m_textureBatchCount,
-           m_pendingCopyUploads.size(), m_copyFenceValue, m_budgetDeferredMeshCount,
-           m_deferredMeshUploads.size(), m_pendingSdfBakes.size(), m_asyncPendingSlots.size());
+           m_pendingCopyUploads.size(), m_copyFenceValue);
     return IsSceneFullyLoaded();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FlushSdfBakes — batch GPU SDF bake for all pending meshes
+// QueueSdfBake — hand a loaded mesh to the asynchronous bake queue (block B.3)
 // ─────────────────────────────────────────────────────────────────────────────
 
-void SceneRenderer::FlushSdfBakes(IRHICommandList* cmdList) {
-    if (m_pendingSdfBakes.empty()) return;
+static MeshSdfBakeRequest MakeSdfBakeRequest(uint32_t meshIndex) {
+    MeshSdfBakeRequest request;
+    request.meshIndex = meshIndex;
+    request.resolution = static_cast<uint32_t>(std::clamp(cv_MeshSdfResolution->value, 1.0f, 128.0f));
+    request.twoSided = cv_MeshSdfTwoSided->value != 0.0f;
+    request.vertexNormalOffset = static_cast<uint32_t>(offsetof(Vertex, normal));
+    return request;
+}
 
-    auto bakePipeline = m_pipelines->GetMeshSdfBake();
-    if (!bakePipeline.IsValid()) {
-        UZ_LOG(Renderer, Warning,
-               "SceneRenderer: SDF bake pipeline not available — skipping {} pending bakes",
-               m_pendingSdfBakes.size());
-        m_pendingSdfBakes.clear();
+void SceneRenderer::QueueSdfBake(uint32_t meshIndex, Mesh& cpuMesh) {
+    if (!m_sdfBakeQueue) return;
+    MeshSdfBakeRequest request = MakeSdfBakeRequest(meshIndex);
+    if (!MeshSdfBakeQueue::FillFromMesh(request, cpuMesh)) {
+        UZ_LOG(Renderer, Warning, "SceneRenderer: mesh {} has no standard geometry for an SDF", meshIndex);
         return;
     }
+    m_sdfBakeQueue->Submit(std::move(request));
+}
 
-    UZ_LOG(Renderer, Info, "SceneRenderer: batch SDF bake — {} meshes",
-           m_pendingSdfBakes.size());
-    const auto resolution = static_cast<uint32_t>(std::clamp(cv_MeshSdfResolution->value, 1.0f, 128.0f));
+// ───────────────────────────────────────
+// ServiceSdfBakes — the asynchronous bakes, once per frame (block B.3)
+// ───────────────────────────────────────
 
-    for (auto& bake : m_pendingSdfBakes) {
-        if (bake.meshIndex >= static_cast<uint32_t>(m_meshes.size())) continue;
+void SceneRenderer::ServiceSdfBakes(IRHICommandList* cmdList) {
+    if (!m_sdfBakeQueue) return;
+    const auto serviceStart = std::chrono::steady_clock::now();
+    uint32_t requeued = 0;
 
-        const auto* positions = reinterpret_cast<const float*>(bake.vertexData.data());
-        const auto* indices   = reinterpret_cast<const uint32_t*>(bake.indexData.data());
-
-        MeshSDF sdf = MeshSdfBaker::BakeMeshGPU(
-            m_device, cmdList, bakePipeline,
-            positions, bake.vertexCount, bake.vertexStride,
-            indices, bake.indexCount, resolution, static_cast<uint32_t>(offsetof(Vertex, normal)),
-            cv_MeshSdfTwoSided->value);
-
-        if (sdf.valid) {
-            // Defer destruction of the temporary triangle upload buffer until the
-            // GPU finishes the command list that references it.
-            if (sdf.pendingTriBuffer.IsValid()) {
-                m_deferredDestroyBuffers.push_back(sdf.pendingTriBuffer);
-                sdf.pendingTriBuffer = RHIBufferHandle{};
+    // SDF GI switched on since meshes loaded without fields: re-read them by path, a few per
+    // frame, and queue their bakes. Procedural meshes have no source and keep no field.
+    // The first call only records the state: meshes loaded with SDF GI on were queued by LoadMesh.
+    if (!m_sdfServiceStarted) {
+        m_sdfServiceStarted = true;
+        m_sdfGiEnabledLast = m_sdfGiEnabled;
+    }
+    if (m_sdfGiEnabled && !m_sdfGiEnabledLast) {
+        m_sdfRetriggerPending = true;
+        m_sdfRetriggerCursor = 0;
+    }
+    m_sdfGiEnabledLast = m_sdfGiEnabled;
+    if (m_sdfRetriggerPending && m_sdfGiEnabled) {
+        while (m_sdfRetriggerCursor < m_meshes.size() && requeued < kSdfRetriggerPerFrame) {
+            const uint32_t index = m_sdfRetriggerCursor++;
+            if (m_meshes[index].sdf.valid || !m_meshes[index].IsValid() || m_sdfBakeQueue->IsPending(index)) continue;
+            std::string path;
+            for (const auto& [meshPath, meshIndex] : m_meshMap) {
+                if (meshIndex == index) { path = meshPath; break; }
             }
-            m_meshes[bake.meshIndex].sdf = sdf;
-            UZ_LOG(Renderer, Info,
-                   "SceneRenderer: GPU-baked mesh SDF (meshIdx={}, res={}, SRV={})",
-                   bake.meshIndex, sdf.resolution, sdf.srvIndex);
-        } else {
-            UZ_LOG(Renderer, Warning,
-                   "SceneRenderer: SDF bake failed for meshIdx={} ({} verts, {} indices)",
-                   bake.meshIndex, bake.vertexCount, bake.indexCount);
+            if (path.empty()) continue;
+            MeshSdfBakeRequest request = MakeSdfBakeRequest(index);
+            if (path.compare(0, 8, "builtin:") == 0) {
+                Mesh cpuMesh = LoadCpuMeshByPath(path, m_lastVfs);   // procedural, cheap
+                if (!MeshSdfBakeQueue::FillFromMesh(request, cpuMesh)) continue;
+            } else if (m_lastVfs && m_lastVfs->Exists(path) && !std::filesystem::exists(m_lastVfs->ResolvePath(path))) {
+                request.sourceBytes = m_lastVfs->Read(path);          // pak: the bytes, parsed on the worker
+                request.sourcePath = path;
+                if (request.sourceBytes.empty()) continue;
+            } else {
+                // A real file: the worker reads and parses it (a 15 MB read cost the main thread ~25 ms).
+                const bool isAbsolute = !path.empty() && (path[0] == '/' || path[0] == '\\' ||
+                                         (path.size() > 1 && path[1] == ':'));
+                request.sourcePath = (m_lastVfs && !isAbsolute) ? m_lastVfs->ResolvePath(path) : path;
+            }
+            m_sdfBakeQueue->Submit(std::move(request));
+            ++requeued;
+        }
+        if (m_sdfRetriggerCursor >= m_meshes.size()) {
+            m_sdfRetriggerPending = false;
+            UZ_LOG(Renderer, Info, "SceneRenderer: SDF GI enabled after load — missing mesh SDFs queued");
         }
     }
 
-    // All SDF dispatches are on the command list — flush once and wait for GPU.
-    cmdList->End();
-    cmdList->Execute();
-    m_device->WaitIdle();
-    cmdList->Begin();
-
-    m_pendingSdfBakes.clear();
-    UZ_LOG(Renderer, Info, "SceneRenderer: SDF batch bake complete");
+    const auto requeueEnd = std::chrono::steady_clock::now();
+    const RHIPipelineHandle bakePipeline = m_pipelines ? m_pipelines->GetMeshSdfBake() : RHIPipelineHandle{};
+    // A profiler scope around the GPU work of this frame (uploads, slab dispatches, readbacks).
+    if (m_gpuProfileEnabled) m_device->GpuProfilerBeginTimestamp(cmdList, "MeshSdfBake");
+    const MeshSdfBakeQueue::ServiceStats stats = m_sdfBakeQueue->Service(cmdList, bakePipeline, m_meshes, m_bakeFenceValue + 1, m_preloading);
+    if (m_gpuProfileEnabled) m_device->GpuProfilerEndTimestamp(cmdList, "MeshSdfBake");
+    // Main-thread cost of this frame's service (mesh re-reads, resource creation, uploads): a hitch
+    // here is visible in the frame time, so it is named when it exceeds 10 ms.
+    const double serviceMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - serviceStart).count();
+    if (serviceMs > 10.0) {
+        const double requeueMs = std::chrono::duration<double, std::milli>(requeueEnd - serviceStart).count();
+        UZ_LOG(Renderer, Info, "SceneRenderer: SDF bake service took {:.1f} ms this frame ({:.1f} ms queuing {} re-reads; {:.1f} ms completing {} [fence {:.1f}, body {:.1f}, erase {:.1f}]; {:.1f} ms starting {}; {:.1f} ms slabs {}; {} in flight)",
+               serviceMs, requeueMs, requeued, stats.completeMs, stats.completed, stats.fenceMs, stats.completeBodyMs, stats.eraseMs, stats.startMs, stats.started, stats.slabMs, stats.slabs, m_sdfBakeQueue->InFlight());
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

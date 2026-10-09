@@ -1,0 +1,6 @@
+{
+  "status": "completed",
+  "createdAt": "2026-10-07T15:34:53.155Z",
+  "updatedAt": "2026-10-07T21:35:32.000Z",
+  "resolution": "done 2026-10-07, commit edfd7942: each DDGI probe ray traced once, the second bounce, the TLAS built only when its instances change; test_ddgi_dedup.py 6/6"
+}

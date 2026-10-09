@@ -1,0 +1,56 @@
+{
+  "_comment": "Demo asset for phase16_vfx-spline-data-interface item 1.11. ForceTowardSplineModule pulls particles toward the nearest baked spline point with a spring force. 400 particles, normal blend, 5s lifetime — long enough for the spring to converge visibly.",
+  "maxParticles": 400,
+  "emissionRate": 80.0,
+  "lifetime": 5.0,
+  "spawnRadius": 80.0,
+  "blendMode": 0,
+  "initialSize": 6.0,
+  "initialColor": [0.4, 0.8, 1.0, 0.85],
+  "stages": [
+    {
+      "stage": "ParticleSpawn",
+      "modules": [
+        {
+          "type": "spawn",
+          "instanceId": "core_spawn",
+          "enabled": true
+        }
+      ]
+    },
+    {
+      "stage": "ParticleUpdate",
+      "modules": [
+        {
+          "type": "update",
+          "instanceId": "core_update",
+          "enabled": true
+        },
+        {
+          "type": "force_toward_spline",
+          "instanceId": "spline_attract",
+          "enabled": true,
+          "config": {
+            "stiffness": 18.0,
+            "max_acceleration": 1500.0,
+            "attract_distance": 200.0
+          }
+        }
+      ]
+    },
+    {
+      "stage": "Render",
+      "modules": [
+        {
+          "type": "sprite_render",
+          "instanceId": "drops",
+          "enabled": true,
+          "config": {
+            "width": 8.0,
+            "height": 8.0
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -358,7 +358,7 @@ end
 For complete API documentation, see:
 
 - **Global Functions**: `uz.log()`, `uz.quit()`, `uz.delta_time`, `uz.total_time`
-- **Camera**: `uz.camera.set_position()`, `uz.camera.look_at()`
+- **Camera**: `uz.camera.set_position()`, `uz.camera.look_at()`, `uz.camera.get_position()`, `uz.camera.get_forward()`
 - **Input**: `uz.input.is_key_down()`, `uz.input.is_key_just_pressed()`, `uz.input.get_mouse_delta()`, etc.
 - **Scene**: `uz.scene.get_entities()`, `uz.scene.get_name()`, `uz.scene.get_rotation()`, `uz.scene.set_rotation()`
 - **Scene I/O**: `uz.scene.load_scene()`, `uz.scene.save_scene()`

@@ -76,8 +76,8 @@ TEST(SpawnModule, GetParameters_ContainsExpectedParameters) {
 TEST(UpdateModule, Defaults_AllFieldsMatchSpec) {
     UpdateModule mod;
     EXPECT_FLOAT_EQ(mod.gravity.x, 0.0f);
-    EXPECT_FLOAT_EQ(mod.gravity.y, -9.81f);
-    EXPECT_FLOAT_EQ(mod.gravity.z, 0.0f);
+    EXPECT_FLOAT_EQ(mod.gravity.y, 0.0f);
+    EXPECT_FLOAT_EQ(mod.gravity.z, -981.0f);
     EXPECT_FLOAT_EQ(mod.drag, 0.98f);
     EXPECT_FLOAT_EQ(mod.angularVelocity, 0.0f);
 }

@@ -65,6 +65,7 @@ public:
 
     /// Submits the command list to the appropriate queue and advances the frame index.
     void Execute() override;
+    uint64_t GetSubmitCount() const override { return m_submitCount; }
 
     /// Binds a graphics or compute pipeline state object. Sets the root signature
     /// and selects `SetGraphicsRoot*` vs `SetComputeRoot*` dispatch for subsequent calls.
@@ -226,6 +227,7 @@ private:
     ComPtr<ID3D12CommandAllocator>       m_allocators[kFramesInFlight];
     uint32_t                             m_currentFrame = 0;
     D3D12_COMMAND_LIST_TYPE              m_listType = D3D12_COMMAND_LIST_TYPE_DIRECT;
+    uint64_t                             m_submitCount = 0;   ///< GetSubmitCount()
 
     /// True when the currently bound pipeline is a compute PSO.
     /// Used to select `SetComputeRoot*` vs `SetGraphicsRoot*` variants.

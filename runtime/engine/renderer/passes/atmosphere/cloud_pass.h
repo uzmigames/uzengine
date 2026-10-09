@@ -194,6 +194,7 @@ private:
     // ── State flags ──
     bool m_initialized          = false;
     bool m_hasNoiseTextures     = false;
+    bool m_noiseLoadAttempted   = false;   ///< LoadNoiseTextures runs once; a missing file is not retried per frame
     bool m_initialBarriersDone  = false;
 };
 

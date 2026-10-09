@@ -81,12 +81,20 @@ std::string DiagnosticReport::ToJSON() const {
         os << "{";
         os << "\"name\":"; JsonEscapeString(os, t.name); os << ",";
 
-        // Status string: deterministic priority order — NaN > Inf > zero > OK
+        // Status string: deterministic priority order — skipped > NaN > Inf > zero > OK.
+        // SKIPPED comes first because the values below are not a measurement in that case, and
+        // reporting a skipped target as OK with 0/0/0 reads as a black image (followup-06 item 4.3).
         const char* status = "OK";
-        if (t.hasNaN)       status = "FAIL_NAN";
+        if (t.skipped)      status = "SKIPPED";
+        else if (t.hasNaN)  status = "FAIL_NAN";
         else if (t.hasInf)  status = "FAIL_INF";
         else if (t.isZero)  status = "WARN_ZERO";
         os << "\"status\":\"" << status << "\",";
+        os << "\"measured\":" << (t.skipped ? "false" : "true") << ",";
+        if (t.skipped) {
+            os << "\"reason\":"; JsonEscapeString(os, t.skipReason); os << ",";
+        }
+        os << "\"channel\":"; JsonEscapeString(os, t.channel); os << ",";
 
         os << "\"min\":"; JsonFloat(os, t.minVal); os << ",";
         os << "\"max\":"; JsonFloat(os, t.maxVal); os << ",";
@@ -102,7 +110,10 @@ std::string DiagnosticReport::ToJSON() const {
         if (i > 0) os << ",";
         os << "{";
         os << "\"name\":"; JsonEscapeString(os, t.name); os << ",";
-        os << "\"gpuMs\":"; JsonFloat(os, t.gpuTimeMs);
+        os << "\"gpuMs\":"; JsonFloat(os, t.gpuTimeMs); os << ",";
+        os << "\"minMs\":"; JsonFloat(os, t.minMs); os << ",";
+        os << "\"maxMs\":"; JsonFloat(os, t.maxMs); os << ",";
+        os << "\"samples\":" << t.samples;
         os << "}";
     }
     os << "]";
@@ -129,6 +140,7 @@ DiagnosticReport PassInspector::GenerateReport(IRHIDevice* device, IRHICommandLi
 
     // Compute summary flags for quick triage
     for (const auto& t : report.targets) {
+        if (t.skipped)            continue;  // not measured — neither a failure nor a warning
         if (t.hasNaN || t.hasInf) report.hasAnyFailure = true;
         if (t.isZero)             report.hasAnyWarning = true;
     }

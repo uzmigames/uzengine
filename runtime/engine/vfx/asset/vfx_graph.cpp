@@ -249,6 +249,11 @@ std::unique_ptr<VFXGraph> VFXGraph::LoadFromString(
     auto graph = std::make_unique<VFXGraph>();
     graph->version_ = root.value("version", 0u);
     graph->name_ = root.value("name", "");
+    // Record the authored parent path (pre-resolution) so VFXHotReload can
+    // find descendants when a parent file changes. Empty for roots.
+    if (root.contains("parent") && root["parent"].is_string()) {
+        graph->parentPath_ = root["parent"].get<std::string>();
+    }
     graph->emitterConfig_ = ParseEmitterConfig(root);
     graph->modules_ = ParseModules(root, registry);
     graph->parameters_ = ParseParameters(root);
@@ -259,6 +264,75 @@ std::unique_ptr<VFXGraph> VFXGraph::LoadFromString(
            graph->version_, graph->modules_.size(),
            graph->parameters_.size(), graph->events_.size());
 
+    return graph;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Inheritance-aware loaders (phase 8.3.0)
+// ─────────────────────────────────────────────────────────────────────────────
+
+std::unique_ptr<VFXGraph> VFXGraph::LoadFromStringWithInheritance(
+    const std::string& jsonStr, const ModuleRegistry& registry,
+    const VfxInheritanceLoader& loader)
+{
+    json root;
+    try {
+        root = json::parse(jsonStr);
+    } catch (const json::parse_error& e) {
+        UZ_LOG(VFX, Error,
+               "VFXGraph::LoadFromStringWithInheritance: parse error: {}", e.what());
+        return nullptr;
+    }
+
+    // Preserve the original parent reference so the graph reports it after
+    // inheritance collapses it out of the resolved JSON.
+    std::string authoredParent;
+    if (root.contains("parent") && root["parent"].is_string()) {
+        authoredParent = root["parent"].get<std::string>();
+    }
+
+    auto resolved = VfxResolveInheritance(root, loader);
+    if (!resolved) {
+        UZ_LOG(VFX, Error,
+               "VFXGraph::LoadFromStringWithInheritance: inheritance resolution failed");
+        return nullptr;
+    }
+
+    auto graph = LoadFromString(resolved->dump(), registry);
+    if (graph) {
+        graph->parentPath_ = authoredParent;
+    }
+    return graph;
+}
+
+std::unique_ptr<VFXGraph> VFXGraph::LoadWithInheritance(
+    const std::string& path, const ModuleRegistry& registry,
+    const VfxInheritanceLoader& loader, IVFS* vfs)
+{
+    std::vector<uint8_t> fileData;
+    if (vfs) {
+        fileData = vfs->Read(path);
+    } else {
+        fileData = FileReadAll(path.c_str());
+    }
+    if (fileData.empty()) {
+        UZ_LOG(VFX, Error,
+               "VFXGraph::LoadWithInheritance: failed to read '{}'", path);
+        return nullptr;
+    }
+
+    std::string jsonStr(fileData.begin(), fileData.end());
+    auto graph = LoadFromStringWithInheritance(jsonStr, registry, loader);
+    if (graph) {
+        graph->sourcePath_ = path;
+        if (graph->name_.empty()) {
+            const auto slash = path.find_last_of("/\\");
+            const auto dot   = path.rfind('.');
+            const auto start = (slash != std::string::npos) ? slash + 1 : 0;
+            const auto end   = (dot != std::string::npos && dot > start) ? dot : path.size();
+            graph->name_ = path.substr(start, end - start);
+        }
+    }
     return graph;
 }
 

@@ -29,6 +29,7 @@ class IRHISwapChain;
 class World;
 class IVFS;
 class PipelineLibrary;
+class SceneRenderer;
 
 /// Per-frame shared state passed between the RenderFrame sub-functions.
 /// Lives on the stack inside RenderFrame() — never persisted across frames.
@@ -40,6 +41,24 @@ struct FrameContext {
     IVFS*            vfs = nullptr;
     float            dt = 0.f;
     uint32_t         frameIndex = 0;
+
+    /// Owning SceneRenderer back-pointer.
+    ///
+    /// Provides per-frame sub-functions (e.g. `RegisterParticlePasses`) access
+    /// to renderer-owned asset caches without wrapping every accessor in a
+    /// `std::function`. Symmetric with `world` and `vfs`: the FrameContext
+    /// already stores all other top-level externals as raw non-owning
+    /// pointers, so adding `SceneRenderer*` keeps the struct uniform.
+    ///
+    /// Currently consumed by the VFX mesh-particle path to resolve
+    /// `MeshRenderModuleConfig::meshPath` into a cached `GPUMesh` via
+    /// `SceneRenderer::LoadMesh` + `SceneRenderer::GetGPUMesh`. Future
+    /// per-frame helpers that need texture / material caches should reuse
+    /// this pointer instead of plumbing additional callbacks.
+    ///
+    /// Always non-null inside `RenderFrame` (set by the populator at
+    /// `scene_render_frame.cpp`).
+    SceneRenderer*   sceneRenderer = nullptr;
 
     // ── Resolved during SetupFrameData ──────────────────────────────
     PipelineLibrary* pipelines = nullptr;
@@ -108,6 +127,9 @@ struct FrameContext {
     rg::RgResourceId velocityRes{};
     rg::RgResourceId shadowAtlasRes{};
     rg::RgResourceId apVolumeRes{};        ///< Aerial perspective volume (imported, Read in deferred, Write in AP compute).
+    rg::RgResourceId debugDirectRes{};     ///< Lighting split RT1 (written by deferred lighting, read by the debug view).
+    rg::RgResourceId debugIndirectRes{};   ///< Lighting split RT2.
+    rg::RgResourceId debugShadowRes{};     ///< Lighting split RT3 (R = shadow, G = AO).
 
     // ── DBuffer resource IDs (decal system) ─────────────────────────
     rg::RgResourceId dbufferARes{};
@@ -116,6 +138,7 @@ struct FrameContext {
 
     // ── TAA state ───────────────────────────────────────────────────
     bool     taaActive = false;
+    uint32_t jitterIndex = 0;   ///< Halton index used this frame ((frame % r.TAA.JitterSequenceLength) + 1); 0 = no jitter.
     float    jitterX = 0.f;
     float    jitterY = 0.f;
     uint32_t taaWriteIdx = 0;

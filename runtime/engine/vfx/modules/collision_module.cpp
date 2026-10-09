@@ -23,6 +23,7 @@ const char* CollisionResponseToString(CollisionResponse response) noexcept {
         case CollisionResponse::Kill:   return "kill";
         case CollisionResponse::Bounce: return "bounce";
         case CollisionResponse::Slide:  return "slide";
+        case CollisionResponse::Stick:  return "stick";
     }
     return "unknown";
 }
@@ -41,6 +42,7 @@ CollisionResponse CollisionResponseFromString(const std::string& str) {
     if (lower == "kill")   { return CollisionResponse::Kill;   }
     if (lower == "bounce") { return CollisionResponse::Bounce; }
     if (lower == "slide")  { return CollisionResponse::Slide;  }
+    if (lower == "stick")  { return CollisionResponse::Stick;  }
 
     UZ_LOG(VFX, Warning,
            "CollisionResponseFromString: unrecognized value '{}', defaulting to 'bounce'",
@@ -63,7 +65,7 @@ CollisionResponse CollisionResponseFromString(const std::string& str) {
 //     ProjectOntoPlane() from vfx_collision.hlsli
 //
 // Response enum values are baked into the constant buffer as uint:
-//   0 = Kill, 1 = Bounce, 2 = Slide.
+//   0 = Kill, 1 = Bounce, 2 = Slide, 3 = Stick.
 
 static constexpr const char* kCollisionShaderCode = R"hlsl(
 // --- CollisionModule ---
@@ -83,7 +85,13 @@ if (cbCollisionEnabled != 0u) {
     );
 
     if (hit) {
-        // cbCollisionResponse: 0=Kill, 1=Bounce, 2=Slide
+        // Signal sub-emitter system when collision event flag is enabled.
+        // SubEmitterModule reads this flag to spawn child particles at impact.
+        if (cbCollisionEmitEvent != 0u) {
+            SubEmitterFlags[particleIdx] = 1u;
+        }
+
+        // cbCollisionResponse: 0=Kill, 1=Bounce, 2=Slide, 3=Stick
         if (cbCollisionResponse == 0u) {
             // Kill: set age to lifespan so DecayModule recycles this particle.
             Ages[particleIdx] = Lifespans[particleIdx];
@@ -100,10 +108,16 @@ if (cbCollisionEnabled != 0u) {
                 // on the very next frame.
                 Positions[particleIdx] = particlePos + surfaceNormal * cbCollisionOffset;
             }
-        } else {
+        } else if (cbCollisionResponse == 2u) {
             // Slide: project velocity onto the surface plane so the particle
             // glides along the surface without penetrating it.
             Velocities[particleIdx] = ProjectOntoPlane(particleVel, surfaceNormal);
+            Positions[particleIdx] = particlePos + surfaceNormal * cbCollisionOffset;
+        } else if (cbCollisionResponse == 3u) {
+            // Stick: zero velocity and snap position to collision point.
+            // The particle remains at the collision surface for the rest of
+            // its lifetime (e.g., blood splatter, embedded shrapnel).
+            Velocities[particleIdx] = float3(0.0, 0.0, 0.0);
             Positions[particleIdx] = particlePos + surfaceNormal * cbCollisionOffset;
         }
     }
@@ -143,7 +157,7 @@ std::string_view CollisionModule::GetShaderCode() const {
 /// constant buffer serialization. The order here determines the cbuffer layout.
 std::vector<ParameterDef> CollisionModule::GetParameters() const {
     std::vector<ParameterDef> params;
-    params.reserve(5);
+    params.reserve(6);
 
     {
         ParameterDef p;
@@ -154,9 +168,9 @@ std::vector<ParameterDef> CollisionModule::GetParameters() const {
     }
     {
         ParameterDef p;
-        p.name         = "bounce_factor";
+        p.name         = "restitution";
         p.type         = ParameterType::Float;
-        p.defaultFloat = config_.bounceFactor;
+        p.defaultFloat = config_.restitution;
         params.push_back(p);
     }
     {
@@ -178,6 +192,13 @@ std::vector<ParameterDef> CollisionModule::GetParameters() const {
         p.name         = "min_bounce_speed";
         p.type         = ParameterType::Float;
         p.defaultFloat = config_.minBounceSpeed;
+        params.push_back(p);
+    }
+    {
+        ParameterDef p;
+        p.name        = "emit_collision_event";
+        p.type        = ParameterType::Bool;
+        p.defaultBool = config_.emitCollisionEvent;
         params.push_back(p);
     }
 
@@ -216,15 +237,21 @@ CollisionModuleConfig CollisionModule::ParseConfig(const nlohmann::json& j) {
         cfg.response = CollisionResponseFromString(j["response"].get<std::string>());
     }
 
-    if (j.contains("bounce_factor") && j["bounce_factor"].is_number()) {
-        const float raw = j["bounce_factor"].get<float>();
-        cfg.bounceFactor = std::clamp(raw, 0.0f, 1.0f);
-        if (raw != cfg.bounceFactor) {
-            UZ_LOG(VFX, Warning,
-                   "CollisionModule::ParseConfig: bounce_factor {} clamped to [0,1]",
-                   raw);
+    // "restitution" is the canonical key; "bounce_factor" is accepted as a
+    // backward-compatible alias for assets saved before the rename.
+    auto parseRestitution = [&](const char* key) {
+        if (j.contains(key) && j[key].is_number()) {
+            const float raw = j[key].get<float>();
+            cfg.restitution = std::clamp(raw, 0.0f, 1.0f);
+            if (raw != cfg.restitution) {
+                UZ_LOG(VFX, Warning,
+                       "CollisionModule::ParseConfig: {} {} clamped to [0,1]",
+                       key, raw);
+            }
         }
-    }
+    };
+    parseRestitution("bounce_factor");  // legacy alias — applied first
+    parseRestitution("restitution");    // canonical — overwrites if both present
 
     if (j.contains("depth_buffer_collision") && j["depth_buffer_collision"].is_boolean()) {
         cfg.depthBufferCollision = j["depth_buffer_collision"].get<bool>();
@@ -250,6 +277,10 @@ CollisionModuleConfig CollisionModule::ParseConfig(const nlohmann::json& j) {
                    raw);
         }
         cfg.minBounceSpeed = std::max(0.0f, raw);
+    }
+
+    if (j.contains("emit_collision_event") && j["emit_collision_event"].is_boolean()) {
+        cfg.emitCollisionEvent = j["emit_collision_event"].get<bool>();
     }
 
     return cfg;

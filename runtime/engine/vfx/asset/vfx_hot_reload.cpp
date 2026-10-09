@@ -1,18 +1,27 @@
 /// VFX Hot-Reload Implementation
 ///
 /// Uses std::filesystem for directory scanning and timestamp polling.
-/// Guarded by UZ_DEV_BUILD / !NDEBUG to strip from shipping builds.
-
-#if defined(UZ_DEV_BUILD) || !defined(NDEBUG)
+///
+/// The class is instantiated only in dev builds — see scene_renderer_init.cpp,
+/// which guards the `make_unique<VFXHotReload>()` call with `#if !NDEBUG`. The
+/// implementation itself is unconditionally compiled because `unique_ptr<T>`
+/// in the renderer header forces the destructor to be visible to the linker
+/// even in release builds where the unique_ptr is always null. Unreferenced
+/// methods are stripped by DCE in `-Doptimize=ReleaseFast`.
 
 #include "vfx_hot_reload.h"
+#include "vfx_emitter_inheritance.h"
 
 #include "log.h"
 #include "profiler.h"
 
+#include <json.hpp>
+
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 
 namespace uz {
 
@@ -67,6 +76,7 @@ void VFXHotReload::Shutdown() {
     watchedFiles_.clear();
     fileTimestamps_.clear();
     callbacks_.clear();
+    inheritanceMap_.clear();
     vfxSystem_ = nullptr;
     registry_ = nullptr;
     contentDir_.clear();
@@ -74,6 +84,59 @@ void VFXHotReload::Shutdown() {
     initialized_ = false;
 
     UZ_LOG(VFX, Info, "VFXHotReload: shut down");
+}
+
+// ---------------------------------------------------------------------------
+// Inheritance map (phase 8.3.0)
+// ---------------------------------------------------------------------------
+
+/// Parses the `"parent"` JSON field out of `normalizedPath` and updates
+/// `inheritanceMap_` so ReloadGraph can propagate edits downstream.
+void VFXHotReload::UpdateInheritanceLink(const std::string& normalizedPath) {
+    // Clear any prior edge from this child: it may have been renamed or had
+    // its parent field removed since the last scan.
+    for (auto& kv : inheritanceMap_) {
+        auto& deps = kv.second;
+        deps.erase(std::remove(deps.begin(), deps.end(), normalizedPath),
+                   deps.end());
+    }
+
+    std::ifstream f(normalizedPath);
+    if (!f) return;
+    std::ostringstream ss; ss << f.rdbuf();
+    const std::string content = ss.str();
+    if (content.empty()) return;
+
+    try {
+        auto root = nlohmann::json::parse(content);
+        if (!root.is_object() || !root.contains("parent") ||
+            !root["parent"].is_string()) {
+            return;
+        }
+        const std::string parent = VfxNormalizeInheritancePath(
+            root["parent"].get<std::string>());
+        auto& deps = inheritanceMap_[parent];
+        if (std::find(deps.begin(), deps.end(), normalizedPath) == deps.end()) {
+            deps.push_back(normalizedPath);
+        }
+    } catch (const nlohmann::json::parse_error&) {
+        // Non-JSON / malformed file — tolerate; a later reload will retry.
+    }
+}
+
+void VFXHotReload::ReloadDescendants(const std::string& parentPath,
+                                     std::unordered_set<std::string>& visited) {
+    auto it = inheritanceMap_.find(parentPath);
+    if (it == inheritanceMap_.end()) return;
+
+    // Copy the list because ReloadGraph on a descendant might mutate the map.
+    const std::vector<std::string> children = it->second;
+    for (const auto& child : children) {
+        if (!visited.insert(child).second) continue; // already reloaded
+        UZ_LOG(VFX, Info,
+               "VFXHotReload: cascading reload of descendant '{}'", child);
+        ReloadGraph(child);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -104,6 +167,8 @@ void VFXHotReload::ScanDirectory(const std::string& dir) {
         auto ticks = writeTime.time_since_epoch().count();
         fileTimestamps_[normalized] = static_cast<uint64_t>(ticks);
         watchedFiles_.push_back(normalized);
+        // Record parent → child edge for inheritance-aware reload (8.3.0).
+        UpdateInheritanceLink(normalized);
     }
 }
 
@@ -155,11 +220,21 @@ void VFXHotReload::ReloadGraph(const std::string& path) {
 
     ++reloadCount_;
 
+    // Refresh the parent edge for this file before cascading: the edit may
+    // have added, removed, or retargeted the `"parent"` JSON key.
+    UpdateInheritanceLink(path);
+
     for (const auto& cb : callbacks_) {
         if (cb) {
             cb(path);
         }
     }
+
+    // Cascade to descendants so parent edits propagate through the chain
+    // (phase 8.3.0). Visited set guards against cycles.
+    std::unordered_set<std::string> visited;
+    visited.insert(path);
+    ReloadDescendants(path, visited);
 }
 
 // ---------------------------------------------------------------------------
@@ -171,5 +246,3 @@ void VFXHotReload::OnReload(VFXReloadCallback callback) {
 }
 
 } // namespace uz
-
-#endif // UZ_DEV_BUILD || !NDEBUG

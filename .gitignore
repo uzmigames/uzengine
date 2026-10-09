@@ -1,6 +1,9 @@
 # Sandbox — test outputs, Falcor references, temp captures (never committed)
 .sandbox/
 
+# Local toolchains pinned to project (e.g. zig 0.15.2 download)
+.tools/
+
 # Rulebook - ignore runtime data, keep specs and tasks
 /.rulebook/*
 !/.rulebook/specs/
@@ -123,19 +126,18 @@ CLAUDE.local.md
 .rulebook/telemetry/
 
 # Sponza diagnostics and generated regression output; keep runners and fixtures.
-/scripts/*_artifacts/
 /scripts/*.generated.h
-/scripts/sponza-*.png
+/scripts/*_artifacts/
 /scripts/sponza-*.args
-/scripts/sponza-*.exit
 /scripts/sponza-*.asm
+/scripts/sponza-*.exit
 /scripts/sponza-*.json
+/scripts/sponza-*.png
 /scripts/sponza-*-files.txt
-/scripts/sponza-*-sha256.txt
 /scripts/sponza-*-path-scan.txt
+/scripts/sponza-*-sha256.txt
 /scripts/sponza-lighting-debug-journal.md
 /scripts/lumen-siggraph2022-reference.pdf
 /scripts/lumen-siggraph2022-reference.txt
-
 # Downloaded by scripts/setup.ps1; do not vendor a second DirectX header tree.
 /runtime/thirdparty/agility/

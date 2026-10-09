@@ -3,7 +3,13 @@
 /// 16-step ray march with transmittance LUT. No sun disk (IBL only).
 /// Output: linear HDR, no tonemap. 64x64x6 RGBA16F.
 ///
-/// b0: 10 root constants, u0: RWTexture2DArray, s0: linear sampler
+/// b0: 12 root constants, u0: RWTexture2DArray, s0: linear sampler
+///
+/// The sun illuminance is per channel, the same quantity the sky pass scatters
+/// (`skyCB.sunIlluminance`): block B.5c (2026-10-08) found the capture taking the
+/// length of the illuminance vector (sqrt 3 x the per-channel value of a white sun,
+/// grey for a tinted one), so every image-based term saw a sky brighter than the
+/// one the frame renders.
 
 #include "../common/constants.hlsli"
 
@@ -11,7 +17,7 @@ cbuffer SkyCubemapParams : register(b0) {
     float bottomRadiusKm;
     float topRadiusKm;
     float sunDirX, sunDirY, sunDirZ;
-    float sunIntensity;
+    float sunIllumR, sunIllumG, sunIllumB;   ///< Sun illuminance per channel (as the sky pass).
     uint  transmittanceLutIdx;
     uint  packedScatterScales;
     uint  scatteringLut3DIdx;
@@ -119,6 +125,7 @@ void main(uint3 DTid : SV_DispatchThreadID) {
 
     float3 L = float3(0, 0, 0);
     float3 T = float3(1, 1, 1);
+    const float3 sunIllum = float3(sunIllumR, sunIllumG, sunIllumB);
 
     for (int i = 0; i < NUM_STEPS; ++i) {
         float t = tStart + (float(i) + 0.5) * stepLen;
@@ -138,7 +145,7 @@ void main(uint3 DTid : SV_DispatchThreadID) {
         float3 scatter = artBetaR * dR * phaseR + artBetaM * dM * phaseM;
         float3 Sint = (scatter - scatter * Ts) / max(ext, 1e-7);
 
-        L += T * sunT * Sint * sunIntensity;
+        L += T * sunT * Sint * sunIllum;
         T *= Ts;
     }
 
@@ -148,12 +155,18 @@ void main(uint3 DTid : SV_DispatchThreadID) {
         float3 gN = normalize(gPos);
         float3 gSunT = SampleTLut(tLut, gPos, sunDir, bottomRadiusKm, topRadiusKm);
         float NdotL = max(0.0, dot(gN, sunDir));
-        float3 gRad = GROUND_ALBEDO * (1.0/PI) * NdotL * sunIntensity * gSunT;
+        float3 gRad = GROUND_ALBEDO * (1.0/PI) * NdotL * sunIllum * gSunT;
         L += T * gRad;
     }
 
+    // No sun disk — IBL cubemaps exclude point-source specular.
+    // Store radiance, not radiance/PI. The atmospheric integration above already
+    // produces radiance (the ground term carries its own Lambertian 1/PI), and the
+    // consumers divide by PI themselves: PackSHToCompactFormat() bakes the UE5
+    // cosine-convolution constants (c0 = 1/(2*sqrt(PI)) = A0/PI * Y00, etc.), so
+    // EvalSH_L2 already returns E/PI. The old 1/PI here was a second division that
+    // darkened both the SH diffuse and the prefiltered specular by PI.
     /// @ref Hillaire 2020 "A Scalable and Production Ready Sky and Atmosphere Rendering Technique"
-    /// @constants Alpha 1 marks valid radiance; diffuse consumers apply their own 1/pi.
-    // Atmospheric integration already produces radiance, including the ground BRDF.
+    /// @constants Alpha 1 marks valid radiance; diffuse consumers apply their own 1/PI.
     outputCubemap[uint3(texel, face)] = float4(L, 1.0);
 }

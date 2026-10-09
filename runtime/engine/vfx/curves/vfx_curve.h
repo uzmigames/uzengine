@@ -187,6 +187,16 @@ public:
     /// `BakeToTexture()` has not been called or failed.
     [[nodiscard]] RHITextureHandle GetBakedTexture() const noexcept;
 
+    /// Returns the float keyframes for serialization or inspection.
+    [[nodiscard]] const std::vector<Keyframe>& GetFloatKeys() const noexcept {
+        return floatKeys_;
+    }
+
+    /// Returns the Vec4 keyframes for serialization or inspection.
+    [[nodiscard]] const std::vector<KeyframeVec4>& GetVec4Keys() const noexcept {
+        return vec4Keys_;
+    }
+
 private:
     std::vector<Keyframe> floatKeys_;
     std::vector<KeyframeVec4> vec4Keys_;

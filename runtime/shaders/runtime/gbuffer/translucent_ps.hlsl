@@ -13,6 +13,7 @@
 /// so SrcAlpha blend makes center transparent, rim reflective.
 
 #include "../common/encoding.hlsli"
+#include "../common/region_dump.hlsli"
 
 struct PSInput {
     float4 positionCS : SV_Position;
@@ -42,6 +43,12 @@ cbuffer PerFrameCB : register(b1) {
     float    skyLightColorR      : packoffset(c14.w); // byte 236
     float    skyLightColorG      : packoffset(c15.x); // byte 240
     float    skyLightColorB      : packoffset(c15.y); // byte 244
+    // Region dump (diagnostics) — the same PerFrameCB offsets the deferred lighting pass reads.
+    uint     _debugRegionUav     : packoffset(c62.x); // byte 992
+    uint     _debugRegionSrv     : packoffset(c62.y); // byte 996
+    uint     _debugRegionCount   : packoffset(c62.z); // byte 1000
+    uint     _debugRegionStamp   : packoffset(c62.w); // byte 1004
+    uint     _debugRegionFields  : packoffset(c63.x); // byte 1008
 };
 
 // ── PerObjectCB — matches gbuffer_ps.hlsl and constant_buffers.h ─────────
@@ -78,17 +85,46 @@ cbuffer PerObjectCB : register(b2) {
 
 SamplerState linearSampler : register(s0);
 
+/// Region dump (diagnostics): what this pass consumed and produced at a pixel, into LIGHTING_EXTRA
+/// records +5..+10. The deferred pass cleared them earlier this frame, so a pixel this pass does not
+/// draw keeps opacity -1 and zero layers. +5..+9 hold the last layer drawn; +10 counts the layers,
+/// so overlap is recorded instead of assumed away.
+void WriteRegionDumpTranslucent(uint2 rp, float fragDepth, float3 sourceColor, float opacity, float3 albedo,
+                                uint albedoIdx, float3 iblDiffuse, uint irradianceIdx, float3 N,
+                                uint shadingModel, float3 emission, float NdotL) {
+#ifdef UZ_BINDLESS
+    if (_debugRegionUav == 0xffffffffu || _debugRegionCount == 0u
+        || (_debugRegionFields & UZ_REGION_FIELD_LIGHTING_EXTRA) == 0u) return;
+    StructuredBuffer<uint4>    rects = ResourceDescriptorHeap[_debugRegionSrv];
+    RWStructuredBuffer<float4> dump  = ResourceDescriptorHeap[_debugRegionUav];
+    for (uint r = 0u; r < _debugRegionCount; ++r) {
+        const uint4 a = rects[r * 2u];
+        const uint4 b = rects[r * 2u + 1u];
+        if (!UzRegionContains(a, rp)) continue;
+        const uint lrec = UzRegionPixelBase(a, b, rp) + UzRegionLightingExtraOffset(_debugRegionFields);
+        dump[lrec + 5] = float4(sourceColor, opacity);
+        dump[lrec + 6] = float4(albedo, asfloat(albedoIdx));
+        dump[lrec + 7] = float4(iblDiffuse, asfloat(irradianceIdx));
+        dump[lrec + 8] = float4(N, asfloat(shadingModel));
+        dump[lrec + 9] = float4(emission, NdotL);
+        // Read-modify-write: draw calls run in order, but invocations inside one draw call may run
+        // concurrently, so overlap between primitives of the same draw can be undercounted. It can
+        // never be overcounted.
+        // y: this fragment's depth (SV_Position.z), so the last layer can be matched to a surface.
+        dump[lrec + 10] = float4(dump[lrec + 10].x + 1.0, fragDepth, dump[lrec + 10].z, 0.0);
+    }
+#endif
+}
+
 /// @ref Bruneton 2017 — cubemap direction conversion (engine Z-up to cubemap Y-up)
 float3 WorldToCubemap(float3 dir) { return float3(dir.x, dir.z, dir.y); }
 
+// [earlydepthstencil]: the region-dump records are a UAV write, and a pixel shader with UAV writes
+// otherwise loses the implicit early depth test, so it ran and recorded glass fragments that the
+// depth test then rejected (ledger H-44). This shader has no discard, clip or depth output, so forcing
+// the early test restores exactly the visibility it had before it was instrumented.
+[earlydepthstencil]
 float4 main(PSInput input) : SV_Target {
-    float3 emission = emissiveColor * emissiveIntensity;
-#ifdef UZ_BINDLESS
-    if (emissiveIndex > 0 && emissiveIndex != kSentinelSrvIndex) {
-        Texture2D<float4> emissiveTexture = ResourceDescriptorHeap[emissiveIndex];
-        emission *= emissiveTexture.Sample(linearSampler, input.texcoord * uvScale + uvOffset).rgb;
-    }
-#endif
     float3 N = normalize(input.normalWS);
     float3 V = normalize(cameraPos.xyz - input.positionWS);
     float  NoV = max(dot(N, V), 1e-4);
@@ -98,6 +134,17 @@ float4 main(PSInput input) : SV_Target {
 
     // Extract specular from materialFlags bits[8:15].
     float specularVal = float((materialFlags >> 8u) & 0xFFu) / 255.0;
+
+    // Emission. The forward translucent path ignored its emission inputs
+    // entirely, so an authored glow on a translucent material (Sponza's window
+    // glass carries a WindowSunGlow constant) never reached the image.
+    float3 emission = emissiveColor * emissiveIntensity;
+#ifdef UZ_BINDLESS
+    if (emissiveIndex > 0 && emissiveIndex != kSentinelSrvIndex) {
+        Texture2D<float4> emissiveTexture = ResourceDescriptorHeap[emissiveIndex];
+        emission *= emissiveTexture.Sample(linearSampler, input.texcoord * uvScale + uvOffset).rgb;
+    }
+#endif
 
     // ── Glass / ThinTranslucent (smID == 9) ─────────────────────────────
     // @ref Shadertoy XdVfDd — analytical sphere ray tracing with refraction.
@@ -189,7 +236,7 @@ float4 main(PSInput input) : SV_Target {
 
                 // Translucent blur: sample at higher mip for internal light scattering.
                 // @constants mipLevels-1 = max mip, translucentBlur = 2.0 base + roughness
-                float translucentMip = 1.0 + roughnessMultiplier * float(prefilteredMipLevels - 1);
+                float translucentMip = 1.0 + roughnessMultiplier * float((prefilteredMipLevels & 0xFFu) - 1u);   // bit 8 = PMREM flag
                 refractionColor = prefTex.SampleLevel(linearSampler, WorldToCubemap(exitRay), translucentMip).rgb
                                 * skyLightIntensity * skyTint;
             }
@@ -199,6 +246,9 @@ float4 main(PSInput input) : SV_Target {
         // @ref Shadertoy XdVfDd — color = refraction + surface_reflection
         // Refraction is dominant (1-F ≈ 0.96 at center), reflection adds Fresnel rim.
         float3 color = refractionColor + surfaceReflection + emission;
+        WriteRegionDumpTranslucent(uint2(input.positionCS.xy), input.positionCS.z, color, 1.0, float3(0, 0, 0), 0u,
+                                   refractionColor, prefilteredSrvIndex, N, smID, emission,
+                                   max(dot(N, normalize(lightDir.xyz)), 0.0));
         return float4(color, 1.0);
     }
 
@@ -227,6 +277,8 @@ float4 main(PSInput input) : SV_Target {
 #endif
 
     float3 color = albedo * (lightColor.xyz * NdotL + iblDiffuse + ambientColor.xyz) + emission;
+    WriteRegionDumpTranslucent(uint2(input.positionCS.xy), input.positionCS.z, color, matOpacity, albedo, albedoIndex,
+                               iblDiffuse, irradianceSrvIndex, N, smID, emission, NdotL);
     // Premultiplied alpha — color already weighted by opacity for (One, InvSrcAlpha) blend.
     return float4(color * matOpacity, matOpacity);
 }

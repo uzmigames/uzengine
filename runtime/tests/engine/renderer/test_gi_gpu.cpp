@@ -19,6 +19,7 @@
 #include "gi/global_distance_field.h"
 #include "gi/radiance_cache.h"
 #include "gi/mesh_sdf_baker.h"
+#include "gi/mesh_sdf_bake_queue.h"
 
 #include <gtest/gtest.h>
 
@@ -754,8 +755,8 @@ TEST_F(GIGpuTest, GDFShaderConstantStructLayout) {
         "GdfMeshSdfGPU must be 128 bytes for cbuffer packing");
 
     // Eight original DWORDs retain their offsets; rawOutputUav appends the ninth.
-    static_assert(sizeof(uz::GdfCompositeConstants) == 36,
-        "GdfCompositeConstants must be 36 bytes (9 root constants)");
+    static_assert(sizeof(uz::GdfCompositeConstants) == 52,
+        "GdfCompositeConstants must be 52 bytes (13 root constants)");
     static_assert(offsetof(uz::GdfCompositeConstants, outputUav) == 0);
     static_assert(offsetof(uz::GdfCompositeConstants, meshCount) == 4);
     static_assert(offsetof(uz::GdfCompositeConstants, accumulate) == 8);
@@ -765,10 +766,19 @@ TEST_F(GIGpuTest, GDFShaderConstantStructLayout) {
     static_assert(offsetof(uz::GdfCompositeConstants, clipmapCenterZ) == 24);
     static_assert(offsetof(uz::GdfCompositeConstants, clipmapExtent) == 28);
     static_assert(offsetof(uz::GdfCompositeConstants, rawOutputUav) == 32);
+    static_assert(offsetof(uz::GdfCompositeConstants, regionOrigin) == 36);
+    static_assert(offsetof(uz::GdfCompositeConstants, regionSize) == 40);
+    static_assert(offsetof(uz::GdfCompositeConstants, windowOrigin) == 44);
+    static_assert(offsetof(uz::GdfCompositeConstants, band) == 48);
 
-    // RadianceCacheTraceConstants must be exactly 176 bytes
-    static_assert(sizeof(uz::RadianceCacheTraceConstants) == 176,
-        "RadianceCacheTraceConstants must be 176 bytes");
+    // RadianceCacheTraceConstants is 464 bytes: the 176-byte trace constants, the
+    // phase16 VFX→DDGI emissive injection row (16 bytes), the grid-recentre
+    // history-shift row (16 bytes, phase0_sponza-followup-06 item 4.5) and 16
+    // change-box rows (block B-02). The DDGI mirror declares the first 13 rows.
+    static_assert(sizeof(uz::RadianceCacheTraceConstants) == 464,
+        "RadianceCacheTraceConstants must be 464 bytes");
+    static_assert(offsetof(uz::RadianceCacheTraceConstants, historyShiftX) == 192);
+    static_assert(offsetof(uz::RadianceCacheTraceConstants, historyShiftZ) == 200);
 
     // Verify field offsets for GdfCompositeConstants (matches root constant layout)
     uz::GdfCompositeConstants cc{};
@@ -883,6 +893,107 @@ TEST_F(GIGpuTest, BufferUploadCopyReadback) {
     m_device->DestroyBuffer(readbackBuf);
     m_device->DestroyBuffer(gpuBuf);
     m_device->DestroyBuffer(uploadBuf);
+}
+
+
+// ---------------------------------------------------------------------------
+// Block B.3: the on-disk mesh SDF cache entry (header + LZ4 block) round-trips and
+// rejects damage. No device: the encoder and decoder are static.
+// ---------------------------------------------------------------------------
+
+static uz::MeshSdfCacheHeader MakeCacheHeader(uint32_t res, uint32_t triangles, uint32_t nodes) {
+    uz::MeshSdfCacheHeader h{};
+    h.resolution = res;
+    h.twoSided = 1;
+    h.triangleCount = triangles;
+    h.nodeCount = nodes;
+    h.volumeBytes = static_cast<uint64_t>(res) * res * res * 2u;
+    h.recordBytes = (static_cast<uint64_t>(triangles) + nodes) * 64u;
+    h.voxelSize = 1.5f;
+    h.volumeCenter[0] = 1.0f;
+    h.volumeHalfExtent[1] = 2.0f;
+    h.volumeMin[2] = -3.0f;
+    h.orientedTriangleCount = 7;
+    return h;
+}
+
+static std::vector<uint8_t> MakeCacheBody(const uz::MeshSdfCacheHeader& h) {
+    std::vector<uint8_t> body(static_cast<size_t>(h.volumeBytes + h.recordBytes));
+    for (size_t i = 0; i < body.size(); ++i) body[i] = static_cast<uint8_t>((i * 7919u + (i >> 5)) & 0xffu);
+    return body;
+}
+
+TEST(MeshSdfCacheEntry, RoundTripKeepsEveryByteAndField) {
+    const uz::MeshSdfCacheHeader h = MakeCacheHeader(8, 5, 3);
+    const std::vector<uint8_t> body = MakeCacheBody(h);
+    const std::vector<uint8_t> entry = uz::MeshSdfBakeQueue::EncodeCacheEntry(h, body);
+    ASSERT_FALSE(entry.empty());
+    ASSERT_GT(entry.size(), sizeof(uz::MeshSdfCacheHeader));
+    uz::MeshSdfCacheHeader decoded{};
+    std::vector<uint8_t> body2;
+    ASSERT_TRUE(uz::MeshSdfBakeQueue::DecodeCacheEntry(entry, decoded, body2));
+    EXPECT_EQ(body2, body);
+    EXPECT_EQ(decoded.magic, uz::kMeshSdfCacheMagic);
+    EXPECT_EQ(decoded.version, uz::kMeshSdfCacheVersion);
+    EXPECT_EQ(decoded.resolution, 8u);
+    EXPECT_EQ(decoded.twoSided, 1u);
+    EXPECT_EQ(decoded.triangleCount, 5u);
+    EXPECT_EQ(decoded.nodeCount, 3u);
+    EXPECT_EQ(decoded.orientedTriangleCount, 7u);
+    EXPECT_EQ(decoded.volumeBytes, h.volumeBytes);
+    EXPECT_EQ(decoded.recordBytes, h.recordBytes);
+    EXPECT_EQ(decoded.compressedBytes, entry.size() - sizeof(uz::MeshSdfCacheHeader));
+    EXPECT_FLOAT_EQ(decoded.voxelSize, 1.5f);
+    EXPECT_FLOAT_EQ(decoded.volumeCenter[0], 1.0f);
+    EXPECT_FLOAT_EQ(decoded.volumeHalfExtent[1], 2.0f);
+    EXPECT_FLOAT_EQ(decoded.volumeMin[2], -3.0f);
+}
+
+// The regression of 2026-10-05: a header whose record size was read from a moved-from vector
+// (0 bytes) described a body it did not match, and every entry came back as corrupt.
+TEST(MeshSdfCacheEntry, HeaderThatDoesNotDescribeTheBodyIsNotEncoded) {
+    uz::MeshSdfCacheHeader h = MakeCacheHeader(8, 5, 3);
+    const std::vector<uint8_t> body = MakeCacheBody(h);
+    h.recordBytes = 0;
+    EXPECT_TRUE(uz::MeshSdfBakeQueue::EncodeCacheEntry(h, body).empty());
+    h = MakeCacheHeader(8, 5, 3);
+    EXPECT_TRUE(uz::MeshSdfBakeQueue::EncodeCacheEntry(h, std::vector<uint8_t>{}).empty());
+}
+
+TEST(MeshSdfCacheEntry, TruncatedEntryIsRejected) {
+    const uz::MeshSdfCacheHeader h = MakeCacheHeader(8, 5, 3);
+    std::vector<uint8_t> entry = uz::MeshSdfBakeQueue::EncodeCacheEntry(h, MakeCacheBody(h));
+    ASSERT_FALSE(entry.empty());
+    uz::MeshSdfCacheHeader decoded{};
+    std::vector<uint8_t> body;
+    std::vector<uint8_t> half(entry.begin(), entry.begin() + static_cast<std::ptrdiff_t>(entry.size() / 2));
+    EXPECT_FALSE(uz::MeshSdfBakeQueue::DecodeCacheEntry(half, decoded, body));
+    std::vector<uint8_t> shortHeader(entry.begin(), entry.begin() + static_cast<std::ptrdiff_t>(sizeof(uz::MeshSdfCacheHeader) - 1));
+    EXPECT_FALSE(uz::MeshSdfBakeQueue::DecodeCacheEntry(shortHeader, decoded, body));
+}
+
+TEST(MeshSdfCacheEntry, DamagedBlockOrHeaderIsRejected) {
+    const uz::MeshSdfCacheHeader h = MakeCacheHeader(8, 5, 3);
+    const std::vector<uint8_t> good = uz::MeshSdfBakeQueue::EncodeCacheEntry(h, MakeCacheBody(h));
+    ASSERT_FALSE(good.empty());
+    uz::MeshSdfCacheHeader decoded{};
+    std::vector<uint8_t> body;
+    std::vector<uint8_t> flipped = good;
+    flipped[sizeof(uz::MeshSdfCacheHeader) + 3] ^= 0x5au;    // the LZ4 block or the checksum catches it
+    EXPECT_FALSE(uz::MeshSdfBakeQueue::DecodeCacheEntry(flipped, decoded, body));
+    std::vector<uint8_t> otherVersion = good;
+    uz::MeshSdfCacheHeader hv{};
+    std::memcpy(&hv, otherVersion.data(), sizeof(hv));
+    hv.version += 1;
+    std::memcpy(otherVersion.data(), &hv, sizeof(hv));
+    EXPECT_FALSE(uz::MeshSdfBakeQueue::DecodeCacheEntry(otherVersion, decoded, body));
+    std::vector<uint8_t> otherCount = good;
+    uz::MeshSdfCacheHeader hc{};
+    std::memcpy(&hc, otherCount.data(), sizeof(hc));
+    hc.triangleCount += 1;                                   // the record size no longer matches the counts
+    std::memcpy(otherCount.data(), &hc, sizeof(hc));
+    EXPECT_FALSE(uz::MeshSdfBakeQueue::DecodeCacheEntry(otherCount, decoded, body));
+    EXPECT_TRUE(uz::MeshSdfBakeQueue::DecodeCacheEntry(good, decoded, body));
 }
 
 } // namespace

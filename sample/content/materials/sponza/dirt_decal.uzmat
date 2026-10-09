@@ -1,7 +1,7 @@
 {
     "version": 1,
     "name": "dirt_decal",
-    "domain": "Surface",
+    "domain": "Decal",
     "shadingModel": "DefaultLit",
     "blendMode": "Masked",
     "twoSided": false,
@@ -36,7 +36,7 @@
     ],
     "params": {
         "roughnessMultiplier": 1.0,
-        "metallicMultiplier": 1.0,
+        "metallicMultiplier": 0.0,
         "baseColorTint": [
             1.0,
             1.0,

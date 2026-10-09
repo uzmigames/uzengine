@@ -32,13 +32,13 @@ class RgBuilder;
 namespace uz {
 
 // ---------------------------------------------------------------------------
-// SkyCubemapCapturePSRootConstants — 8 DWORDs (32 bytes) at root param 0 (b0)
+// SkyCubemapCapturePSRootConstants — 10 DWORDs (40 bytes) at root param 0 (b0)
 // ---------------------------------------------------------------------------
 
 /// Root constants for the sky cubemap capture pixel shader.
 ///
 /// Matches the HLSL cbuffer SkyCubemapFaceParams at b0 in sky_cubemap_ps.hlsl.
-/// DWORD 6 is `cubeFaceIndex` (not a bindless SRV index like the compute path).
+/// DWORD 8 is `cubeFaceIndex` (not a bindless SRV index like the compute path).
 /// The renderer updates cubeFaceIndex before each of the 6 draw calls.
 struct SkyCubemapCapturePSRootConstants {
     float    bottomRadiusKm;        ///< Planet surface radius (km). DWORD 0.
@@ -46,13 +46,15 @@ struct SkyCubemapCapturePSRootConstants {
     float    sunDirX;               ///< Sun direction X component (normalised). DWORD 2.
     float    sunDirY;               ///< Sun direction Y component (normalised). DWORD 3.
     float    sunDirZ;               ///< Sun direction Z component (normalised). DWORD 4.
-    float    sunIntensity;          ///< Sun illuminance (uniform RGB). DWORD 5.
-    uint32_t cubeFaceIndex;         ///< Current cubemap face [0-5]. DWORD 6.
-    uint32_t packedScatterScales;   ///< Packed f16 pair: low16 = rayleighScale, high16 = mieScale. DWORD 7.
+    float    sunIllumX;             ///< Sun illuminance, red (per channel, block B.5c). DWORD 5.
+    float    sunIllumY;             ///< Sun illuminance, green. DWORD 6.
+    float    sunIllumZ;             ///< Sun illuminance, blue. DWORD 7.
+    uint32_t cubeFaceIndex;         ///< Current cubemap face [0-5]. DWORD 8.
+    uint32_t packedScatterScales;   ///< Packed f16 pair: low16 = rayleighScale, high16 = mieScale. DWORD 9.
 };
 
-static_assert(sizeof(SkyCubemapCapturePSRootConstants) == 32,
-    "SkyCubemapCapturePSRootConstants must be exactly 8 DWORDs (32 bytes)");
+static_assert(sizeof(SkyCubemapCapturePSRootConstants) == 40,
+    "SkyCubemapCapturePSRootConstants must be exactly 10 DWORDs (40 bytes)");
 
 // ---------------------------------------------------------------------------
 // SkyCubemapCapturePSPassDesc
@@ -64,7 +66,7 @@ struct SkyCubemapCapturePSPassDesc {
     rg::RgResourceId  transmittanceLut;    ///< Transmittance LUT (read, ShaderResource state).
     RHIPipelineHandle  pipeline;            ///< Graphics PSO (fullscreen_vs + sky_cubemap_ps).
     RHITextureHandle   transmittanceLutTex; ///< Transmittance LUT texture handle (for SetFragmentTexture).
-    SkyCubemapCapturePSRootConstants rootConstants; ///< Atmosphere params (8 DWORDs).
+    SkyCubemapCapturePSRootConstants rootConstants; ///< Atmosphere params (10 DWORDs).
 };
 
 /// Registers a sky cubemap capture pixel shader pass in the render graph.

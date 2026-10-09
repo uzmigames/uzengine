@@ -22,6 +22,7 @@ echo DXR 1.0 sozinho nao suporta o shader DDGI deste preset.
 "runtime\build\bin\uzengine.exe" ^
     --project "sample/projects/sponza.uzproject" ^
     --width 1920 --height 1080 ^
+    --adapter 0 ^
     --cvar r.RayTracing=1 ^
     --cvar r.RayTracing.GI=1 ^
     --cvar r.RadianceCache=1 ^

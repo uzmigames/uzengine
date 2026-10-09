@@ -27,6 +27,21 @@ This directory contains deep architectural analyses of rendering systems from UE
   - Phase 3 (Baked GI): Lightmass integration (2-3 weeks)
   - **Status**: Ready for development, includes code specifications
 
+### Sponza Parity Evidence
+
+Ten reports ported verbatim from `test/windows-sponza-parity @ 25cd0c5f` (each carries an origin header; their `scripts/*_artifacts` paths are evidence not kept in Git). Engine-side descriptions: `docs/engine/12-rendering/31..33-*.md`, `docs/engine/09-application-lifecycle/07-scene-readiness-and-preload.md`.
+
+- **[sponza-lighting-rootcause.md](sponza-lighting-rootcause.md)** — root cause of the dark/flat Sponza (Euler order, π sky, SSR filter, shadow bias, specular) — **Status**: Evidence record
+- **[sponza-gi-correction-2026-09-06.md](sponza-gi-correction-2026-09-06.md)** — SDF GI: empty shader stubs, mesh SDF bake, global distance field, radiance cache — **Status**: Evidence record
+- **[sponza-sdf-orientation-evidence.md](sponza-sdf-orientation-evidence.md)** — SDF sign/orientation and two-sided bake evidence — **Status**: Evidence record
+- **[sponza-sun-rotation-evidence.md](sponza-sun-rotation-evidence.md)** — quaternion Euler composition and sun direction — **Status**: Evidence record
+- **[sponza-graph-material-evidence.md](sponza-graph-material-evidence.md)** — graph material draw metadata (blend mode, two-sided, specular, ORM) — **Status**: Evidence record
+- **[sponza-surface-lighting-2026-09-07.md](sponza-surface-lighting-2026-09-07.md)** — filtered final gather and surface lighting — **Status**: Evidence record
+- **[sponza-local-reflections-2026-09-07.md](sponza-local-reflections-2026-09-07.md)** — SDF reflections, SSR lerp and reflection selection — **Status**: Evidence record
+- **[sponza-ddgi-cbuffer-layout-2026-09-07.md](sponza-ddgi-cbuffer-layout-2026-09-07.md)** — `RadianceCacheTraceConstants` layout (176 bytes there, 192 here with the VFX emissive tail) — **Status**: Evidence record
+- **[sponza-loading-exposure-2026-09-07.md](sponza-loading-exposure-2026-09-07.md)** — incomplete-load presentation and opening exposure: readiness counters, no-present preload, exposure history reset — **Status**: Evidence record
+- **[sponza-test-handoff.md](sponza-test-handoff.md)** — SponzaTest's own limits: no Lumen parity, no Surface Cache, Falcor PSNR unverified, DXR unvalidated on Tier 1.0, 23 pre-existing `test_runtime` errors — **Status**: Handoff record
+
 ---
 
 ## Key Findings

@@ -92,6 +92,19 @@ struct UpscalerInput {
 
     bool  firstFrame = true;   ///< True on first frame (no valid history available)
     float exposure   = 1.0f;   ///< Auto-exposure value (1.0 if disabled)
+
+    // Diagnostic clamp-box storage (r.TAA.ClampFreezeAfterFrame, ledger H-25).
+    uint32_t clampBoxSrv[2] = {UINT32_MAX, UINT32_MAX};  ///< Stored clip box, min and max.
+    uint32_t clampBoxUav[2] = {UINT32_MAX, UINT32_MAX};
+    uint32_t frameIndex     = 0;    ///< Absolute frame index, for the freeze threshold.
+    uint32_t clampFreezeEnabled = 0; ///< 1 only while the diagnostic is on; otherwise the shader must not touch the storage.
+
+    // Region dump (diagnostics) — TAA resolve writes per-pixel intermediates for this rectangle.
+    uint32_t debugRegionUav = UINT32_MAX;   ///< Dump buffer UAV; UINT32_MAX = off.
+    uint32_t debugRegionSrv = UINT32_MAX;   ///< Rect table SRV.
+    uint32_t debugRegionCount = 0;          ///< Rect count (0 = off).
+    uint32_t debugRegionStamp = 0;          ///< Frame stamp written into each rect footer.
+    uint32_t debugRegionFields = 0;         ///< Field-group bitmask.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -27,6 +27,8 @@
 #include "selection_manager.h"
 #include "lua_editor_api.h"
 #include "vfs.h"
+#include "engine/vfx/vfx_system.h"
+#include "engine/vfx/components/particle_emitter.h"
 #include "lua_vm.h"
 #include "lua_scene_api.h"
 #include "lua_scene_io_api.h"
@@ -1468,6 +1470,85 @@ void uz_set_content_root(const char* path) {
         // Before viewport creation — store for later consumption.
         s_pendingContentRoot = path;
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VFX scalability + sequencer hooks
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace {
+
+/// Resolves the active `VFXSystem*` and a named emitter in a single call.
+/// Returns `false` (logged) when either lookup fails so the C-API
+/// functions can early-out cleanly without nesting.
+bool ResolveVfxEmitterByName(const char* name,
+                              const char* fnName,
+                              uz::VFXSystem*& outVfx,
+                              uz::ParticleEmitter*& outEmitter) noexcept
+{
+    outVfx     = nullptr;
+    outEmitter = nullptr;
+
+    if (!HasViewport()) {
+        UZ_LOG(RuntimeAPI, Warning, "{}: no active viewport", fnName);
+        return false;
+    }
+    if (!name || name[0] == '\0') {
+        UZ_LOG(RuntimeAPI, Warning, "{}: name is null or empty", fnName);
+        return false;
+    }
+
+    outVfx = s_state->sceneRenderer.GetVFXSystem();
+    if (!outVfx) {
+        UZ_LOG(RuntimeAPI, Warning, "{}: VFXSystem not available", fnName);
+        return false;
+    }
+
+    outEmitter = outVfx->FindEmitterByName(std::string(name));
+    if (!outEmitter) {
+        UZ_LOG(RuntimeAPI, Warning,
+               "{}: no emitter registered with name '{}'", fnName, name);
+        return false;
+    }
+    return true;
+}
+
+} // anonymous namespace
+
+int uz_vfx_seek(const char* name, float time_seconds) {
+    uz::VFXSystem*       vfx     = nullptr;
+    uz::ParticleEmitter* emitter = nullptr;
+    if (!ResolveVfxEmitterByName(name, "uz_vfx_seek", vfx, emitter)) return 0;
+
+    emitter->Seek(time_seconds);
+    return 1;
+}
+
+int uz_vfx_pause(const char* name) {
+    uz::VFXSystem*       vfx     = nullptr;
+    uz::ParticleEmitter* emitter = nullptr;
+    if (!ResolveVfxEmitterByName(name, "uz_vfx_pause", vfx, emitter)) return 0;
+
+    emitter->isPaused = true;
+    return 1;
+}
+
+int uz_vfx_resume(const char* name) {
+    uz::VFXSystem*       vfx     = nullptr;
+    uz::ParticleEmitter* emitter = nullptr;
+    if (!ResolveVfxEmitterByName(name, "uz_vfx_resume", vfx, emitter)) return 0;
+
+    emitter->isPaused = false;
+    return 1;
+}
+
+int uz_vfx_set_time_scale(const char* name, float scale) {
+    uz::VFXSystem*       vfx     = nullptr;
+    uz::ParticleEmitter* emitter = nullptr;
+    if (!ResolveVfxEmitterByName(name, "uz_vfx_set_time_scale", vfx, emitter)) return 0;
+
+    emitter->timeScale = (scale > 0.0f) ? scale : 0.0f;
+    return 1;
 }
 
 } // extern "C"

@@ -45,6 +45,7 @@
 /// @deviations NONE
 
 #include "../include/depth_common.hlsli"
+#include "flipbook_atlas.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -92,6 +93,11 @@ struct VSOutput {
     float4 prevPositionCS : TEXCOORD5;   ///< Previous frame clip-space position for TAA motion vectors.
     float  speedFactor    : TEXCOORD6;   ///< Normalized speed [0,1] = saturate(speed / speedRangeMax). Used by PS for color-by-speed.
     float4 dynamicParams  : TEXCOORD7;   ///< Per-particle dynamic material parameters (Task 4.14.0). X=normalizedAge, YZW=user.
+    // ── Niagara-style flipbook UVs (pre-computed per vertex, interpolated) ──
+    /// @ref Niagara NiagaraSpriteVertexFactory.ush — VS-computed atlas UVs
+    float2 flipbookUV0    : TEXCOORD8;   ///< Atlas UV for current frame at this vertex.
+    float2 flipbookUV1    : TEXCOORD9;   ///< Atlas UV for next frame at this vertex (for blending).
+    float  flipbookLerp   : TEXCOORD10;  ///< Inter-frame blend factor [0,1].
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -121,7 +127,8 @@ cbuffer VFXBillboardConstants : register(b0) {
     uint spriteTextureIdx;     ///< SRV index: Texture2D<float4> sprite/atlas (PS only).
     uint depthBufferIdx;       ///< SRV index: Texture2D<float> scene depth reversed-Z (PS only).
     uint dynamicParamsBufferIdx; ///< SRV index: StructuredBuffer<float4> dynamic material params (Task 4.14.0).
-    uint _vfxPad1;
+    /// @ref Niagara SubImageIndex module — per-particle SoA flipbook index.
+    uint subImageIndexBufferIdx; ///< SRV index: StructuredBuffer<float> subImageIndices.
 };
 #else
 /// SM5 fallback: explicit SRV bindings for particle attribute buffers.
@@ -205,7 +212,7 @@ cbuffer VFXBillboardCB : register(b2) {
     // ── Billboard facing mode + custom direction (16 bytes) ──────────────
     /// @ref Latta 2004 "Inside Geometry Instancing" — camera-position billboard
     /// @ref Valve 2006 "Rendering in Left 4 Dead" — axis-aligned billboard
-    uint     facingMode;           ///< 0=FaceCamera, 1=VelocityAligned, 2=FaceCameraPlane, 3=CustomVector, 4=FaceCameraPosition.
+    uint     facingMode;           ///< 0=FaceCamera, 1=VelocityAligned, 2=FaceCameraPlane, 3=CustomVector, 4=FaceCameraPosition, 5=PlaneAxis (plane normal from customFacingXYZ), 6=WorldZAligned.
     float    customFacingX;        ///< Custom facing direction X (facingMode 3 only).
     float    customFacingY;        ///< Custom facing direction Y (facingMode 3 only).
     float    customFacingZ;        ///< Custom facing direction Z (facingMode 3 only). Default: world Z-up.
@@ -223,9 +230,14 @@ cbuffer VFXBillboardCB : register(b2) {
     // ── Color by speed (VS→PS, 16 bytes) ──────────────────────────────────
     /// When non-zero, VS passes speed-normalized factor to PS for color lerp.
     uint     colorBySpeedEnabled;   ///< 0=off, 1=on. PS uses speed instead of age for color lerp.
-    uint     _cbsPad0;              ///< Padding for 16-byte alignment.
-    uint     _cbsPad1;              ///< Padding for 16-byte alignment.
-    uint     _cbsPad2;              ///< Padding for 16-byte alignment.
+    uint     flipbookRows;          ///< Sprite atlas rows (1=no flipbook). VS computes per-frame UVs.
+    uint     flipbookCols;          ///< Sprite atlas cols (1=no flipbook).
+    uint     flipbookTotalFrames;   ///< Total valid frames in atlas.
+    // ── Flipbook FPS + channel mask (16 bytes) ──────────────────────────────
+    float    _cbsFlipbookFPS;       ///< Flipbook playback rate. 0=lifetime-driven.
+    uint     _cbsSpriteChannelMask; ///< PS reads spriteChannelMask here.
+    float    _cbsVfxTotalTime;      ///< Global total time — matches PS vfxTotalTime.
+    uint     _cbsPad4;              ///< 16-byte alignment padding.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -357,6 +369,83 @@ void BasisFaceCameraPosition(float3 particlePos, out float3 right, out float3 up
     up    = cross(toCamera, right); // re-orthogonalize: guaranteed perpendicular and unit length
 }
 
+/// Builds billboard right/up axes for mode 5: PlaneAxis.
+///
+/// The billboard rotates within the plane whose normal is `planeNormal`
+/// (author-supplied via customFacingXYZ). The long axis (`up` output)
+/// stays as the most camera-facing direction within that plane; the short
+/// axis (`right`) is perpendicular to both plane normal and up.
+///
+/// Typical use: `planeNormal = (0,0,1)` to constrain billboards to the
+/// XY plane (ground-locked sprites), or `(0,1,0)` for a wall decal.
+///
+/// @ref ENiagaraBillboardType::PlaneAxis
+///
+/// # Parameters
+/// - particlePos:  world-space particle center (for parallax-correct up axis).
+/// - planeNormal:  unit-length plane normal (rotation axis).
+/// - right:        out — billboard right vector (perpendicular to planeNormal).
+/// - up:           out — billboard up vector (lies in the plane, faces camera).
+void BasisPlaneAxis(float3 particlePos, float3 planeNormal,
+                    out float3 right, out float3 up)
+{
+    // Vector from particle to camera; we project it onto the plane to pick
+    // the "most camera-facing" in-plane orientation. The plane projection is
+    // toCamera - (toCamera · n) n.
+    float3 toCamera = cameraPos.xyz - particlePos;
+    float  dotN     = dot(toCamera, planeNormal);
+    float3 inPlane  = toCamera - dotN * planeNormal;
+
+    float inPlaneLen = length(inPlane);
+    if (inPlaneLen < 0.001f) {
+        // Degenerate: camera is on the plane normal. Pick an arbitrary in-plane
+        // axis by taking the world-X cross; fall back to world-Y if collinear.
+        float3 alt = (abs(planeNormal.x) < 0.99f) ? float3(1.0f, 0.0f, 0.0f)
+                                                    : float3(0.0f, 1.0f, 0.0f);
+        right = normalize(cross(planeNormal, alt));
+    } else {
+        // Right axis = planeNormal × inPlane. Because inPlane is in the plane,
+        // this cross is also in the plane and perpendicular to inPlane.
+        right = normalize(cross(planeNormal, inPlane / inPlaneLen));
+    }
+    up = cross(right, planeNormal); // in-plane, perpendicular to right
+}
+
+/// Builds billboard right/up axes for mode 6: WorldZAligned.
+///
+/// Long axis is locked to world up (Z axis). The short axis lies in the
+/// horizontal plane, perpendicular to the camera-to-particle direction
+/// projected onto horizontal. Equivalent to `PlaneAxis(planeNormal=(0,0,1))`
+/// but cheaper — no dynamic planeNormal branch.
+///
+/// Common use: vertical rain streaks, vertical laser beams, upright flares.
+///
+/// @ref ENiagaraBillboardType::WorldUpAligned
+///
+/// # Parameters
+/// - particlePos:  world-space particle center (for horizontal facing).
+/// - right:        out — billboard right vector (horizontal, perpendicular to camera).
+/// - up:           out — billboard up vector (always world Z).
+void BasisWorldZAligned(float3 particlePos, out float3 right, out float3 up)
+{
+    const float3 worldUp = float3(0.0f, 0.0f, 1.0f);
+
+    // Horizontal direction from particle to camera (drop Z).
+    float2 toCam2D = cameraPos.xy - particlePos.xy;
+    float  len2D   = length(toCam2D);
+
+    if (len2D < 0.001f) {
+        // Camera directly overhead — pick world-X as a stable fallback.
+        right = float3(1.0f, 0.0f, 0.0f);
+    } else {
+        // Right axis: perpendicular to the in-plane toCamera, still in the
+        // horizontal plane. Rotating (x,y) by 90° gives (-y,x).
+        float2 horiz = toCam2D / len2D;
+        right = float3(-horiz.y, horiz.x, 0.0f);
+    }
+    up = worldUp;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Vertex Shader Entry Point
 // ─────────────────────────────────────────────────────────────────────────────
@@ -376,8 +465,24 @@ VSOutput main(uint vertexID : SV_VertexID) {
     VSOutput output;
 
     // Determine which particle this vertex belongs to and which corner
-    uint particleID   = vertexID / VERTICES_PER_PARTICLE;
+    uint sortedSlot   = vertexID / VERTICES_PER_PARTICLE;
     uint vertexInQuad = vertexID % VERTICES_PER_PARTICLE;
+
+    // Translate the linear draw slot to the source particle index when a
+    // sort buffer is bound. The bitonic sort writes alive particles in
+    // back-to-front order to slots [0..aliveCount-1] (dead particles get
+    // SORT_KEY_DEAD and trail at the end), so iterating sortedSlot
+    // 0..aliveCount-1 gives correct alpha-blend draw order. When no sort
+    // is dispatched (additive sprites, or no sort PSO), the SRV index is
+    // UINT32_MAX and we fall back to identity mapping.
+    uint particleID = sortedSlot;
+#ifdef UZ_BINDLESS
+    if (sortedIndicesSrvIndex != 0 && sortedIndicesSrvIndex != 0xFFFFFFFF) {
+        StructuredBuffer<uint> sortedIndices =
+            ResourceDescriptorHeap[sortedIndicesSrvIndex];
+        particleID = sortedIndices[sortedSlot];
+    }
+#endif
 
     // ── Read particle attributes from structured buffers ──
 #ifdef UZ_BINDLESS
@@ -428,6 +533,9 @@ VSOutput main(uint vertexID : SV_VertexID) {
         output.prevPositionCS = float4(0, 0, 0, 1);
         output.speedFactor    = 0;
         output.dynamicParams  = float4(0, 0, 0, 0);
+        output.flipbookUV0    = float2(0, 0);
+        output.flipbookUV1    = float2(0, 0);
+        output.flipbookLerp   = 0;
         return output;
     }
 
@@ -597,6 +705,21 @@ VSOutput main(uint vertexID : SV_VertexID) {
             BasisFaceCameraPosition(particlePos, billboardRight, billboardUp);
             break;
         }
+        case 5: // PlaneAxis — rotate within the plane whose normal is customFacingXYZ
+        {
+            float3 planeNormal = float3(customFacingX, customFacingY, customFacingZ);
+            float  pnLen       = length(planeNormal);
+            // Default to world-Z when the plane normal is unset / zero.
+            planeNormal = (pnLen > 0.001f) ? (planeNormal / pnLen)
+                                            : float3(0.0f, 0.0f, 1.0f);
+            BasisPlaneAxis(particlePos, planeNormal, billboardRight, billboardUp);
+            break;
+        }
+        case 6: // WorldZAligned — long axis locked to world up
+        {
+            BasisWorldZAligned(particlePos, billboardRight, billboardUp);
+            break;
+        }
         default: // 0: FaceCamera — standard full-spherical camera-facing billboard
         {
             BasisFaceCamera(billboardRight, billboardUp);
@@ -650,7 +773,45 @@ VSOutput main(uint vertexID : SV_VertexID) {
 
     // ── Dynamic material parameters (Task 4.14.0) ──
     // Pass through per-particle float4 to PS for shader-driven effects.
+    // Override .x with authoritative normalizedAge (computed from VS-visible
+    // particleAge/particleLife). PS color-over-life reads this field.
     output.dynamicParams = particleDynParams;
+    output.dynamicParams.x = saturate(particleAge / max(particleLife, 0.0001f));
+
+    // ── Niagara-style atlas UV pre-computation (per-vertex) ──────────────
+    // Reads the per-particle subImageIndex written by the update CS each
+    // frame and computes the atlas UVs for the current frame, the next
+    // frame, and the blend factor between them. The PS simply samples
+    // at these UVs and lerps — no flipbook math runs in the PS.
+    //
+    /// @ref Niagara NiagaraSpriteVertexFactory.ush — SubUV VS pre-computation
+    /// @ref Nguyen 2007 "GPU Gems 3" ch.23 — SubUV sprite sheet animation
+    if (flipbookTotalFrames > 1u) {
+        // Read subImageIndex from SoA channel (written each frame by update CS).
+        float subImgIdx = 0.0f;
+#ifdef UZ_BINDLESS
+        if (subImageIndexBufferIdx != 0xFFFFFFFFu) {
+            StructuredBuffer<float> subImages = ResourceDescriptorHeap[subImageIndexBufferIdx];
+            subImgIdx = subImages[particleID];
+        }
+#endif
+        // Shared atlas helper — see `flipbook_atlas.hlsli`. Keeps the math
+        // identical between this path and the debug quad overlay.
+        uint  frameA;
+        uint  frameB;
+        float lerpT;
+        ComputeFlipbookFrames(subImgIdx, flipbookTotalFrames, frameA, frameB, lerpT);
+
+        float2 cornerUV    = kCornerUVs[vertexInQuad];
+        output.flipbookUV0 = AtlasUV(frameA, flipbookRows, flipbookCols, cornerUV);
+        output.flipbookUV1 = AtlasUV(frameB, flipbookRows, flipbookCols, cornerUV);
+        output.flipbookLerp = lerpT;
+    } else {
+        // No flipbook — pass straight corner UVs.
+        output.flipbookUV0  = kCornerUVs[vertexInQuad];
+        output.flipbookUV1  = kCornerUVs[vertexInQuad];
+        output.flipbookLerp = 0.0f;
+    }
 
     return output;
 }

@@ -1,0 +1,6 @@
+{
+  "status": "completed",
+  "createdAt": "2026-10-08T14:52:10.501Z",
+  "updatedAt": "2026-10-08T15:51:20.000Z",
+  "resolution": "done 2026-10-08: nine CVar names were registered in two translation units (the r.SSR.* five, r.Fog, r.Clouds, r.SSGI, r.RayTracing.GI); the never-read copies removed, r.RayTracing.GI read through the registry; test_cvar_registrations.py 5/5 (269 names once, fixture control, no header, SSR passes run with the surviving defaults)"
+}

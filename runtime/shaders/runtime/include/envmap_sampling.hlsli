@@ -33,7 +33,7 @@ struct AliasEntry {
 
 /// Result of an environment sample.
 struct EnvSample {
-    float3 direction;  ///< World-space direction toward the sampled texel.
+    float3 direction;  ///< World-space (Z-up) direction toward the sampled texel.
     float  pdf;        ///< Probability density (per solid angle).
     float3 color;      ///< Environment radiance from the sampled direction.
 };
@@ -42,7 +42,15 @@ struct EnvSample {
 // Coordinate Conversions
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Convert equirectangular UV [0,1]² to unit direction (Z-up).
+/// The engine's cubemaps are in the DX convention with +Y up; world space is Z-up. The luminance pyramid
+/// and the alias table live in cubemap space (the equirect's pole is the cube's +Y); every direction that
+/// crosses this interface is converted here, the same swizzle the lighting and the skybox apply
+/// (`WorldToCubemap` in deferred_lighting_ps.hlsl / skybox_cubemap_ps.hlsl). The swap is its own inverse.
+float3 EnvWorldToCubemap(float3 dir) { return float3(dir.x, dir.z, dir.y); }
+float3 EnvCubemapToWorld(float3 dir) { return float3(dir.x, dir.z, dir.y); }
+
+/// Convert equirectangular UV [0,1]² to unit direction (cubemap space: the equirect's pole is +Z here,
+/// which the cube stores as its +Y).
 float3 EnvUVToDirection(float2 uv) {
     float phi   = uv.x * 2.0 * PI;
     float theta = uv.y * PI;
@@ -54,12 +62,25 @@ float3 EnvUVToDirection(float2 uv) {
     );
 }
 
-/// Convert unit direction (Z-up) to equirectangular UV [0,1]².
+/// Convert unit direction (cubemap space) to equirectangular UV [0,1]².
 float2 DirectionToEnvUV(float3 dir) {
     float theta = acos(clamp(dir.z, -1.0, 1.0));
     float phi   = atan2(dir.y, dir.x);
     if (phi < 0.0) phi += 2.0 * PI;
     return float2(phi / (2.0 * PI), theta / PI);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Solid-angle pdf (block B.5b)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Solid-angle pdf of an equirect texel with pyramid weight `lumValue` (luminance * sin(theta)) whose
+/// centre sits at the equirect row `v` in [0, 1] (theta = v * PI).
+float EnvTexelPdf(float lumValue, float totalLuminance, uint texelCount, float v)
+{
+    float sinTheta = max(sin(v * PI), 1e-4);
+    float pdf = (lumValue / max(totalLuminance, 1e-10)) * float(texelCount) / (2.0 * PI * PI * sinTheta);
+    return max(pdf, 1e-10);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -71,18 +92,22 @@ float2 DirectionToEnvUV(float3 dir) {
 /// Given two uniform random numbers in [0,1]:
 ///   u.x selects a bin, u.y accepts/rejects within the bin.
 /// Returns the sampled texel index in the equirectangular luminance map.
+///
+/// The accept test needs a uniform of its own: reusing the fractional part of u.x * texelCount
+/// (the classic trick) requires far more than the table's 17 bits of precision in u.x. With the
+/// 16-bit randoms this shader used, that fraction was always 0 (block B.5b): every sample accepted its
+/// own even texel, the alias was never taken, and the environment was sampled uniformly while the
+/// estimator divided by the luminance pdf (+11 % at roughness 0.3, +25 % at 0.5 on the reference).
 uint SampleAliasTable(float2 u,
                       StructuredBuffer<AliasEntry> aliasTable,
                       uint texelCount)
 {
     // Select bin
-    float scaled = u.x * float(texelCount);
-    uint  idx    = min(uint(scaled), texelCount - 1);
-    float frac   = scaled - float(idx);
+    uint idx = min(uint(u.x * float(texelCount)), texelCount - 1);
 
-    // Accept/reject
+    // Accept/reject with the second uniform
     AliasEntry entry = aliasTable[idx];
-    return (frac < entry.prob) ? idx : entry.alias;
+    return (u.y < entry.prob) ? idx : entry.alias;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -123,23 +148,23 @@ EnvSample SampleEnvironment(
     // Add sub-texel jitter for anti-aliasing (use fractional part from alias sampling)
     float2 uv = (float2(texX, texY) + 0.5) / float2(lumWidth, lumHeight);
 
-    // Direction from equirectangular UV
-    result.direction = EnvUVToDirection(uv);
+    // Direction from equirectangular UV (cubemap space); the caller gets it in world space
+    float3 dirCube = EnvUVToDirection(uv);
+    result.direction = EnvCubemapToWorld(dirCube);
 
     // Fetch environment radiance from cubemap
     TextureCube<float4> envMap = ResourceDescriptorHeap[envMapSrv];
-    result.color = envMap.SampleLevel(samp, result.direction, 0).rgb;
+    result.color = envMap.SampleLevel(samp, dirCube, 0).rgb;
 
-    // Compute PDF: p(texel) = luminance(texel) / totalLuminance.
-    // Convert to solid angle PDF: p(omega) = p(texel) * texelCount / (4 * PI).
-    // But we stored luminance * sin(theta) in the pyramid, so the sin(theta)
-    // Jacobian is already baked in. The PDF per solid angle is:
-    //   pdf = (lumValue / totalLuminance) * texelCount / (2 * PI * PI)
-    // This accounts for the equirectangular → sphere Jacobian: dA = sin(theta) dtheta dphi.
+    // PDF per solid angle. The pyramid stores w = luminance * sin(theta) per texel, so the discrete
+    // probability is p(texel) = w / total. A texel covers (2 PI / W) * (PI / H) * sin(theta) steradians,
+    // i.e. 2 PI^2 sin(theta) / texelCount, so
+    //   p(omega) = p(texel) / dOmega = (w / total) * texelCount / (2 PI^2 sin(theta)).
+    // (Block B.5b: the sin(theta) of the solid angle was missing, which left the pdf too small by
+    // sin(theta) and the estimate too bright towards the zenith and the nadir.)
     Texture2D<float> lumTex = ResourceDescriptorHeap[lumMip0Srv];
     float lumValue = lumTex.Load(int3(texX, texY, 0));
-    result.pdf = (lumValue / max(totalLuminance, 1e-10)) * float(texelCount) / (2.0 * PI * PI);
-    result.pdf = max(result.pdf, 1e-10); // prevent division by zero
+    result.pdf = EnvTexelPdf(lumValue, totalLuminance, texelCount, uv.y);
 
     return result;
 }
@@ -151,7 +176,7 @@ EnvSample SampleEnvironment(
 /// Evaluate the environment sampling PDF for a given direction.
 /// Used to compute MIS weight when combining environment sampling with BRDF sampling.
 ///
-/// @param dir            World-space direction to evaluate.
+/// @param dir            World-space (Z-up) direction to evaluate.
 /// @param lumMip0Srv     SRV index of luminance pyramid mip 0.
 /// @param totalLuminance Total luminance sum.
 /// @param texelCount     texelCount = lumWidth * lumHeight.
@@ -161,7 +186,7 @@ float EvaluateEnvironmentPDF(
     float  totalLuminance,
     uint   texelCount)
 {
-    float2 uv = DirectionToEnvUV(dir);
+    float2 uv = DirectionToEnvUV(EnvWorldToCubemap(dir));
 
     Texture2D<float> lumTex = ResourceDescriptorHeap[lumMip0Srv];
     // Nearest texel lookup (Load, not Sample, for exact PDF match)
@@ -171,8 +196,7 @@ float EvaluateEnvironmentPDF(
     texel = clamp(texel, int2(0, 0), int2(dims) - 1);
 
     float lumValue = lumTex.Load(int3(texel, 0));
-    float pdf = (lumValue / max(totalLuminance, 1e-10)) * float(texelCount) / (2.0 * PI * PI);
-    return max(pdf, 1e-10);
+    return EnvTexelPdf(lumValue, totalLuminance, texelCount, (float(texel.y) + 0.5) / float(dims.y));
 }
 
 #endif // ENVMAP_SAMPLING_HLSLI

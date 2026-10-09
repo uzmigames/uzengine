@@ -1,0 +1,11 @@
+{
+    "format": "uzvfxsys",
+    "version": 1,
+    "name": "Fireball",
+    "emitters": [
+        {"name": "head",   "path": "preset:FireballHead",   "id": "e1", "enabled": true, "localSpace": true},
+        {"name": "sparks", "path": "preset:FireballSparks", "id": "e2", "enabled": true, "localSpace": true},
+        {"name": "embers", "path": "preset:FireballEmbers", "id": "e3", "enabled": true, "localSpace": true},
+        {"name": "smoke",  "path": "preset:FireballSmoke",  "id": "e4", "enabled": true, "localSpace": true}
+    ]
+}

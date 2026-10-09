@@ -240,9 +240,12 @@ bool UzfxLoader::InstantiateEmitter(
             emitter.moduleStack.AddUpdateModule(std::move(mod));
         } else if (entry.type == "collision") {
             CollisionModuleConfig cfg;
-            cfg.bounceFactor        = JFloat(j, "bounce_factor", cfg.bounceFactor);
+            // "restitution" is canonical; "bounce_factor" accepted for backward compat.
+            cfg.restitution          = JFloat(j, "restitution",
+                                              JFloat(j, "bounce_factor", cfg.restitution));
             cfg.depthBufferCollision = JBool(j, "depth_buffer_collision", cfg.depthBufferCollision);
             cfg.collisionOffset     = JFloat(j, "collision_offset", cfg.collisionOffset);
+            cfg.emitCollisionEvent  = JBool(j, "emit_collision_event", cfg.emitCollisionEvent);
             emitter.moduleStack.AddUpdateModule(std::make_unique<CollisionModule>(cfg));
         } else if (entry.type == "vector_field") {
             auto mod = std::make_unique<VectorFieldModule>();
@@ -275,6 +278,49 @@ bool UzfxLoader::InstantiateEmitter(
                 cfg.materialPath = JString(j, "material_path", "");
                 cfg.meshScale    = JVec3(j, "scale", {1.0f, 1.0f, 1.0f});
                 cfg.castShadow   = JBool(j, "cast_shadow", false);
+
+                // Rotation mode: per-particle orientation strategy. Empty /
+                // missing falls back to the struct default (VelocityAligned)
+                // — the production loader has historically defaulted to that
+                // behaviour even when the asset omitted the field.
+                if (const std::string rotStr = JString(j, "rotation_mode", "");
+                    !rotStr.empty()) {
+                    cfg.rotationMode = MeshRotationModeFromString(rotStr);
+                }
+
+                // Sort mode: depth-ordering strategy for transparent meshes.
+                // Empty / missing keeps the default `None` (no sort), which
+                // preserves byte-identical behaviour for legacy `.uzvfx`
+                // assets that have never seen this field.
+                if (const std::string sortStr = JString(j, "sort_mode", "");
+                    !sortStr.empty()) {
+                    cfg.sortMode = MeshSortModeFromString(sortStr);
+                }
+
+                // Custom-attribute sort key — only meaningful when
+                // sort_mode == CustomAttribute. Validation of the
+                // (sortMode, customSortAttribute) pair lives in
+                // `MeshRenderModule::ApplyJsonConfig`/`ParseConfig`, not
+                // here, so the loader can keep its branches small.
+                cfg.customSortAttribute = JString(j, "custom_sort_attribute", "");
+                if (cfg.sortMode == MeshSortMode::CustomAttribute &&
+                    cfg.customSortAttribute.empty()) {
+                    UZ_LOG(VFXAsset, Warning,
+                           "UzfxLoader: mesh.sort_mode='CustomAttribute' but "
+                           "custom_sort_attribute is empty — falling back to None");
+                    cfg.sortMode = MeshSortMode::None;
+                }
+
+                // Per-emitter mesh instance buffer ceiling. Out-of-range
+                // values are silently clamped by `ParseConfig`; here we
+                // only forward the JSON value to the constructor so the
+                // production loader matches the serializer / `.uzfx`
+                // editor path.
+                if (const auto maxInstancesU = JUint(j, "max_instances", cfg.maxInstances);
+                    maxInstancesU > 0) {
+                    cfg.maxInstances = maxInstancesU;
+                }
+
                 emitter.moduleStack.SetRenderModule(std::make_unique<MeshRenderModule>(cfg));
             } else if (desc.renderModule.type == "light") {
                 LightRenderModuleConfig cfg;

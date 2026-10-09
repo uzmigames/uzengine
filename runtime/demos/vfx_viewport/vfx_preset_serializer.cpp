@@ -189,6 +189,11 @@ std::string VFXPresetSerializer::SerializeToString(const std::string& name,
     wf("terrainBaseHeight",        c.terrainBaseHeight);
     // Death decal spawn (Task 4.19.0)
     wu("deathDecalEnabled",         c.deathDecalEnabled);
+    wf("minSizeForDecal",           c.minSizeForDecal);
+    wf("decalSizeScale",            c.decalSizeScale);
+    wf("decalLifetime",             c.decalLifetime);
+    wu("decalMaterialIndex",        c.decalMaterialIndex);
+    wu("maxDeathDecalsPerFrame",    c.maxDeathDecalsPerFrame);
     // Render target feedback (Task 4.22.0)
     wu("renderTargetFeedbackEnabled", c.renderTargetFeedbackEnabled);
     // Depth buffer collision (Task 4.23.0)
@@ -203,6 +208,11 @@ std::string VFXPresetSerializer::SerializeToString(const std::string& name,
     // Collision event spawn (Task 4.25.0)
     wu("collisionSpawnEnabled",      c.collisionSpawnEnabled);
     wu("collisionSpawnCount",        c.collisionSpawnCount);
+    // Vector field (Task 4.15.0)
+    wu("vector_field_enabled",       c.vectorFieldEnabled);
+    wf("vector_field_strength",      c.vectorFieldStrength);
+    wf("vector_field_tightness",     c.vectorFieldTightness);
+    wf("vector_field_scale",         c.vectorFieldScale);
     // Deterministic simulation seed (Task 4.27.0)
     wu("emitterSeed",                c.emitterSeed, /*last=*/true);
 
@@ -514,6 +524,11 @@ bool VFXPresetSerializer::LoadFromMemory(const void* data,
     c.terrainBaseHeight        = ParseFloat(src, "terrainBaseHeight",        c.terrainBaseHeight);
     // Death decal spawn (Task 4.19.0)
     c.deathDecalEnabled              = ParseUint(src,  "deathDecalEnabled",              c.deathDecalEnabled);
+    c.minSizeForDecal                = ParseFloat(src, "minSizeForDecal",                c.minSizeForDecal);
+    c.decalSizeScale                 = ParseFloat(src, "decalSizeScale",                 c.decalSizeScale);
+    c.decalLifetime                  = ParseFloat(src, "decalLifetime",                  c.decalLifetime);
+    c.decalMaterialIndex             = ParseUint(src,  "decalMaterialIndex",             c.decalMaterialIndex);
+    c.maxDeathDecalsPerFrame         = ParseUint(src,  "maxDeathDecalsPerFrame",         c.maxDeathDecalsPerFrame);
     // Render target feedback (Task 4.22.0)
     c.renderTargetFeedbackEnabled    = ParseUint(src,  "renderTargetFeedbackEnabled",    c.renderTargetFeedbackEnabled);
     // Depth buffer collision (Task 4.23.0)
@@ -528,6 +543,11 @@ bool VFXPresetSerializer::LoadFromMemory(const void* data,
     // Collision event spawn (Task 4.25.0)
     c.collisionSpawnEnabled          = ParseUint(src,  "collisionSpawnEnabled",          c.collisionSpawnEnabled);
     c.collisionSpawnCount            = ParseUint(src,  "collisionSpawnCount",            c.collisionSpawnCount);
+    // Vector field (Task 4.15.0)
+    c.vectorFieldEnabled             = ParseUint(src,  "vector_field_enabled",            c.vectorFieldEnabled);
+    c.vectorFieldStrength            = ParseFloat(src, "vector_field_strength",           c.vectorFieldStrength);
+    c.vectorFieldTightness           = ParseFloat(src, "vector_field_tightness",          c.vectorFieldTightness);
+    c.vectorFieldScale               = ParseFloat(src, "vector_field_scale",              c.vectorFieldScale);
     // Deterministic simulation seed (Task 4.27.0)
     c.emitterSeed                    = ParseUint(src,  "emitterSeed",                    c.emitterSeed);
 

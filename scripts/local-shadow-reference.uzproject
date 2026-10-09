@@ -1,0 +1,17 @@
+{
+  "name": "Local light shadow reference",
+  "version": "1.0",
+  "content_root": "../sample/content",
+  "default_scene": "scenes/local-shadow-reference.uzscene",
+  "window": {
+    "width": 640,
+    "height": 360
+  },
+  "cvars": {
+    "r.AutoExposure": 0,
+    "r.Exposure": 1,
+    "r.RadianceCache": 0,
+    "r.TAA": 1,
+    "r.TechPanel.Show": 0
+  }
+}

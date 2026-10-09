@@ -64,6 +64,19 @@ public:
     /// Advances the internal frame index for allocator rotation.
     virtual void Execute() = 0;
 
+    /// Number of times this command list has been submitted (`Execute()`).
+    ///
+    /// D3D12 buffers decay to the common state when a submission completes, so the buffer states a
+    /// recording established no longer hold for the next recording of the same list.
+    /// `rg::RgStateRegistry` compares this count to drop them (phase0_render-graph-state-registry). A
+    /// counter per list rather than per queue: an auxiliary list submitted while this one is still
+    /// recording executes first, and does not change the states this list's own barriers set.
+    ///
+    /// # Returns
+    /// The count, or 0 when the backend does not count; the registry then relies on explicit
+    /// `RgStateRegistry::OnQueueSubmit()` calls.
+    virtual uint64_t GetSubmitCount() const { return 0; }
+
     // ── Pipeline and resource binding ────────────────────────────────────
 
     /// Binds a graphics or compute pipeline for subsequent draw/dispatch calls.
@@ -428,6 +441,16 @@ public:
     /// Required after BuildBLAS/BuildTLAS and before the AS is read
     /// (e.g., by DispatchRays or inline ray query).
     virtual void UAVBarrierAS() {}
+
+    // ── Stencil ──────────────────────────────────────────────────────────
+
+    /// Sets the dynamic stencil reference value for subsequent draw calls.
+    /// Only meaningful when the PSO's `RHIDepthStencilDesc::stencilEnable`
+    /// is true and a face's `stencilFunc` references the ref value.
+    ///
+    /// Maps to `OMSetStencilRef` (DX12), `vkCmdSetStencilReference` (Vulkan),
+    /// `setStencilReferenceValue` (Metal).
+    virtual void SetStencilRef(uint32_t ref) { (void)ref; }
 
     // ── Render pass scope ────────────────────────────────────────────────
 

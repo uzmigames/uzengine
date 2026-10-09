@@ -15,6 +15,8 @@
 #include "cvar.h"
 
 #include <cstring>
+#include <algorithm>
+#include <vector>
 
 UZ_DECLARE_LOG_CATEGORY(Renderer);
 
@@ -23,6 +25,13 @@ static auto* cv_SSGIEnabled   = UZ_CVAR_BOOL("r.SSGI", false, "Screen-space glob
 static auto* cv_SSGIQuality   = UZ_CVAR_INT("r.SSGI.Quality", 2, "SSGI quality (1=4rays, 2=8, 3=16, 4=32)", 1, 4);
 static auto* cv_SSGIIntensity = UZ_CVAR_FLOAT("r.SSGI.Intensity", 0.3f, "SSGI indirect diffuse intensity", 0.f, 10.f);
 static auto* cv_SSGIRayCount     = UZ_CVAR_INT("r.SSGI.RayCount", 8, "Rays per pixel (overrides quality preset)", 1, 32);
+// Diagnostic (H-31): shifts ONLY the diffuse gather's sample sequence, by whole frames. The jitter,
+// the TAA and every resource binding are untouched, so if the alternating groups follow it, the
+// alternation is in the sampling and not in what the sampling reads. Declared here, at file scope,
+// because a CVar declared inside the dispatch registers only on the first frame — after the command
+// line has been parsed, which drops every override silently.
+static auto* cv_SampleFrameOffset = UZ_CVAR_INT("r.GI.SDF.SampleFrameOffset", 0,
+    "Diagnostic: offset the diffuse gather's sample sequence by N frames", -8, 8);
 static auto* cv_SSGIMaxSteps     = UZ_CVAR_INT("r.SSGI.MaxMarchSteps", 32, "Max linear march steps per ray", 8, 128);
 static auto* cv_SSGIStepSize     = UZ_CVAR_FLOAT("r.SSGI.StepSize", 0.02f, "UV-space step size per march step", 0.005f, 0.1f);
 // Thickness default 0.5 cm is way too small for indoor scenes at cm scale.
@@ -565,7 +574,7 @@ void SSGIRenderer::DispatchTrace(IRHICommandList* cmdList, const SSGIRenderParam
     rc.outputUavIndex    = m_ssgiTraceUav;
     rc.aoOutputUavIndex  = m_ssgiTraceAOUav;
     rc.packedDimensions  = (m_halfWidth & 0xFFFF) | ((m_halfHeight & 0xFFFF) << 16);
-    rc.frameIndex        = params.frameIndex;
+    rc.frameIndex        = params.frameIndex + static_cast<uint32_t>(cv_SampleFrameOffset->value);
     rc.hizSrvIndex       = 0xFFFF; // Hi-Z disabled for now (linear march)
     rc.rayCount          = static_cast<uint32_t>(cv_SSGIRayCount->value);
     rc.maxSteps          = static_cast<uint32_t>(cv_SSGIMaxSteps->value);
@@ -739,11 +748,34 @@ void SSGIRenderer::DispatchTemporalAccum(IRHICommandList* cmdList, const SSGIRen
     };
     static_assert(sizeof(TemporalAccumRC) == 60, "Must fit 16 root DWORDs");
 
-    auto historyAllocation = params.cbRing->Allocate(sizeof(m_previousViewProj));
+    // HistoryCB: the previous view-projection plus the world boxes where the distance field
+    // changed this frame or the last one (the gather reads the radiance cache one frame late):
+    // pixels inside reject their history (block B.2 phase 4). Mirrors ssgi_temporal_accum_cs.hlsl.
+    struct HistoryCB {
+        float    previousViewProj[16];
+        uint32_t regionCount;
+        uint32_t _pad[3];
+        float    regionLo[16][4];
+        float    regionHi[16][4];
+    };
+    static_assert(sizeof(HistoryCB) == 592, "HistoryCB mirrors ssgi_temporal_accum_cs.hlsl");
+    HistoryCB history{};
+    std::memcpy(history.previousViewProj, m_previousViewProj, sizeof(m_previousViewProj));
+    {
+        std::vector<GlobalDistanceField::ChangedRegion> boxes = m_previousRegions;
+        if (params.changedRegions) boxes.insert(boxes.end(), params.changedRegions->begin(), params.changedRegions->end());
+        history.regionCount = static_cast<uint32_t>(std::min<size_t>(boxes.size(), 16));
+        for (uint32_t r = 0; r < history.regionCount; ++r) {
+            history.regionLo[r][0] = boxes[r].lo.x; history.regionLo[r][1] = boxes[r].lo.y; history.regionLo[r][2] = boxes[r].lo.z;
+            history.regionHi[r][0] = boxes[r].hi.x; history.regionHi[r][1] = boxes[r].hi.y; history.regionHi[r][2] = boxes[r].hi.z;
+        }
+        m_previousRegions = params.changedRegions ? *params.changedRegions : std::vector<GlobalDistanceField::ChangedRegion>{};
+    }
+    auto historyAllocation = params.cbRing->Allocate(sizeof(HistoryCB));
     UZ_VERIFY(historyAllocation.cpuPtr != nullptr);
-    std::memcpy(historyAllocation.cpuPtr, m_previousViewProj, sizeof(m_previousViewProj));
+    std::memcpy(historyAllocation.cpuPtr, &history, sizeof(HistoryCB));
     cmdList->SetRootCBV(kSlotPerObject, historyAllocation.bufferHandle, historyAllocation.offsetBytes,
-                       historyAllocation.cpuPtr, sizeof(m_previousViewProj));
+                       historyAllocation.cpuPtr, sizeof(HistoryCB));
     TemporalAccumRC rc{};
     rc.depthSrv = params.depthSrvIndex;
     rc.normalSrv = params.normalSrvIndex;

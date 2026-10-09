@@ -6,6 +6,15 @@ $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
 $env:Path = "$machinePath;$userPath"
 
+# Prefer project-pinned toolchains in .tools/ when present (e.g. zig 0.15.2 — README pin).
+# Each tool lives in its own subdir (.tools/zig-*/zig.exe, .tools/<name>/<bin>).
+$LocalTools = Join-Path $Root ".tools"
+if (Test-Path $LocalTools) {
+    Get-ChildItem $LocalTools -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+        $env:Path = "$($_.FullName);$env:Path"
+    }
+}
+
 # Parse --compiler flag (zig, msvc, clang). Default: zig
 $compiler = "zig"
 foreach ($arg in $args) {

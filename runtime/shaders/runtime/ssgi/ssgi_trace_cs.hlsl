@@ -174,8 +174,47 @@ void main(uint3 DTid : SV_DispatchThreadID) {
 #ifdef UZ_BINDLESS
     if (sdfDiffuseSamples != 0) {
         float3 geometricNormal = SurfaceGeometricNormal(depthTex,fullPx,uint2(fullWidth,fullHeight),depth,worldPos);
-        outputTex[pixel] = float4(GatherSurfaceLighting(worldPos,N,geometricNormal,uint2(fullPx),g_frameIndex),1.0);
+        float3 origin, firstDirection;
+        float4 rays[UZ_GATHER_MAX_REPORTED_RAYS];
+        float2 rotationUsed;
+        uint seed, reportedRays;
+        bool resolved;
+        float4 cascadeStats, clipmap0;
+        float3 gathered = GatherSurfaceLightingIdentified(worldPos,N,geometricNormal,uint2(fullPx),
+                                                          g_frameIndex,origin,seed,firstDirection,resolved,
+                                                          rays,reportedRays,rotationUsed,cascadeStats,clipmap0);
+        outputTex[pixel] = float4(gathered,1.0);
         aoOutputTex[pixel] = 1.0;
+        // Region dump (diagnostics): what was sampled and what was read, see common/region_dump.hlsli.
+        // Guarded so a normal frame neither writes records nor traces the extra probe ray.
+        if (UzGatherDumpActive()) {
+            const uint2 fullSize = uint2(fullWidth, fullHeight);
+            UzGatherDumpHalf(pixel, fullSize, 9u, float4(worldPos, depth));
+            UzGatherDumpHalf(pixel, fullSize, 10u, float4(origin, resolved ? 1.0 : 0.0));
+            UzGatherDumpHalf(pixel, fullSize, 11u, float4(geometricNormal, asfloat(seed)));
+            UzGatherDumpHalf(pixel, fullSize, 12u, float4(firstDirection, float(sdfDiffuseSamples)));
+            UzGatherDumpHalf(pixel, fullSize, 13u, float4(asfloat(g_frameIndex), asfloat(sdfClipmapSrv.x),
+                                                          asfloat(sdfClipmapSrv.y), asfloat(sdfClipmapSrv.z)));
+            UzGatherDumpHalf(pixel, fullSize, 14u, float4(asfloat(sdfClipmapSrv.w), asfloat(rcProbeSrv),
+                                                          asfloat(sdfSkySrv), asfloat(sdfRawClipmapSrv.x)));
+            float3 snapped;
+            bool probeHit;
+            const float cell = max(sdfVoxelSize, 1.0) * 8.0;
+            float3 probe = ProbeSurfaceLightingSnapped(worldPos, cell, snapped, probeHit);
+            UzGatherDumpHalf(pixel, fullSize, 15u, float4(snapped, cell));
+            UzGatherDumpHalf(pixel, fullSize, 16u, float4(probe, 1.0));
+            UzGatherDumpHalf(pixel, fullSize, 18u,
+                             float4(ProbeVolumeAtSnapped(snapped, float3(0,1,0)), probeHit ? 1.0 : 0.0));
+            [unroll] for (uint rr = 0u; rr < UZ_GATHER_MAX_REPORTED_RAYS; ++rr) {
+                UzGatherDumpHalf(pixel, fullSize, 19u + rr, rays[rr]);
+            }
+            UzGatherDumpHalf(pixel, fullSize, 27u, float4(gathered, float(reportedRays)));
+            UzGatherDumpHalf(pixel, fullSize, 28u,
+                             float4(rotationUsed, asfloat(sdfSampleRotation), 0.0));
+            // +29 where the rays ended with respect to clipmap 0; +30 clipmap 0 as this shader saw it.
+            UzGatherDumpHalf(pixel, fullSize, 29u, cascadeStats);
+            UzGatherDumpHalf(pixel, fullSize, 30u, clipmap0);
+        }
         return;
     }
 #endif

@@ -651,6 +651,12 @@ uz.camera.set_position(x, y, z)
 -- Make camera look at a target point
 uz.camera.look_at(target_x, target_y, target_z)
 
+-- Read the active camera's pose (all return nil when no camera is active).
+-- get_forward follows the renderer's rule: the look-at target when one is
+-- set (scene `look_at` or uz.camera.look_at), else rotation * Forward.
+local px, py, pz = uz.camera.get_position()
+local fx, fy, fz = uz.camera.get_forward()
+
 -- Example: FPS camera controller
 function on_update(entity, dt)
     -- Get mouse look delta
@@ -676,6 +682,8 @@ end
 |----------|-----------|--------|-------|
 | `uz.camera.set_position(x, y, z)` | x, y, z: float | — | Set camera world position |
 | `uz.camera.look_at(x, y, z)` | x, y, z: float | — | Make camera look at a point in world space |
+| `uz.camera.get_position()` | — | x, y, z: float \| nil | Active camera world position |
+| `uz.camera.get_forward()` | — | x, y, z: float \| nil | Unit forward direction (Z-up world): look-at target when set, else rotation × Forward. Lets a controller start from the scene camera instead of teleporting |
 
 ### Coordinate System
 

@@ -1,0 +1,6 @@
+{
+  "status": "completed",
+  "createdAt": "2026-10-08T14:52:10.993Z",
+  "updatedAt": "2026-10-08T15:51:20.000Z",
+  "resolution": "done 2026-10-08: the light cull tests a spot's cone against the cell's bounding sphere after the range test (r.Lights.ClusterSpotCone, default 1); lighting bit-identical, mean cluster light count on the dense scene 126.6 -> 66.9 (47 % fewer), LightCull unchanged, DeferredLighting 0.90 -> 0.71 ms; test_cluster_spot_cone.py 4/4"
+}

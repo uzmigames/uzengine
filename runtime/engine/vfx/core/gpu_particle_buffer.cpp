@@ -24,7 +24,7 @@ bool ParticleAttributeSet::IsValid() const noexcept
     return positions.IsValid() && velocities.IsValid() &&
            ages.IsValid() && lifespans.IsValid() &&
            sizes.IsValid() && colors.IsValid() &&
-           rotations.IsValid();
+           rotations.IsValid() && subImageIndices.IsValid();
 }
 
 // ---------------------------------------------------------------------------
@@ -101,7 +101,8 @@ bool CreateAttributeSet(IRHIDevice* device, ParticleAttributeSet& set,
     set.lifespans  = CreateVFXBuffer(device, cap * 4,  4,  FormatDebugName("Lifespans", suffix));
     set.sizes      = CreateVFXBuffer(device, cap * 4,  4,  FormatDebugName("Sizes", suffix));
     set.colors     = CreateVFXBuffer(device, cap * 16, 16, FormatDebugName("Colors", suffix));
-    set.rotations  = CreateVFXBuffer(device, cap * 4,  4,  FormatDebugName("Rotations", suffix));
+    set.rotations       = CreateVFXBuffer(device, cap * 4,  4,  FormatDebugName("Rotations", suffix));
+    set.subImageIndices = CreateVFXBuffer(device, cap * 4,  4,  FormatDebugName("SubImageIndices", suffix));
 
     return set.IsValid();
 }
@@ -115,7 +116,15 @@ void DestroyAttributeSet(IRHIDevice* device, ParticleAttributeSet& set)
     if (set.lifespans.IsValid())  device->DestroyBuffer(set.lifespans);
     if (set.sizes.IsValid())      device->DestroyBuffer(set.sizes);
     if (set.colors.IsValid())     device->DestroyBuffer(set.colors);
-    if (set.rotations.IsValid())  device->DestroyBuffer(set.rotations);
+    if (set.rotations.IsValid())       device->DestroyBuffer(set.rotations);
+    if (set.subImageIndices.IsValid()) device->DestroyBuffer(set.subImageIndices);
+    if (set.persistentIDs.IsValid())   device->DestroyBuffer(set.persistentIDs);
+    for (auto& h : set.userFloat) {
+        if (h.IsValid()) device->DestroyBuffer(h);
+    }
+    for (auto& h : set.userVec4) {
+        if (h.IsValid()) device->DestroyBuffer(h);
+    }
     set = {};
 }
 
@@ -150,9 +159,37 @@ bool GPUParticleBuffer::Create(IRHIDevice* device, uint32_t particleCapacity)
 
     const auto cap = static_cast<uint64_t>(capacity);
 
-    // Shared: alive count (single uint32, modified by GPU atomics)
-    aliveCount = CreateVFXBuffer(device, sizeof(uint32_t), sizeof(uint32_t),
-                                 "VFX_AliveCount");
+    // Shared: alive count (single uint32, modified by GPU atomics).
+    // Extra `CopySrc` usage is required so the simulation pass can copy
+    // it into the CPU readback ring each frame.
+    {
+        RHIBufferDesc desc{};
+        desc.sizeBytes = sizeof(uint32_t);
+        desc.stride = sizeof(uint32_t);
+        desc.usage = RHIBufferUsage::StructuredBuffer
+                   | RHIBufferUsage::UnorderedAccess
+                   | RHIBufferUsage::CopySrc;
+        desc.memory = RHIMemoryType::Default;
+        desc.debugName = "VFX_AliveCount";
+        aliveCount = device->CreateBuffer(desc);
+    }
+
+    // Readback ring (3 slots). Each holds a single uint32 in a
+    // CPU-visible Readback heap. The simulation pass's Kick copies the
+    // current `aliveCount` here; the CPU polls the oldest slot each
+    // frame to get the authoritative live particle count.
+    for (uint32_t i = 0; i < kAliveReadbackRingSize; ++i) {
+        RHIBufferDesc desc{};
+        desc.sizeBytes = sizeof(uint32_t);
+        desc.stride    = sizeof(uint32_t);
+        desc.usage     = RHIBufferUsage::CopyDst;
+        desc.memory    = RHIMemoryType::Readback;
+        desc.debugName = "VFX_AliveCount_Readback";
+        aliveCountReadback[i] = device->CreateBuffer(desc);
+    }
+    readbackWriteIndex    = 0;
+    readbackHasKickedOnce = false;
+    gpuAliveCount         = 0;
 
     // Shared: free list stack (capacity entries, each uint32 particle index)
     freeList = CreateVFXBuffer(device, cap * sizeof(uint32_t), sizeof(uint32_t),
@@ -262,6 +299,226 @@ void GPUParticleBuffer::DestroyMeshBuffers(IRHIDevice* device)
 }
 
 // ---------------------------------------------------------------------------
+// GPUParticleBuffer::CreatePersistentIDBuffers (phase 7.4.0)
+// ---------------------------------------------------------------------------
+
+bool GPUParticleBuffer::CreatePersistentIDBuffers(IRHIDevice* device)
+{
+    UZ_CHECKF(device != nullptr,
+              "GPUParticleBuffer::CreatePersistentIDBuffers: device is null");
+    UZ_CHECKF(IsValid(),
+              "GPUParticleBuffer::CreatePersistentIDBuffers: base buffers not allocated");
+    UZ_CHECKF(!hasPersistentIDs,
+              "GPUParticleBuffer::CreatePersistentIDBuffers: already allocated");
+
+    const auto cap = static_cast<uint64_t>(capacity);
+
+    // uint64 per slot, matching `FNiagaraEmitter::bRequiresPersistentIDs`.
+    // Structured buffer stride = 8 bytes so HLSL `RWStructuredBuffer<uint64_t>`
+    // (or paired uint2) indexes correctly.
+    sets[0].persistentIDs = CreateVFXBuffer(
+        device, cap * 8, 8, "VFX_PersistentIDs_SetA");
+    sets[1].persistentIDs = CreateVFXBuffer(
+        device, cap * 8, 8, "VFX_PersistentIDs_SetB");
+
+    if (!sets[0].persistentIDs.IsValid() || !sets[1].persistentIDs.IsValid()) {
+        UZ_LOG(VFX, Error,
+               "CreatePersistentIDBuffers: allocation failed for capacity={}",
+               capacity);
+        if (sets[0].persistentIDs.IsValid()) {
+            device->DestroyBuffer(sets[0].persistentIDs);
+            sets[0].persistentIDs = {};
+        }
+        if (sets[1].persistentIDs.IsValid()) {
+            device->DestroyBuffer(sets[1].persistentIDs);
+            sets[1].persistentIDs = {};
+        }
+        return false;
+    }
+
+    hasPersistentIDs = true;
+    const uint64_t idsKB = (cap * 8 * 2) / 1024;
+    UZ_LOG(VFX, Info,
+           "GPU persistent-ID buffers created: capacity={}, memory~{}KB",
+           capacity, idsKB);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// GPUParticleBuffer::CreateUserFloatSlot / CreateUserVec4Slot
+// ---------------------------------------------------------------------------
+
+bool GPUParticleBuffer::CreateUserFloatSlot(IRHIDevice* device, uint32_t slotIndex)
+{
+    UZ_CHECKF(device != nullptr,
+              "GPUParticleBuffer::CreateUserFloatSlot: device is null");
+    UZ_CHECKF(IsValid(),
+              "GPUParticleBuffer::CreateUserFloatSlot: base buffers not allocated");
+    UZ_CHECKF(slotIndex < kMaxUserFloatAttrs,
+              "GPUParticleBuffer::CreateUserFloatSlot: slot %u >= max %u",
+              slotIndex, kMaxUserFloatAttrs);
+
+    // Idempotent when the slot is already live — callers may re-issue a
+    // declaration on hot-reload without us thrashing the allocator.
+    if ((userFloatMask & (1u << slotIndex)) != 0u) {
+        return true;
+    }
+
+    const auto cap = static_cast<uint64_t>(capacity);
+    char nameA[64]; char nameB[64];
+    std::snprintf(nameA, sizeof(nameA), "VFX_UserFloat_Slot%u_SetA", slotIndex);
+    std::snprintf(nameB, sizeof(nameB), "VFX_UserFloat_Slot%u_SetB", slotIndex);
+
+    sets[0].userFloat[slotIndex] = CreateVFXBuffer(
+        device, cap * sizeof(float), sizeof(float), nameA);
+    sets[1].userFloat[slotIndex] = CreateVFXBuffer(
+        device, cap * sizeof(float), sizeof(float), nameB);
+
+    if (!sets[0].userFloat[slotIndex].IsValid() ||
+        !sets[1].userFloat[slotIndex].IsValid()) {
+        UZ_LOG(VFX, Error,
+               "CreateUserFloatSlot: allocation failed for slot={} capacity={}",
+               slotIndex, capacity);
+        if (sets[0].userFloat[slotIndex].IsValid()) {
+            device->DestroyBuffer(sets[0].userFloat[slotIndex]);
+            sets[0].userFloat[slotIndex] = {};
+        }
+        if (sets[1].userFloat[slotIndex].IsValid()) {
+            device->DestroyBuffer(sets[1].userFloat[slotIndex]);
+            sets[1].userFloat[slotIndex] = {};
+        }
+        return false;
+    }
+    userFloatMask |= (1u << slotIndex);
+    UZ_LOG(VFX, Info,
+           "User-attribute float slot {} allocated: capacity={}", slotIndex, capacity);
+    return true;
+}
+
+bool GPUParticleBuffer::CreateUserVec4Slot(IRHIDevice* device, uint32_t slotIndex)
+{
+    UZ_CHECKF(device != nullptr,
+              "GPUParticleBuffer::CreateUserVec4Slot: device is null");
+    UZ_CHECKF(IsValid(),
+              "GPUParticleBuffer::CreateUserVec4Slot: base buffers not allocated");
+    UZ_CHECKF(slotIndex < kMaxUserVec4Attrs,
+              "GPUParticleBuffer::CreateUserVec4Slot: slot %u >= max %u",
+              slotIndex, kMaxUserVec4Attrs);
+
+    if ((userVec4Mask & (1u << slotIndex)) != 0u) {
+        return true;
+    }
+
+    const auto cap = static_cast<uint64_t>(capacity);
+    char nameA[64]; char nameB[64];
+    std::snprintf(nameA, sizeof(nameA), "VFX_UserVec4_Slot%u_SetA", slotIndex);
+    std::snprintf(nameB, sizeof(nameB), "VFX_UserVec4_Slot%u_SetB", slotIndex);
+
+    // float4 stride = 16 bytes.
+    sets[0].userVec4[slotIndex] = CreateVFXBuffer(
+        device, cap * 16u, 16u, nameA);
+    sets[1].userVec4[slotIndex] = CreateVFXBuffer(
+        device, cap * 16u, 16u, nameB);
+
+    if (!sets[0].userVec4[slotIndex].IsValid() ||
+        !sets[1].userVec4[slotIndex].IsValid()) {
+        UZ_LOG(VFX, Error,
+               "CreateUserVec4Slot: allocation failed for slot={} capacity={}",
+               slotIndex, capacity);
+        if (sets[0].userVec4[slotIndex].IsValid()) {
+            device->DestroyBuffer(sets[0].userVec4[slotIndex]);
+            sets[0].userVec4[slotIndex] = {};
+        }
+        if (sets[1].userVec4[slotIndex].IsValid()) {
+            device->DestroyBuffer(sets[1].userVec4[slotIndex]);
+            sets[1].userVec4[slotIndex] = {};
+        }
+        return false;
+    }
+    userVec4Mask |= (1u << slotIndex);
+    UZ_LOG(VFX, Info,
+           "User-attribute vec4 slot {} allocated: capacity={}", slotIndex, capacity);
+    return true;
+}
+
+void GPUParticleBuffer::DestroyUserAttributeBuffers(IRHIDevice* device)
+{
+    if (device == nullptr) return;
+    for (uint32_t set = 0; set < 2; ++set) {
+        for (uint32_t i = 0; i < kMaxUserFloatAttrs; ++i) {
+            if (sets[set].userFloat[i].IsValid()) {
+                device->DestroyBuffer(sets[set].userFloat[i]);
+                sets[set].userFloat[i] = {};
+            }
+        }
+        for (uint32_t i = 0; i < kMaxUserVec4Attrs; ++i) {
+            if (sets[set].userVec4[i].IsValid()) {
+                device->DestroyBuffer(sets[set].userVec4[i]);
+                sets[set].userVec4[i] = {};
+            }
+        }
+    }
+    userFloatMask = 0;
+    userVec4Mask  = 0;
+}
+
+// ---------------------------------------------------------------------------
+// GPUParticleBuffer::CreateDeathEventBuffers
+// ---------------------------------------------------------------------------
+
+bool GPUParticleBuffer::CreateDeathEventBuffers(IRHIDevice* device)
+{
+    UZ_CHECKF(device != nullptr, "GPUParticleBuffer::CreateDeathEventBuffers: device is null");
+    UZ_CHECKF(IsValid(), "GPUParticleBuffer::CreateDeathEventBuffers: base buffers not allocated");
+    UZ_CHECKF(!hasDeathEventBuffers, "GPUParticleBuffer::CreateDeathEventBuffers: already allocated");
+
+    const auto cap = static_cast<uint64_t>(capacity);
+
+    // Death event structured buffer: one ParticleDeathEvent (48 bytes) per particle.
+    deathEventBuffer = CreateVFXBuffer(device,
+                                        cap * sizeof(ParticleDeathEvent),
+                                        sizeof(ParticleDeathEvent),
+                                        "VFX_DeathEventBuffer");
+
+    // Death event count: single uint32 atomic counter.
+    deathEventCount = CreateVFXBuffer(device,
+                                       sizeof(uint32_t),
+                                       sizeof(uint32_t),
+                                       "VFX_DeathEventCount");
+
+    if (!deathEventBuffer.IsValid() || !deathEventCount.IsValid()) {
+        UZ_LOG(VFX, Error,
+               "Failed to allocate death event buffers: capacity={}", capacity);
+        DestroyDeathEventBuffers(device);
+        return false;
+    }
+
+    hasDeathEventBuffers = true;
+
+    const uint64_t deathKB = (cap * sizeof(ParticleDeathEvent) + sizeof(uint32_t)) / 1024;
+    UZ_LOG(VFX, Info,
+           "GPU death event buffers created: capacity={}, memory~{}KB",
+           capacity, deathKB);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// GPUParticleBuffer::DestroyDeathEventBuffers
+// ---------------------------------------------------------------------------
+
+void GPUParticleBuffer::DestroyDeathEventBuffers(IRHIDevice* device)
+{
+    if (!device) return;
+
+    if (deathEventBuffer.IsValid()) device->DestroyBuffer(deathEventBuffer);
+    if (deathEventCount.IsValid())  device->DestroyBuffer(deathEventCount);
+
+    deathEventBuffer = {};
+    deathEventCount = {};
+    hasDeathEventBuffers = false;
+}
+
+// ---------------------------------------------------------------------------
 // GPUParticleBuffer::Destroy
 // ---------------------------------------------------------------------------
 
@@ -278,10 +535,25 @@ void GPUParticleBuffer::Destroy(IRHIDevice* device)
     // Destroy optional mesh instance buffers if present.
     DestroyMeshBuffers(device);
 
+    // Destroy optional death event buffers if present.
+    DestroyDeathEventBuffers(device);
+
+    // Destroy optional user-attribute channels (both attribute sets).
+    DestroyUserAttributeBuffers(device);
+
     // Destroy sort buffers (sortKeys + sortIndices).
     sort.Destroy(device);
 
     if (aliveCount.IsValid())           device->DestroyBuffer(aliveCount);
+    for (uint32_t i = 0; i < kAliveReadbackRingSize; ++i) {
+        if (aliveCountReadback[i].IsValid()) {
+            device->DestroyBuffer(aliveCountReadback[i]);
+            aliveCountReadback[i] = {};
+        }
+    }
+    readbackWriteIndex    = 0;
+    readbackHasKickedOnce = false;
+    gpuAliveCount         = 0;
     if (freeList.IsValid())             device->DestroyBuffer(freeList);
     if (freeListHead.IsValid())         device->DestroyBuffer(freeListHead);
     if (idToIndex.IsValid())            device->DestroyBuffer(idToIndex);
@@ -668,6 +940,46 @@ void GPUParticleBuffer::TransitionAllToUAV(IRHICommandList* cmd) {
     }
 
     UZ_LOG(VFX, Info, "GPUParticleBuffer: transitioned {} buffers Common→UAV", count);
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Alive-count CPU readback (phase 15.6)
+// ───────────────────────────────────────────────────────────────────────────
+
+void GPUParticleBuffer::KickAliveReadback(IRHICommandList* cmd) {
+    if (cmd == nullptr) return;
+    if (!aliveCount.IsValid()) return;
+
+    const uint32_t slot = readbackWriteIndex;
+    if (!aliveCountReadback[slot].IsValid()) return;
+
+    // Caller has already barriered `aliveCount` from UAV → CopySrc and
+    // will barrier it back after this copy. The readback buffer is in a
+    // Readback heap (Common state) and accepts `CopyDst` without an
+    // explicit barrier.
+    cmd->CopyBuffer(aliveCount, 0,
+                    aliveCountReadback[slot], 0, sizeof(uint32_t));
+
+    readbackWriteIndex    = (slot + 1u) % kAliveReadbackRingSize;
+    readbackHasKickedOnce = true;
+}
+
+void GPUParticleBuffer::PollAliveReadback(IRHIDevice* device) {
+    if (device == nullptr) return;
+    if (!readbackHasKickedOnce) return;
+
+    // After Kick, `readbackWriteIndex` points to the slot that will be
+    // written NEXT frame — which is the oldest slot in the ring, so its
+    // current contents reflect the GPU value from N-1 frames ago. That
+    // slot's write has had a full frame + GPU sync to complete.
+    const uint32_t readSlot = readbackWriteIndex;
+    if (!aliveCountReadback[readSlot].IsValid()) return;
+
+    void* mapped = device->MapBuffer(aliveCountReadback[readSlot]);
+    if (mapped != nullptr) {
+        gpuAliveCount = *static_cast<uint32_t*>(mapped);
+        device->UnmapBuffer(aliveCountReadback[readSlot]);
+    }
 }
 
 }  // namespace uz

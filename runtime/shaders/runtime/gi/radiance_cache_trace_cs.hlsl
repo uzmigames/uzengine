@@ -28,7 +28,16 @@ cbuffer RootConstants : register(b0) {
     uint g_probeBudget;        // Number of probes to update this frame (0 = all).
     uint g_skyRadianceSrv;
     uint g_diagnosticUav;
-    uint _padRC;
+    uint g_sequenceMode;       ///< Diagnostic: 0 = this writer's per-frame + per-probe rotation;
+                               ///< 1 = the DDGI writer's index/count perturbation (same directions).
+    uint g_knownRadianceBits;  ///< Diagnostic (followup-01 consumer stage): float bits of a constant
+                               ///< radiance every ray returns instead of tracing; 0 = off.
+    uint g_knownRadianceMode;  ///< 0 = constant; 1 = directional L * (0.5 + 0.5 dot(dir, d0)).
+    uint g_probeSideSrv;       ///< Per probe (probe_side_cs.hlsl): nearest face, back-face fraction; sentinel = not computed.
+    uint g_classification;     ///< 0 = biased field < kSurfaceEpsilon at the probe is inside (current rule);
+                               ///< 1 = followup-01 candidate: back-face fraction, relocation, guard;
+                               ///< 2 = as 1, plus inside when most rays exit some mesh more often
+                               ///< than they enter it (embedded faces, followup-01 R3).
 };
 
 // ─── Trace constants at b2 (matches RadianceCacheTraceConstants) ──────────
@@ -73,7 +82,52 @@ cbuffer TraceConstants : register(b2) {
     float lightColorG;
     float lightColorB;
     float groundAlbedo;
+
+    // ── VFX → DDGI emissive injection (phase16 hardware-validation) ──────
+    // Trailing fields appended in `RadianceCacheTraceConstants` so the C++
+    // host can write a single struct to either compute pipeline. The radiance
+    // cache trace shader does not consume the VFX feed (only the DDGI atlas
+    // writer in `ddgi_probe_update_cs.hlsl` does); we declare them only so
+    // the cbuffer layout matches the CPU mirror (464 bytes since block B-02).
+    uint  vfxEmissiveSrvIndex;
+    uint  vfxEmissiveSampleCount;
+    float regionBlendAlpha;    ///< Blend weight of a probe inside a change box (1 = replace, block B.2 phase 4)
+    float _vfxEmissivePad1;
+
+    // Grid recentre: the history buffer was traced with the grid at its previous
+    // origin. history coordinate = probe coordinate + shift (whole probes); zero
+    // unless the grid moved this frame.
+    int   historyShiftX;
+    int   historyShiftY;
+    int   historyShiftZ;
+    uint  regionCount;         ///< Change boxes (block B.2): probes inside replace their history
+    float4 regionLo[8];        ///< lo.xyz of each box
+    float4 regionHi[8];        ///< hi.xyz of each box
 };
+
+/// True inside one of this frame's change boxes: the distance field changed there, so the
+/// probe's history was traced against geometry that no longer exists and it replaces instead of
+/// blending (block B.2 phase 4).
+bool InChangedRegion(float3 p) {
+    [loop] for (uint r = 0; r < min(regionCount, 8u); ++r) {
+        if (all(p >= regionLo[r].xyz) && all(p <= regionHi[r].xyz)) return true;
+    }
+    return false;
+}
+
+// ─── History grid (previous origin) ───────────────────────────────────────
+//
+// Probes are snapped to the spacing, so after a recentre the probe at coordinate
+// c is the same world-space probe as c + shift in the history buffer. Reading
+// history through these helpers keeps temporal hysteresis and the multi-bounce
+// feedback alive across a recentre; only the slab that entered the grid has no
+// history. Identity when the grid did not move.
+
+int3 HistoryShift() { return int3(historyShiftX, historyShiftY, historyShiftZ); }
+
+float3 HistoryGridOrigin() {
+    return float3(gridOriginX, gridOriginY, gridOriginZ) - float3(HistoryShift()) * probeSpacing;
+}
 
 // ─── Constants ────────────────────────────────────────────────────────────
 
@@ -84,6 +138,16 @@ static const float kSurfaceEpsilon = 5.0;     // cm — accept hits below this d
 static const float kMinStep        = 2.0;     // cm — never advance less than this
 static const uint  kMaxStepsPerRay = 96;
 static const uint  kMaxRaysPerProbe = 64;
+
+// Known-radiance diagnostic (followup-01): mode 0 = constant L, mode 1 = L * (0.5 + 0.5 dot(dir, d0))
+// with d0 = normalize(0.3, 0.5, 0.8), a smooth non-negative function of direction that crosses every
+// octahedral tile edge and corner — a misplaced or inverted border copy shows against it.
+static const float3 kKnownDir = float3(0.30305, 0.50508, 0.80812);
+float3 KnownRadiance(float L, float3 dir, uint mode) {
+    // mode 2 (per-probe parity) is applied by the caller through L itself; here it is a constant.
+    const float v = (mode == 1u) ? L * (0.5 + 0.5 * dot(dir, kKnownDir)) : L;
+    return float3(v, v, v);
+}
 
 // ─── L2 SH basis (Sloan 2008 packing — pre-cosine-convolved on accumulate) ──
 //
@@ -150,6 +214,11 @@ void UnpackL2(float4 packed[7], out float shR[9], out float shG[9], out float sh
     shR[8] = packed[6].x; shG[8] = packed[6].y; shB[8] = packed[6].z;
 }
 
+// Shared GDF surface sampling (needs linearClamp, the trace cbuffer and
+// kSurfaceEpsilon, all declared above).
+#include "gdf_surface.hlsli"
+#include "rc_probe_guard.hlsli"
+
 // ─── GDF clipmap sampling ─────────────────────────────────────────────────
 //
 // Each clipmap stores distance in R and diffuse reflectance in GBA, with a
@@ -157,70 +226,90 @@ void UnpackL2(float4 packed[7], out float shR[9], out float shG[9], out float sh
 // surface in cm; values outside the clipmap return a large positive number
 // (the next cascade is tried automatically).
 
-float4 SampleGdfClipmap(uint srvIdx, float3 worldPos, float3 center, float extent) {
-    if (srvIdx == kSentinelSrvIndex || extent <= 0.0) {
-        return float4(1e9, 0.0, 0.0, 0.0);
-    }
-    float3 local = (worldPos - center) / extent;       // [-1,1] inside the clipmap
-    if (any(abs(local) > 1.0)) {
-        return float4(1e9, 0.0, 0.0, 0.0);
-    }
-    float3 uvw = local * 0.5 + 0.5;                    // [0,1]
-    Texture3D<float4> gdfTex = ResourceDescriptorHeap[srvIdx];
-    return gdfTex.SampleLevel(linearClamp, uvw, 0);
-}
-
-float4 SampleGdfSurface(float3 worldPos) {
-    // Try cascades from finest to coarsest. Each cascade is 4x larger so the
-    // first one that contains the point gives the most accurate distance.
-    float4 d = SampleGdfClipmap(gdfClipmapSrv0,
-                               worldPos,
-                               float3(gdfCenter0X, gdfCenter0Y, gdfCenter0Z),
-                               gdfExtent0);
-    if (d.x < 1e8) return d;
-    d = SampleGdfClipmap(gdfClipmapSrv1,
-                         worldPos,
-                         float3(gdfCenter1X, gdfCenter1Y, gdfCenter1Z),
-                         gdfExtent1);
-    if (d.x < 1e8) return d;
-    d = SampleGdfClipmap(gdfClipmapSrv2,
-                         worldPos,
-                         float3(gdfCenter2X, gdfCenter2Y, gdfCenter2Z),
-                         gdfExtent2);
-    if (d.x < 1e8) return d;
-    return SampleGdfClipmap(gdfClipmapSrv3,
-                            worldPos,
-                            float3(gdfCenter3X, gdfCenter3Y, gdfCenter3Z),
-                            gdfExtent3);
-}
-
-float SampleGdfDistance(float3 worldPos) {
-    return SampleGdfSurface(worldPos).x;
-}
+// SampleGdfClipmap / SampleGdfSurface / SampleGdfDistance / GdfNormal now
+// live in gdf_surface.hlsli, included above — the DDGI atlas writer needs
+// the same surface attributes and inline RayQuery cannot provide them.
 
 // Sphere-tracing returns a hit (>=0), distance escape (-1), or exhausted work (-2).
-float TraceGDF(float3 origin, float3 dir, float maxT) {
+// `endT` reports where the march stopped whatever the outcome: the hit distance, the distance
+// at which the ray left the trace range, or the distance reached when the budget ran out. The
+// -1/-2 sentinels discard that, and an escape distance is what says whether a ray left through
+// an opening or simply ran past the end of the field (followup-01 stage 3).
+float TraceGDF(float3 origin, float3 dir, float maxT, out float endT, out float minD) {
     float t = kMinStep;
+    endT = 0.0;
+    minD = 1e30;
     [loop]
     for (uint i = 0; i < kMaxStepsPerRay; ++i) {
         float3 p = origin + dir * t;
         float d = SampleGdfDistance(p);
+        minD = min(minD, d);
         if (d < kSurfaceEpsilon) {
+            endT = t;
             return t;
         }
         t += max(d, kMinStep);
         if (t >= maxT) {
+            endT = t;
             return -1.0;
         }
     }
+    endT = t;
     return -2.0;
+}
+
+float TraceGDF(float3 origin, float3 dir, float maxT, out float endT) {
+    float unusedMinD;
+    return TraceGDF(origin, dir, maxT, endT, unusedMinD);
+}
+
+float TraceGDF(float3 origin, float3 dir, float maxT) {
+    float unusedEndT;
+    return TraceGDF(origin, dir, maxT, unusedEndT);
+}
+
+// ─── Candidate classification (followup-01, g_classification = 1) ────────
+//
+// The biased field is unsigned and conservative, so "field < kSurfaceEpsilon at the probe" holds
+// within a band around every surface, on both sides. The side of the nearest mesh face tells the
+// sides apart; a probe in front of its face but inside the band cannot start a march there (every
+// ray would register a hit at the first step), so its trace origin moves off the face first.
+/// @constants Relocated origins keep 2 x kSurfaceEpsilon of field clearance (the offset the shadow and
+/// indirect lookups at hit points already use): with a 1-Lipschitz field and a first step of
+/// kMinStep, no ray starts inside the hit tolerance. Half a spacing keeps the origin nearer its own
+/// grid point than any neighbour's; eight steps suffice because each step restores the missing
+/// clearance along the nearest face's normal.
+static const float kRelocationClearance = 2.0 * kSurfaceEpsilon;
+static const uint  kRelocationSteps = 8;
+/// @ref Majercik 2021 "Scaling Probe-Based Real-Time Dynamic Global Illumination for Production",
+///      section 6.1 — inside geometry = too many of the probe's rays see back faces.
+/// @constants A quarter: the measured fractions are bimodal (H-64: 13 of 601 Sponza probes between 0.1
+/// and 0.5; outside 1.0, enclosed interior 0.0), and a quarter sits in the empty middle.
+static const float kBackfaceThreshold = 0.25;
+/// @constants Mode 2: a probe is also inside when more than half of the 64 fixed rays leave some mesh
+/// more often than they enter it (probe_side_cs.hlsl, record [1].w). From inside a closed solid every
+/// ray that reaches its boundary within the trace distance votes, so the fraction is ~1 there; half
+/// leaves room for rays through open meshes, which can add unmatched exits from a free probe.
+static const float kCrossingThreshold = 0.5;
+
+bool RelocateOrigin(float3 probePos, float3 direction, out float3 origin) {
+    origin = probePos;
+    [loop] for (uint step = 0; step < kRelocationSteps; ++step) {
+        const float clearance = SampleGdfDistance(origin);
+        if (clearance >= kRelocationClearance) return true;
+        origin += direction * max(kRelocationClearance - clearance, kMinStep);
+        if (distance(origin, probePos) > 0.5 * probeSpacing) return false;
+    }
+    return SampleGdfDistance(origin) >= kRelocationClearance;
 }
 
 /// @ref Majercik 2019 "Dynamic Diffuse Global Illumination with Ray-Traced Irradiance Fields", sections 5.2-5.3.
 /// @constants Eight trilinear corners; squared normal weight rejects probes behind a surface.
 float3 SamplePreviousDiffuse(float3 position, float3 normal) {
     if (firstWrite != 0 || g_shBufferSrvIndex == kSentinelSrvIndex) return 0.0;
-    float3 cell = (position - float3(gridOriginX, gridOriginY, gridOriginZ)) / probeSpacing;
+    // The history buffer is laid out on the *previous* grid.
+    const float3 historyOrigin = HistoryGridOrigin();
+    float3 cell = (position - historyOrigin) / probeSpacing;
     if (any(cell < 0.0) || any(cell > float(probesPerAxis - 1))) return 0.0;
     uint3 lower = uint3(floor(cell));
     uint3 upper = min(lower + 1, probesPerAxis - 1);
@@ -236,13 +325,16 @@ float3 SamplePreviousDiffuse(float3 position, float3 normal) {
         float weight = ((corner & 1) ? fraction.x : 1.0 - fraction.x)
                      * ((corner & 2) ? fraction.y : 1.0 - fraction.y)
                      * ((corner & 4) ? fraction.z : 1.0 - fraction.z);
-        float3 probePosition = float3(gridOriginX, gridOriginY, gridOriginZ) + float3(index) * probeSpacing;
-        float3 toProbe = probePosition - position;
+        float3 probePosition = historyOrigin + float3(index) * probeSpacing;
+        uint probeLinear = index.x + index.y * probesPerAxis + index.z * probesPerAxis * probesPerAxis;
+        const float4 guard = history[ProbeGuardIndex(probesPerAxis, probeLinear)];
+        float3 toProbe = ProbeEffectivePosition(guard, probePosition) - position;
         float distance = length(toProbe);
         float normalWeight = distance > 0.0 ? saturate(dot(normal, toProbe / distance)) : 1.0;
         weight *= normalWeight * normalWeight;
-        uint base = (index.x + index.y * probesPerAxis + index.z * probesPerAxis * probesPerAxis) * 7;
+        uint base = probeLinear * 7;
         if (history[base + 6].w <= 0.0) continue;
+        if (ProbeGuardRejects(guard, probePosition, position)) continue;
         float4 coefficients[7];
         [unroll] for (uint k = 0; k < 7; ++k) coefficients[k] = history[base + k];
         irradiance += weight * EvalSH_L2(normal, coefficients);
@@ -251,19 +343,6 @@ float3 SamplePreviousDiffuse(float3 position, float3 normal) {
     return totalWeight > 0.0 ? irradiance / totalWeight : 0.0;
 }
 
-/// @ref Hart 1996 "Sphere Tracing: A Geometric Method for the Antialiased Ray Tracing of Implicit Surfaces"
-/// @constants Central differences use offsets +/- one hit tolerance; 2*epsilon clears the surface for a shadow ray.
-float3 GdfNormal(float3 position) {
-    float3 dx = float3(kSurfaceEpsilon, 0.0, 0.0);
-    float3 dy = float3(0.0, kSurfaceEpsilon, 0.0);
-    float3 dz = float3(0.0, 0.0, kSurfaceEpsilon);
-    float3 gradient = float3(
-        SampleGdfDistance(position + dx) - SampleGdfDistance(position - dx),
-        SampleGdfDistance(position + dy) - SampleGdfDistance(position - dy),
-        SampleGdfDistance(position + dz) - SampleGdfDistance(position - dz));
-    float magnitude = length(gradient);
-    return magnitude > 0.0 ? gradient / magnitude : float3(0.0, 0.0, 0.0);
-}
 
 // ─── Hammersley + uniform sphere sample ─────────────────────────────────
 
@@ -312,16 +391,82 @@ void main(uint3 DTid : SV_DispatchThreadID) {
                     + float3(float(gx), float(gy), float(gz)) * probeSpacing;
 
     /// @ref Majercik 2021 "Scaling Probe-Based Real-Time Dynamic Global Illumination for Production", section 6.1.
-    /// @constants SH record6.w stores validity (0=inside geometry,1=active); seven records per probe.
+    /// @constants SH record6.w stores validity (0=inside geometry,1=active); seven records per probe,
+    /// then one guard record per probe (rc_probe_guard.hlsli); six diagnostic records per probe.
+    /// Class codes (diagnostic record 4.z): 0 valid and 1 inside under the current rule; 2 valid by
+    /// the rays, 3 inside by the rays, 4 relocated, 5 relocation failed under the candidate; 6 inside
+    /// by the crossings alone (mode 2: the back-face fraction said free); mode 3: 7 not reachable
+    /// from the camera, 8 reachable, 9 reachable and traced from the end of its climb, 10 relocated
+    /// into reached air (r.GI.RadianceCache.ReachRelocate; y = distance moved) (w = 1 when
+    /// connectivity was used). Record 5.x = the crossing fraction (0 when the classifier did not run),
+    /// 5.yzw = trace origin minus grid position (0 unless moved).
     float4 probeSurface = SampleGdfSurface(probePos);
-    if (probeSurface.r < kSurfaceEpsilon) {
+    float3 traceOrigin = probePos;
+    float4 guard = 0.0;
+    float4 classification = float4(0.0, 0.0, 0.0, 0.0);
+    float crossingFraction = 0.0;
+    bool inside;
+    if (g_classification == 0u || g_probeSideSrv == kSentinelSrvIndex) {
+        inside = probeSurface.r < kSurfaceEpsilon;
+        classification.z = inside ? 1.0 : 0.0;
+    } else if (g_classification == 3u) {
+        // Reachability (probe_reach_cs.hlsl): [0] xyz = climb direction, w = guard distance;
+        // [1] x = valid, y = climb length. A valid probe inside the band is traced from the end of
+        // its climb, which is in air connected to the camera, and guarded by the plane behind it.
+        StructuredBuffer<float4> sides = ResourceDescriptorHeap[g_probeSideSrv];
+        const float4 climb = sides[probeIdx * 2];
+        const float4 reach = sides[probeIdx * 2 + 1];
+        inside = reach.x < 0.5;
+        classification.y = reach.y;
+        classification.w = reach.w;
+        classification.z = inside ? 7.0 : 8.0;
+        if (reach.x > 1.5) {
+            // Relocated: traced at the moved position; readers weight it there and reject receivers
+            // behind the surface it was moved across (w < 0 encoding, rc_probe_guard.hlsli).
+            traceOrigin = probePos + climb.xyz * reach.y;
+            guard = float4(climb.xyz * reach.y, -max(climb.w, 0.01));
+            classification.z = 10.0;
+        } else if (!inside && probeSurface.r < kSurfaceEpsilon) {
+            traceOrigin = probePos + climb.xyz * reach.y;
+            // w = 0 would mean "no guard"; a probe at or below the biased surface keeps a plane
+            // through itself.
+            guard = float4(climb.xyz, max(climb.w, 0.01));
+            classification.z = 9.0;
+        }
+    } else {
+        StructuredBuffer<float4> sides = ResourceDescriptorHeap[g_probeSideSrv];
+        const float4 nearest = sides[probeIdx * 2];       // direction from the nearest face, distance
+        const float4 rays = sides[probeIdx * 2 + 1];      // back-face fraction, hits, nearest-face side
+        classification.x = rays.z * nearest.w;
+        classification.w = rays.x;
+        crossingFraction = rays.w;
+        inside = rays.y > 0.0 && rays.x > kBackfaceThreshold;
+        classification.z = inside ? 3.0 : 2.0;
+        if (!inside && g_classification == 2u && rays.w > kCrossingThreshold) {
+            inside = true;
+            classification.z = 6.0;
+        }
+        if (!inside && probeSurface.r < kSurfaceEpsilon) {
+            inside = !RelocateOrigin(probePos, nearest.xyz, traceOrigin);
+            classification.y = distance(traceOrigin, probePos);
+            classification.z = inside ? 5.0 : 4.0;
+            if (!inside) guard = float4(nearest.xyz, nearest.w);
+        }
+    }
+    RWStructuredBuffer<float4> guardOut = ResourceDescriptorHeap[g_shBufferUavIndex];
+    guardOut[ProbeGuardIndex(probesPerAxis, probeIdx)] = guard;
+    if (inside) {
         RWStructuredBuffer<float4> outputSH = ResourceDescriptorHeap[g_shBufferUavIndex];
         [unroll] for (uint coefficient = 0; coefficient < 7; ++coefficient)
             outputSH[probeIdx * 7 + coefficient] = 0.0;
         if (g_diagnosticUav != 0 && g_diagnosticUav != kSentinelSrvIndex) {
             RWStructuredBuffer<float4> diagnostic = ResourceDescriptorHeap[g_diagnosticUav];
-            diagnostic[probeIdx * 2] = probeSurface;
-            diagnostic[probeIdx * 2 + 1] = 0.0;
+            diagnostic[probeIdx * 6] = probeSurface;
+            diagnostic[probeIdx * 6 + 1] = 0.0;
+            diagnostic[probeIdx * 6 + 2] = 0.0;
+            diagnostic[probeIdx * 6 + 3] = 0.0;
+            diagnostic[probeIdx * 6 + 4] = classification;
+            diagnostic[probeIdx * 6 + 5] = float4(crossingFraction, traceOrigin - probePos);
         }
         return;
     }
@@ -338,26 +483,56 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     uint frameJitter = (frameIndex * 1664525u + 1013904223u);
     /// @constants Diagnostic luminance uses Rec.709 weights (0.2126,0.7152,0.0722).
     float4 traceStats = 0.0;
+    // Sky-only readback: x = mean luminance carried by SKY rays (over all rays), y = sky ray
+    // fraction, z = fraction of rays that exhausted the budget, w = mean luminance carried by hits.
+    float4 skyStats = 0.0;
+    // Hit/escape side (followup-01 stage 3): x = mean of the CLOSEST the ray came to a surface
+    // over the ESCAPED rays (the end distance it held before is void: an escape is defined by
+    // reaching the end of the range, so it always reported the end of the range),
+    // y = mean sun-term luminance over HIT rays, z = mean indirect-term luminance over HIT rays
+    // (the DDGI writer has no indirect term), w = hit ray count.
+    float4 pathStats = 0.0;
+    float  escapeCount = 0.0;
 
     [loop]
     for (uint i = 0; i < nRays; ++i) {
+        // Since H-57 the DDGI writer uses this same construction; the diagnostic mode that once
+        // replicated its windowed sequence is therefore the identity and is kept for the record.
         float2 xi = frac(Hammersley(i, nRays)
-            + float2(RadicalInverseVdC(frameJitter), RadicalInverseVdC(frameJitter ^ probeIdx)));
+                         + float2(RadicalInverseVdC(frameJitter), RadicalInverseVdC(frameJitter ^ probeIdx)));
         float3 dir = SphericalSample(xi);
 
-        float t = TraceGDF(probePos, dir, maxTraceDistance);
+        float endT, minD;
+        const float knownL = asfloat(g_knownRadianceBits);
+        float t;
+        if (knownL > 0.0) {
+            // Known radiance: no trace, every ray is an escape carrying the constant.
+            t = -1.0; endT = maxTraceDistance; minD = 1e6;
+        } else {
+            t = TraceGDF(traceOrigin, dir, maxTraceDistance, endT, minD);
+        }
 
         float3 radiance = 0.0;
         if (t == -1.0) {
+            pathStats.x += min(minD, 1e6); escapeCount += 1.0;
             traceStats.x += invN;
             radiance = float3(0.0, 0.0, 0.0);
-            if (g_skyRadianceSrv != kSentinelSrvIndex) {
+            if (knownL > 0.0) {
+                float knownLeff = knownL;
+                if (g_knownRadianceMode == 2u) {
+                    // Per-probe parity: odd cells L, even cells L/4 (followup-01 step 4).
+                    const uint3 cell = uint3(probeIdx % probesPerAxis, (probeIdx / probesPerAxis) % probesPerAxis,
+                                             probeIdx / (probesPerAxis * probesPerAxis));
+                    knownLeff = ((cell.x + cell.y + cell.z) & 1u) != 0u ? knownL : 0.25 * knownL;
+                }
+                radiance = KnownRadiance(knownLeff, dir, g_knownRadianceMode);
+            } else if (g_skyRadianceSrv != kSentinelSrvIndex) {
                 TextureCube<float4> sky = ResourceDescriptorHeap[g_skyRadianceSrv];
                 radiance = sky.SampleLevel(linearClamp, float3(dir.x, dir.z, dir.y), 0).rgb
                          * float3(skyColorR, skyColorG, skyColorB);
             }
         } else if (t >= 0.0) {
-            float3 hitPosition = probePos + t * dir;
+            float3 hitPosition = traceOrigin + t * dir;
             float3 N    = GdfNormal(hitPosition);
             float3 L    = normalize(float3(lightDirX, lightDirY, lightDirZ));
             float  NdL  = max(dot(N, L), 0.0);
@@ -375,8 +550,16 @@ void main(uint3 DTid : SV_DispatchThreadID) {
             float3 albedo = saturate(SampleGdfSurface(hitPosition).gba);
             float3 indirect = SamplePreviousDiffuse(hitPosition + N * (2.0 * kSurfaceEpsilon), N);
             radiance = dot(N, -dir) > 0.0 ? albedo * (sunRad / kPI + indirect) : 0.0;
+            if (dot(N, -dir) > 0.0) {
+                pathStats.y += dot(albedo * (sunRad / kPI), float3(0.2126, 0.7152, 0.0722));
+                pathStats.z += dot(albedo * indirect,       float3(0.2126, 0.7152, 0.0722));
+            }
+            pathStats.w += 1.0;
         }
         traceStats.w += dot(radiance, float3(0.2126, 0.7152, 0.0722)) * invN;
+        if (t == -1.0)     { skyStats.x += dot(radiance, float3(0.2126, 0.7152, 0.0722)) * invN; skyStats.y += invN; }
+        else if (t >= 0.0) { skyStats.w += dot(radiance, float3(0.2126, 0.7152, 0.0722)) * invN; }
+        else               { skyStats.z += invN; }
 
         // Project raw radiance; PackL2 applies the cosine convolution.
         float basis[9];
@@ -392,11 +575,18 @@ void main(uint3 DTid : SV_DispatchThreadID) {
         }
     }
 
-    // Optional transport readback: two float4 records per probe, Rec.709 luminance.
+    // Optional transport readback: three float4 records per probe, Rec.709 luminance.
     if (g_diagnosticUav != 0 && g_diagnosticUav != kSentinelSrvIndex) {
         RWStructuredBuffer<float4> diagnostic = ResourceDescriptorHeap[g_diagnosticUav];
-        diagnostic[probeIdx * 2] = probeSurface;
-        diagnostic[probeIdx * 2 + 1] = traceStats;
+        diagnostic[probeIdx * 6] = probeSurface;
+        diagnostic[probeIdx * 6 + 1] = traceStats;
+        diagnostic[probeIdx * 6 + 2] = skyStats;
+        diagnostic[probeIdx * 6 + 3] = float4(pathStats.x / max(escapeCount, 1.0),
+                                              pathStats.y / max(pathStats.w, 1.0),
+                                              pathStats.z / max(pathStats.w, 1.0),
+                                              pathStats.w);
+        diagnostic[probeIdx * 6 + 4] = classification;
+        diagnostic[probeIdx * 6 + 5] = float4(crossingFraction, traceOrigin - probePos);
     }
 
     // Pack into 7 float4s (matches deferred lighting `EvalSH_L2`).
@@ -408,14 +598,36 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     RWStructuredBuffer<float4> shBuf = ResourceDescriptorHeap[g_shBufferUavIndex];
     uint base = probeIdx * 7u;
 
-    float a = (firstWrite != 0) ? 1.0 : saturate(temporalBlendAlpha);
+    // This probe's history lives at its coordinate in the *previous* grid. A probe
+    // that entered the grid this frame (shifted coordinate outside the grid) or
+    // that was inside geometry last time (validity 0) has no history: replace.
+    int3 historyCoord = int3(int(gx), int(gy), int(gz)) + HistoryShift();
+    bool hasHistory = (firstWrite == 0)
+                   && all(historyCoord >= 0) && all(historyCoord < int(probesPerAxis));
+    uint historyBase = base;
+    if (hasHistory) {
+        StructuredBuffer<float4> validity = ResourceDescriptorHeap[g_shBufferSrvIndex];
+        historyBase = (uint(historyCoord.x)
+                     + uint(historyCoord.y) * probesPerAxis
+                     + uint(historyCoord.z) * probesPerAxis * probesPerAxis) * 7u;
+        hasHistory = validity[historyBase + 6].w > 0.0;
+    }
+
+    // Inside a change box the history was traced against geometry that no longer exists
+    // (block B.2 phase 4): it is replaced (regionBlendAlpha 1) or blended out over a few frames.
+    // A single-frame trace is noisy, and the clamped SH evaluation of the consumers turns that
+    // noise into a positive bias until the blend has averaged it, so a weight below 1 trades a
+    // short fade of the stale history for a smaller transient.
+    const bool fieldChanged = hasHistory && InChangedRegion(probePos);
+    float a = hasHistory ? saturate(fieldChanged ? regionBlendAlpha : temporalBlendAlpha) : 1.0;
+    const bool replace = !hasHistory || a >= 1.0;
     [unroll]
     for (uint k = 0; k < 7; ++k) {
-        if (firstWrite != 0) {
+        if (replace) {
             shBuf[base + k] = newPacked[k];
         } else {
             StructuredBuffer<float4> history = ResourceDescriptorHeap[g_shBufferSrvIndex];
-            shBuf[base + k] = lerp(history[base + k], newPacked[k], a);
+            shBuf[base + k] = lerp(history[historyBase + k], newPacked[k], a);
         }
     }
     shBuf[base + 6].w = 1.0;

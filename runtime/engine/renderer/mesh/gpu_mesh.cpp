@@ -285,6 +285,7 @@ void DestroyGPUMesh(IRHIDevice* device, GPUMesh& gpuMesh) {
     if (gpuMesh.sdf.texture3D.IsValid()) {
         device->DestroyTexture(gpuMesh.sdf.texture3D);
     }
+    SafeDestroyBuffer(device, gpuMesh.sdf.triangleBuffer);
     gpuMesh.sdf = MeshSDF{};
 
     gpuMesh.vbSrvIndex  = UINT32_MAX;

@@ -1,5 +1,9 @@
 # Sponza SDF orientation evidence
 
+> **Origin**: `test/windows-sponza-parity @ 25cd0c5f` (`E:\SponzaTest`), ported verbatim on 2026-09-08 by `phase0_sponza-parity-06-qa-harness-validation`.
+> Paths such as `scripts/*_artifacts/`, `scripts/sponza-*.png|log|json|sha256.txt` refer to evidence that is **not in Git**; the executable identities quoted are SponzaTest builds, not this repository's.
+
+
 CPU audit performed 2026-09-06 in the shared UzEngine worktree. Runtime files were read only during this audit. No GPU execution was used.
 
 ## Inputs and method

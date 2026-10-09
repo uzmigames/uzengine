@@ -78,6 +78,17 @@ struct DebugViewPassDesc {
     rg::RgResourceId  ssrGBuffer;       ///< SSR resolve result (read, SRV). Required for Reflections.
     uint32_t          ssrSrvIndex;      ///< SRV heap index for SSR result (UINT32_MAX if unused).
 
+    // ── Lighting split targets (Lighting / Shadows / LightingOnly) ───────
+    // Written by the deferred lighting pass as SV_Target1..3. Bindless only: the SM5 path binds
+    // t0..t5, so those three modes stay unavailable there rather than reading the wrong texture.
+    rg::RgResourceId  directGBuffer;    ///< Direct lighting target (read, SRV).
+    uint32_t          directSrvIndex   = UINT32_MAX; ///< SRV heap index for direct lighting.
+    rg::RgResourceId  indirectGBuffer;  ///< Indirect lighting target (read, SRV).
+    uint32_t          indirectSrvIndex = UINT32_MAX; ///< SRV heap index for indirect lighting.
+    rg::RgResourceId  shadowGBuffer;    ///< Shadow/AO mask target (read, SRV).
+    uint32_t          shadowSrvIndex   = UINT32_MAX; ///< SRV heap index for the shadow/AO mask.
+    uint32_t          gtaoSrvIndex     = UINT32_MAX; ///< GTAO filtered AO (UINT32_MAX = fall back to G-buffer AO).
+
     bool              bindless;         ///< True if SM6.6 bindless descriptor model is active.
     float             viewportWidth;    ///< Viewport width in pixels.
     float             viewportHeight;   ///< Viewport height in pixels.

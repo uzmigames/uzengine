@@ -117,6 +117,7 @@ void VFXEditorUI::BeginFrame(uint32_t frameIndex) {
 bool VFXEditorUI::HandleMouse(const InputSystem* input, float dt) {
     (void)dt;
 
+    m_inputRef = input; // Cache for NumberInput char access.
     m_mouseX = input->GetMouseX();
     m_mouseY = input->GetMouseY();
     m_mouseDown = input->IsMouseDown(MouseButton::Left);
@@ -141,6 +142,11 @@ bool VFXEditorUI::HandleMouse(const InputSystem* input, float dt) {
     const float sh = static_cast<float>(m_screenH);
 
     m_wantsInput = false;
+
+    // If a number input is being edited, consume all input (keyboard + mouse).
+    if (m_editingPtr != nullptr) {
+        m_wantsInput = true;
+    }
 
     // Menu bar
     if (HitTest(0.0f, 0.0f, sw, kMenuBarH)) {
@@ -320,6 +326,115 @@ bool VFXEditorUI::Slider(float x, float y, float w, float* value, float minVal, 
             *value = rawVal;
         }
         return true;
+    }
+
+    return false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Number Input Widget — click-to-type numeric field
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool VFXEditorUI::NumberInput(float x, float y, float w, float* value,
+                              float minVal, float maxVal, const char* label) {
+    const bool isEditing = (m_editingPtr == value);
+    const bool hovered = HitTest(x, y, w, kSliderH);
+
+    // Background — highlight when editing or hovered.
+    const Vec4 bgColor = isEditing ? Vec4{0.20f, 0.25f, 0.35f, 1.0f}
+                       : hovered   ? kColorBtnHover
+                                   : kColorSliderBg;
+    m_textRenderer.AddRect(x, y, w, kSliderH, bgColor);
+
+    // Label on the left.
+    m_textRenderer.AddText(m_font, label, x + 4.0f, y + 2.0f, kColorText);
+
+    // Value display or edit buffer on the right.
+    char displayBuf[32];
+    if (isEditing) {
+        // Show the edit buffer with a blinking cursor (underscore).
+        std::snprintf(displayBuf, sizeof(displayBuf), "%s_", m_editBuffer.c_str());
+    } else {
+        std::snprintf(displayBuf, sizeof(displayBuf), "%.2f", *value);
+    }
+    m_textRenderer.AddText(m_font, displayBuf, x + w - 80.0f, y + 2.0f,
+                           isEditing ? Vec4{1.0f, 1.0f, 0.6f, 1.0f} : Vec4{1,1,1,1});
+
+    // Click to start editing.
+    if (hovered && m_mouseJustPressed && !isEditing) {
+        m_editingPtr = value;
+        m_editingMin = minVal;
+        m_editingMax = maxVal;
+        // Pre-fill with current value.
+        std::snprintf(displayBuf, sizeof(displayBuf), "%.2f", *value);
+        m_editBuffer = displayBuf;
+        m_wantsInput = true;
+        return false;
+    }
+
+    // Click elsewhere to commit.
+    if (isEditing && m_mouseJustPressed && !hovered) {
+        // Commit the value.
+        char* end = nullptr;
+        const double parsed = std::strtod(m_editBuffer.c_str(), &end);
+        if (end != m_editBuffer.c_str()) {
+            *value = std::clamp(static_cast<float>(parsed), minVal, maxVal);
+        }
+        m_editingPtr = nullptr;
+        m_editBuffer.clear();
+        return true;
+    }
+
+    // Process typed characters while editing.
+    if (isEditing && m_inputRef) {
+        const auto& chars = m_inputRef->GetTypedChars();
+        bool changed = false;
+        for (char ch : chars) {
+            if (ch == '\r' || ch == '\n') {
+                // Enter — commit.
+                char* end = nullptr;
+                const double parsed = std::strtod(m_editBuffer.c_str(), &end);
+                if (end != m_editBuffer.c_str()) {
+                    *value = std::clamp(static_cast<float>(parsed), minVal, maxVal);
+                    changed = true;
+                }
+                m_editingPtr = nullptr;
+                m_editBuffer.clear();
+                return changed;
+            } else if (ch == 0x1B) {
+                // Escape — cancel without changing value.
+                m_editingPtr = nullptr;
+                m_editBuffer.clear();
+                return false;
+            } else if (ch == '\b') {
+                // Backspace.
+                if (!m_editBuffer.empty()) {
+                    m_editBuffer.pop_back();
+                }
+            } else if ((ch >= '0' && ch <= '9') || ch == '.' || ch == '-') {
+                m_editBuffer += ch;
+            }
+        }
+
+        // Also handle Enter/Escape via key state (in case WM_CHAR doesn't fire for them).
+        if (m_inputRef->IsKeyJustPressed(Key::Enter)) {
+            char* end = nullptr;
+            const double parsed = std::strtod(m_editBuffer.c_str(), &end);
+            if (end != m_editBuffer.c_str()) {
+                *value = std::clamp(static_cast<float>(parsed), minVal, maxVal);
+                changed = true;
+            }
+            m_editingPtr = nullptr;
+            m_editBuffer.clear();
+            return changed;
+        }
+        if (m_inputRef->IsKeyJustPressed(Key::Escape)) {
+            m_editingPtr = nullptr;
+            m_editBuffer.clear();
+            return false;
+        }
+
+        m_wantsInput = true;
     }
 
     return false;
@@ -1286,7 +1401,7 @@ void VFXEditorUI::BuildStageTree(VFXEmitterConfig* cfg, float* spawnRate, uint32
                     switch (param.type) {
                         case VfxModuleParam::Float:
                             if (param.fPtr != nullptr) {
-                                Slider(px, y, pw, param.fPtr, param.min, param.max, param.label);
+                                NumberInput(px, y, pw, param.fPtr, param.min, param.max, param.label);
                             }
                             break;
                         case VfxModuleParam::Uint:
@@ -1387,7 +1502,7 @@ void VFXEditorUI::BuildRightPanel(VFXEmitterConfig* cfg) {
         switch (param.type) {
             case VfxModuleParam::Float:
                 if (param.fPtr != nullptr) {
-                    Slider(cx, y, contentW, param.fPtr, param.min, param.max, "");
+                    NumberInput(cx, y, contentW, param.fPtr, param.min, param.max, param.label);
                 }
                 break;
             case VfxModuleParam::Uint:
