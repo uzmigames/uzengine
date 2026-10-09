@@ -6,6 +6,17 @@ status: report
 
 # Overnight Session Report — 2026-04-07
 
+> **Correction (2026-10-08): the Brixelizer GI statements in this report did not hold.** Commit
+> `29c83ba5` (2026-04-07 00:53), which predates every commit of this session, made
+> `RegisterBrixelizerGIPasses` return at its first statement
+> (`runtime/engine/renderer/frame/frame_gi_passes.cpp:387` today), so no Brixelizer bake or GI
+> dispatch ran during the session. The "Brixelizer GI ... Enabled by default in scene" row,
+> follow-up 1 ("the preferred indoor GI") and follow-up 2 ("the actual GI contribution is correct")
+> are therefore unfounded: whatever the deferred-lighting branch read from the GI target, and
+> whatever the dump showed as white, was not written by Brixelizer. Construction was commented out
+> on 2026-04-10 (`c84a8bce`), and `phase0_brixelizer-gi-integration` was closed as superseded on
+> 2026-10-08 (see its `tasks.md`).
+
 User directive: "implmente continuamente, vou dormir, sem perguntar nada".
 Session ran continuously without confirmation prompts. 9 commits landed.
 

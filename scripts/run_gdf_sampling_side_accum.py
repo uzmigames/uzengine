@@ -98,6 +98,10 @@ def run(args, report):
     rep = json.load(open(os.path.join(args.data, 'gdf_sampling_side.json'), encoding='utf-8'))
     if rep.get('status') != 'complete':
         raise Stop('input', 'the sampling-side study is not complete; nothing to extend')
+    # The captures' own identity, not the binary on disk at analysis time (the 'harness' stamp).
+    report['captures'] = [{'name': c['name'], 'repeat': c['repeat'],
+                           'identity': c.get('identity') or runner.capture_identity(c['dir'])}
+                          for c in rep['captures']]
     rows = []
     for cap in rep['captures']:
         region = runner.require_region_dir(os.path.join(cap['dir'], 'region'), cap['name'])

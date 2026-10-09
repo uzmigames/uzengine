@@ -6,24 +6,46 @@
 # Symptom guarded against: a dark blink of the whole indirect lighting once per
 # probe spacing (~267 cm on Sponza) of camera travel on ANY axis (reported while
 # rising vertically at z ~ 267), recovering over ~20 frames (EMA alpha 0.12).
+#
+# Re-anchored 2026-10-08 (the script had not changed since 7eea6b95 and failed 7 of its
+# 40 checks on the sources): block B-02 (0a9cc732) grew RadianceCacheTraceConstants to
+# 464 bytes - the shift row's fourth field `_historyShiftPad` became `regionCount` and 16
+# change-box rows follow the row - and gave probes inside a change box their own blend
+# weight; block B-06 (edfd7942) moved the DDGI writers' mirror of the 13 rows into
+# ddgi_probe_common.hlsli. The layout and blend checks follow those sources. What they
+# guard is unchanged as long as change boxes come only from GDF instance changes
+# (global_distance_field.cpp, frame_gi_passes.cpp, as read on 2026-10-08): a pure recentre
+# then still blends every probe that keeps its history at temporalBlendAlpha. This script
+# does not check where change boxes come from, nor InChangedRegion's body, nor what precedes
+# the shift row in the HLSL mirrors. Since 2026-10-09 the blend check also pins
+# `fieldChanged = hasHistory && InChangedRegion(probePos)`: without it, a shader that set
+# fieldChanged for every probe with history (all of them replaced on a recentre) passed 42/42.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $rcHeader = Get-Content (Join-Path $root 'runtime/engine/renderer/gi/radiance_cache.h') -Raw -Encoding UTF8
 $rcSource = Get-Content (Join-Path $root 'runtime/engine/renderer/gi/radiance_cache.cpp') -Raw -Encoding UTF8
 $trace    = Get-Content (Join-Path $root 'runtime/shaders/runtime/gi/radiance_cache_trace_cs.hlsl') -Raw -Encoding UTF8
-$ddgi     = Get-Content (Join-Path $root 'runtime/shaders/runtime/gi/ddgi_probe_update_cs.hlsl') -Raw -Encoding UTF8
+# The DDGI writers (update and trace) share the mirror in ddgi_probe_common.hlsli since B-06 (edfd7942).
+$ddgi     = Get-Content (Join-Path $root 'runtime/shaders/runtime/gi/ddgi_probe_common.hlsli') -Raw -Encoding UTF8
+$ddgiUpdate = Get-Content (Join-Path $root 'runtime/shaders/runtime/gi/ddgi_probe_update_cs.hlsl') -Raw -Encoding UTF8
+$ddgiTrace  = Get-Content (Join-Path $root 'runtime/shaders/runtime/gi/ddgi_probe_trace_cs.hlsl') -Raw -Encoding UTF8
 $frameCb  = Get-Content (Join-Path $root 'runtime/engine/renderer/frame/frame_constants.cpp') -Raw -Encoding UTF8
 
 $checks = [ordered]@{}
 
-# ── CB layout: one extra 16-byte row, declared by every shader that binds it ──
-$checks['cb_size_208'] = $rcHeader -match 'static_assert\(sizeof\(RadianceCacheTraceConstants\) == 208'
-$checks['cb_has_shift_row_cpp'] = ($rcHeader -match 'int32_t\s+historyShiftX') -and ($rcHeader -match 'int32_t\s+historyShiftZ') -and ($rcHeader -match 'uint32_t\s+_historyShiftPad')
-$checks['cb_has_shift_row_trace_hlsl'] = ($trace -match 'int\s+historyShiftX;') -and ($trace -match 'int\s+historyShiftZ;') -and ($trace -match 'uint\s+_historyShiftPad;')
+# ── CB layout: the grid-shift row is the 13th 16-byte row (bytes 192-207), declared by every shader that binds it ──
+# Since B-02 (0a9cc732) the C++ struct and the trace mirror continue with 16 change-box rows (464 bytes)
+# and the row's fourth field is `regionCount`; the DDGI mirror declares the 13 rows and ends there.
+$checks['cb_size_464'] = $rcHeader -match 'static_assert\(sizeof\(RadianceCacheTraceConstants\) == 464'
+$checks['cb_shift_row_offsets'] = ($rcHeader -match 'offsetof\(RadianceCacheTraceConstants, regionCount\) == 204') -and ($rcHeader -match 'offsetof\(RadianceCacheTraceConstants, regionLo\) == 208')
+$checks['cb_has_shift_row_cpp'] = ($rcHeader -match 'int32_t\s+historyShiftX') -and ($rcHeader -match 'int32_t\s+historyShiftZ') -and ($rcHeader -match 'uint32_t\s+regionCount')
+$checks['cb_has_shift_row_trace_hlsl'] = ($trace -match 'int\s+historyShiftX;') -and ($trace -match 'int\s+historyShiftZ;') -and ($trace -match 'uint\s+regionCount;')
 $checks['cb_has_shift_row_ddgi_hlsl'] = ($ddgi -match 'int\s+historyShiftX;') -and ($ddgi -match 'uint\s+_historyShiftPad;')
-# The shift row must be the LAST row in both mirrors (appended, never inserted).
-$checks['cb_shift_row_is_last_trace'] = [regex]::IsMatch($trace, '(?s)_historyShiftPad;\s*\};')
+# The C++ offsets above pin the row at bytes 192-207; in the trace mirror only the change-box rows may
+# follow it, and the DDGI mirror ends with it. Both DDGI writers must include that mirror.
+$checks['cb_shift_row_then_regions_trace'] = [regex]::IsMatch($trace, '(?s)historyShiftZ;\s*uint\s+regionCount;[^\r\n]*\s*float4\s+regionLo\[8\];[^\r\n]*\s*float4\s+regionHi\[8\];[^\r\n]*\s*\};')
 $checks['cb_shift_row_is_last_ddgi']  = [regex]::IsMatch($ddgi,  '(?s)_historyShiftPad;\s*\};')
+$checks['ddgi_writers_include_mirror'] = ([regex]::IsMatch($ddgiUpdate, '#include "ddgi_probe_common\.hlsli"')) -and ([regex]::IsMatch($ddgiTrace, '#include "ddgi_probe_common\.hlsli"'))
 
 # ── C++: a recentre is a full retrace WITH history; only first write / invalidation drop it ──
 $checks['reset_only_first_write_or_invalid'] = $rcSource -match 'const bool resetHistory\s*=\s*m_firstWritePending \|\| m_historyInvalid;'
@@ -57,7 +79,9 @@ $checks['blend_shifted_coord'] = $blend -match 'int3 historyCoord = int3\(int\(g
 $checks['blend_bounds_check']  = $blend -match 'all\(historyCoord >= 0\) && all\(historyCoord < int\(probesPerAxis\)\)'
 $checks['blend_validity_check'] = $blend -match 'hasHistory = validity\[historyBase \+ 6\]\.w > 0\.0;'
 $checks['blend_reads_shifted_history'] = $blend -match 'lerp\(history\[historyBase \+ k\], newPacked\[k\], a\)'
-$checks['blend_replace_without_history'] = ($blend -match 'float a = hasHistory \? saturate\(temporalBlendAlpha\) : 1\.0;') -and ($blend -match 'if \(!hasHistory\) \{')
+# Since B-02 (0a9cc732) a probe inside a change box (fieldChanged) blends at regionBlendAlpha (default 1 = replace);
+# a probe without history still replaces and every other probe blends at temporalBlendAlpha.
+$checks['blend_replace_without_history'] = ($blend -match 'const bool fieldChanged = hasHistory && InChangedRegion\(probePos\);') -and ($blend -match 'float a = hasHistory \? saturate\(fieldChanged \? regionBlendAlpha : temporalBlendAlpha\) : 1\.0;') -and ($blend -match 'const bool replace = !hasHistory \|\| a >= 1\.0;') -and ($blend -match 'if \(replace\) \{')
 
 # ── CPU model of the mapping: probe c in the new grid == probe c + shift in the old grid ──
 # Integer arithmetic on a 16^3 grid with spacing 1 (positions are integers), so the

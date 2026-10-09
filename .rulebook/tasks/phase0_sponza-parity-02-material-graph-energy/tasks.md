@@ -24,9 +24,9 @@
 
 
 ## 6. Tail (mandatory — enforced by rulebook v5.3.0)
-- [x] 6.1 Documentation: `docs/engine/12-rendering/32-graph-material-draw-metadata.md` (indexed in that folder's README) — authored keys, the materialFlags bit layout, constant/texture input resolution, the F0/F90 formulation, translucency handling and the directional light fields.
-- [x] 6.2 Tests: `MaterialGraphSerialization.BlendModeAndTwoSidedRoundTripAndHash` added to `runtime/tests/material/test_material_graph.cpp` (round trip + content-hash sensitivity), plus the ported `scripts/test_material_specular.{cpp,ps1}` harness.
-- [x] 6.3 Tests run 2026-09-07. `MaterialGraphSerialization.BlendModeAndTwoSidedRoundTripAndHash` **passes**; the material graph suites are 38/39, and the broader `MaterialGraph*:*BlendMode*` filter is 74/74. `scripts/test_material_specular.ps1` is 686/686.
+- [x] 6.1 Update documentation: `docs/engine/12-rendering/32-graph-material-draw-metadata.md` (indexed in that folder's README) — authored keys, the materialFlags bit layout, constant/texture input resolution, the F0/F90 formulation, translucency handling and the directional light fields.
+- [x] 6.2 Write tests: `MaterialGraphSerialization.BlendModeAndTwoSidedRoundTripAndHash` added to `runtime/tests/material/test_material_graph.cpp` (round trip + content-hash sensitivity), plus the ported `scripts/test_material_specular.{cpp,ps1}` harness.
+- [x] 6.3 Run tests and confirm they pass: tests run 2026-09-07. `MaterialGraphSerialization.BlendModeAndTwoSidedRoundTripAndHash` **passes**; the material graph suites are 38/39, and the broader `MaterialGraph*:*BlendMode*` filter is 74/74. `scripts/test_material_specular.ps1` is 686/686.
   - **`runtime/tests/material/` and `runtime/tests/engine/material/` were never registered in `build.zig`** (neither here nor in SponzaTest), so all 46 tests in them — including the one SponzaTest added for this feature — were compiled by nothing and run by nobody. Registered both; they compile and link clean.
   - That surfaced one genuine pre-existing failure: `MaterialGraphSerialization.RoundTrip_NodeCount_Connections_ParamValues` — `ScalarConstant id=0 not found after round-trip`. Unrelated to this task (expression id 0 collides with the `IsConnected() { return connectedExprId != 0; }` sentinel); it needs its own task, and it is now visible instead of silent.
   - The full `zig build test` still fails on the 73 pre-existing failures plus the `MaterialPipeline_ParticleMesh` crash catalogued in task 01; this task adds no new failure to that set.

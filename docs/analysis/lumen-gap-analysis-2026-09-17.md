@@ -77,7 +77,7 @@ Deferred lighting contains source selection and replacement logic, not merely un
 
 **Work:** implement a persistent surface representation retaining spatial material/emissive data, coverage and invalidation, then direct/indirect lighting updates. Cards are the closest architectural match to the stated replication goal. Reuse the existing GDF as an intersection representation, rather than asking its average color to replace surface data.
 
-**Task coverage:** no dedicated equivalent found among searched active task files. Indoor-lighting and Brixelizer tasks cover adjacent work. **Complexity: very high.**
+**Task coverage:** no dedicated equivalent found among searched active task files. Indoor-lighting and Brixelizer tasks cover adjacent work. **Complexity: very high.** *Update 2026-10-08: the Brixelizer task no longer counts; `phase0_brixelizer-gi-integration` was closed as superseded.*
 
 ### G2 — P0: Complete lighting and material evaluation in DDGI
 
@@ -133,7 +133,7 @@ DDGI also repeats its ray loop per atlas texel for both irradiance and depth. Wi
 
 **Work:** trace probe rays once and reuse them for atlas integration; preserve overlapping probes when scrolling; prioritize invalid/visible data; evaluate sparse GDF storage and measured quality tiers.
 
-**Task coverage:** existing probe spreading and Brixelizer performance items partially cover this; they do not validate the current maximum preset. **Complexity: high.**
+**Task coverage:** existing probe spreading and Brixelizer performance items partially cover this; they do not validate the current maximum preset. **Complexity: high.** *Update 2026-10-08: the Brixelizer items no longer count, because `phase0_brixelizer-gi-integration` was closed as superseded.*
 
 ### G7 — P1: Reconcile implemented, disabled and validated status
 
@@ -144,6 +144,8 @@ DDGI also repeats its ray loop per atlas texel for both irradiance and depth. Wi
 **Work:** classify Brixelizer as inactive until fixed and freshly verified. Decide its role explicitly: an alternative GI backend does not fill the custom renderer's missing Surface Cache by merely being present in the repository. Update status documents after runtime verification.
 
 **Task coverage:** `phase0_brixelizer-gi-integration` directly applies. **Complexity: unknown until crash diagnosis.**
+
+**Update 2026-10-08 (decided):** `phase0_brixelizer-gi-integration` was closed as superseded. Brixelizer is classified inactive and is not being revived; the dormant source stays, and removing it is a separate decision. The status documents were corrected the same day (`docs/specs/rendering/gi-system.md`, `docs/specs/rendering/ibl-pipeline.md`, `docs/guides/brixelizer-gi-guide.md`, `runtime/CHANGELOG.md`). The line numbers in the evidence above are those of 2026-09-17; the early return is now at `frame_gi_passes.cpp:387` and the commented-out construction at `scene_renderer_init.cpp:666-674`.
 
 ### G8 — P2: Share indirect lighting with fog and translucency
 

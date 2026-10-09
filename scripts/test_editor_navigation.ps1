@@ -12,7 +12,7 @@ $toggle = [regex]::Match($frame, '(?s)    if \(m_input && m_input->IsKeyJustPres
 $fly = [regex]::Match($frame, '(?s)    if \(!cameraFromECS && !vfxOverlayWantsMouse.*?\n    \}').Value
 $speed = [regex]::Match($init, 'm_cameraCtrl->SetMoveSpeed\([^)]+\);').Value
 $end = [regex]::Match($render, 'm_input->EndFrame\(\);').Value
-if (!$prepare -or !$toggle -or !$fly -or !$speed) { throw 'Production navigation source could not be extracted.' }
+if (!$prepare -or !$toggle -or !$fly -or !$speed -or !$end) { throw 'Production navigation source could not be extracted.' }
 [IO.File]::WriteAllText((Join-Path $artifacts 'navigation_frame.generated.h'), "$speed`n$prepare`n$toggle`n$fly`n$end")
 $window = Get-Content (Join-Path $repo 'runtime/platform/windows/platform_window.cpp') -Raw
 $keyExpression = [regex]::Match($window, 'self->m_input->OnKeyDown\(([^\r\n]+)\);').Groups[1].Value

@@ -197,6 +197,30 @@ def main():
           'and the wrong order really would have read zero on that input',
           f'{mean_then_std:.2e}')
 
+    # ---- spread_verdict ----------------------------------------------------
+    check(c.spread_verdict([9.5e-7, 3.218e-3], [0.0, 3.218e-3]) == 'INDISTINGUISHABLE',
+          'spread_verdict: cross pairs inside the repeat spread are indistinguishable',
+          '40-default-vs-explicit: between and within both reach 3.218e-03')
+    check(c.spread_verdict([4e-3, 5e-3], [0.0, 3.218e-3]) == 'SEPARATED'
+          and c.spread_verdict([1e-3, 4e-3], [0.0, 3.218e-3]) == 'OVERLAPPING',
+          'spread_verdict: a cross pair beyond every repeat pair is never indistinguishable',
+          'separated / overlapping')
+    check((3.218e-3 <= max(1.473e-3, 2.37e-4)) is False
+          and c.spread_verdict([3.218e-3], [1.473e-3, 3.218e-3]) == 'INDISTINGUISHABLE',
+          'spread_verdict: the 2026-09-16 failure was the single-pair floor, not the conditions',
+          'one pair fails, the repeat spread does not')
+    check(c.spread_verdict([0.0], [0.0]) == 'INDISTINGUISHABLE'
+          and c.spread_verdict([1e-11], [0.0]) == 'SEPARATED',
+          'spread_verdict: a zero spread is guarded against numerical dust only',
+          '0 vs 0 indistinguishable; 1e-11 vs 0 separated (guard 1e-12)')
+    for bad in (([float('nan')], [0.0]), ([], [0.0])):
+        try:
+            c.spread_verdict(*bad)
+            refused = False
+        except ValueError:
+            refused = True
+        check(refused, 'spread_verdict refuses a NaN or an empty distance list', repr(bad))
+
     print(f'\n{len(PASS)} passed, {len(FAIL)} failed')
     for f in FAIL:
         print(f'  FAILED: {f}')

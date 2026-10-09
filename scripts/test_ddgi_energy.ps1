@@ -15,6 +15,15 @@
 #      the hardcoded placeholder sun/sky the dispatch used to build.
 #
 # Source-level, like test_reflection_selection.ps1: no GPU required.
+#
+# 2026-10-08: `TraceProbeRay` lives in ddgi_probe_common.hlsli since block B.6 (edfd7942), shared by
+# the trace pass production dispatches (ddgi_probe_trace_cs.hlsl) and the update shader's per-texel
+# fallback (r.GI.DDGI.RayBuffers 0). The extraction looked for the original two-argument signature
+# in ddgi_probe_update_cs.hlsl; the signature gained `out float4 hitInfo` for followup-01's stage-3
+# hit records (notes, 2026-09-17; ddgi_probe_update_cs.hlsl:269 in 7eea6b95), and from then on the
+# script threw before any check. It now reads the shared header with any parameters after
+# `float3 origin, float3 dir` (renaming either makes it throw), and check 0 ties that function to the
+# trace pass.
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -23,20 +32,34 @@ $writer   = Get-Content -Raw -LiteralPath (Join-Path $root 'runtime/shaders/runt
 $consumer = Get-Content -Raw -LiteralPath (Join-Path $root 'runtime/shaders/runtime/lighting/deferred_lighting_ps.hlsl')
 $rc       = Get-Content -Raw -LiteralPath (Join-Path $root 'runtime/shaders/runtime/gi/radiance_cache_trace_cs.hlsl')
 $dispatch = Get-Content -Raw -LiteralPath (Join-Path $root 'runtime/engine/renderer/gi/ddgi_system.cpp')
+$common   = Get-Content -Raw -LiteralPath (Join-Path $root 'runtime/shaders/runtime/gi/ddgi_probe_common.hlsli')
+$traceCs  = Get-Content -Raw -LiteralPath (Join-Path $root 'runtime/shaders/runtime/gi/ddgi_probe_trace_cs.hlsl')
 
-$trace = [regex]::Match($writer, '(?s)float4 TraceProbeRay\(float3 origin, float3 dir\) \{.*?\n\}').Value
-if (-not $trace) { throw 'TraceProbeRay not found in the DDGI writer.' }
+$trace = [regex]::Match($common, '(?s)float4 TraceProbeRay\(float3 origin, float3 dir\b[^)]*\)\s*\{.*?\n\}').Value
+if (-not $trace) { throw 'TraceProbeRay not found in ddgi_probe_common.hlsli, the header both DDGI writers take it from.' }
+# Comments are not code (2026-10-08): with them, `sunRad / kPI` also matched the function's own comment
+# and `NdL * visibility` its diagnostic hit flag, so lambert_over_pi_in_ddgi and visibility_applied
+# could not fail; visibility_applied now reads the sunRad assignment itself.
+$trace = [regex]::Replace($trace, '//[^\r\n]*', '')
 
 $checks = [ordered]@{}
 
+# 0. The function checked below is the one production traces with: the trace pass includes the shared
+# header and calls it, and the update shader includes the same header for its fallback.
+$checks['trace_pass_uses_shared_trace'] = [bool]([regex]::IsMatch($traceCs, '#include\s+"ddgi_probe_common\.hlsli"')) `
+                                      -and [bool]([regex]::IsMatch($traceCs, '=\s*TraceProbeRay\(probePos,\s*rayDir')) `
+                                      -and [bool]([regex]::IsMatch($writer, '#include\s+"ddgi_probe_common\.hlsli"'))
+
 # 1. Lambert 1/pi, matching the SDF writer's `albedo * (sunRad / kPI + indirect)`.
 $checks['lambert_over_pi_in_ddgi'] = [bool]([regex]::IsMatch($trace, 'sunRad\s*/\s*kPI'))
-$checks['lambert_over_pi_in_sdf']  = [bool]([regex]::IsMatch($rc, 'sunRad\s*/\s*kPI'))
+# The SDF writer's radiance assignment itself (2026-10-08): its diagnostic `pathStats.y` line also
+# carries `sunRad / kPI`, so the bare pattern still passed with the assignment's 1/pi gone.
+$checks['lambert_over_pi_in_sdf']  = [bool]([regex]::IsMatch($rc, '\bradiance\s*=[^;]*\bsunRad\s*/\s*kPI'))
 $checks['no_unscaled_albedo_return'] = -not [regex]::IsMatch($trace, 'return\s+float4\(\s*sunRad\s*\*\s*groundAlbedo')
 
 # 2. Shadow ray gating the hit radiance.
 $checks['shadow_rayquery'] = [bool]([regex]::IsMatch($trace, 'RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH'))
-$checks['visibility_applied'] = [bool]([regex]::IsMatch($trace, 'NdL\s*\*\s*visibility'))
+$checks['visibility_applied'] = [bool]([regex]::IsMatch($trace, 'sunRad\s*=[^;]*NdL\s*\*\s*visibility'))
 
 # 3. Normalised depth moments on both sides.
 $checks['writer_normalises_depth'] = [bool]([regex]::IsMatch($writer, 'hitNorm\s*=\s*hitT\s*\*\s*invMaxTraceDistance'))

@@ -142,3 +142,171 @@ backend compile expectations).
 `QuickF5TapBeforeFrameTogglesOnce`) are in the reference repo, not here, so they were not run. The
 behaviour they assert is implemented and tested above; running those files unchanged still needs
 `test_editor_navigation.ps1`, which also wants `NormalizeWindowKey` in `platform_window.cpp`.
+
+## Closure review (2026-10-08)
+
+A static review for closing the task, against HEAD `4501fa74` (the sources it cites are unchanged at
+`8246ab5c`, and at `5fcd62e5`, where `runtime/tools/uzengine.cpp` changed outside the parts cited;
+re-checked 2026-10-09). Nothing was built or run apart from `rulebook task validate`; every
+prediction below comes from reading the sources.
+
+### Correction (2026-10-08): the record of item 1.4
+
+* "No call site moved" (2026-09-16 section) was overtaken the same day by the frame-boundary fix.
+  The runner pumps window messages before `RenderFrame`, and `BeginFrame()` in `frame_setup.cpp`
+  dropped every edge before anything read it. `frame_setup.cpp:234` now calls `PrepareFrame()`, and
+  `frame_overlay.cpp:396` calls `EndFrame()` after `ClearTypedChars()`. It was committed with the port
+  in `7eea6b95` (2026-10-04).
+* "The two SponzaTest files live in the reference repo, not here" (2026-09-16 section and
+  `.metadata.json`) is wrong. `scripts/test_editor_navigation.{cpp,ps1}` have been here since
+  2026-09-08 (the 2026-09-15 diagnosis ran them), were committed in `7eea6b95`, and as committed match
+  `origin/test/windows-sponza-parity` apart from line endings (the `.ps1` now also differs by the
+  guard change below).
+* `NormalizeWindowKey` came with merge `31b5c14a` (2026-10-05) from SponzaTest `97acd374`
+  (`platform_window.cpp:28`, called at `:112` and `:119`). The harness now extracts it.
+
+### Item 1.4 residue: what the navigation harness still needs
+
+An emulation of the `.ps1` extraction on today's sources (Python, CRLF kept as `Get-Content -Raw`
+keeps it) extracts `$prepare`, `$toggle`, `$fly`, `$speed`, `$keyExpression` and `$keyNormalizer`.
+`$end` comes back empty: this branch has no `m_input->EndFrame()` in `scene_render_frame.cpp`, because
+merge `31b5c14a` dropped SponzaTest's call there as a duplicate of `frame_overlay.cpp:396`. The guard
+did not check `$end`, so the harness would have compiled a `Frame()` that never ends the input frame.
+Reading the sources predicts that 5 of the 9 `EditorNavigation` tests pass and these 4 fail:
+
+| test | why it fails |
+|---|---|
+| `InjectedModifiersLatchQuickTransitions` | `SetModifierState` (`input.cpp:561-576`) writes `m_keyCurrent` and records no edge. SponzaTest routes it through `OnKeyDown`/`OnKeyUp` (its `input.cpp:542-561`). It has no production caller here (`runtime.cpp:1231-1236`). |
+| `PumpedF5ActivatesOnceAndRestoresCamera` | The harnessed frame never calls `EndFrame`, so F5 toggles again on the second frame. With that fixed, the test still fails at `test_editor_navigation.cpp:74`. Nothing calls `InitFromCamera` on the push or the pop (SponzaTest `frame_setup.cpp:258`, `:266`), so after the pop the controller re-aims camera 0 from its default yaw and pitch. |
+| `FreeCameraMovesAtSceneScaleAndMouseMovesSameFrame` | F5 toggles again (no `EndFrame`). The controller runs only for camera id 0 (`frame_setup.cpp:339`; SponzaTest's `:300-303` also runs it for the free camera). The editor speed is 5 cm/s (`scene_renderer_init.cpp:177`; SponzaTest `:169` sets 500). |
+| `QuickF5TapBeforeFrameTogglesOnce` | F5 toggles again on the second frame (no `EndFrame`). |
+
+Five SponzaTest pieces are missing: the unconditional `EndFrame()` at the end of `RenderFrame`,
+`InitFromCamera` on the push and the pop, the free-camera gating, the 500 cm/s speed and the latching
+`SetModifierState`. They are engine changes and are listed for this task's closure below. With the
+first four applied to a scratch copy, the extraction succeeds and the generated
+`navigation_frame.generated.h` is identical to the one SponzaTest's sources produce. With all five in,
+all 9 tests are expected to pass (`InjectedModifiersLatchQuickTransitions` needs the fifth), but this
+has not been measured.
+
+Three of the gaps are visible to users even without the harness:
+
+* The F5 free camera cannot be moved. The fly controller runs only for camera id 0, and
+  `fly_camera.lua` moves only the ECS camera. `docs/analysis/rendering/sponza-test-handoff.md:45`
+  promises F5 with WASD.
+* With `r.ShadowDebug` set to 1, the OverlayPass is not registered (`frame_overlay.cpp:188`; the mode
+  is re-read every frame, `scene_renderer_init.cpp:1095`), so `EndFrame()` never runs. Press edges and
+  scroll and raw deltas are never cleared, so every `IsKeyJustPressed` toggle fires again on every
+  frame: F5, F, G, the number keys and Lua `uz.input.is_key_just_pressed`.
+* The standalone `uzengine.exe` never calls `SetMoveSpeed`, so its C++ fly controller moves at 5 cm/s;
+  so does the runtime C API viewport of the VS Code scene editor (`runtime/engine/app/runtime.cpp`).
+  The `Application` host already applies `AppConfig::cameraMoveSpeed` of 500 (`application.cpp:174`,
+  `app_config.h:112`).
+
+**Harness change (2026-10-08).** Line 15 of `scripts/test_editor_navigation.ps1` now also throws when
+`$end` is empty. This is the only difference from the SponzaTest file. What the script extracts and
+asserts is unchanged, so the rule of 2026-09-15 (no test rewritten until it passes) still holds. In the
+emulation (Python, and again with Windows PowerShell's own regex engine), the guard throws on today's
+sources with its generic message, `$end` being the only empty extraction. It passes once change 1
+below (the `EndFrame` call) is in; with changes 1-4 applied, the generated header equals the one from
+SponzaTest's sources apart from line endings (re-checked 2026-10-09).
+
+### Hand-offs to this task that were not picked up
+
+* Parity-03 (notes.md:30-32, :42) handed this task SponzaTest's editor-navigation hunks in
+  `frame_setup.cpp`. `PrepareFrame` is done and `InitFromCamera` is covered above. The third hunk is
+  overlay shutdown on failure: when the deferred `Init` of the stats overlay, the VFX editor overlay or
+  the viewport toolbar fails, SponzaTest calls `Shutdown()` and `reset()`. This branch only logs
+  (`frame_setup.cpp:79`, `:165`, `:188`), so a failed `Init` is retried every frame with
+  `End`/`Execute`/`WaitIdle`/`Begin`, and the stats block re-uploads its fallback textures each time.
+  The fix is queued as an engine change.
+* Parity-03 tasks.md 1.3: `test_sdf_window.ps1 -BvhCompare` has never run. There is no
+  `window_mesh_128_bvh.r16` in `scripts/test_sdf_dynamic_gpu_artifacts/`; only the brute-force field
+  from 2026-09-08 is there. Reading the sources shows the fixture cannot run unchanged any more.
+  `scripts/test_sdf_window.cpp` and `scripts/test_sdf_gpu.cpp` declare 9 root DWORDs and one static
+  sampler at `s2`. Today `global_sdf_composite_cs.hlsl` takes 13 root DWORDs (`ce2caa5e`, `0a9cc732`),
+  `mesh_sdf_bake_cs.hlsl` takes 9 (`8c4d14b6`), and `sdf_reflections.hlsli` samples through a WRAP
+  sampler at `s3` (`ce2caa5e`). A separate task was proposed for this, together with the other SDF GPU
+  fixtures, and created on 2026-10-09: `phase0_sdf-gpu-fixture-refresh`.
+* Parity-01 (notes.md:130-150) asked this task to add the one-line stub shaders to known-issues. Item
+  2.2 put the whole-tree count (32 files, 26 referenced) under `runtime/shaders/runtime/gi/`, where
+  only the bake and composite shaders were stubs, and did not add the list. Known-issues still
+  describes `r.MotionBlur` as working correctly and `r.DOF`, `r.LensFlare`, `r.TSR`, `r.FSR` and
+  `r.SMAA` as implemented, although their shaders are one-line stubs (29 remain today). The
+  corrections were applied to known-issues on 2026-10-08 (the `r.RadianceCache` paragraph, the
+  `r.TSR`, `r.FSR`, `r.SMAA`, `r.DOF`, `r.LensFlare`, `r.MotionBlur` and Distortion entries, and the
+  new "One-line stub shaders" entry).
+
+### Corrections to other items
+
+* Item 2.3: the stale "Exposure 3.0" comment is still at `frame_constants.cpp:127-129`. Its removal is
+  queued as an engine change.
+* Item 3.3 and the Runs table: the DXR 77.1 against SDF 52.0 comparison was confounded and is not an
+  energy finding. `run_sponza_dxr.bat` sets `r.GI.FinalGather=0`, which brings back the additive SSGI
+  term, while the SDF capture ran with the gather on (followup-01 notes.md:7). "No task yet" is
+  stale: `phase0_sponza-followup-01-dxr-ddgi-energy-parity` was opened from these notes the same day.
+  The DDGI level is still open there and in `docs/analysis/lighting-block-b-2026-10.md` ("Still open
+  after the block", B.6). Followup-01's 2026-10-08 close-out passes the writer-parity re-measurement to
+  `phase0_lighting-ddgi-sdf-writer-parity-head` (created 2026-10-09).
+* Item 3.2: "stable stationary convergence" compared the whole-image means of frames 120 and 640
+  (+0.15 %), while the shaded column still moved +20.9 %. That is convergence drift, not
+  frame-to-frame stability. Static-camera flicker was measured later by `phase0_sponza-followup-09..14`
+  and is open in known-issues.
+* The pre-existing gtest failures ("Not ported / open", 5.3) belong to no task:
+  * `MaterialGraphSerialization.RoundTrip_NodeCount_Connections_ParamValues` failed in parity-02's
+    run (material graph suites 38/39) and passed in followup-05's (`*MaterialGraph*` 39/39, notes.md:62).
+    Parity-02 notes.md:80-86 blamed an expression id 0 colliding with the `IsConnected()` sentinel
+    (`material_expression.h:55`), but expression ids start at 2 (`material_graph.h:195`). From reading
+    the code (not run): the test keeps `scalar`, a reference to `expressions_.back()` of a
+    `std::vector` (`material_graph.cpp:73-77`), across the next `AddExpression`
+    (`test_material_graph.cpp:58`, `:62`), which reallocates the vector, so the `scalar.id` printed at
+    `:93-94` is read from freed memory. The test and the graph code are unchanged since `7eea6b95`.
+  * `MaterialGraphHlslCodegen.Add_/Multiply_ExplicitVariables_*` hold `AddExpression` references the
+    same way (`test_material_graph.cpp:500-506`, `:544-550`); `Add_` is recorded as depending on the
+    test order (followup-05 notes.md:62).
+  * The fog and sky default-value tests.
+
+  A task was proposed for all of these and created on 2026-10-09: `phase0_preexisting-test-failures`.
+  Its proposal and item 1.1 still give parity-02's sentinel diagnosis, which the first bullet above
+  corrects. `VfxSceneSDFDI.*` belongs to the VFX work.
+* The `rt_uv_test_lib.hlsl` `[raypayload]` error accepted in 3.1 is a one-line shader fix
+  (`docs/analysis/rendering/sponza-ddgi-cbuffer-layout-2026-09-07.md:54`). It is queued as an engine
+  change. The qualifier that line gives does not compile; change 8 below has one that does.
+
+### Item 4.2 done
+
+`rulebook task validate` (CLI 5.4.1, read-only; `git status` was the same before and after) ran on the
+six tasks. Parity-05 and 06 were valid. Parity-01..04 failed only the v5.3.0 mandatory-tail check,
+because their tail lines read "Documentation:" and "Tests:" (and, in parity-02, "Tests run") instead of
+the labels the CLI matches. Those labels were reworded in place, with the content unchanged: 01 items
+10.1-10.2, 02 items 6.1-6.3, 03 items 7.1-7.2 and 04 items 6.1-6.2. A second run reported all six
+valid.
+
+### What closes this task
+
+Engine changes:
+
+1. `scene_render_frame.cpp`: `#include "input.h"`, and `m_input->EndFrame();` as the last statement of
+   `RenderFrame` (SponzaTest `:29`, `:384`). The call at `frame_overlay.cpp:396` then becomes
+   redundant, and the comment at `frame_setup.cpp:228-233` (edges dropped "at the end of the overlay
+   pass") is updated to the new boundary.
+2. `frame_setup.cpp`: `m_cameraCtrl->InitFromCamera(*freeCam)` after `:294`, and
+   `m_cameraCtrl->InitFromCamera(m_cameraManager->GetActiveCamera())` after `:301`.
+3. `frame_setup.cpp:339`: SponzaTest's free-camera gating (its `:300-303`), landing together with 2.
+4. `scene_renderer_init.cpp:177`: `SetMoveSpeed(500.f)`.
+5. `input.cpp:561-576`: `SetModifierState` through `OnKeyDown`/`OnKeyUp`.
+6. `frame_setup.cpp:78-80`, `:164-166`, `:187-189`: `Shutdown()` and `reset()` on a failed `Init`. The
+   VFX-overlay hunk needs the user's agreement, because that overlay's work is in flight.
+7. Delete `frame_constants.cpp:127-129`.
+8. `rt_uv_test_lib.hlsl:17-19`: `struct [raypayload] RayPayload { float4 color : read(caller) :
+   write(closesthit, miss); };`. The qualifier in `sponza-ddgi-cbuffer-layout-2026-09-07.md:54`,
+   `read(caller, closesthit, miss)`, fails to compile: the bundled dxc 1.9.2602 (the same
+   `dxcompiler.dll` the engine loads) reports "field 'color' is qualified 'read' for shader stage
+   'miss' but has no valid producer" (and the same for `closesthit`) at `lib_6_8` and `lib_6_9`. The
+   form above compiles at `lib_6_7` to `lib_6_9` without warnings, and at `lib_6_6` with a warning that
+   the qualifiers are ignored. The unchanged file fails at `lib_6_8` with "type 'RayPayload' used as
+   payload requires that it is annotated with the [raypayload] attribute" (checked 2026-10-09 with the
+   bundled dxc, output to the scratchpad; no engine build).
+
+After that, `scripts/test_editor_navigation.ps1` (CPU only) must pass all 9 `EditorNavigation` tests
+together with the input suite it compiles; that ticks 1.4.

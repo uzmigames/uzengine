@@ -9,6 +9,12 @@
                   and reports a smaller residual than comparing the same screen pixels (negative
                   control: no motion compensation)
 
+Correction (2026-10-08): the world-tracking checks ran on frames 41..100 after FIRST (198..257), but
+the trajectory counts its segments from its on_start frame (logged `base_frame=37`), so 198..217 were
+still frames. They now run on the moving frames the trajectory logs (218..267 of this dump at
+base_frame=37; the block-B sweep of 2026-10-07 logged base_frame=39, which gives 220..267). The
+figures recorded with the old window (95 % valid, 4.3x) predate the fix.
+
 Usage: python scripts/test_gdf_controls.py [--keep]
 """
 from __future__ import annotations
@@ -22,13 +28,15 @@ import tempfile
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'flicker'))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import regiondump  # noqa: E402
 import runner  # noqa: E402
+from run_gdf_motion_study import logged_windows  # noqa: E402
 
 SCENE_START = 37
 FIRST = SCENE_START + 120
-LAST = FIRST + 110          # into the first moving segment
+LAST = FIRST + 110          # 157..267: segment 2 (-X), moving from base_frame + 181 (218 at base 37)
 PROJECT = os.path.join(runner.REPO, 'scripts', 'sponza-gdf-boundary.uzproject')
 ROI = ('lit_wall', 1100, 300, 96, 96)
 BASE = {'r.AutoExposure': 0, 'r.Exposure': 1.0, 'r.TAA.JitterSequenceLength': 8}
@@ -82,9 +90,15 @@ def main():
               'a shifted grid phase moves the event frames while the path is unchanged',
               f'{len(sh)} events, {len(moved)} of them on frames the baseline had no event on')
 
-        # world tracking against no compensation, on the moving part of the sequence
+        # world tracking against no compensation, on the frames where the camera moves, as the
+        # trajectory logged them (corrected 2026-10-08: 41..100 after FIRST included 20 still frames)
         frames = regiondump.load_sequence(base['region_dir'], FIRST, LAST)
-        moving = [f for f in frames if 41 <= (f.frame - FIRST) <= 100]
+        windows = logged_windows(base['log'])
+        moving = [f for f in frames if any(lo <= f.frame <= hi for lo, hi in windows)]
+        if len(moving) < 10:
+            check(False, 'the dump holds frames where the camera moves',
+                  f'{len(moving)} frames of {FIRST}..{LAST} inside the logged windows {windows}')
+            return 1
         name, rx, ry, rw, rh = ROI
         tracked, plain, coverage = [], [], []
         for a, b in zip(moving, moving[1:]):

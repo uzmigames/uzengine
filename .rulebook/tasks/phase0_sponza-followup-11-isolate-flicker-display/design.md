@@ -44,3 +44,16 @@ it moved the counts (dark side 11x brighter, exposure 16x lower) without changin
 
 Ledger rows H-02b, H-08b, H-15, H-16 in `docs/analysis/flicker-hypothesis-ledger.md`; full tables in
 notes.md and the package report.
+
+**Correction (2026-10-08).** (1) "with an effect on the count that changes sign with the exposure" is
+wrong: bloom lowers the threshold counts at both exposures measured, 1.0 here and ~67 in the
+2026-09-09 package (bloom off raised px > 40 from 39 to 1547 per frame there), so it masks the
+residual (ledger H-16b supersedes H-16; H-05b supersedes H-05). (2) The records "stay bit-identical"
+in those single-process runs only; the renderer is not bit-reproducible across processes
+(followup-14), and the harnesses now compare repeated processes against their measured spread.
+(3) The package does not meet the artifact list under "Artifacts and reproducibility": the study
+deleted every linear dump and kept 3 of its 9 manifests and no logs; what survived was recovered into
+`recovered-2026-10-08/`, and the rewritten study keeps every manifest, log and PNG and the first
+process's dump of each configuration; it still writes no per-frame CSV, annotated masks or plots (the
+masks can be recomputed from the retained bloom-off dump). Details in notes.md, "Close-out review
+(2026-10-08)".

@@ -1976,3 +1976,157 @@ P1 1.004, P3 0 on every sealed label, C pass, P2 1.0515 / 1.0492; S2 shadow_wall
 rear_door, right_shadow, lit_floor, left_wall with the same recentre frames (128 / 172 / 216); GPU
 frame on the sweep 16.4 ms (rule 0) -> 14.4 ms (candidate). `verify_sponza_loading.ps1` 3/3 (startup, converged, camera-c);
 Sponza `--diag` with the candidate: GPU frame 20.2 ms (baseline 21.6 ms with rule 0; DeferredLighting 8.6, SSGI 8.0, RadianceCache_Trace 0.73).
+
+## Closure review — corrections and hand-over (2026-10-08; appended, nothing above is rewritten)
+
+Review for closure on 4501fa74 (HEAD was 8246ab5c by the end of the review; 8e3470f8, 70772229 and 8246ab5c
+change none of the code cited below). Each point below corrects or completes a statement above; the earlier
+text stays as written. The matching dated corrections are on tasks.md 3.1, 4.1, 4.2, 5.1-5.3, 6.4, 6.5.
+
+**`scripts/test_ddgi_energy.ps1` threw from 2026-09-17 to 2026-10-08.** The Verification table (16/16)
+and "Ray count shared" (19/19) were true when written. The script extracts `TraceProbeRay` by its full
+signature; the stage-3 hit records (2026-09-17) gave the function an `out float4 hitInfo`
+(`ddgi_probe_update_cs.hlsl:269` at 7eea6b95) and block B.6 (edfd7942) moved it, with six parameters, to
+`ddgi_probe_common.hlsli:220`, so the extraction matched nothing and the script threw before any check.
+Repaired: it reads the shared header with any parameter list; it strips comments from the extracted
+function, because two checks could not fail on today's code — `lambert_over_pi_in_ddgi` also matched the
+comment at `ddgi_probe_common.hlsli:274`, `visibility_applied` the diagnostic hit flag at `:283` (it now
+reads the `sunRad` assignment); `lambert_over_pi_in_sdf` had the same weakness in the SDF writer, whose
+diagnostic `pathStats.y` line (`radiance_cache_trace_cs.hlsl:554`) also carries `sunRad / kPI`, and reads
+the radiance assignment (`:552`) since the closure review; and `trace_pass_uses_shared_trace` requires the trace pass
+(`ddgi_probe_trace_cs.hlsl`, what production dispatches since B.6) and the update shader to include the
+header, and the trace pass to call the function. Verified statically: the script's own regexes, replayed in
+Python on the sources at 4501fa74, give 20/20; for each of the 20 checks a targeted mutation of its source
+fails that check and no other; a renamed function makes the extraction fail; the original script, replayed
+the same way, throws. The PowerShell file parses with 0 errors; it was not executed in this session.
+
+**What `scripts/test_gi_energy_gpu.ps1` compares.** "Per probe" (tasks 3.1, 4.1; the known-issues DDGI
+section) describes the statistic each writer logs, not the ratio. The harness divides the two writers'
+grid lines (`test_gi_energy_gpu.ps1:34-36, 58`), and they average different probes: the cache's line keeps
+probes with field distance >= 5 cm (`radiance_cache.cpp:531`), the DDGI's every probe with finite records
+(`ddgi_system.cpp:529-548`). Both are means of luminance: no per-channel statistic is logged, so the "per
+channel" of 4.1's criterion was never measured. Under mode 3 the cache's population also holds 185 unreachable probes (class 7),
+which are not traced and log 0. Block B.6's two D4 logs re-read on one population
+(`scripts/gi_energy_populations.py`; post-hoc, no verdict; paths under `.screenshots/flicker-elimination/`):
+
+| log | harness ratio (RC 3 885 / DDGI 4 096 probes) | cache-valid probes (class 8/9/10, n 3 904) | cache-valid probes inside the building (cells x 5..12, z 7..14, n 832) | per-probe median inside (p10, p90) |
+|---|---|---|---|---|
+| B.6 run, build of edfd7942 (`test-ddgi-dedup/gi_energy_run.log`) | 0.9662 | 0.9731 | 0.9434 | 0.9353 (0.771, 1.029) |
+| closing sweep, 794b632f (`sweep-b/test-ddgi-dedup/gi_energy_run.log`) | 0.9637 | 0.9704 | 0.9404 | 0.9427 (0.774, 1.025) |
+
+The per-probe ratio pairs two different 32-ray sets (the cache traced each probe in the frame of its
+slice, the DDGI every probe at the snapshot), so its median is the reading and its tails are not. Inside
+the building the DDGI writer with its second bounce reads about 6 % below the cache; outside, where 3 072
+of the 4 096 probes are, the ratio of means is 0.978 / 0.975 and the per-probe median 0.997 / 0.995. No comparison on identical directions (H-52, H-61) has been
+made since edfd7942.
+
+**None of it is measured on the current scene set.** 513e2983 took the mesh decals (`materialFlags`
+bit 4, `scene_sync.cpp:577`) out of the distance-field occluder set (`frame_gi_passes.cpp:209`) and the
+shadow passes (`frame_shadows.cpp:216, 455`, `shadow_pass.cpp:229`), not out of the TLAS:
+`TLASManager::Rebuild` takes every draw command (`tlas_manager.cpp:76-81`, called from
+`scene_render_frame.cpp:137-141`) and the DDGI traces with `RAY_FLAG_FORCE_OPAQUE`
+(`ddgi_probe_common.hlsli:237`). The DDGI writer therefore still has Sponza's dirt-decal quads as opaque
+occluders and the SDF writer no longer does; their distance field had darkened Sponza's indirect light by
+43 % (4501fa74's message), while how much the triangles themselves occlude the DDGI's rays is not measured.
+b8ff5077 (sky capture per channel) and 4501fa74 (SkyLight x sqrt 3) also changed the sky input of both
+writers after 794b632f.
+
+**Item 4.2.** Its "Met" is display-referred and does not test the probe energy (tasks.md 4.2 correction):
+Camera A is identical by construction, and the HDR-linear consumer ratios at Camera C with the gather off
+(38/57-ddgi-sdf-parity, H-60) and their decomposition (H-62) are the measurements that do.
+
+**Residual of H-56.** The 0.4-0.8 % below 1 under the uniform known field (K1 0.9923 / 0.9953 / 0.9963) was
+not re-measured after the ray-set correction: H-58's 1.006 / 1.023 / 1.007 is the directional field's K1, a
+different test. Not attributed; dropped at closure as immaterial against the +-10 % target.
+
+**H-61's writer term** — inside the building the DDGI's per-ray sky luminance read 6.5-9.2 % above the
+cache's, where the field reports a surface and the triangles an opening — was measured once, before B.6, on
+the QA field (the stage-3 protocol runs `scripts/sponza-lighting-camera-c.uzproject`: GDF 64 / mesh SDF 32 by
+default). Its candidate cause, the surface bias of `r.GI.MeshSdf.TwoSided 1`, and which writer is right at
+those rays were never measured; the shipped project traces a two-sided field too (`sponza.uzproject:17`), at
+256 / 128, where the term itself was never measured. Open.
+
+**The hang (6.4, H-71, H-72).** Of H-71's two suspects only the readback wait was changed, and only for the
+radiance cache (`radiance_cache.cpp:386-388, 503-504`); `DDGISystem::ReadDiagnosticResults` still calls
+`WaitIdle` (`ddgi_system.cpp:521`, DXR diagnostic runs only). The G-buffer position read the cache pass
+declares for the visible seeds (`frame_gi_passes.cpp:285, 317`), on in `sponza.uzproject:21` since
+6ee6163f, was not examined. The cause is unknown; it has not recurred in 38+ runs. Contrary to the 6.4
+closure above ("Every CPU wait for the GPU ... now has a watchdog") and ledger H-72 ("if it returns the
+watchdog says where"), the watchdog loops only around `DX12Device::WaitIdle`'s direct-queue wait and `DX12Fence::WaitCPU` (`dx12_device.cpp:1285-1294`,
+`dx12_fence.cpp:83-95` at 8246ab5c), while `WaitIdle`'s copy- and compute-queue drains still wait `INFINITE`
+with no log (`dx12_device.cpp:1305-1308, 1319-1322`); a recurrence there, or outside a GPU wait, would leave
+no trace.
+
+**Scope of 6.5.** `scripts/test_probe_classification.py` (7/7 on the 2026-09-21 binary) runs rules 0 and 1
+in the QA configuration only (`test_probe_classification.py:47-48`, `run_probe_side_reference.py:47`). The
+configuration enabled on 2026-10-05 (mode 3 + `ReachRelocate` + `ReachVisibleSeeds`) has no pass/fail
+regression harness; H-72's re-runs are study runs, and `scripts/sweep_block_b.sh` runs no classification
+harness.
+
+**`test_flicker_metrics.py`'s 11 errors.** "Pre-existing" (H-63 checks above, and 2026-09-21) is not shown
+by a run: the last recorded pass is followup-13 2.3 (26/26) and the first recorded failure is 2026-09-18.
+The code shows a cause independent of this task: the failing fixtures are format-2/3 files
+(`write_region_file`, `test_flicker_metrics.py:36-69`) carrying only the LIGHTING, TAA and OUTPUT groups
+(fields 3, 5, 4), on which all three `LEGACY_LAYOUTS` agree (2 / 5 / 1 records), yet `resolve_layout`
+rejects any record count that more than one legacy layout matches (`scripts/flicker/regiondump.py:164-168,
+209-215`). The same rejection makes real format-2/3 captures with those masks unreadable. H-63's change
+(LIGHTING_EXTRA 11 -> 13 in `CURRENT_LAYOUT`) is not on that path. The reader change (accept matches that
+agree on every group the file carries) is handed over with this closure.
+
+**The points left open on 2026-09-21/23.** Mode 3 uses no faces and relocates into reached air, so embedded
+or coplanar faces and relocation where the field is the conservative bound no longer bear on the shipped
+configuration (S1, on the QA field, was retired), and whether the vertex orientation is the true side on
+Sponza became moot without being answered (modes 1 and 2 stay behind the switch, default 0). Far probes
+across a wall remain wherever both of its sides are reachable: the cache query has no visibility test, and
+the reference's sealed rooms cannot show it under mode 3 (P3 0 everywhere, H-70).
+
+**H-62's wall-flicker candidate** — the cache query's renormalised mean over a surviving probe set that
+changes (a validity flip at a recentre, an SH clamped to zero, a cell boundary) — was recorded as a
+candidate for the flicker track and never measured; no task names it, and S3 of H-67/H-70..H-72 compared
+rules without testing it. It is handed over as an open ledger row (H-62b) with its next experiment. With
+the final gather on (the shipped configuration) a wall pixel takes the gather, whose hits query the cache
+through the same renormalised mean (`SdfReflectionIrradiance`, `sdf_reflections.hlsli:160-194`, called at
+`:208`); `rc_support` records only the deferred query the gather replaces (`deferred_lighting_ps.hlsl:961`,
+`:1148-1150`), so that condition needs a record of the hit-point queries before it can be tested.
+
+**Where each open point goes at closure.**
+
+* The DDGI level with the second bounce against a ground truth, DDGI probe relocation and classification,
+  a Chebyshev test inside the indirect term: `docs/analysis/lighting-block-b-06-ddgi-dedup.md` "Still open"
+  and `docs/analysis/lighting-block-b-2026-10.md` "Still open after the block" (B.6), where they are listed.
+* The TLAS occluder set (translucent draws and mesh decals out, as in the distance field and the shadows),
+  the writer comparison re-run on the current build on both populations, H-61's writer term: the proposed
+  follow-up phase0_lighting-ddgi-sdf-writer-parity-head.
+* A pass/fail regression harness for the shipped classification, far probes across walls whose both sides
+  are reachable, P2 against an irradiance solution of the reference (ledger H-72), the hang's unexamined
+  suspect, the DDGI readback's `WaitIdle` and the two drains the watchdog does not cover, the H-62
+  candidate (ledger H-62b): the proposed follow-up
+  phase0_lighting-rc-probe-support-followups.
+* `test_flicker_metrics.py`: the change to `scripts/flicker/regiondump.py` handed over with this closure.
+* Dropped: H-56's residual (above).
+
+### Closure check (2026-10-09; appended, nothing above is rewritten)
+
+HEAD is 5fcd62e5; 7eee2d00 and 5fcd62e5 touch `runtime/tools/uzengine.cpp` and the cloud harness only, so
+none of the code cited above changed.
+
+* **The guard ran.** `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_ddgi_energy.ps1`
+  (Windows PowerShell 5.1; the six sources it reads are unchanged since 4501fa74) printed
+  `DDGI energy: 20/20 checks passed`, exit 0. An independent replay of its expressions in Python agrees:
+  20/20; each check fails alone under a mutation of a single occurrence in its source; mutating only the
+  diagnostic lines (`radiance_cache_trace_cs.hlsl:554`, `ddgi_probe_common.hlsli:283`) leaves 20/20; the
+  original script throws on the sources of 7eea6b95, edfd7942, 4501fa74 and 5fcd62e5. "Any parameter list"
+  above is any parameters after `float3 origin, float3 dir`: renaming either makes the script throw.
+* **The reader change is in.** `resolve_layout` (`scripts/flicker/regiondump.py:211-214`) accepts matching
+  legacy layouts that agree on every group the file carries since 2026-10-08. With it
+  `python scripts/test_flicker_metrics.py` ran 26/26 and `python scripts/test_region_format.py` 12/12; the
+  metrics tests against HEAD's `regiondump.py` give the 11 errors.
+* **The two follow-ups exist.** phase0_lighting-ddgi-sdf-writer-parity-head and
+  phase0_lighting-rc-probe-support-followups were created on 2026-10-09.
+* **Same probes are not always the same trace origin.** The cache traces class 9 probes from the end of
+  their climb and class 10 from their relocated position; the DDGI traces every probe from its grid
+  position. Of the 832 cache-valid probes inside the building, 98 are class 9 and 70 class 10. On the 664
+  class-8 probes, which both writers trace from the same point, the ratio of means is 0.9277 / 0.9236 and
+  the per-probe median 0.9242 / 0.9317 (edfd7942 / 794b632f), against 0.9434 / 0.9404 and 0.9353 / 0.9427
+  over all 832 (`scripts/gi_energy_populations.py`, which now prints that population). Still inside
+  1 +- 0.10, in luminance, and still before 513e2983.

@@ -140,7 +140,8 @@ def main():
         # Measured, and kept as an assertion so a later change that "fixes" it is noticed: freezing
         # the sampling seed does NOT stabilise the final gather — it pins the sampling pattern and
         # the residual gets *worse*. A valid gather freeze has to hold the gather's output, not its
-        # seed; that control does not exist yet and is named in the ledger for followup-14.
+        # seed. That control is `r.GI.FinalGather.FreezeAfterFrame` (added 2026-09-10, ledger H-28c);
+        # this harness does not exercise it.
         check(d_both > d_base,
               'freezing the seed does not stabilise the final gather (measured, not assumed)',
               f'{d_both:.3e} vs {d_base:.3e} ({d_both / max(1e-12, d_base):.2f}x) — a valid gather '

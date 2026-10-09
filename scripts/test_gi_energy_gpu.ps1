@@ -4,9 +4,12 @@
 # The SDF writer (radiance_cache_trace_cs.hlsl) and the DDGI writer (ddgi_probe_update_cs.hlsl)
 # each log, in LINEAR radiance, the mean luminance of the ray radiance their probes saw:
 #   "RC transport: grid ... meanRadiance=X skyFraction=Y"   and   "DDGI transport: grid ... meanRadiance=X skyFraction=Y"
-# plus one line per central probe (x,y,z in {7,8}). This script pairs them and prints the ratio.
-# Both grids share origin and spacing (DDGISystem::SetGridOrigin(rcOrigin)), so the comparison
-# is probe-to-probe. Parity target: |ratio - 1| <= 0.10 — reported as MET / NOT MET; the script
+# plus one line per probe (every probe since 2026-09-16). This script prints the ratio of the two grid
+# lines and the per-probe pairs. Both grids share origin and spacing (DDGISystem::SetGridOrigin(rcOrigin)),
+# so the pairs are probe-to-probe; the grid ratio is not (2026-10-08): the RC line averages the probes
+# with field distance >= 5 cm, unreachable mode-3 probes included at 0, and the DDGI line every probe;
+# scripts/gi_energy_populations.py re-reads this log on one population.
+# Parity target: |ratio - 1| <= 0.10 — reported as MET / NOT MET; the script
 # fails only when the measurement itself is missing or non-finite (use -Strict to fail on parity).
 param([int]$Frames = 200, [switch]$Strict, [switch]$ReuseLog)
 $ErrorActionPreference = 'Stop'

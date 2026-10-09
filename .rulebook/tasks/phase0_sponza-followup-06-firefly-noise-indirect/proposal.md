@@ -53,6 +53,11 @@ see notes) and measured:
 - Open (this task's remaining items): a spatial/temporal filter for the SDF reflection path, and
   the debug views `shadows`, `lighting`, `lightingonly`, `ao` which render magenta / black / flat
   and could not be used for attribution.
+  *Correction (2026-10-08): both closed. The four debug views were fixed and verified on
+  2026-09-16 (tasks.md 4.2). No filter was built: 4.1 closed by decision on 2026-09-23 (ledger
+  H-68). Since block B the trace constants are 464 bytes (0a9cc732), and the DDGI mirror
+  listed below is `ddgi_probe_common.hlsli` (edfd7942); see notes.md, "Closure review
+  (2026-10-08)".*
 
 ## Impact
 - Affected specs: none

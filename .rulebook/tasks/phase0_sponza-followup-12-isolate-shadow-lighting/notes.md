@@ -243,6 +243,14 @@ own clip was already rejected on motion (H-42). Before running it, the pre-regis
   reference followup-14 used, where `rear_door` held 42 % of the correct bright energy.
 * **Validation is still pending.** `test_correction_gates.py` has not run to completion. The criteria,
   format and layout tests do not replace it.
+  *Correction (2026-10-08): this holds for the revision saved on 2026-09-15, the one with the stricter
+  criteria (the incident at the end of "Door reading, v3 — review findings" above). Earlier revisions
+  had run to completion, 10/10 and 11/11 on 2026-09-09 (`test_gates7.log`, `test_gates8.log`) and
+  11/11 on 2026-09-10 (the ledger's re-run entry under "Results marked invalid"). The 2026-09-15
+  revision first ran to completion on 2026-09-16 (10/11, `correction_gates_full.log`; the three logs
+  are in session 9d44760c's scratchpad, local only), and the harness passed 11/11 on 2026-09-21
+  (followup-01 notes, "Checks on the final build"). Its repeat-based revision of 2026-10-08 awaits
+  its GPU run (followup-14 item 2.3).*
 * **C0's scope.** It holds for the records with `[earlydepthstencil]` present, exactly as declared.
 
 ## Next step, pre-registered before its captures and before its analysis (2026-09-15)
@@ -375,6 +383,11 @@ the pixel rejects it, and that depth changes with the jitter.
   is chosen.
 
 **Still pending:** `test_correction_gates.py` has not run to completion.
+*Correction (2026-10-08): this holds for the revision saved on 2026-09-15; earlier revisions had run
+to completion on 2026-09-09 and 2026-09-10. That revision first ran to completion on 2026-09-16
+(10/11), and the harness passed 11/11 on 2026-09-21; the sources are in the correction under "Door
+reading, v3 — result" above. Its repeat-based revision of 2026-10-08 awaits its GPU run (followup-14
+item 2.3).*
 
 
 ## Review decision: no correction is chosen (2026-09-16)
@@ -639,3 +652,94 @@ fixed — and that fix is recorded here, not silently applied.
 
 Which correction to try, whether any is warranted at all, and anything about the DDGI/radiance-cache
 flicker, which is a different mechanism (H-49/H-50/H-51) and not covered by this gate.
+
+
+## Closure record (2026-10-08)
+
+Written at HEAD 4501fa74 for the closure review. Above this record only two dated corrections were
+added (to the `test_correction_gates.py` entries), and no capture was taken: this is a static review
+of these records, the sources and the data files. Five commits followed the same afternoon, to
+5fcd62e5: 8246ab5c fixed the two stale gtests (table below); 8e3470f8 changed the SkyLight of the
+three sample Sponza scenes only; 70772229 (the cloud noise) and 5fcd62e5 (the cloud reference scenes
+and their harness) concern clouds, which no Sponza scene uses (none has a
+`VolumetricCloudsComponent`); and 7eee2d00 lets `--screenshot-frames` take a single frame. None of
+them changes the renderer code or the shaders these records rest on.
+
+**What this task did.** The diagnostic checklist is complete (10/10, committed in 7eea6b95). Every ROI
+is attributed at pass level on its own evidence (ledger H-06b, H-17, H-18, H-19, H-28c, H-38). At the
+rear door the glass coverage flips through the depth test against an opaque silhouette that crosses
+the pixels with the jitter (H-47, `41-door-occluder-depth`), and the glass energy is lost in the TAA
+plus-filter reconstruction and history (H-46, H-48). Acceptance criteria for any correction were
+pre-registered on 2026-09-17 (above). No candidate correction was built or run.
+
+**Why it closes with the flicker open.** proposal.md makes this task diagnostic until a correction is
+selected. The review decisions of 2026-09-16 (above) kept it open for a correction, to be tried only
+after the reference and the acceptance criteria were fixed; they were fixed on 2026-09-17, and no
+correction was selected or tried. followup-14, the programme's correction task, evaluated the TAA
+HDR-weight candidate and selected nothing for the door, and its closure notes handed this task
+diagnostics (the gather-output freeze, and the translucent instrumentation of the door and the right
+shadow), not a correction. Closing here hands the correction, and the diagnostics still owed, to the
+owners in the table below rather than leaving them in a diagnostic task.
+
+### Corrections (2026-10-08)
+
+* **`test_correction_gates.py` is no longer pending,** as the 2026-09-15 entries above still say it
+  is. The revision they meant ran to completion on 2026-09-16 (followup-14 notes, "The behavioural
+  harness ran to completion"): exit 1, negative control 3.218e-03 against a floor taken from one
+  pair, 1.473e-03, which `40-default-vs-explicit` then showed to be process spread; the harness
+  passed 11/11 on 2026-09-21. What remains, a floor measured from repeats, is followup-14's (its
+  item 2.3).
+* **The 2026-09-17 criteria are incomplete as a gate.** They stay as written, by their own rule; a new
+  dated pre-registration must fix, before any candidate is judged:
+  * M1 states no recovery tolerance. Under G6's 2 % relative tolerance all six `shadow_wall`
+    recoveries of H-42's three-repeat run were censored, and `shadow_wall` is an M1 ROI in both motion
+    conditions, so M1's "not censored" would reject every candidate there until a tolerance passes
+    `criteria.recovery_tolerance_usable` (`scripts/flicker/criteria.py:191`) on that ROI.
+  * E1 is an energy ratio on the 137-pixel glass mask. The ledger's confound list reads per-mask energy
+    ratios as redistribution, not loss, and H-46 needed N_1..N_16 and the rectangle to make an energy
+    statement.
+  * `right_shadow` and `lit_floor` are in no condition, and the door is in no motion condition, so
+    trails at the door edge are never checked.
+  * The still condition's controls, `shadow_wall` and `lit_wall` on `sponza-flicker-a`, have no
+    rectangle at pose A: both are pose-W ROIs, and pose A's are `rear_door`, `right_shadow` and
+    `lit_floor` (followup-09; `scripts/run_correction_validation.py:60-62`). E2, T2 and D1 have no
+    control ROI at pose A until one is defined.
+* **H-45..H-48 are baselines of an older renderer.** At 4501fa74 `taa_resolve_cs.hlsl` and
+  `taa_upscaler.cpp` are unchanged since 7eea6b95, and `translucent_ps.hlsl` changed only at :239
+  (c14215ed), inside the `smID == 9` branch (:160) that the shading-model-1 door glass does not take
+  (H-43, H-45). But the glass's irradiance input (:271-276) samples the sky capture that b8ff5077
+  changed; the direct light, which carries the door's non-glass share, changed with 31b5c14a (CSM
+  distance) and 8aeb8917 (contact shadows); 513e2983 changed how the prefab's two dirt-decal meshes
+  draw; and `scripts/sponza-flicker-a.uzscene` keeps both SkyLight intensities at 1.0, since 4501fa74
+  and 8e3470f8 recalibrated only three sample scenes. 975fc3c9 should not matter here: none of the
+  seven Sponza files it repaired is referenced by `sample/content/meshes/sponza/sponza.uzprefab`,
+  which loads split files such as `ornament_doors_09_metal_door_0_0.uzmesh`, or by any other tracked
+  file. The door numbers must be re-captured before a candidate is judged against them.
+* **notes.md does not hold the 2026-09-09 component tables**, although tasks.md 2.1 and design.md said
+  so (both corrected). They are in `.screenshots/flicker-elimination/12-isolate-shadow-lighting/`
+  (git-ignored) and summarised in the ledger, whose rounded ratios H-06c restates.
+* **Standing limits, unchanged.** C0 (H-45) validates the records' visual cost with
+  `[earlydepthstencil]` present in both conditions; the attribute's own effect was never isolated. The
+  ROIs are screen rectangles on still poses, so the spec's "registered world-space ROIs" hold only
+  while the camera is still. The G-buffer carries no material or instance ID.
+
+### Where every open point goes
+
+| open point | evidence | owner |
+|---|---|---|
+| Rear-door correction: stabilise the glass coverage at the opaque silhouette, or change the TAA reconstruction and accumulation; gate completed first, baselines re-captured | H-45..H-48; the criteria above | proposed task `phase0_sponza-flicker-correction`; known-issues, Sponza flicker entry |
+| `right_shadow`: what the translucent pass consumes and produces there, per pixel (H-45's reading; `run_door_consumption_study.py` is hard-wired to `rear_door`) | followup-14 closure notes; H-31, H-38, H-68 | proposed `phase0_sponza-flicker-correction`; ledger H-38b |
+| Shadow-map update control for `lit_floor` (H-18), for the 67.5 % of the door's oscillation that survives without the translucent pass (H-38) and for H-20's motion residual; needs a diagnostic CVar | H-18, H-20, H-38 | proposed `phase0_sponza-flicker-correction`; ledger H-18b |
+| Shadowed walls, no candidate left: the gather output dominates (H-28c), decorrelating its rotation is 41 % worse (H-36), and the clip gamma that helped on a still camera fails G6 on `window` (H-42) | H-17, H-28c, H-36, H-39, H-42 | proposed `phase0_sponza-flicker-correction`; known-issues |
+| Pose-A regions in motion, never measured | tasks.md 1.3 | proposed `phase0_sponza-flicker-correction` |
+| Final gather 8.2 % / 17.2 % low against an independent reference; H-35's change of the reflections; the AO transient and same-frame specular change under the gather-output freeze | H-34, H-35, ledger sections of 2026-09-10 | proposed task `phase0_gi-final-gather-bias-coupling`; ledger H-28d; known-issues |
+| `test_correction_gates.py`: the floor from repeats | followup-14 notes | followup-14 (its item 2.3, unticked on 2026-10-08, and its outstanding field) |
+| Stale gtests `PerFrameCB_Is768Bytes`, `PrefilteredMipLevelsDefaultIsFive` | tasks.md 2.3 | none: fixed in 8246ab5c (2026-10-08), as the known-issues entry "Stale unit tests" now records |
+
+**Items other closures of this sweep placed with followup-12.** The 2026-10-08 closures of followup-09
+(the GTAO period test on `shadow_wall`, ledger H-09b, since H-17's GTAO-off runs of 16 frames are
+shorter than the 24-frame period; a shadowed-wall ROI above the decision floor; the baselines and
+per-ROI thresholds on the current build), followup-13 (the shadow-map update control, ledger H-18b
+and H-20b) and followup-06 (the door mechanism) place these items with this task or with the proposed
+correction task. This task closes on the same day, so whatever they name, each goes to the proposed
+`phase0_sponza-flicker-correction` with the items above.

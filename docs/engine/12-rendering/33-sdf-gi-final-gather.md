@@ -81,8 +81,10 @@ spacing mismatch — spacing is `2*extent/(N-1)` on both sides). `radiance_cache
 - the output SH is cosine-convolved for the consumer; a uniform radiance of 1 evaluates to 1;
 - record 6.w carries **validity**: a probe inside geometry writes 0 and every consumer skips it and
   renormalises the surviving weights;
-- all 4096 probes receive a first-write initialisation; the history is discarded only then and when
-  the scene revision changes (`InvalidateHistory`). A grid **recentre** (the snapped camera crossed a
+- all 4096 probes receive a first-write initialisation; the history is discarded only then, when
+  the scene revision changes (`InvalidateHistory`), and, since block B-02 (0a9cc732), for the probes
+  inside a GDF change box (`RetraceKeepingHistory`; `r.GI.RadianceCache.RegionBlendAlpha`,
+  default 1 = replace). A grid **recentre** (the snapped camera crossed a
   probe cell, spacing ≈ 267 cm on Sponza) retraces every probe in the same frame but keeps each
   probe's history: the grid moves by whole probes, so probe `c` of the new grid is probe
   `c + shift` of the old one, and the shader reads both the hysteresis history and the multi-bounce
@@ -93,9 +95,10 @@ spacing mismatch — spacing is `2*extent/(N-1)` on both sides). `radiance_cache
   that buffer was traced with — never the current origin, which on a recentre frame is already one
   cell away. See the addendum below for what happened before these two rules.
 
-The VFX→DDGI emissive injection (phase 16) is preserved: the trace constants are 208 bytes here —
-SponzaTest's 176, our 16-byte VFX tail and the 16-byte grid-recentre row — and
-`ddgi_probe_update_cs.hlsl` declares the same 13 rows (it ignores the last).
+The VFX→DDGI emissive injection (phase 16) is preserved. The trace constants are SponzaTest's 176
+bytes, our 16-byte VFX tail, the 16-byte grid-recentre row and, since block B-02 (0a9cc732), 16
+change-box rows: 464 bytes. The DDGI writers declare the first 13 rows and ignore the recentre row,
+in `ddgi_probe_common.hlsli` since block B-06 (edfd7942).
 
 ### Consumer semantics — zero is a valid answer
 
@@ -172,11 +175,17 @@ surfaces in shadow, not exposure.
 
 ## Instruments — what they do and do not show
 
-- `--diag` shares readbacks between targets (`gbuffer.metallic == roughness == normal`,
-  `gbuffer.ao == albedo`, `ssgi.* == lighting.direct`) and reads 3D targets as zero. Do not use it
-  for metallic, AO, SSGI or GDF questions.
-- `--view-mode detaillighting` is directional NdotL only; `reflections` is SSR only; `lightingonly`
-  is unexposed HDR÷albedo. None of them isolate IBL or GI specular.
+- `--diag` validates a 4x4 block at each target's centre. Since 2026-09-16 (followup-06 4.3),
+  `gbuffer.ao`, `gbuffer.metallic` and `gbuffer.roughness` are read on their own channel, and depth
+  or oversized targets report `SKIPPED`. 3D targets are read through their centre slice (`gi.gdf_*`
+  non-zero on 2026-10-08). Each target's `channel` field says what was measured: a whole RGBA target
+  mixes all four channels, alpha included, into min/max/avg. Use the region dump for per-pixel
+  questions.
+- `--view-mode detaillighting` is directional NdotL only and `reflections` the SSR resolve only.
+  Since 2026-09-16 (followup-06 4.2), `lighting` shows the direct light, `lightingonly` direct +
+  indirect from the lighting pass's split targets (no albedo), `shadows` the shadow mask and `ao` the
+  GTAO result (the G-buffer alpha when GTAO is off); these four are bindless-only. None of them
+  isolates IBL or GI specular.
 - `--pixel-debug` is dead (`pixel_debug_cs.hlsl` is a stub).
 - Shaders are embedded at build time; the `ShaderVFS` mount points at a directory that does not
   exist, so every shader edit needs `zig build`.
@@ -188,7 +197,8 @@ surfaces in shadow, not exposure.
 ```powershell
 foreach ($t in 'test_mesh_sdf_bvh','test_gdf_raw_composite','test_gdf_raw_lifecycle','test_sdf_dynamic_origin',
                'test_rc_trace_exhaustion','test_filtered_gather','test_gather_activation',
-               'test_surface_geometric_normal','test_reflection_selection') {
+               'test_surface_geometric_normal','test_reflection_selection',
+               'test_sdf_reflection_firefly','test_rc_recentre_scroll') {
   powershell -NoProfile -ExecutionPolicy Bypass -File "scripts/$t.ps1"
 }
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_radiance_cache_sh.ps1 -Zig (Get-Command zig).Source
@@ -198,7 +208,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_sdf_diffuse_gpu
 ```
 
 Expected: 3082 exact BVH comparisons; 210/210 (200 bitwise); 34/34; 4/4; 12/12; filter PASS; 192/192;
-11/11; 8/8; 90/90; GPU controls with max channel error ≤ 0.000195.
+11/11; 8/8; 18/18; 42/42; 90/90; GPU controls with max channel error ≤ 0.000195.
 
 ## Related
 
@@ -218,8 +228,9 @@ Expected: 3082 exact BVH comparisons; 210/210 (200 bitwise); 34/34; 4/4; 12/12; 
 - The SDF reflection path has no spatial or temporal filter. Rays that leave the distance field
   through an opening return sky radiance; at 4 rays per pixel this is binary per pixel and shows
   as white specks on dark walls beside windows. `r.TAA` (off by default) suppresses ~75–85 % of
-  it and is now set in `sample/projects/sponza.uzproject`; a filter for the path is open work
-  (`phase0_sponza-followup-06`). Guard: `scripts/test_sdf_reflection_firefly.ps1`.
+  it and is now set in `sample/projects/sponza.uzproject`. No filter was built: in linear radiance, the isolated pixels that reach the TAA output are not
+  reflection pixels (ledger H-41, H-68, 2026-09-23; H-68's rule is the re-test), so a project that
+  enables `r.GI.Reflections` sets `r.TAA 1`. Guard: `scripts/test_sdf_reflection_firefly.ps1`.
 
 ## Addendum 2026-09-08 — grid recentre without a blink
 
@@ -239,13 +250,15 @@ Three defects made every probe-cell crossing (≈ 267 cm of camera travel on any
    moves by whole probes, so the trace shader now reads each probe's history — hysteresis and
    multi-bounce feedback — at `coordinate + shift` through the `historyShift*` row of the trace
    constants; only the entering slab starts fresh, and only the first write or a scene-revision
-   change (`InvalidateHistory`) discards history.
+   change (`InvalidateHistory`) discards history (since block B-02, a GDF change box does too, for
+   the probes inside it).
 
 After the three fixes the vertical sweep reads 83.4 → 83.9 → 84.1 across the crossing with
 adjacent-frame differences at the motion-only level (2.0 % of pixels > 40/255, versus 12.4 % at
 the flash). Repro scenes: `scripts/sponza-longsweep-camera.*` (+X), `scripts/sponza-vertical-camera.*`
 (+Z, the user's pose). Guards: `scripts/test_sdf_reflection_firefly.ps1` (gate),
-`scripts/test_rc_recentre_scroll.ps1` (origin + history scroll, CB layout).
+`scripts/test_rc_recentre_scroll.ps1` (origin + history scroll, CB layout; re-anchored 2026-10-08 to
+the 464-byte layout, 42 checks).
 
 Related, same day (`phase0_sponza-followup-07`): the TAA jitter was applied to the combined
 view-projection as if it were the projection matrix, which turned the sub-pixel offset into a

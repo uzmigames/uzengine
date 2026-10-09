@@ -9,6 +9,10 @@ Evidence package: `.screenshots/flicker-elimination/13-isolate-gdf-motion/`
 
 ## Result: supported, and this is the first demonstrated cause in the programme
 
+*(Correction (2026-10-08): withdrawn. The excess below is an artefact of a motion mask placed 120
+frames behind the trajectory; see "Correction (2026-10-08)" at the end of this file. The text
+below stays as written.)*
+
 Both criteria the task set for claiming causality are met:
 
 * **the discontinuity follows the grid.** Shifting the voxel snapping phase by half a voxel
@@ -84,6 +88,8 @@ is a discontinuity, not a drift.
 variant was a single measurement compared against a baseline measured three times. Every variant now
 gets the repeats. The result of doing so: they are **bit-identical**, 0.0 % spread on every variant
 and region, so repeats here bound nondeterminism and nothing else.
+*(Correction (2026-10-08): not bit-identical. The three repeats agree within 8.0e-5 relative, e.g.
+baseline `shadow_wall` ratios 1.3455505 / 1.3455443 / 1.3455412.)*
 
 **Separating the field from the sampling.** A recentre does two things at once — requantises the
 clipmap onto a new lattice, and moves the sampling origin of everything that traces it. A sub-voxel
@@ -101,6 +107,8 @@ changing the trajectory. The single half-voxel point became three.
 Freezing the centres removes the events and leaves the ordinary residual where it was (2.476e-06
 against the baseline's 2.353e-06), which confirms the earlier finding that the motion residual is not
 made of recentres.
+*(Correction (2026-10-08): the two numbers average different frame sets. Over the same frames the
+runs are equal, 2.4756e-06 both.)*
 
 **The excess is sensitive to the phase of the grid.** *(Corrected 2026-09-15: this heading first read "the excess tracks the lattice, not the event", which claims a separation the measurement does not deliver. Phase sensitivity is what was measured; the phase also changes the event set, and no control separates the two mechanisms.)* An origin shift is the same geometric displacement
 whatever the phase, so an origin-driven excess ought to be roughly phase-invariant. It is not — it
@@ -111,6 +119,9 @@ requantisation of the field.
 10 in window), so the near-event frame subsets differ between conditions. The claim that survives is
 that the excess is **not invariant to lattice phase**; no individual per-phase number should be read
 as a measurement of anything on its own.
+*(Correction (2026-10-08): the phase sensitivity is frame selection. The frozen run, which never
+recentres, reproduces each variant's ratio at that variant's event frames: `shadow_wall` 0.995 /
+1.456 / 2.127 against 0.936 / 1.523 / 2.129.)*
 
 
 ## Review decision: stays open (2026-09-16)
@@ -294,6 +305,8 @@ its own tracking and metric, and four of those events coincide with a recentre o
 137, 218, 399, 516), a cascade four times coarser that neither the field comparison (clipmap 0 only)
 nor this study examined. Those events are the next candidate, with the field comparison extended to
 clipmap 1. One trajectory, two rectangles, three events, 2 repeats.
+*(Correction (2026-10-08): H-40's excess was not reproduced because it was never there; see the end
+of this file.)*
 
 
 ## Clipmap 1 — pre-registration (2026-09-17, before the captures)
@@ -464,4 +477,135 @@ excess is, it is not the field's values, on either cascade.
 **What remains open.** The sampling side at the clipmap-1 events (frames 137/218/399/516) is still
 unmeasured — H-50 measured it for clipmap-0 events only. That is the remaining route, and it is the
 next candidate; nothing about it is decided here.
+*(Correction (2026-10-08): moot. At 218, 399 and 516 the frozen run, which never recentres, matches
+the baseline frame by frame (0.99943-1.00014), so there is no clipmap-1 effect to explain on that
+build. Since ce2caa5e the storage is toroidal and the readers address it by frac(p / (2 extent)).)*
 
+
+
+## Correction (2026-10-08): the near-event excess was an analysis artefact
+
+Found by the close-out review of 2026-10-08 and checked against the retained package
+(`.screenshots/flicker-elimination/13-isolate-gdf-motion`: `gdf-motion-study.json`, `csv/`) without
+the engine: `python scripts/run_gdf_motion_study.py --reanalyse
+.screenshots/flicker-elimination/13-isolate-gdf-motion`. `--log` can name a retained `run.log` of
+the trajectory: the 19 of 2026-09-16..2026-10-05 give the same windows, and so do the study's own 15
+run logs of 2026-09-15, kept outside the repository in `%TEMP%\uz_gdf_motion\<variant>_<repeat>\run.log`
+(checked 2026-10-09: all 15 read `base_frame=37`). The block-B sweep of
+2026-10-07 logged `base_frame=39` (`sweep-b/test-gdf-incremental/g1-field-compare/r0/run.log`), and
+with its windows the guard below stops the reanalysis (the recentre at 218 falls outside them), so
+the base moves with the build. The text above stays as written; this section corrects it.
+
+**What was wrong.** `event_stats` placed the moving frames at FIRST + seg x 140 + 41..100 with
+FIRST = SCENE_START + WARMUP = 157, i.e. 198..257, 338..397, 478..537, 618..677, 758..817 and
+898..957. `sponza-gdf-boundary.lua` counts from its on_start frame instead, with no warm-up, and
+logs it. Every retained log of 2026-09-16..2026-10-05 reads `GdfBoundaryQA base_frame=37`, with
+moves 78..137, 218..277, 358..417, 498..557, 638..697 and 778..837, and the baseline's first events
+(78/98/117/137) fall in the first window. As a result:
+
+* 160 of the 360 masked frames were still (198-217, 338-357, 478-497, 618-637, 758-777, 898-957).
+  Their residual is 2.8x (`shadow_wall`) and 2.6x (`lit_wall`) lower than on moving frames: 1.25e-6
+  vs 3.46e-6, and 7.49e-6 vs 1.95e-5.
+* The camera recentres the clipmaps only while it moves, so every event frame is a moving frame. The
+  near-event set was all motion, and the "elsewhere" set was diluted by still frames.
+* Segment 1 (+X, moving 78..137, 5 of the 24 events) ran before the dump (157..996), and 877..996
+  are still frames after the trajectory ends. The dump holds segments 2-6.
+
+The control that would have caught this was claimed in item 1.5 and never computed. `event_stats`
+used each run's own events, so the frozen run's near-event set was empty and its ratio NaN.
+
+**Recomputed** from repeat 0 (the repeats agree within 8.0e-5 relative). "Frozen" is
+`r.GI.GDF.FreezeCenter=1`, which has 0 recentres, evaluated at the baseline's event frames:
+
+| ROI | old mask: baseline / frozen | logged windows: baseline / frozen | per frame at the 16 event frames, baseline / frozen |
+|---|---|---|---|
+| `shadow_wall` | 1.346x / 1.346x | **1.093x / 1.093x** | 0.99985-1.00017 |
+| `lit_wall` | 1.314x / 1.314x | **0.894x / 0.894x** | 0.99943-1.00022 |
+
+The 16 event frames include the double clipmap-0/clipmap-1 events at 218, 399 and 516. The two runs'
+ROI means agree within 9.3e-5 relative at every dumped frame.
+
+Each phase variant at its own event frames, shown as variant / frozen at the same frames:
+
+| variant | old mask `shadow_wall` | old mask `lit_wall` | logged windows `shadow_wall` | logged windows `lit_wall` |
+|---|---|---|---|---|
+| phase +1/4 voxel | 0.936 / 0.995 | 1.543 / 1.602 | 0.754 / 0.779 | 1.107 / 1.120 |
+| phase +1/2 voxel | 1.523 / 1.456 | 1.864 / 1.910 | 1.000 / 0.987 | 1.312 / 1.313 |
+| phase +3/4 voxel | 2.129 / 2.127 | 1.294 / 1.298 | 1.169 / 1.170 | 0.855 / 0.870 |
+
+H-40 read the swing across phases as sensitivity to the lattice. A run with no recentre at all
+reproduces it, so it reflects which frames each event set selects along the path. The table gives no
+per-frame ratio for the phase variants, because before ce2caa5e a phase offset moved the lattice and
+changed the field at every frame.
+
+**The other 2026-09-09/15 figures, re-read.**
+
+* ROI-mean steps (6.4x / 3.3x, "24 % / 9 % of the mean radiance"). The script that computed them was
+  not retained. Three definitions were tried: |m(e+3) - m(e-3)|, the mean of m(e..e+2) minus the mean
+  of m(e-3..e-1), and |m(e) - m(e-1)|. For each, the frozen run gives the same value as the baseline
+  at the same frames to four significant figures. Whatever the steps measured, it was not the
+  recentre.
+* "Residual away from events slightly higher with the centres frozen" (2.48e-6 vs 2.35e-6). The
+  frozen run's "elsewhere" set kept the event neighbourhoods. Over the same frames the runs are equal:
+  2.4756e-6 both on `shadow_wall`, 1.4154e-5 both on `lit_wall`.
+* Coverage "88 % through the moving segments" is the mean over every dumped frame. On the logged
+  moving frames it is 76.3 % (`shadow_wall`) and 85.7 % (`lit_wall`).
+* Repeats "bit-identical": they agree within 8.0e-5 relative. The baseline `shadow_wall` ratios, for
+  example, are 1.3455505 / 1.3455443 / 1.3455412.
+
+**What this changes.**
+
+* H-07b is rejected in scope (ledger H-07c). The scope is pose W's boundary trajectory at 1 cm/frame,
+  the two deferred-lit rectangles, and the centre-relative clipmaps before ce2caa5e. There, a
+  recentre changes the motion-compensated residual by no more than 0.06 % at its own frame and the
+  two after it, against the 31-35 % H-07b reported (the largest baseline / frozen difference anywhere
+  in the dump, 0.22 % on `lit_wall`, is at frame 514, two frames before the event at 516; checked
+  2026-10-09). Items 1.5-1.7 are corrected in tasks.md. The field-side results do not
+  depend on the mask and stand: H-49 and H-54 found the overlap bit-identical on clipmaps 0 and 1.
+* H-40's phase sweep is void (H-40b). So is the 2026-09-16 decision to separate requantisation from
+  the sampling origin: there was no effect to split. H-50 did not reproduce the excess because there
+  was none. The clipmap-1 sampling-side study named as the next step on 2026-09-17, and candidates
+  (1) and (3) listed there, are moot: at 218, 399 and 516 the frozen run matches the baseline frame by
+  frame.
+* H-20's rejection stands on corrected grounds (H-20b): freezing the centres changes the motion
+  residual nowhere.
+* No re-measurement on the current build is needed for this hypothesis. ce2caa5e (block B.2) made
+  the storage toroidal: a recentre recomposes only the entering slab, and B-02 G1 found the result
+  identical to a full recompose (IDENTICAL over 20 events), which is what the measured build did at
+  every recentre. Its toroidal readers were checked on a still camera only (G4); a moving re-check
+  would test ce2caa5e, not this hypothesis.
+
+**Harness fixes (2026-10-08).**
+
+* `scripts/run_gdf_motion_study.py`:
+  * the windows come from the trajectory's logged line;
+  * the study stops if a recentre falls outside them. Under the old mask this guard fires on every
+    recentring variant (baseline: 277, 399, 555, 687, 827);
+  * the fixed-centre run is evaluated at every variant's event frames;
+  * the coverage on the moving frames is reported;
+  * `--reanalyse` recomputes a package without the engine.
+
+  `event_stats` keeps its call signature and now defaults to the trajectory's windows at
+  base_frame=37. That corrects `scripts/run_coverage_study.py` (followup-14 item 1.4, whose
+  1.35x / 1.31x carry the same artefact) only while the build logs base_frame=37; its call at line 119
+  should pass `moving_windows=gdf.logged_windows(res['log'])`.
+* `scripts/test_gdf_controls.py`: the two world-tracking checks run on the moving frames the
+  trajectory logs (218..267 of its dump at base_frame=37) instead of 198..257.
+
+Neither corrected capture path has run on the GPU yet; the reanalysis is the evidence.
+
+**Left to other owners.**
+
+* The cascaded-shadow-map update control was never scheduled by this task. Ledger H-18 and H-20 named
+  it as the next experiment, and followup-12 item 1.7 and followup-14's notes assigned it here. It
+  goes to the proposed task `phase0_sponza-flicker-correction`, where followup-12's close-out of
+  2026-10-08 sends it with followup-12's own open points (followup-12 notes.md, "Closure record
+  (2026-10-08)"; ledger H-18b, H-20b). That task was created on 2026-10-09; its item 1.3 carries the
+  shadow-map freeze.
+* The two stale gtests of item 2.3 were fixed in 8246ab5c (2026-10-08).
+* B-02's description of the recentre as "a hitch the flicker programme had measured as a lighting
+  step" rests on H-40. It is corrected with the rest of the close-out's knock-on edits.
+
+**Process note.** The spec's "Confounded or incomplete evidence" scenario names capture alignment as
+a confound that must be recorded. The mask was aligned to the dump, not to the trajectory, and nothing
+checked one against the other. The guard above is that check.

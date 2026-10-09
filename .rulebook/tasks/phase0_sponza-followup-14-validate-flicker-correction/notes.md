@@ -26,6 +26,8 @@ TAA reconstruction filter. Exponent 0 removes it and is bit-identical to `Recons
 Four of seven gates fail (G1, G2, G6, G7), so by the rule frozen before the candidate existed
 the default stays at 1.0 and the change remains opt-in. G7 fails only through its "G6 holds" clause: its own conditions all pass - the accumulated image moves *towards* the instantaneous input (no blur), the recorded exposure is identical, and the active lighting-path bitmask is identical in every ROI. It is not independent evidence of cheating, it is a restatement of G6.
 
+**Correction (2026-10-08).** The lighting-path clause rests on one capture per variant, `materials.json`, never repeated. The ledger's layout-bug audit lists its path bits as invalid ("Results marked invalid" table), but the file was written on 2026-09-09 at 21:43 local, before that bug's window (2026-09-10 08:13 to 09:55 local), and its path bits ([3]) are the value the post-fix slot dump reads (ledger H-29); see tasks.md 1.5 and ledger row H-23c. G7 still fails through G6; the verdict is unchanged.
+
 ## What the measurement had to survive
 
 * **The gates were frozen first**, in the ledger, including a note predicting that G2 would
@@ -64,12 +66,16 @@ the default stays at 1.0 and the change remains opt-in. G7 fails only through it
 | AABB-only clamp | -28.7 % |
 | TAA off (negative control) | identical, both exactly 0 |
 
+**Correction (2026-10-08).** The "TAA off" row is the vacuous control described under "Three of my own" below: with `r.TAA=0` the `output` record is never written, so both variants recorded all zeros. The row was removed from the matrix; the real TAA-off control is in `scripts/test_correction_gates.py`. `report.md` (git-ignored, not edited) still carries the sentence that described it.
+
 Material coverage came from the recorded G-buffer: every measured ROI is rough (roughness p05
 0.50-0.60, median 0.73-0.80) with normal-mapped surfaces (shading-normal spread 13-22 deg) and
 metallic pixels present (43 % of the W window ROI). Mirror and glossy classes do not exist in the
 scene - 13 glossy pixels in total, no mirror pixels - so they were forced with
 `r.Material.RoughnessOverride` / `MetallicOverride` and measured separately
 (`material-classes.json`), with each capture asserting the override actually reached the G-buffer.
+
+**Correction (2026-10-08).** The metallic share (43 % of the W window ROI) comes from one frame of one capture, `materials.json`. The ledger's layout-bug audit lists its metallic counts and path bits as invalid ("Results marked invalid" table), but the file predates that bug's window (tasks.md 1.5), so the figure stands on that single capture, as do the roughness and normal figures, which read LIGHTING records. The "metallic px" and "active lighting paths" columns of `report.md` (git-ignored, not edited) come from the same file.
 
 ## What this does and does not say
 
@@ -82,6 +88,8 @@ scene - 13 glossy pixels in total, no mirror pixels - so they were forced with
   clamp routes are now rejected (H-13 rejected no-clamp; H-23 rejects AABB-only, which on its own
   moves recovery from 16 to 48 frames).
 * The next experiment is named: ledger **H-24**, a reversible-tonemap reconstruction.
+
+**Correction (2026-10-08).** H-23's AABB-only figure (recovery 16 -> 48 frames) is one run, never repeated (see "`stage_motion` gave extra variants a single run" below); independently of it, the AABB-only clamp moves the static window residual by only -9.5 % (`matrix.json`), short of G1. H-24 was rejected on paper the same day (review item 1 below); the window's open next steps are in known-issues, "Static TAA residual".
 
 ## What an independent review changed (2026-09-09)
 
@@ -104,6 +112,9 @@ that the evidence now supports the claims made from it.
    the report printed "lighting paths identical: None" while scoring G7 as verified. Gates are now
    tri-state; missing evidence reads inconclusive. The absent capture was taken, and the clause is
    now `True` for all three variants.
+
+   **Correction (2026-10-08):** the capture taken for this clause is `materials.json`, one capture per variant. The ledger's layout-bug audit later listed its path bits as invalid ("Results marked invalid" table), but the file predates that bug's window (tasks.md 1.5; ledger row H-23c), so the `True` stands on that single capture. G7 still fails through G6.
+
 3. **The reference could not support the claims.** Everything was measured against the
    cycle-averaged raw input, built from the same jitter offsets under examination, and "not blur"
    rested on the output approaching the *instantaneous* sample. An independent reference was built
@@ -143,6 +154,9 @@ test found earlier in this task:
   resolve, so with `r.TAA=0` nothing writes it. It now runs on the deferred lighting components of
   a sunlit floor and asserts its own power first: floor 1.2e-07 against a signal of 0.239, i.e.
   0.00 % of it. The matrix row that shared the flaw was removed with the reason recorded;
+
+  **Correction (2026-10-08):** that floor (1.2e-07) is from one pair of the run of 2026-09-09 23:25 local (`test_gates8.log`), which the ledger's layout-bug audit lists as invalid ("Results marked invalid" table) although it predates that bug's window (2026-09-10 08:13 to 09:55 local) and read the same 0.23884 signal as the runs after the fix. Re-run after the fix: floor 1.218e-04 on that signal (0.05 %), with the CVar's max |delta| 0 on 2026-09-10 and 1.182e-05 on 2026-09-16.
+
 * **the exposure study read the wrong exposure.** The 4th record component is the exposure the TAA
   *weights* use (`r.TAA.ExposureScale`, constant 1.0), not the display exposure, so a run where
   auto-exposure climbed to ~68 was reported as a flat 1.00 with no transition. The region file
@@ -177,6 +191,13 @@ overrides, the region dump, the analysis stack).
 | **`BuildPerFrameCB_StructSize.PerFrameCB_Is768Bytes`** | 1 | **Named in the checklist.** Stale: commit `29c83ba5` grew `PerFrameCB` to 1024 bytes (4 x 256) and the header carries its own `static_assert(sizeof(PerFrameCB) == 1024)`, with fields in use out to offset 1008. The invariant that matters, D3D12's 256-byte constant-buffer alignment, is already enforced there. Suggested fix: assert `sizeof(PerFrameCB) % 256 == 0`. Not changed here - it belongs to the constant-buffer area. |
 | **`PerFrameCB_IBL.PrefilteredMipLevelsDefaultIsFive`** | 1 | **Named in the checklist.** Stale: commit `6985ffac` deliberately raised the prefiltered chain to 8 in `IBLBaker::kPrefilteredMipLevels` and in all three CB structs, which agree with each other. Suggested fix: expect `IBLBaker::kPrefilteredMipLevels` instead of the literal 5. Not changed here - it belongs to the IBL area. |
 
+**Correction (2026-10-09).** The `ShaderCrossBackend` row is misdiagnosed: its 12 "Shader source not found on disk" failures are a
+defect of the test fixture, not of the environment. The fixture's subdirectory list
+(`runtime/tests/engine/shader/test_shader_cross_backend.cpp:56-57`) has no `gbuffer/`, where `mesh_vs`, `mesh_ps`, `gbuffer_ps`
+and `gbuffer_debug_ps` have lived since bd4db199 (known-issues, "Stale unit tests"). The failures of this table other than the
+two named ones are owned by `phase0_preexisting-test-failures` (created 2026-10-09; `ShaderCrossBackend` is its item 1.4, the
+default-drift tests item 1.3), except the VFX and editor suites, which stay with the VFX work in progress.
+
 This task added two fields to `PerFrameCB` / `PerFrameParams`, inside the existing 12 bytes of tail
 padding, so the struct stays 1024 bytes and both `static_assert`s in the headers still hold - the
 build would have failed otherwise. The G-buffer change is proven at runtime rather than only by
@@ -188,6 +209,9 @@ Behavioural harnesses, all passing:
 * `scripts/test_correction_gates.py` - **10 / 10**, including the two negative controls (with TAA
   off the CVar changes nothing; omitting the CVar matches setting it to its default) and the
   equivalence of exponent 0 with `r.TAA.ReconstructionMode=1` (bit-identical).
+
+  **Correction (2026-10-08):** this 10 / 10 is the run of 2026-09-09 17:19 local (`test_gates4.log`, scratchpad of session 9d44760c), the latest when these lines were written (17:30). In it exponent 0 and `ReconstructionMode=1` did match bit for bit (max |delta| 0), but not in general across processes: a later run measured 1.247e-02 between them, exactly on its floor (`test_gates5.log`; tasks.md 1.3). Its omitted-vs-1.0 control passed exactly on its single-pair floor (3.815e-04 against 3.815e-04), and its TAA-off control was the all-zero comparison rebuilt later (above). The 10 / 10 and 11 / 11 runs later that night (23:07, 23:25) passed the omitted-vs-1.0 control exactly on its floor too (3.366e-03), and the 11 / 11 the exponent-0 check as well (2.707e-07 against 2.707e-07).
+
 * `scripts/validate_taa_model.py --exponents 1,0.5` - the offline model reproduces the GPU to a max
   relative error of 2.1e-07 at both exponents.
 * `scripts/diagnose_cvar_ulp.py` - characterises the process-to-process reproducibility floor.
@@ -214,10 +238,18 @@ Work that belongs to follow-ups rather than here:
   right shadow. Nothing in followup-14 or the H-25/26/27 work touches these regions.
 * **followup-13 (open)** — motion and the GDF: the third repeat, separating a change of the field
   from a change of its sampling, and testing direct-shadow updates.
+  *(2026-10-08: followup-13 closes. The third repeat ran on 2026-09-15. The field/sampling split is
+  moot because the recentre excess was a mask artefact (ledger H-07c). The direct-shadow update
+  control goes to `phase0_sponza-flicker-correction` (ledger H-18b, H-20b), proposed at followup-12's
+  close-out the same day and created 2026-10-09.)*
 * **ledger H-26** — the history read is not eliminated; it needs an exact-read substitution during
   a run, not an instantaneous comparison.
 * **ledger H-25b scope** — bound stabilisation was rejected for a single frozen jitter phase.
   Averaging the bounds over a cycle, or filtering them slowly, are untested and different.
+  *(2026-10-09: every open item of this list now has one owner, `phase0_sponza-flicker-correction`
+  (created 2026-10-09). followup-12's close-out of 2026-10-08 hands it the walls, the rear door and
+  the right shadow, and its item 1.3 holds the exact history read (H-26) and the cycle-averaged or
+  slowly filtered bounds (H-25b scope).)*
 
 ## Instrumentation added
 
@@ -269,6 +301,8 @@ read as single-run results until they are re-run. The candidate this task reject
 (`ReconstructionHdrWeightExponent`) was a primary variant and did get its repeats, so its rejection is
 unaffected.
 
+**Correction (2026-10-08).** "Repeats in this renderer have since proven bit-identical" overstates it: the three repeats of each main motion variant agree exactly in recovery frames and to within 3e-06 relative in the error 80 frames after the cut (8.2e-08 absolute at exponent 0), not bit for bit (`motion.json`), and per-pixel records differ across processes (above). The two extra variants were never re-run, so their G6 figures remain single-run (handed to the ledger on 2026-10-08 as a row superseding H-23).
+
 ## The behavioural harness ran to completion, and its negative control failed (2026-09-16)
 
 `scripts/test_correction_gates.py` had never been run to the end (it was stopped twice by a 300 s
@@ -283,6 +317,8 @@ format and layout tests do not substitute for it. Full run, exit code 1:
 | exponent 0 changes the image by at least 1 % of its own mean | ok — mean abs delta 2.065e-01, 6.1 % of the mean |
 | exponent 0 matches `r.TAA.ReconstructionMode=1` | ok — max abs delta 3.124e-03 against a floor of 1.247e-02 |
 | the residual falls monotonically as the exponent falls | ok — 1.1301e-02 > 9.4422e-03 > 8.3770e-03 > 7.8582e-03 > 7.6165e-03 |
+
+**Correction (2026-10-08).** Two errors in this section. (1) "Had never been run to the end" holds only for the revision saved on 2026-09-15: earlier revisions ran to completion five times on 2026-09-09 (16:31 8/10, 17:19 10/10, 21:56 9/10, 23:07 10/10 and 23:25 11/11, local) and once on 2026-09-10 (10:08 local, 11/11, the re-run after the layout-bug fix). (2) The table lists 6 checks; this run executed all 11 and passed 10 (`correction_gates_full.log`, 2026-09-16 00:36, local scratchpad of session 9d44760c). The five not listed all passed: the TAA-off control's power (floor 1.218e-04 on a signal of 0.23884, 0.05 %), the TAA-off negative control (1.182e-05 against 1.218e-04), not blur (0.3314 -> 0.2355), energy (0.9252 -> 0.9818) and the bleed cost (2096x -> 12060x). `.metadata.json` repeats the error ("Five of six checks pass").
 
 **The failure, stated plainly and not explained away.** Omitting `r.TAA.ReconstructionHdrWeightExponent`
 should render exactly as setting it to its default of 1.0. It does not: the two differ by 3.218e-03
@@ -382,3 +418,51 @@ measured in `40-default-vs-explicit`; whether the harness's own floor is changed
 
 The provenance item is resolved in the verified scope. That does not make the task complete, and it
 does not replace `test_correction_gates.py`, which remains a separate pending item.
+
+## Close-out (2026-10-08)
+
+**The harness floor now comes from repeats.** `scripts/test_correction_gates.py` captures every
+configuration `--repeats` times (default 4, at least 3), interleaved, and judges each equivalence
+check (omitted vs 1.0, exponent 0 vs `ReconstructionMode=1`, and the TAA-off control) by the rule
+pre-registered for `40-default-vs-explicit`: max(between) <= max(within) on max |delta|
+(`spread_verdict`). The mean |delta| verdict and the old single-pair comparison are printed beside
+each verdict and are not judged. The effect check takes the smallest mean |delta| over every
+default x exponent-0 pair. Cost: 27 captures at the default.
+
+Why the single-pair floor had to go, from the saved logs: the omitted-vs-1.0 check passed exactly
+on its floor in 4 of the 5 runs of 2026-09-09 with per-configuration floors (3.815e-04 twice,
+3.366e-03 twice; the revision before them, with one global floor of 0, failed it at 2.707e-07),
+failed on 2026-09-16 (3.218e-03 against 1.473e-03) and passed on 2026-09-21; the exponent-0 check
+sat exactly on its floor in 3 of 6 runs; and the TAA-off control passed at exact equality on
+2026-09-09 (1.192e-07 against 1.192e-07, 23:25 local, `test_gates8.log`).
+
+**Static verification, no engine run.** `python -m py_compile` and pyflakes are clean. On the eight
+captures of `40-default-vs-explicit` (the harness's pose, ROI, frames and fields), read through the
+harness's own `stack()` and `equivalent()`: INDISTINGUISHABLE (between 9.537e-07 to 3.218e-03, within
+0 to 3.218e-03), so the check passes. Treating the eight same-path captures as exchangeable, all 35
+splits into two groups of four are INDISTINGUISHABLE on max |delta|, against 25 of 35 on mean
+|delta|, which is why the mean is reported and not judged; the single-pair rule passes 4512 of its
+5040 pair choices over those splits (89.5 %) and 132 of 144 on the real split. The rule can fail: one
+pixel shifted by 1.5 times the within spread in every `explicit1` capture reads SEPARATED, and a
+uniform +1e-3 (0.03 % of the mean) reads OVERLAPPING. `main()` driven end to end with the engine
+calls replaced by those arrays (plus synthetic exponent and TAA-off arrays): 11 passed; with a real
++5e-4 difference given to the TAA-off candidate that control fails (SEPARATED) and the script exits
+1; `--repeats 2` is refused. The emulation scripts are in the session scratchpad (46a4cf85, `t14/`),
+local only; `t14/emulate_gates.py` predates the move of `spread_verdict` into `scripts/flicker/criteria.py`,
+and `sweep/emulate_gates_rewired.py`, the same check against the rewired harness, reproduced its log on 2026-10-09.
+
+**Before this task closes:** run the changed harness on the current build and record it here (item
+2.3 is unticked until then). The two stale gtests of item 1.6 need nothing more: 8246ab5c fixed
+them the same afternoon (47/47 on the commit's own filter). Optional:
+`scripts/run_correction_validation.py --stage motion --repeats 3` with `--out` set to a new package
+directory, to replace the single runs of the two AABB variants (the default `--out` would
+overwrite this task's 2026-09-09 package). That re-run, the window's residual and the candidate fixes never tried are owned
+by `phase0_sponza-flicker-correction` (created 2026-10-09, items 1.3 and 1.4), which absorbed the window-residual task this
+close-out proposed.
+
+**`report.md` is git-ignored and was not edited.** Read its G7 "lighting paths identical: True"
+(both candidate tables) and the "metallic px" and "active lighting paths" columns of "Material
+coverage" as one capture per variant (`materials.json`; the ledger's "Results marked invalid" table lists them as invalid, but
+the file predates the layout bug's window, see tasks.md 1.5 and ledger row H-23c); its motion rows
+`combined_exp0_aabb` and `baseline_aabb` as single runs; and the `taa_off` sentence under the
+robustness matrix as describing a removed, vacuous row.

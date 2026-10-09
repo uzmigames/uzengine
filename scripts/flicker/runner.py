@@ -63,18 +63,13 @@ def reuse_repeat_range(repeats: int, reuse: bool) -> range:
     return range(repeats)
 
 
-def _hash_file(path: str, limit: int = 64 * 1024 * 1024) -> str:
-    """SHA-256 of a file, so a binary is identified by its contents and not by its date."""
+def _hash_file(path: str) -> str:
+    """SHA-256 of a whole file, so a binary is identified by its contents and not by its date."""
     import hashlib
     h = hashlib.sha256()
     with open(path, 'rb') as fh:
-        read = 0
-        while read < limit:
-            chunk = fh.read(1 << 20)
-            if not chunk:
-                break
+        for chunk in iter(lambda: fh.read(1 << 20), b''):
             h.update(chunk)
-            read += len(chunk)
     return h.hexdigest()
 
 

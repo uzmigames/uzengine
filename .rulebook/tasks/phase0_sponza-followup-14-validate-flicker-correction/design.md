@@ -42,6 +42,8 @@ is opt-in.
 
 G7 fails only through its "G6 holds" clause: its own conditions all pass - the accumulated image moves *towards* the instantaneous input (no blur), the recorded exposure is identical, and the active lighting-path bitmask is identical in every ROI. It is not independent evidence of cheating, it is a restatement of G6.
 
+**Correction (2026-10-08).** The "active lighting-path bitmask is identical in every ROI" clause rests on one capture per variant, `materials.json`, never repeated. The ledger's layout-bug audit lists its path bits as invalid (`docs/analysis/flicker-hypothesis-ledger.md`, "Audit of the layout bug", "Results marked invalid" table), but the file was written on 2026-09-09 at 21:43 local, before that bug's window opened (TAA_EXTRA grew on 2026-09-10 at 08:13 local), and its path bits ([3]) are the value the post-fix slot dump reads (ledger H-29); the listing is corrected in ledger row H-23c (tasks.md 1.5). G7 still fails through its G6 clause; the verdict is unchanged.
+
 | gate | threshold | exponent 0.5 | exponent 0.0 |
 |---|---|---|---|
 | G1 residual | -50 % on pose W `window` | -27.9 % FAIL | -35.4 % FAIL |
@@ -75,3 +77,5 @@ The visual defect is **not** closed. About 65 % of the window residual is untouc
 mechanism, and both clamp routes are now rejected (H-13, H-23). The next discriminating experiment
 is recorded as ledger row **H-24**: a reversible-tonemap reconstruction, which is the variance
 reduction the HDR weight approximates but is unbiased for the filter.
+
+**Correction (2026-10-08).** Two statements above are out of date. (1) The AABB-only half of "both clamp routes are now rejected" rests on one motion run each of `baseline_aabb` and `combined_exp0_aabb` (`motion.json`, 2026-09-09, never repeated); on the static window residual alone they reach only -9.5 % and -35.4 % (`matrix.json`), short of the -50 % G1 asks for. (2) H-24 was rejected on paper the same day: the reversible tonemap is the same `1/(k + Y)` weighting (ledger H-24, H-24b); H-25, H-25b, H-26 and H-27 followed. The window's open next steps are listed in `docs/analysis/known-issues-and-partial-implementations.md`, "Static TAA residual", and since 2026-10-09 are owned by `phase0_sponza-flicker-correction`.

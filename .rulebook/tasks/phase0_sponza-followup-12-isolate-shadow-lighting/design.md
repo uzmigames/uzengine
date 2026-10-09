@@ -43,3 +43,15 @@ Results: the window and the right-hand shadowed arcade are forward translucent g
 walls and the sunlit floor are deferred and have different sources from each other. Full tables in
 notes.md and `.screenshots/flicker-elimination/12-isolate-shadow-lighting/report.md`; ledger rows
 H-06b, H-17, H-18, H-19.
+
+**Correction (2026-10-08).** "Full tables in notes.md" is wrong: the committed notes.md (7eea6b95,
+the only version in git) begins with the 2026-09-15 door section and holds none of the 2026-09-09
+tables. They are in `.screenshots/flicker-elimination/12-isolate-shadow-lighting/report.md` and
+`shadow-lighting-study.json` (git-ignored, local only) and, in summary, in ledger rows H-06b, H-17,
+H-18 and H-19, whose rounded ratios H-06c restates. The diagnostics added after this section are
+listed in `docs/guides/build-and-deployment.md`. The gather work of 2026-09-10..14
+(`r.GI.FinalGather.FreezeAfterFrame`, `r.GI.FinalGather.SampleRotation`, `r.GI.SDF.SampleFrameOffset`,
+`--component-replay`) is recorded in ledger H-28..H-36 and
+`docs/analysis/gather-sampling-candidate-preregistration.md`, not in notes.md; the door work
+(`r.Translucency.DepthTest`, the translucent and plus-filter records) is in notes.md and ledger
+H-43..H-48. The closure record (2026-10-08) ends notes.md.

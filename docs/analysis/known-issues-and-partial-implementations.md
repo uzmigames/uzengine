@@ -23,8 +23,8 @@ of these, read this doc and the linked code locations.
 
 ## Anti-Aliasing / Temporal / Upscalers
 
-### `r.TAA` — `OFF` (BUG)
-**File**: [runtime/engine/renderer/frame/frame_setup.cpp:42](../../runtime/engine/renderer/frame/frame_setup.cpp)
+### `r.TAA` — `OFF` by default (the trembling below matches the jitter defect fixed 2026-09-08)
+**File**: [runtime/engine/renderer/frame/frame_setup.cpp:47](../../runtime/engine/renderer/frame/frame_setup.cpp)
 **Default**: `false`
 
 TAA causes visible mesh trembling / vertex wobble. Multiple tuning sessions
@@ -38,15 +38,36 @@ introduced by an unrelated change. Needs a ground-up audit.
 `project_taa_jitter_trembling_bug.md` (2026-04-01), attributed to commit
 `24c4d801` (decals).
 
+**Correction (2026-10-08, closure of `phase0_sponza-followup-06`).** The trembling described above
+matches the defect fixed on 2026-09-08 by `phase0_sponza-followup-07`: the jitter was applied to the
+view-projection as if it were the projection ("TAA jitter applied to the view-projection as if it
+were the projection — `FIXED`", under Global Illumination). The comment above the CVar
+(`frame_setup.cpp:46`, "TAA disabled (jitter trembling bug). No anti-aliasing until fixed.")
+predates that fix. The FXAA named in the workaround is inert: its pass was removed with the dead post
+chain (`phase0_sponza-followup-08` 4.4), and `r.FXAA.EdgeThreshold` is registered as "pass not wired"
+(`frame_postprocess.cpp:45`). The default is still `false`, and no quality preset applies at startup
+unless `quality` is set (`scene_renderer_init.cpp:1027-1036`). With TAA off, the stochastic GI passes
+(`r.GI.Reflections`, `r.GI.FinalGather`, GTAO) show per-pixel noise, including white specks beside
+openings ("Indirect-path noise", under DDGI), so a project that enables them sets `r.TAA 1`, as
+`sample/projects/sponza.uzproject` does. The default itself is unchanged, and no task tracks
+changing it.
+
 ---
 
-### `r.TSR` — `PARTIAL`
+### `r.TSR` — `STUB` (corrected 2026-10-08; was listed as `PARTIAL`)
 **File**: [runtime/engine/renderer/passes/postprocess/tsr_upscaler.cpp](../../runtime/engine/renderer/passes/postprocess/tsr_upscaler.cpp)
 
-Temporal Super Resolution (UE5-style) is implemented with 3 passes
-(dilate-velocity, reject-shading, update-history), but known to produce
-artifacts. Not recommended over DLSS/FSR2 for now. Needs a tuning pass
-once TAA is fixed (TSR and TAA share the temporal infrastructure).
+The three passes (dilate-velocity, reject-shading, update-history) are all
+compiled from `tsr_resolve_cs.hlsl` (`pipeline_temporal.cpp:79`, `:115`, `:151`),
+and that file has been a one-line empty compute body since `bd4db199`
+(2026-03-31). Selecting TSR (`UpscalerType::TSR`: Lua
+`uz.renderer.set_upscaler("tsr")`, `lua_renderer_api.cpp:368`, and the fallback
+for `XeSS`, `temporal_upscaler.cpp:28` and `:42`) therefore writes no output.
+The earlier text ("implemented with 3 passes ... known to produce artifacts")
+was written on 2026-04-07 (`192ef554`), after that commit, and did not reflect
+it. Open; no task re-implements TSR: owner `<stub-shader task>` (proposed by the
+`phase0_sponza-parity-06-qa-harness-validation` closure review). See "One-line
+stub shaders".
 
 ---
 
@@ -72,20 +93,26 @@ after the 2026-03-25 fix (raw vtable access + exposure default 10.0). Remaining 
 FSR 2.x temporal upscaler is scaffolded but never enabled by default. Build
 path compiles, integration untested at runtime.
 
-### `r.FSR` — `OFF`
+### `r.FSR` — `STUB` (corrected 2026-10-08; was listed as `OFF`, "works")
 **File**: [fsr_pass.cpp:24](../../runtime/engine/renderer/passes/postprocess/fsr_pass.cpp)
 
-FSR 1.0 spatial upscaler (EASU + RCAS). Works but not wired into any
-default pipeline. Useful for old hardware; low priority.
+FSR 1.0 spatial upscaler (EASU + RCAS). `fsr_easu_cs.hlsl` and
+`fsr_rcas_cs.hlsl` are one-line empty compute bodies since `bd4db199`
+(2026-03-31), and `FSRPass` is used only by its own files and
+`test_fsr_pass.cpp`: it is neither wired nor able to produce an image. Owner:
+`<stub-shader task>` (no open task re-implements FSR 1.0). See "One-line stub
+shaders".
 
 ---
 
-### `r.SMAA` — `OFF`
+### `r.SMAA` — `STUB` (corrected 2026-10-08; was listed as `OFF`)
 **File**: [smaa_pass.cpp:33](../../runtime/engine/renderer/passes/postprocess/smaa_pass.cpp)
 
-SMAA (edge + blend + resolve) shaders exist and compile, but the pass is
-off by default. Needs validation vs. FXAA (which is the current AA path)
-and a quality comparison.
+`smaa_edge_ps.hlsl`, `smaa_blend_ps.hlsl` and `smaa_resolve_ps.hlsl` compile,
+but each is a one-line pixel shader returning opaque black since `bd4db199`
+(2026-03-31), and `SMAAPass` is used only by its own files and
+`test_smaa_pass.cpp`. Owner: `<stub-shader task>` (no open task re-implements
+SMAA). See "One-line stub shaders".
 
 ---
 
@@ -104,6 +131,17 @@ fundamental's gain to the whole variance, and neither phase nor per-pixel time s
 reproduced. It bounds the remedies without declaring the visible behaviour acceptable — that
 judgement has not been made.
 
+**Open, owner: `phase0_sponza-followup-15-taa-window-residual`** (proposed at the followup-10 and
+followup-14 close-outs, 2026-10-08). No open task item owned the window's residual before it.
+followup-14's closure notes list H-25b's untested bounds variants and H-26 as "work that belongs to
+follow-ups rather than here". Untested on the window: clamp bounds averaged over a jitter cycle or
+filtered slowly (H-25b scope), an exact history read substituted during accumulation (H-26), and the
+motion behaviour of two followup-10 variants that never went through the cut sequence:
+`r.TAA.ReconstructionMode=2` (centre tap only), which cut the static residual 53 % but raised it
+75 % on the boundary pixels, and `ReconstructionMode=1` with `BlendMode=1` (-50 %), each measured in
+one 24-frame run. The same task owns the judgement, not yet made, of whether the modelled residual
+is acceptable.
+
 Consequences for anyone tuning TAA here:
 
 * the residual is `input_ripple x |H|`, so reducing it means making the reconstruction less
@@ -117,10 +155,17 @@ Consequences for anyone tuning TAA here:
 * the history fetch is **not** eliminated (H-26): its immediate perturbation is small, but no run
   substituted an exact history read while accumulating, so an effect that builds up over frames
   remains possible;
+* no pre-registered gate judges a window candidate against a reference: followup-14's G1 measured
+  stability (`std_mean`, which a correct reconstruction can raise), and followup-12's acceptance
+  criteria of 2026-09-17 (its notes.md, "Acceptance criteria for any candidate correction") cover
+  the pose A rear-door glass (with two walls as controls), the walls of pose W in motion and the
+  teleport, not the W `window`. Open, owner: `phase0_sponza-followup-15-taa-window-residual`;
 * `r.TAA.JitterScale=0` is a *control*, not a fix: it removes the residual by removing the
   anti-aliasing.
 
-The shadowed walls and the behaviour in motion are outside all of this and remain open.
+The shadowed walls (open, owner: `phase0_sponza-flicker-correction`, proposed 2026-10-08; their
+state is in the Sponza flicker entry under Global Illumination) and the behaviour in motion are
+outside all of this and remain open.
 
 ### TAA reconstruction HDR weighting - `MEASURED, NOT CHANGED (2026-09-09)`
 The plus filter in `taa_resolve_cs.hlsl` weights each tap by `1 / (Y * exposure + 4)`
@@ -139,15 +184,26 @@ the default was not changed. Measured at exponent 0, pose W window, 3 repeats:
 * but recovery after a camera cut goes 16 -> 60 frames, and a dark
   ROI containing a small bright feature (pose A `rear_door`) gets
   +120 % residual and
-  +79 % energy;
+  +79 % energy against the baseline. Against the cycle-averaged reference most of that energy is
+  restored, not added (bright side 42 % -> 74 % of correct, per-pixel error halved; ledger "Two
+  findings about the measurement itself"), so on that ROI the cost is stability, not accuracy;
 * pixels whose correct value is ~0 receive about 6x more light.
 
-The weighting is a variance/bleed trade, not a defect to delete. The next experiment is a
-reversible-tonemap reconstruction (ledger H-24). `r.TAA.ClampMode=3` (AABB only) is now rejected
-as an alternative as well: on its own it moves recovery after a cut from 16 to
-48 frames.
+The weighting is a variance/bleed trade, not a defect to delete. The reversible-tonemap
+reconstruction once named here as the next experiment was rejected on paper before any capture
+(ledger H-24: it is the same `1/(k + Y)` weighting with k = 1, more aggressive than production), and
+H-24b bounds every member of that family by the exponent-0 endpoint, so no reconstruction-weighting
+experiment is pending; what was run after it, and what is still untested, is under "Static TAA
+residual" above. `r.TAA.ClampMode=3` (AABB only) is rejected as an alternative as well.
+Independently of motion, it lowers the static window residual only 9.5 % against the 50 % gate G1
+asks for (followup-14 `matrix.json`, matching followup-10's independent run). On its own it also
+moves recovery after a cut from 16 to 48 frames against G6's limit of 21, a motion figure measured
+once and never repeated (`motion.json`, 2026-09-09; ledger H-23b, H-23d). The energy bias itself is
+unchanged in production (91.9 % of the correctly resampled input over the window rectangle; a
+1.5-px bright bar loses 48.4 %): **open, owner: `phase0_sponza-followup-15-taa-window-residual`**
+(proposed at the followup-10 and followup-14 close-outs, 2026-10-08).
 
-### Stale unit tests - `PRE-EXISTING, DIAGNOSED (2026-09-09)`
+### Stale unit tests - `PRE-EXISTING, DIAGNOSED (2026-09-09)`; both `FIXED (2026-10-08, 8246ab5c)`; `ShaderCrossBackend` failures `OPEN`
 Two tests in `runtime/tests/` fail against committed production values and are unrelated to the
 flicker work. Diagnosed rather than filtered out:
 
@@ -165,6 +221,32 @@ flicker work. Diagnosed rather than filtered out:
 Neither test was changed here: they belong to the IBL and constant-buffer areas, not to this
 programme.
 
+**Fixed 2026-10-08 (`8246ab5c`).** followup-09, -10, -12 and -13 had routed the fix to followup-14
+item 1.6, which only diagnosed both tests; both still failed in the full run of 2026-10-08 (12:45
+local). `BuildPerFrameCB_StructSize.PerFrameCB_Is768Bytes` was removed as a duplicate rather than
+changed to the `% 256` check suggested above: the 1024-byte size is already pinned by the
+`static_assert` at `constant_buffers.h:321` and by `test_constant_buffers.cpp:19`,
+`test_ibl_atmosphere.cpp:668` and `test_material.cpp:293`.
+`PerFrameCB_IBL.PrefilteredMipLevelsDefaultIsFive` became `PrefilteredMipLevelsDefaultMatchesTheBaker`:
+it compares the low byte of `prefilteredMipLevels` with `IBLBaker::kPrefilteredMipLevels` (8) and
+checks that the PMREM flag (bit 8) is clear by default. The commit records
+`test_runtime --gtest_filter=PerFrameCB_IBL.*:BuildPerFrameCB*:ConstantBuffers*:SHProjection.*`
+at 47/47. The tasks that had handed these two tests to one another (followup-09, -10, -12, -13
+and -14) owe nothing further on them.
+
+**Same category, still open, and owned by no task yet** (`phase0_test-suite-preexisting-failures`
+is proposed for it with the followup-09 closing): 13 of the 21
+`ShaderCrossBackend/ShaderCrossBackendTest.Compile/*` cases fail (full runs of 2026-09-16 and
+2026-10-08). Twelve report "Shader source not found on disk": the fixture's subdirectory list
+(`runtime/tests/engine/shader/test_shader_cross_backend.cpp:56-57`) has no `gbuffer/`, where `mesh_vs`,
+`mesh_ps`, `gbuffer_ps` and `gbuffer_debug_ps` have lived since bd4db199. The thirteenth,
+`SPIRV_SM60_deferred_lighting_ps`, is a real compile error of the non-bindless (SPIR-V SM 6.0) path:
+`shadow.hlsli` uses `shadowAtlasTexture` (lines 156 and 251), which no non-bindless block of
+`deferred_lighting_ps.hlsl` declares, and `deferred_lighting_ps.hlsl:1381` reads `gBufIndices` outside
+`#ifdef UZ_BINDLESS` (since 1d2e97da). Suggested fixes: add `"gbuffer/"` to the fixture's list; declare
+`Texture2D<float> shadowAtlasTexture : register(t5);` in the non-bindless block (lines 50-58) and keep
+the line-1381 test inside `#ifdef UZ_BINDLESS`. Neither change alters the DX12 (bindless) code path.
+
 ## Global Illumination
 
 ### `r.SSGI` — `OFF` (BUG)
@@ -180,25 +262,52 @@ screen-space rays never register hits on architectural-scale scenes,
 bumped to 50 cm in the recent session but that's a band-aid.
 
 **Recommendation**: rewrite the march with proper view-space hit-distance
-accumulation, or replace entirely with Brixelizer GI which works.
+accumulation, or retire it. The world-space SDF final gather
+(`r.GI.FinalGather`) is the diffuse GI that runs on Sponza, and the legacy
+screen-space SSGI is only added while that gather is off
+(`deferred_lighting_ps.hlsl:1277`). Brixelizer GI is not an option: it has
+not run since 2026-04-07 (entry below).
 
 ---
 
-### `r.BrixelizerGI` — `OFF` → `ON (via scene CVars)`
+### `r.BrixelizerGI` — `DORMANT` (never constructed since 2026-04-10; task closed as superseded 2026-10-08)
 **File**: [brixelizer_gi_pass.cpp:50](../../runtime/engine/renderer/passes/gi/brixelizer_gi_pass.cpp)
+**Task**: `.rulebook/tasks/phase0_brixelizer-gi-integration/tasks.md` (reconciliation note: which ticks hold, defects found)
 
-AMD FidelityFX Brixelizer GI (sparse SDF voxel GI + screen-space probes).
-Implementation is **functional** — produces diffuse GI visible in Sponza.
-Current gaps:
-- **Specular GI output** produces values that saturate the pass-dump
-  visualization (HDR magnitude > 10, Reinhard clamps to white). Unclear
-  if the magnitudes are physically correct or if the shader is scaling
-  them wrong.
-- **Cascade tuning** uses the default base voxel size 2.0 cm × 4 cascades
-  which works for Sponza but hasn't been profiled on larger scenes.
-- **LOD-aware re-registration** uses a simple delete-all + re-create-all
-  per-frame approach. Works for static scenes but is suboptimal for
-  dynamic geometry.
+AMD FidelityFX Brixelizer GI (sparse SDF voxel GI + screen-space probes), integrated in source only.
+
+**Wrong when written (2026-04-07).** This entry read "`OFF` → `ON (via scene CVars)`" and
+"Implementation is **functional** — produces diffuse GI visible in Sponza", and listed three gaps:
+specular output that saturated the pass dump (HDR > 10, "Reinhard clamps to white"), cascades
+(2 cm × 4) not profiled beyond Sponza, and a per-frame "delete-all + re-create-all"
+re-registration. `29c83ba5` had disabled the dispatch at 00:53 that day, before this registry was
+created (`192ef554`, 23:12). On that day's machine the pass was still compiled and initialised: the
+session dumped its `brixelizer.*` targets (`eb839ed9`), which register only for an initialised pass
+(`frame_lighting.cpp:348-359`). Nothing dispatched it, though, so nothing Brixelizer wrote was on
+screen or in a dump after that commit, which predates the saturated dump; no committed revision ever
+dispatched it. The gaps described code that was not running, and the delete-all + re-create-all
+path had already been removed by `29c83ba5`.
+
+**State today:**
+- **Not compiled.** `runtime/build.zig:903-912` defines `UZ_BRIXELIZER_ENABLED` (`:929-931`) only
+  when the MSVC-built `runtime/thirdparty/amd-fidelityfx-1.1/wrapper/build/bin/uz_brixelizer.dll`
+  exists. Nothing in the repo produces it (`scripts/setup.ps1:543-549` only clones SDK v1.1.4), so
+  the build compiles the no-op stub and registers none of the 15 `r.BrixelizerGI*` CVars.
+- **Never constructed.** Construction is commented out at `scene_renderer_init.cpp:666-674` since
+  `c84a8bce` (2026-04-10); its comment records `ffxBrixelizerContextCreate` failing with
+  `FFX_ERROR_BACKEND_API_ERROR` (0x8000000D) on non-AMD GPUs. The cause was never diagnosed.
+- **Never dispatched.** `RegisterBrixelizerGIPasses` returns at its first statement
+  (`frame_gi_passes.cpp:387`) since `29c83ba5` (2026-04-07 00:53).
+- **Composite never taken.** `frame_constants.cpp:868-872` publishes the sentinel SRV unless a pass
+  is initialised, so the branch at `deferred_lighting_ps.hlsl:1306-1324` never runs. It would
+  replace `diffuseAmbient` (`:1321`) rather than add to it, and it reads no specular.
+- The engine has no `ffxBrixelizerDeleteInstances` call site: `29c83ba5` removed the only one, and
+  the wrapper only re-exports the function (`wrapper/uz_brixelizer_dll.cpp:112-116`, resolved by
+  `brixelizer_loader.cpp:118`).
+
+The GI in use is the SDF radiance cache with the final gather and SDF reflections (next entry), with
+DDGI as the DXR option. The dormant source is kept; removing it is the user's decision (a separate
+task, not opened).
 
 ---
 
@@ -210,13 +319,18 @@ Current gaps:
 16³ L2 SH probe grid traced through the global distance field, with SDF
 reflections (`r.GI.Reflections`, SSR lerped in before the BRDF) and the
 world-space final gather (`r.GI.FinalGather`) layered on top. Until the
-SponzaTest port (`phase0_sponza-parity-03/04`) every trace/bake/composite
-shader under `runtime/shaders/runtime/gi/` was an **empty stub** (32 stub
-files, 26 referenced) and `r.RadianceCache` could not actually be disabled —
+SponzaTest port (`phase0_sponza-parity-03/04`) the mesh SDF bake and global SDF
+composite shaders (`mesh_sdf_bake_cs.hlsl`, `global_sdf_composite_cs.hlsl`) were
+one-line empty stubs and `r.RadianceCache` could not actually be disabled —
 the earlier "implemented but disabled because Brixelizer supersedes it"
-description was wrong on both counts. Sponza enables it from
+description was wrong on both counts. (Corrected 2026-10-08: this paragraph used
+to say every trace/bake/composite shader under `gi/` was a stub, "32 stub files,
+26 referenced"; that count is for all of `runtime/shaders` in parity-01's
+2026-09-07 sweep, and the trace shader was not a stub. See "One-line stub
+shaders".) Sponza enables it from
 `sample/projects/sponza.uzproject`; `--cvar` beats the project file since
-task 05. Brixelizer GI is the alternative path; they are not meant to run together.
+task 05. Brixelizer GI was planned as the alternative path; it is dormant (never constructed since
+2026-04-10, entry above) and its task was closed as superseded on 2026-10-08.
 
 Unresolved (carried over from SponzaTest's handoff and reproduced here on 2026-09-08):
 - 1 of 32 world-reflection rays leaks through the enclosed-box fixture
@@ -244,7 +358,12 @@ Unresolved (carried over from SponzaTest's handoff and reproduced here on 2026-0
   emissive feed); no Lumen parity is claimed.
 - Falcor PSNR ≥ 35 dB parity unverified (no Falcor install on either machine).
 - `--diag` reads `gi.gdf_cascade0` / `gi.gdf_raw_cascade0` as zero in **both**
-  repositories, even after the 3D readback `D3D12_BOX` fix.
+  repositories, even after the 3D readback `D3D12_BOX` fix. *Correction (2026-10-08): fixed in
+  this repository on 2026-09-08 by `phase0_sponza-followup-03-diag-3d-target-readback`: the
+  inspector skipped every 3D target and now reads the centre Z slice, and
+  `scripts/verify_sponza_loading.ps1` fails on an all-zero `gi.gdf_*` since then. Its 2026-10-08
+  run reads `gi.gdf_cascade0` at 0.014 / 625 / 156.4 and `gi.gdf_raw_cascade0` at 625 / 625 / 625
+  (`scripts/sponza-loading-fixed-converged.log:2297`, git-ignored). SponzaTest was not re-checked.*
 - ~~Stone materials read as metallic~~ — **fixed 2026-09-08**
   (`phase0_sponza-followup-05`). The graphs wire `Metallic <- <tex>.B`
   correctly (glTF metallicRoughness), but Sponza's maps carry 3-25 % in that
@@ -270,8 +389,10 @@ Octahedral irradiance + depth atlases, probe grid layout, bindless slots.
 `ddgi_probe_update_cs.hlsl` **is** dispatched from `frame_gi_passes.cpp`
 (`RadianceCache_Trace` pass) once `r.RayTracing.GI=1` and a TLAS is ready;
 deferred lighting samples the atlases after `HasCompletedFirstUpdate()`.
-It shares the 208-byte `RadianceCacheTraceConstants` (176 + VFX emissive
-tail + grid-recentre row) with the SDF trace. SponzaTest could not validate the DXR path
+It shares `RadianceCacheTraceConstants` with the SDF trace and declares its first 13 rows, 208
+bytes (176 + VFX emissive tail + grid-recentre row; in `ddgi_probe_common.hlsli` since block
+B.6). The struct is 464 bytes since block B.2 added 16 change-box rows that only the SDF trace
+reads. SponzaTest could not validate the DXR path
 (`DDGI_ProbeUpdate` pipeline failed with 0x80070057 on a Tier 1.0 GPU); the
 2026-09-08 run on an RTX 5080 (Tier 1.2) is recorded in
 `.rulebook/tasks/phase0_sponza-parity-06-qa-harness-validation/notes.md`.
@@ -295,14 +416,11 @@ That first validated run exposed four probe-energy defects, all fixed on
    reports no hit attributes.
 
 Result: Camera A 52.0/255 for both paths (was 77.1 for DXR), Camera C 91.8 vs
-the SDF path's 90.1. Still open — with the final gather off the DXR path
-remains brighter: the per-probe GPU comparison (`scripts/test_gi_energy_gpu.ps1`, linear mean ray radiance of both writers on the same grid) reads DDGI/SDF = 0.5748 (parity 1 ± 0.10 NOT MET); the earlier display-referred PNG proxy gave 1.21. Found on the way: with `r.RayTracing` (master) off and `r.RayTracing.GI` on, the writer ran against an empty TLAS and filled every probe with sky — the dispatch is now gated on `IsGIEnabled()` and a populated TLAS; the SDF path's 96-step sphere
-trace drops energy on exhausted rays and the DDGI consumer's Chebyshev
-rejection is weaker than the radiance cache consumer's, and the two have not
-been separated. DDGI also uses a flat sky colour where the SDF writer samples
-the sky cubemap, and hardcodes 32 rays per probe.
+the SDF path's 90.1: display-referred PNG means with auto exposure on, and Camera A is identical by
+construction (the final gather replaces the probe irradiance for both sources), so neither is a
+measurement of the probe energy. Found on the way: with `r.RayTracing` (master) off and `r.RayTracing.GI` on, the writer ran against an empty TLAS and filled every probe with sky — the dispatch is now gated on `IsGIEnabled()` and a populated TLAS. Since then (followup-01, all in 7eea6b95) the DDGI dispatch reads `r.GI.RadianceCache.RaysPerProbe` instead of a hardcoded 32 (2026-09-15); escaping rays sample the sky cubemap as the SDF writer does (`r.GI.DDGI.DirectionalSky`, default 1; the two writers' sky fetch is equal to 6e-9, flicker ledger H-51); the atlases' 1-texel tile borders are filled after every update (`ddgi_border_fill_cs.hlsl`, H-55/H-56); the probe rays are the cache's stratified set rotated per frame and per probe (H-57/H-58); and the consumer's Chebyshev test and depth atlas match an offline model of their code on known inputs (H-59). The two candidates once listed here are settled: at Camera C no SDF probe ray exhausted the 96-step budget (lost fraction 0 on every probe, 45-probe-sky-parity, H-51), and with the final gather off what remains between the paths at the consumer is dominated by their two visibility models (the cache query returns zero when no probe survives its validity and facing tests; the DDGI query has only the Chebyshev test; H-62 as corrected, H-63), not by the writers. The writers' energy: block B.6 below.
 
-Regression guard: `scripts/test_ddgi_energy.ps1` (16 source-level checks).
+Regression guard: `scripts/test_ddgi_energy.ps1` (20 source-level checks since 2026-10-08; from 2026-09-17 it threw before any check, because `TraceProbeRay` changed signature and then moved to `ddgi_probe_common.hlsli`).
 
 **Block B.6 (2026-10-07, `phase0_lighting-block-b-06-ddgi-dedup`,
 [lighting-block-b-06-ddgi-dedup.md](lighting-block-b-06-ddgi-dedup.md)).** The update shader ran
@@ -318,12 +436,46 @@ against 3.585 ms per-texel on the same binary (SDF writer alone
 0.262 ms); the writer's per-probe mean ray radiance with the buffers (indirect term off)
 matches the per-texel trace (median relative 0.00000, D1a PASS) and the
 frame with the final gather off matches too (median 0.00000, D1b PASS);
-with the indirect term the energy ratio DDGI/SDF reads 0.9662 (was 0.9321; D4 PASS) and the
-diffuse GI of the frame (gather off) rises × 3.093. Note for every DDGI measurement:
+with the indirect term the energy ratio DDGI/SDF reads 0.9662 (was 0.9321; D4 PASS; 0.9637 at the
+closing sweep on 794b632f) and the diffuse GI of the frame (gather off) rises × 3.093. That ratio is of
+luminance (no per-channel statistic is logged) and divides the two writers' grid means over different
+probes (the cache's 3 885 with field distance >= 5 cm, 185 of them unreachable under mode 3 and logged
+as 0; the DDGI's 4 096): on the cache's valid probes the same logs read 0.973 / 0.970, on those inside the
+building 0.943 / 0.940 with a per-probe median of 0.935 / 0.943 (`scripts/gi_energy_populations.py`;
+followup-01 notes, 'Closure review'). Note for every DDGI measurement:
 with `r.GI.FinalGather 1` (the QA project) the SDF final gather replaces the probe irradiance in every
 pixel, so the frame does not show the atlases at all (the dump's `diffuse_indirect` is ~0.0006 there).
 The DDGI probes still have no relocation / classification, no Chebyshev test inside the indirect
-term, and `g_probeOffset` (temporal spreading) is unused.
+term, and `g_probeOffset` (temporal spreading) is unused (open; listed in
+`lighting-block-b-06-ddgi-dedup.md` 'Still open', the block-B backlog, no task yet). Nothing here is
+measured since 513e2983 and the sky changes of b8ff5077 / 4501fa74: 513e2983 took the mesh decals out
+of the distance-field occluder set and the shadow passes but not out of the TLAS
+(`tlas_manager.cpp:76-81` takes every draw command), so the DDGI writer still traces Sponza's
+dirt-decal quads as opaque occluders the SDF writer no longer has. H-61's writer term (inside the
+building the DDGI's per-ray sky 6.5-9.2 % above the cache's where the field reports a surface, measured
+on the QA field, GDF 64 / mesh SDF 32) has an untested cause (candidate: the surface bias of
+`r.GI.MeshSdf.TwoSided 1`) and was never measured on the project's field (both open, owner:
+phase0_lighting-ddgi-sdf-writer-parity-head, proposed at followup-01's closure).
+
+**Allocation (2026-10-08, open decision N4 of `phase0_indoor-lighting-system`).** The atlases and the
+ray buffers are created at start-up whether DXR GI is on or not
+(`runtime/engine/renderer/scene/scene_renderer_init.cpp:748-761`). They take about 15.1 MiB: a 2 MiB
+irradiance atlas, a 5.06 MiB depth atlas and two 4 MiB ray buffers (`ddgi_system.cpp:47-118`). The
+comment at `:751` says "~256 KB". The consumer binds them only after the writer's first update and
+while `r.RayTracing` and `r.RayTracing.GI` are on (`frame_constants.cpp:890-904`), so with DXR GI off
+(the default) the cost is memory only. Open, owner: `phase0_indoor-lighting-system` (N4).
+
+**Stale binding after a runtime `r.RadianceCache 0` (found 2026-10-08 by the
+`phase0_indoor-lighting-system` review).** That binding tests `m_radianceCache.IsInitialized()`
+(`frame_constants.cpp:890-892`), which stays true, rather than `m_sdfGiEnabled`, while the DDGI
+writer runs inside the radiance cache's pass, which is not registered while `r.RadianceCache` is off
+(`frame_gi_passes.cpp:149-161`). `ApplyCVars` re-reads the CVar every frame (`frame_setup.cpp:137`,
+`scene_renderer_init.cpp:1090-1092`) and nothing resets `DDGISystem`'s first-update flag. Turning
+`r.RadianceCache` off at runtime with DXR GI on therefore keeps the last DDGI atlas bound as source 1
+of the priority chain while nothing updates it: the stale-binding class that the comment at
+`frame_constants.cpp:885-889` records as fixed for `r.RayTracing.GI`. At start-up the gate holds
+(the writer has never run). Open, owner: `phase0_indoor-lighting-system` (not yet in its
+`tasks.md`).
 
 **Indirect-path noise (2026-09-08, `phase0_sponza-followup-06`).** With `r.TAA` off
 (the engine default), the stochastic passes — SDF reflections (4 GGX rays/pixel),
@@ -346,11 +498,24 @@ a plateau decaying over ~40 frames). Vertical sweep at the user's pose, frames
 131→132→133: 83.4 → 95.3 → 88.0 before, 83.4 → 83.9 → 84.1 after
 (`scripts/sponza-vertical-camera.*`). Lighting now indexes the published buffer
 with `GetCompletedGridOrigin()`, and the recentre scrolls the probe history
-through an integer grid shift (`historyShift*` row, 208-byte trace constants);
-only the first write and a scene-revision change reset it. Open: a
-spatial/temporal filter for the SDF reflection path; the `shadows`,
-`lighting`, `lightingonly` and `ao` debug views render nothing usable. Guards:
-`scripts/test_sdf_reflection_firefly.ps1`, `scripts/test_rc_recentre_scroll.ps1`.
+through an integer grid shift (`historyShift*` row, the 13th row of the trace constants;
+they are 464 bytes since block B.2 added 16 change-box rows). Only the first write and a
+scene-revision change reset it, and since block B.2 a GDF change box does too for the probes
+inside it (replaced at the default `r.GI.RadianceCache.RegionBlendAlpha` 1; more than eight
+pending boxes reset every probe, `radiance_cache.h:238-246`). Items 4.1 and 4.2 are closed. The
+four debug views were fixed on 2026-09-16 (`scripts/run_debug_view_check.py` 7/7, last run on the
+2026-10-05 binary). No reflection filter was built: measured in linear radiance on the 2026-09-23
+build, the TAA output keeps no isolated pixels on `shadow_wall`, and those at pose A's
+`rear_door` and `right_shadow` are not reflection pixels (ledger H-41, H-68/H-68b; H-68's rule is
+the re-test). About 90 % of the door's isolated-pixel luminance goes with the translucent pass,
+the door mechanism `phase0_sponza-followup-12` recorded (H-38, H-45..H-48), which the proposed
+`phase0_sponza-flicker-correction` owns. Accepted, not tracked:
+with `r.TAA` off the SDF reflections still sparkle beside openings, so a project that enables
+`r.GI.Reflections` must set `r.TAA 1` (`sample/projects/sponza.uzproject` does); and the ~170
+low-energy isolated output pixels per frame left at `rear_door` with the translucent pass off
+(1.6 % of the region's luminance), which are not reflection pixels and which nothing attributes
+(H-68b). Guards: `scripts/test_sdf_reflection_firefly.ps1` (18 checks),
+`scripts/test_rc_recentre_scroll.ps1` (42 checks since its 2026-10-08 re-anchoring).
 
 ---
 
@@ -378,7 +543,8 @@ colour instead of the TAA output (not the cause — `r.Bloom=0` control identica
 
 ### Static-camera flicker on high-contrast HDR edges under TAA (Sponza window bars) — `OPEN`, attributed 2026-09-09
 **File**: [taa_resolve_cs.hlsl](../../runtime/shaders/runtime/postprocess/taa_resolve_cs.hlsl), [taa_upscaler.cpp](../../runtime/engine/renderer/passes/postprocess/taa_upscaler.cpp)
-**Tests**: `scripts/test_region_dump.ps1`; QA scenes `scripts/sponza-flicker-w-seq.*`; packages `.screenshots/flicker-{sequence,jitter,region}/`
+**Tests**: `scripts/test_region_capture.py` (23 engine checks of the region dump v2; it replaced `scripts/test_region_dump.ps1`, removed with the version-1 format in followup-09 item 2.2) and `scripts/test_flicker_metrics.py` (26 synthetic checks, no engine; 26/26 again since the reader change of 2026-10-08, see "Measurement status" below); QA scenes `scripts/sponza-flicker-w-seq.*`; packages `.screenshots/flicker-{sequence,jitter,region}/` and `.screenshots/flicker-elimination/`
+**Status (2026-10-08):** the window residual is open, owner: `phase0_sponza-followup-15-taa-window-residual` (proposed at the followup-10 and followup-14 close-outs; the other regions' owners are under "Where followup-12 left each region" below). Every candidate tried on this ROI so far was rejected: `r.TAA.PreExposeWeights` (below; ledger H-08b), clamp removal and the AABB-only clamp (H-13; H-23, H-23b, H-23d), frozen clamp bounds (H-25b), `r.TAA.VarianceClipGamma=2.0` (fails G6 on `window`, H-42) and followup-14's `r.TAA.ReconstructionHdrWeightExponent` (see "TAA reconstruction HDR weighting" above). The mechanism's current state is under "Static TAA residual" above; the candidate fixes listed below remain untried.
 
 With the camera still, pixels on the bar/pane edges of the barred window oscillate with a
 period equal to `r.TAA.JitterSequenceLength`. Per-pixel records from the lighting pass and
@@ -397,7 +563,9 @@ oscillation (reflections off: 37 → 0.6 px > 40 per frame; bloom off: 39 → 15
 `r.TAA.PreExposeWeights` halves the bar-side count but destabilises the pane side (output std
 p99 0.18 → 2.49 Y), so it stays off. Candidate fixes not yet tried: partial pre-exposure,
 resampling (not re-weighting) the un-jittered neighbourhood, or an exposure floor for the
-interior. Keep `r.TAA.JitterSequenceLength=8`; length 1 (a constant Halton23(1) offset) is a
+interior — open, owner: phase0_sponza-followup-14-validate-flicker-correction, which selects and
+validates any correction (the display and isolation tasks are diagnostic until then). Keep
+`r.TAA.JitterSequenceLength=8`; length 1 (a constant Halton23(1) offset) is a
 control, not a fix.
 
 **Measurement status (2026-09-09, followup-09).** The capture and the metrics behind those numbers
@@ -406,10 +574,28 @@ were re-validated before any further conclusion is drawn. The instrumentation is
 readback that runs independently of TAA, a shutdown flush and a run manifest
 (`--run-manifest`: executable hash, effective CVars, exposure, frame timing, integrity counters).
 `scripts/test_region_capture.py` (23 behavioural checks) and `scripts/test_flicker_metrics.py`
-(22 synthetic checks) guard it. What the validation established, and what it corrected:
+(22 synthetic checks then, 26 since followup-13) guard it. From at least 2026-09-18 until 2026-10-08,
+11 of the 26 errored: their format-2/3 fixtures carry only the LIGHTING, TAA and OUTPUT groups
+(field masks 3, 5, 4), on which all three legacy layouts agree, yet `resolve_layout`
+(`scripts/flicker/regiondump.py`) rejected any record count that more than one legacy layout
+matched, which also left real format-2/3 captures with those masks unreadable. The reader change
+handed over at followup-01's closure (accept matching layouts that agree on every group the file
+carries) was applied on 2026-10-08, and `python scripts/test_flicker_metrics.py` (no engine) reads
+26/26 again. What the validation established, and what it corrected:
 
 * the records are linear scene radiance — a 16x exposure change leaves them bit-identical, and the
-  renderer is deterministic at a given frame index (two independent runs agree exactly);
+  renderer is deterministic at a given frame index (two independent runs agree exactly); *corrected
+  2026-10-08:* separate processes are **not** bit-reproducible — followup-14 found up to 795 of
+  786 432 recorded values differing between processes of one configuration, by up to 1.6e-2
+  radiance, while run aggregates reproduce closely but not always exactly (up to 2.3e-06 relative
+  in mean energy on A `rear_door`, ledger "Corrected 2026-09-15") — so the bit-identical exposure
+  pair and the exact agreement held for those processes only. The records are linear radiance on
+  the run aggregate, which is how `scripts/test_region_capture.py` judges this control (check 3)
+  and instrumentation neutrality (check 5) since 2026-10-08; bit-identity is checked against a
+  measured same-configuration spread instead
+  ([flicker-hypothesis-ledger.md](flicker-hypothesis-ledger.md), "The renderer is not
+  bit-reproducible across processes"; [build-and-deployment.md](../guides/build-and-deployment.md),
+  "Capture reproducibility");
 * the resolve's own blend equation, recomputed from the recorded fields, reproduces the recorded
   output to 9.2e-07 relative error, so the field meanings are verified rather than assumed;
 * the linear-domain oscillation and the display-domain threshold crossings are **disjoint pixel
@@ -426,6 +612,34 @@ Open hypotheses, their scope and the next discriminating experiment are tracked 
 [flicker-hypothesis-ledger.md](flicker-hypothesis-ledger.md); evidence packages live under
 `.screenshots/flicker-elimination/`.
 
+**Left open when followup-09 closed (2026-10-08).**
+
+* The baselines and the per-ROI decision thresholds of ledger rule 2 were measured on the 2026-09-09
+  binary and have not been re-measured since; the engine has changed in between (among others b8ff5077
+  sky capture, 975fc3c9 mesh winding, 513e2983 decals, c14215ed split-sum). Re-measure them into a new
+  package (`scripts/run_flicker_baselines.py --out <new dir>`, then `scripts/run_flicker_field_check.py
+  --out` and `scripts/report_flicker_baselines.py --dir` on that directory) before any flicker decision
+  rests on them, after correcting the fixed paragraph `scripts/report_flicker_baselines.py:97-102`
+  writes into every report ("agree to within 0.005 %", "the renderer is deterministic at a given frame
+  index") — open, owner: `phase0_sponza-flicker-correction` (proposed; re-homed from
+  `phase0_sponza-followup-12-isolate-shadow-lighting`, which closed the same day).
+* No shadowed-wall ROI sits above the measurement floor: `wall_bounce` (radiance 5.55e-05, temporal
+  std 1.58e-06) is darker than `shadow_wall` (1.64e-04, 3.82e-06) and has no ledger threshold — open,
+  owner: `phase0_sponza-flicker-correction` (proposed; re-homed from followup-12).
+* Scope note, fixed with this closing (2026-10-08): report identity and `--reuse`.
+  `runner._hash_file` (`scripts/flicker/runner.py`) hashed only the first 64 MiB, so every
+  `harness.sha256` written 2026-09-15..2026-10-05 (exe 80.0-81.1 MB) covers a prefix (the manifest's
+  `fnv1a64` is whole-file; the ~11.6 MB exe built since 2026-10-07 was hashed whole); it now hashes
+  the whole file. `scripts/run_gdf_sampling_side_accum.py` and `scripts/run_debug_view_check.py`
+  stamped only the binary present at analysis time; their reports now also carry each capture's
+  identity from `runner.capture_identity` (the analysis-time `harness` stamp stays beside it).
+  `scripts/run_candidate_evaluation.py --reuse` wrote `candidate_<phase>.json` over a three-repeat
+  report; a reuse run now writes `candidate_<phase>.reuse.json` (`runner.report_path`). Reports
+  written before the fix keep what they recorded.
+* Scope note, not an open item: reports of the October lighting harnesses (e.g.
+  `test-env-mis/env_mis.json`, `test-split-sum/split_sum.json`) carry no executable identity because
+  `capture_identity` is opt-in; each capture directory's `manifest.json` holds it.
+
 **Mechanism, isolated 2026-09-09 (followup-10).** The window has two independent defects:
 
 1. **An energy bias.** The converged image holds 91.9 % of the radiance of the correctly resampled
@@ -437,51 +651,144 @@ Open hypotheses, their scope and the next discriminating experiment are tracked 
    completely (0.0486 → 0.00001 radiance on the edge pixels) and leaves the energy bias untouched.
    Per stage: the raw sample is perfectly stable on the pane (0.00000) and swings 3.5 radiance at the
    bars; the jitter-weighted plus filter spreads that onto the pane (0.248); the accumulation
-   attenuates everything about 25x. The variance clamp adds about 35 % of what is left — the
-   neighbourhood AABB alone behaves like no clamp.
+   attenuates everything about 25x. On the boundary pixels the variance clamp adds about 35 % of
+   what is left and the neighbourhood AABB alone behaves like no clamp; over the whole window
+   rectangle the clamp adds 48.5 % and either box alone keeps most of it (the variance box all of
+   it, the AABB 80 %; ledger H-04c).
 
 Removing the clamp is not an option: it gives the best static number and never clears invalid
 history (peak error after a camera cut 10x the baseline, still 46x after 80 frames). This TAA
 rejects history only when the reprojection leaves the screen, so the clamp is its only disocclusion
 defence. Diagnostic CVars `r.TAA.JitterScale`, `r.TAA.ReconstructionMode`, `r.TAA.ClampMode` and
 `r.TAA.BlendMode` all default to the production behaviour; the offline model that reproduces the
-resolve to 2e-7 is `scripts/flicker/taa_model.py`.
+resolve to 2e-7 is `scripts/flicker/taa_model.py`. Until 2026-10-08, three checks in their guard
+`scripts/test_taa_modes.py` were weaker than stated: a jitter negative control ending in `or True`;
+a `r.TAA.BlendMode=1` check that never set `r.TAA.CurrentFrameWeight`, so it passed while that CVar
+was dead (ledger H-39); and a clip-box check that compared RGB with the lower corner only and never
+compared with `taa_clip_max`. All three are fixed and verified statically. The first GPU run of the
+fixed script is pending: **open, owner: `.rulebook/tasks/phase0_sponza-followup-10-isolate-taa-window`**
+(item 2.3 stays unticked until that run is recorded).
 
 **Display side, measured 2026-09-09 (followup-11).** The oscillation reaching the eye is a few per
 cent of radiance amplified by the exposure an interior needs. On the identical HDR sequence, replayed
 through a tonemap model validated against the engine to 1 code value, a 4x exposure change multiplies
-the px > 40 count by 31x while the linear records stay bit-identical — a threshold count is never an
-energy statement. Auto-exposure settles at 66.31 on pose W and is stable when still. Bloom lifts the
-dark floor 2.4x and halves local contrast, and its effect on a threshold count changes sign with the
-exposure. Two controls used in earlier packages turn out to substitute rather than subtract:
+the px > 40 count by 33.8x while the linear records stayed bit-identical in those single-process runs
+— a threshold count is never an energy statement. Auto-exposure settles at 66.31 on pose W and is
+stable when still; with the camera moving it adapts without oscillating (followup-14, `coverage.json`:
+66.1-73.2, one direction only through the strafe, the second hold and after the cut). Bloom lifts the
+dark floor 2.4x and halves local contrast, and it lowers the threshold counts at both exposures
+measured — without → with bloom, px > 8 677 → 408 per frame pair at exposure 1.0 and px > 40 1547 → 39
+per frame at the ~67 operating point (one run, 2026-09-09) — so it masks the residual rather than
+revealing it. Two controls used in earlier packages turn out to substitute rather than subtract:
 `r.GI.Reflections=0` falls back to the prefiltered IBL cubemap (specular radiance is initialised from
 it and only overwritten by the SDF trace), making the interior 11x brighter and the exposure 16x
 lower without changing the oscillation; and `r.TAA.PreExposeWeights` is a no-op at exposure 1.0 and,
 at the real operating point, makes the bright side oscillate 11x more while crushing the dark side to
-2 % of its radiance.
+2 % of its radiance. *(Corrected 2026-10-08: this paragraph said 31x, from rounded values, and that
+bloom's effect on a count changes sign with the exposure, which inverted the 2026-09-09 package —
+ledger H-15b, H-16b, H-05b. Its harnesses, `scripts/test_display_replay.py` and
+`scripts/run_display_study.py`, asserted bit-identity between processes and were rewritten to judge
+repeated, interleaved processes against their measured spread; their run on the current build, which
+also repeats the ~67 bloom measurement, is open, owner: phase0_sponza-followup-11-isolate-flicker-display,
+item 2.3.)*
 
 **Which pass owns each region, measured 2026-09-09 (followup-12).** The regions reported as
 flickering are not all lit the same way, and two of them are not lit by the deferred pass at all.
 With the forward translucent pass disabled, the barred window falls from 2.666 to 0.00006 radiance
 and the right-hand shadowed arcade from 0.0539 to 0.00047: their colour is **forward translucent
-geometry**, which the deferred lighting records do not describe and which no GI control moves
-(every one of them stays at 1.00x). The rear door is mixed (61.5 % deferred). The deeply shadowed
+geometry**, which the deferred lighting records do not describe. No GI control moves the window
+(0.99-1.00x under all six); the arcade stays within the 5 % decision threshold under five of them
+(1.00-1.05x) and moves 1.33x only under `r.GI.Reflections=0`, which substitutes the IBL cubemap and
+raises its mean 1.52x (ledger H-06c). The rear door is mixed (61.5 % deferred). The deeply shadowed
 walls and the sunlit floor are fully deferred, and their residuals have different sources again:
 the shadowed walls are 97.5 % diffuse indirect with the final gather's per-frame sampling dominating
 and GTAO contributing about 40 %, while the sunlit floor is 99 % direct light. The converged
-radiance cache contributes nothing to any of them (freezing it after convergence: 1.00x).
+radiance cache contributes nothing to any of them (freezing it after convergence leaves the diffuse
+indirect at 1.00x and the output at 0.96-1.00x; ledger H-06c).
 
-**Moving camera: the GDF recentre is a demonstrated cause, 2026-09-09 (followup-13).** Measured with
-world-space tracking (each pixel's world point reprojected into the previous frame, 88 % valid
-coverage), on a trajectory that crosses one clipmap axis at a time: the motion-compensated residual
-is 1.31-1.35x higher on the frames where a clipmap recentres, and the ROI mean steps by 3-6x its
-ordinary local change (about 24 % of the shadowed wall's radiance and 9 % of the lit wall's), with no
-consistent sign. Shifting the voxel snapping phase by half a voxel moves the events to different
-frames **and the elevation follows them**; freezing the centres removes the events entirely and
-leaves the residual away from them unchanged. Diagnostic CVars `r.GI.GDF.FreezeCenter` and
-`r.GI.GDF.CenterPhaseOffset` (both default to production behaviour). What is *not* isolated is which
-half of a recentre does it: re-voxelising the clipmap or moving the sampling origin of everything
-that traces it.
+**Moving camera: GDF recentres are not a measured cause, corrected 2026-10-08 (followup-13).**
+Until 2026-10-08 this paragraph called the recentre "a demonstrated cause": a motion-compensated
+residual 1.31-1.35x higher at recentre frames, ROI-mean steps of 3-6x the ordinary change, and an
+elevation that followed a half-voxel shift of the snapping phase. That was an analysis artefact. The
+study's moving-frame mask ran 120 frames behind the trajectory (`scripts/sponza-gdf-boundary.lua`
+counts from its on_start frame, logged `base_frame=37` in those runs), so 160 of the 360 frames
+treated as moving were still, while every recentre happens on a moving frame. The retained package
+was re-analysed without the engine (`python scripts/run_gdf_motion_study.py --reanalyse
+.screenshots/flicker-elimination/13-isolate-gdf-motion`). The residual near recentres is 1.09x
+(shadowed wall) and 0.89x (lit wall) the rest, and with `r.GI.GDF.FreezeCenter=1`, which has no
+recentre at all, it is the same at the same frames: per frame the baseline is 0.99943-1.00022 of the
+frozen run at all 16 event frames, the clipmap-1 events included. Valid coverage is 76-86 % on the
+moving frames; the 88 % quoted before was over all frames. The field side agrees: a single-voxel
+recentre leaves the overlapping field bit-identical on clipmaps 0 and 1 (ledger H-49, H-54), and
+since ce2caa5e a recentre recomposes only the entering slab ("Global distance field recentre"
+below). Ledger H-07c supersedes H-07b, and the phase sweep H-40 is void (H-40b). The diagnostic
+CVars `r.GI.GDF.FreezeCenter` and `r.GI.GDF.CenterPhaseOffset` default to production behaviour;
+since ce2caa5e the phase offset only moves the crossing frames, not the grid. The motion residual
+away from recentres is not attributed, and freezing the centres leaves it unchanged (H-20b). Its
+next control is a hold of the cascaded-shadow-map setup, which needs a new diagnostic CVar: the
+cascades are refitted every frame today, because `kCamera` is set unconditionally
+(`frame_constants.cpp:151`). That control is open, owner: the proposed task
+`phase0_sponza-flicker-correction` (ledger H-18b, H-20b; re-homed from followup-13 with
+followup-12's open points on 2026-10-08).
+
+**Where followup-12 left each region (task closed 2026-10-08).** Every region is attributed at pass
+level; none has a correction.
+
+* **Rear door.** The forward translucent pass carries 32.5 % of the rectangle's oscillation (H-38).
+  There only the glass coverage varies; material, lighting and the produced colour are constant
+  (H-45). The coverage changes through the depth test: an opaque silhouette against the sky, about
+  26-30 cm in front of the glass, crosses 125 glass pixels as the jitter moves (97.5 % of the missing
+  pixel-frames are hidden by the depth test, 0.2 % not rasterised; H-47, `41-door-occluder-depth`).
+  The TAA output keeps 14.1 % of the cycle-averaged input energy at the glass and 14.65 % within
+  16 px, so the energy is lost, not spread (H-46); the loss and the oscillation first appear in the
+  plus-filter reconstruction, where tap values and weights partly cancel (H-48). Acceptance criteria
+  for a correction were pre-registered on 2026-09-17 in followup-12's notes.md and must be completed
+  before use (no M1 tolerance, a per-mask E1, ROIs missing or undefined at pose A; its closure record
+  lists them). 67.5 % of the oscillation survives with the translucent pass off (H-38), and the
+  region's deferred part is 90 % direct light. Open, owner: `phase0_sponza-flicker-correction`
+  (proposed 2026-10-08).
+* **Right arcade (`right_shadow`).** Switching the translucent pass off removes 97.1 % of its
+  oscillation with 98.8 % of its mean, so whether the pass introduces the oscillation or is all there
+  is was not separated (H-38); what the pass consumes there was never recorded. Open, owner:
+  `phase0_sponza-flicker-correction` (proposed; ledger H-38b).
+* **Sunlit floor (`lit_floor`).** 99 % direct light; which part of the direct path varies is
+  inconclusive (H-18). The discriminating control, a shadow-map freeze, does not exist: no
+  `r.Shadow.*` CVar provides it. Open, owner: `phase0_sponza-flicker-correction` (proposed; ledger
+  H-18b).
+* **Shadowed walls.** The gather's output variation dominates (H-28c); decorrelating its rotation
+  makes the visible flicker 41 % worse (H-36), and the clip gamma that helped on a still camera fails
+  G6 on `window` (H-42). No candidate remains. Open, owner: `phase0_sponza-flicker-correction`
+  (proposed).
+* **Baselines.** Every followup-12 number above was measured before b8ff5077, c14215ed, 8aeb8917,
+  31b5c14a and 513e2983 (so were followup-09's per-ROI decision thresholds, listed under "Left open
+  when followup-09 closed" above), and the pose-A regions were never measured in motion. Open, owner:
+  `phase0_sponza-flicker-correction` (proposed).
+
+### Final gather: 8-sample energy deficit and gather-side coupling — `OPEN`, measured 2026-09-10/11 (followup-12)
+**Files**: [sdf_diffuse_gather.hlsli](../../runtime/shaders/runtime/gi/sdf_diffuse_gather.hlsli), [ssgi_world_gather.hlsli](../../runtime/shaders/runtime/ssgi/ssgi_world_gather.hlsli), [frame_gi_passes.cpp](../../runtime/engine/renderer/frame/frame_gi_passes.cpp)
+
+Three threads the flicker work found off its own path (ledger H-34, H-35, H-28d):
+
+* **Energy.** Against an independent hashed-rotation reference (32 samples x 128 frames), the
+  shipping 8-sample gather reads 8.20 % low on `shadow_wall` and 17.23 % low on `right_shadow`. The
+  gap depends on the sample count without converging monotonically (on the wall: 4 samples +6.3 %,
+  8 samples -8.2 %, 32 samples +0.31 % against the reference), which reads as the rotated lattice
+  aliasing against the integrand rather than a statistical bias; the reference's own convergence and
+  uncertainty were never shown, so the deficit is measured, not proven. Sponza ships the gather on
+  (`sample/projects/sponza.uzproject`, `r.GI.FinalGather=1`). Decorrelating the rotation removes its
+  parity lock and makes the visible flicker 33-41 % worse on the shadowed wall (H-36), so a fix must
+  not trade one for the other.
+* **Coupling into the reflections.** Changing only the gather's rotation moved the SDF reflection
+  term by 8.1e-07 (pose W, inside the 1e-06 tolerance) and by a deterministic 1.4e-06 (pose A, above
+  it: H-35's failed confinement control); the route, most plausibly the radiance-cache probes the
+  reflection hits sample, is untested.
+* **AO and specular under `r.GI.FinalGather.FreezeAfterFrame`.** Specular changes on the frame the
+  frozen texture is first reused, and AO in a nine-frame transient (frames 349-357, 5.07e-05); the
+  SSGI pass's second output is not the cause, and a shared resource or a missing barrier are not
+  excluded. It did not carry H-28c's result, but it is unexplained.
+
+Measured on the September renderer; the sky capture and SH have changed since (b8ff5077, c14215ed).
+Open, owner: `phase0_gi-final-gather-bias-coupling` (proposed 2026-10-08).
 
 ### `GlobalSDF` — `FUNCTIONAL` (4 clipmaps, raw + expanded)
 **File**: [global_distance_field.cpp](../../runtime/engine/renderer/gi/global_distance_field.cpp)
@@ -492,15 +799,19 @@ the GPU from per-mesh SDFs baked at load (`mesh_sdf_baker.cpp`, BVH,
 two-sided via `r.GI.MeshSdf.TwoSided`), kept as a raw R16F volume plus an
 expanded RGBA16F copy. Feeds the radiance cache trace, SDF reflections, the
 final gather and DFS. Scene readiness waits for pending bakes (138 on Sponza)
-before the first presented frame. Brixelizer keeps its own SDF; the two are alternatives.
+before the first presented frame. (The dormant Brixelizer integration would keep its own 512³ SDF
+atlas; it is never constructed, see the `r.BrixelizerGI` entry.)
 
 ---
 
 ### Global distance field recentre — `INCREMENTAL` 2026-10-05 (block B.2, phase 2)
 
-A recentre of a clipmap used to rewrite all of its voxels over every instance: ~125 ms of GPU per
-clipmap-0 recentre on Sponza (256^3, 138 instances), the hitch the flicker programme measured as
-a lighting step at grid crossings. The clipmaps are stored toroidally now (world voxel k in texel
+A recentre of a clipmap used to rewrite all of its voxels over every instance. On Sponza's long
+sweep (256^3, 138 instances) `GDF_Composite` averaged 1.27-1.33 ms over 297 frames that hold 46
+clipmap-0 recentres (and 11 of clipmap 1, 3 of clipmap 2), so a recentre cost at most ~8.6 ms of
+GPU. Corrected 2026-10-08: the "~125 ms" first written here divided by the sweep's 3
+radiance-cache recentres, and the "lighting step at grid crossings" it was linked to was an artefact
+(ledger H-07c). The clipmaps are stored toroidally now (world voxel k in texel
 k mod resolution; readers address by `frac(p / (2 extent))` with the WRAP sampler and skip the
 outer voxel of the window) and a recentre recomposes only the entering slabs
 (`r.GI.GDF.Incremental`, default on); since phases 3-4 (same day) a changed, added or removed
@@ -548,16 +859,107 @@ probes into reached air (`ReachRelocate`) and flood seeds in front of visible po
 arcade wall (S2 unsupported 0 -> 0.11 %, means identical) and adds no motion step (S3). Known and
 accepted: P2 of the reference reads +5 % on two lit faces against rule 0 (the control itself
 under-lights them); S1 on the coarse QA field was retired. Defaults of the engine are unchanged
-(0): the switch lives in `sample/projects/sponza.uzproject`. The intermittent hang of H-71 never
-reproduced; the diagnostic readbacks no longer `WaitIdle` and every GPU wait has a 10 s watchdog log.
+(0): the switch lives in `sample/projects/sponza.uzproject`.
+The intermittent hang of H-71 has not recurred (38+ runs), and its cause is unknown: of H-71's two
+suspects only the readback wait was changed (the radiance cache's two diagnostic readbacks follow the
+frame fence; `DDGISystem::ReadDiagnosticResults` still calls `WaitIdle`, `ddgi_system.cpp:521`), the
+G-buffer position read the cache pass declares for the visible seeds (`frame_gi_passes.cpp:285`) was not
+examined, and the 10 s watchdog log covers only `DX12Device::WaitIdle`'s direct-queue wait and
+`DX12Fence::WaitCPU` (`dx12_device.cpp:1285-1294`, `dx12_fence.cpp:83-95` at 8246ab5c): `WaitIdle`'s copy-
+and compute-queue drains still wait `INFINITE` with no log (`dx12_device.cpp:1305-1308, 1319-1322`; flicker
+ledger H-72b). Open, owner: phase0_lighting-rc-probe-support-followups (proposed at followup-01's
+closure): a pass/fail regression harness for this configuration (`scripts/test_probe_classification.py`
+covers rules 0 and 1 in the QA configuration only); a reachable probe on the far side of a wall can still
+light it, since the cache query has no visibility test; P2 against an irradiance solution of the reference
+instead of rule 0 (flicker ledger H-72); the hang above; and the dark-wall flicker candidate of ledger
+H-62 / H-62b (the query's renormalised mean over a changing set of surviving probes), never measured.
 
-### `IrradianceProbeGrid` / `LightProbeVolume` — `PARTIAL`
-**File**: [irradiance_probe_grid.cpp](../../runtime/engine/renderer/gi/irradiance_probe_grid.cpp)
+### `IrradianceProbeGrid` / `LightProbeVolume` — `INERT` (reviewed 2026-10-08; was listed as `PARTIAL`)
+**Files**: [irradiance_probe_grid.cpp](../../runtime/engine/renderer/gi/irradiance_probe_grid.cpp),
+[light_probe_volume_component.h](../../runtime/engine/ecs/environment/light_probe_volume_component.h),
+[frame_constants.cpp](../../runtime/engine/renderer/frame/frame_constants.cpp) (`:906-977`),
+[deferred_lighting_ps.hlsl](../../runtime/shaders/runtime/lighting/deferred_lighting_ps.hlsl) (`:973-1028`)
 
-ECS component + probe grid added in commit `1892a567` (Phase 0 tasks 2.1/2.2).
-Infrastructure is in place but there's no probe bake pipeline yet. Probes
-are spawned as ECS entities and the grid is uploaded to the GPU, but the
-irradiance data is zero until a bake step (which doesn't exist).
+The component and grid were added in `1892a567` (Phase 0 tasks 2.1/2.2) and wired in `29c83ba5`.
+The renderer allocates one grid, for the first enabled volume only (`frame_constants.cpp:975`).
+When the volume is loaded or created, every probe receives the same per-frame sky SH, after
+`shScale` and the lower-hemisphere terms, converted to the world frame
+(`FillFromSkySH(SHCubemapToWorld(...))`, `:936-947`).
+
+The volume contributes nothing:
+- `lpvIntensity` has been hard-coded to 0 since `29c83ba5` (`:967-972`), and the shader samples the
+  volume only when it is above 0 (`deferred_lighting_ps.hlsl:978`).
+- With a non-zero intensity it would still be source 3 of the one-source priority chain
+  (`:739-754`), behind the radiance cache, which answers every pixel once it runs (`:968-969`).
+
+The previous text of this entry was wrong on two points: the probes are not ECS entities (they live
+in one structured buffer), and their irradiance is not zero (it is the broadcast sky SH).
+
+Other gaps:
+- `IrradianceProbeGrid::CaptureFromSkyCubemap` (`irradiance_probe_grid.cpp:193-216`) is never
+  called.
+- `autoFitScene` and `autoFitPadding` are read only by the serializer
+  (`light_probe_volume_component.cpp:30-31`, `:47-48`).
+- The header's default extents are Y-up (`light_probe_volume_component.h:39-49`).
+- The grid has no explicit release at shutdown; only its destructor frees it
+  (`scene_renderer_impl.h:403`, `irradiance_probe_grid.cpp:25-26`).
+- No scene uses `light_probe_volume`. Sponza's `InteriorProbeVolume` was removed in `eb839ed9`.
+
+Spatially varying indirect diffuse comes from the radiance cache, the SDF final gather and DDGI.
+Whether to keep the volume (documented as inert) or remove it, which settles the gaps above, is open
+decision N3, owner: `phase0_indoor-lighting-system` (see `docs/guides/indoor-lighting-guide.md`,
+section 4).
+
+### SkyLight `intensity` / `indirect_lighting_intensity` / lower hemisphere — `OPEN DECISION` (2026-10-08, `phase0_indoor-lighting-system` N1/N2)
+**Files**: [frame_constants.cpp](../../runtime/engine/renderer/frame/frame_constants.cpp) (`:418-454`),
+[deferred_lighting_ps.hlsl](../../runtime/shaders/runtime/lighting/deferred_lighting_ps.hlsl) (`:714-715`),
+[sky_light_component.h](../../runtime/engine/ecs/environment/sky_light_component.h)
+
+The code splits the three settings between lighting paths, and no path reads all of them. The
+component's comments describe neither split: `intensity` "scales both diffuse and specular IBL
+contributions" (`sky_light_component.h:62-65`), and `indirectLightingIntensity` "scales only the
+diffuse IBL contribution" (`:72-75`). The lower-hemisphere comment (`:98-106`) gives the UE meaning
+(`true` replaces the lower hemisphere with the colour), while the code does the opposite: `true`,
+the default, leaves the captured sky SH unchanged, and `false` adds the colour
+(`frame_constants.cpp:446-454`).
+
+- **N1.** `intensity` (times `r.SkyLight.Intensity`) scales:
+  - the prefiltered specular and env-MIS;
+  - the sky of the radiance-cache and DDGI writers;
+  - the sky of the final gather and of the SDF reflections;
+  - the height fog and cloud ambient;
+  - the translucent IBL diffuse.
+
+  It does not scale the sky-SH fallback diffuse. There `skyTintDiffuse = skyColor`
+  (`deferred_lighting_ps.hlsl:714`), since `6543d8cf` (2026-04-08), and `shScale` carries only the
+  indirect intensity (`frame_constants.cpp:428`). The local `skyIntensity` at `:321`/`:330` is never
+  used, and the comment at `:423-427` wrongly says the shader applies the intensity. As a result,
+  the diffuse ambient of every GI-off scene ignores `intensity`. The lights reference authors 0.05
+  "so the frame is lit by the local lights alone" (`scripts/lights_reference.py:5-6`, `:107`), yet
+  block B.7 measured a floor ambient of 0.632 there (`lighting-block-b-07-clustered-lights.md:69`).
+- **N2.** `indirect_lighting_intensity` (times `r.SkyLight.IndirectIntensity`) and the
+  lower-hemisphere colour act only on the packed sky SH (`frame_constants.cpp:428-454`). Only the
+  sky-SH fallback reads that SH, plus the seed of the inert light probe volume. The radiance cache,
+  DDGI, the final gather and the SDF reflections never see these settings, so they do nothing in
+  GI-on scenes such as the Sponza project.
+- **Related.**
+  - On sky-SH-fallback pixels, the split-sum's multi-scatter share reads both settings
+    (`deferred_lighting_ps.hlsl:1218-1219`, `:1339`).
+  - With the radiance cache on and `r.GI.Reflections 0`, the same share multiplies the GI
+    irradiance, whose sky already carries the intensity, by `skyLightColor * skyLightIntensity`
+    again.
+  - Fog and clouds read the raw SH L0 times the intensity, without the colour or the indirect scale
+    (`frame_atmosphere_passes.cpp:123-125`, `:239-242`).
+  - `indirect_lighting_intensity` 0 (or `r.SkyLight.IndirectIntensity 0`) does not darken the GI-off
+    ambient: it zeroes the packed SH, `IsSHZero` (`runtime/shaders/runtime/lighting/ibl.hlsli:58-61`,
+    which tests only the red channel's L1 terms) then reads the SH as empty, and the fallback
+    samples the irradiance cubemap, scaled by neither intensity (`deferred_lighting_ps.hlsl:1040-1044`).
+
+The three Sponza scenes have authored √3 in both settings since `8e3470f8`. Their GI-on image
+therefore does not depend on N1, but it would change under N2 if the GI writers took the indirect
+intensity. No harness measures any of this yet (task item 8.2). Evidence and options: the task's
+`tasks.md` header and `docs/guides/indoor-lighting-guide.md`, section 2. Open, owner:
+`phase0_indoor-lighting-system` (N1, N2 and the related items above).
 
 ---
 
@@ -660,6 +1062,13 @@ stone is above it, so SSR shows nothing there by design unless the cut-off is ra
 ~~`r.SSR.MaxRoughness`, `NumSteps`, `StartMipLevel`, `SlopeToleranceScale`, `Composite` are each
 registered twice (frame_gi_passes.cpp and frame_lighting.cpp / frame_postprocess.cpp).~~ Fixed
 2026-10-08 ("CVars registered twice" under Rendering).
+
+Open (found 2026-10-08 during the `phase0_sponza-followup-06` closure review): since 9f1be63f the
+lighting pass hands the debug view `ssrSrvIndex = UINT32_MAX` whenever SSR is inactive, which is the
+default (`frame_lighting_pass.cpp:163`). `--view-mode reflections` loads the SSR texture through that
+index without testing it (`debug_view_ps.hlsl:60, 178-185`), unlike cases 8, 9 and 16, which break to
+the "no data" magenta. The effect of the out-of-range descriptor is not established. Proposed fix:
+the same sentinel test at the top of case 18. No task owns it.
 
 ### Environment-MIS specular — `FIXED` 2026-10-08 (block B.5b; was "black on metals", side finding of block B.5)
 The environment-MIS estimate (`EnvMIS_Temporal`) replaces the split-sum specular on smooth metals and
@@ -962,32 +1371,50 @@ radius 60 in Sponza produces visible crevice contact shadows. Needs
 testing in more scenes, and PIXEL_DEBUG pass-dump validation that the
 AO channel matches expected values.
 
----
-
-### `r.DOF` — `OFF` (PARTIAL)
-**File**: [frame_postprocess.cpp:27](../../runtime/engine/renderer/frame/frame_postprocess.cpp)
-**Shaders**: `dof_setup_cs.hlsl`, `dof_blur_cs.hlsl`
-
-Depth of field setup + blur compute shaders exist. Off by default, uses
-fixed lens parameters, no bokeh kernel sampling, no near-field handling.
-Works as a cheap gaussian blur based on circle-of-confusion — acceptable
-for background blur but nothing fancy.
+**AO floor discontinuity (found 2026-10-08 by the `phase0_indoor-lighting-system` review).**
+`deferred_lighting_ps.hlsl:506` uses the GTAO value only when it is above 0.01; at or below 0.01
+the pixel keeps the G-buffer AO (usually 1). A fully occluded GTAO texel therefore reads as
+unoccluded instead of reaching the `minOcclusion` floor (`:512`). The jump at 0.01 has been there
+since `a612d736` (2026-04-03). Open, owner: `phase0_indoor-lighting-system` (recorded under its
+item 8.2).
 
 ---
 
-### `r.LensFlare` — `OFF`
+### `r.DOF` — `OFF`, `STUB` (UNWIRED) (corrected 2026-10-08; was `PARTIAL`, "works as a cheap gaussian blur")
+**CVar**: [frame_postprocess.cpp:32](../../runtime/engine/renderer/frame/frame_postprocess.cpp)
+**Shaders**: `dof_setup_cs.hlsl`, `dof_blur_cs.hlsl` — one-line empty compute bodies since `bd4db199` (2026-03-31)
+
+No pass dispatches depth of field: the post chain that did was removed as dead
+code by `phase0_sponza-followup-08` item 4.4, `ctx.dofActive`
+(`frame_setup.cpp:466`) is computed and read by nothing, and the `r.DOF*` CVars
+say "(inert: ...)". Re-implementation: open, owner:
+`phase3a-3.50.0-ue5-visual-parity-roadmap` item 2.9 (pending; its 2.9.1 tick
+predates `bd4db199`).
+
+---
+
+### `r.LensFlare` — `OFF`, `STUB` (UNWIRED) (corrected 2026-10-08; was "builds, runs")
 **File**: [lens_flare_pass.cpp:30](../../runtime/engine/renderer/passes/postprocess/lens_flare_pass.cpp)
-**Shader**: `lensflare_cs.hlsl`
+**Shader**: `lensflare_cs.hlsl` — a one-line empty compute body since `bd4db199` (2026-03-31)
 
-Ghost-based lens flare compute pass. Builds, runs, visible artifacts around
-bright light sources. Off by default because the ghost positions and
-chromatic aberration are un-tuned.
+`LensFlarePass` is created and initialised (`scene_renderer_init.cpp:639-640`)
+but never executed: nothing calls `LensFlarePass::Execute` (the post chain that
+did was removed by `phase0_sponza-followup-08` item 4.4). Open, owner:
+`phase3a-3.24.0-lens-flare` (pending; its items 1.1-1.3 and 1.5, ticked on
+2026-03-19, predate `bd4db199`).
 
 ---
 
-### `r.MotionBlur` — `ON`
-Object-space motion blur (tile max / neighbor max / reconstruction). Works
-correctly. Listed for completeness.
+### `r.MotionBlur` — CVar `ON` by default, `STUB` (UNWIRED) (corrected 2026-10-08; was "works correctly")
+**CVar**: [frame_postprocess.cpp:31](../../runtime/engine/renderer/frame/frame_postprocess.cpp)
+**Shaders**: `motion_blur_cs.hlsl`, `motionblur_tilemax_cs.hlsl`, `motionblur_neighbormax_cs.hlsl` — one-line empty compute bodies since `bd4db199` (2026-03-31)
+
+Nothing is blurred. No pass dispatches these shaders (the post chain that did
+was removed as dead code by `phase0_sponza-followup-08` item 4.4);
+`ctx.motionBlurActive` (`frame_setup.cpp:460`) is computed and read by nothing;
+`r.MotionBlur.MaxRadius` and `.TargetFPS` say "(inert: pass not wired)".
+Re-implementation: open, owner: `phase3a-3.50.0-ue5-visual-parity-roadmap`
+item 2.8 (pending; its 2.8.1 tick predates `bd4db199`).
 
 ---
 
@@ -997,11 +1424,16 @@ correctly. Listed for completeness.
 - [distortion_resolve_pass.cpp](../../runtime/engine/renderer/passes/vfx/distortion_resolve_pass.cpp)
 - Shaders: `distortion_ps.hlsl`, `distortion_haze_ps.hlsl`, `distortion_resolve_ps.hlsl`
 
-Pass classes and shaders are all implemented, but **there is no wiring
-in `frame_postprocess.cpp` or `frame_particles.cpp` that calls
-`AddDistortionAccumulationPass` or `AddDistortionResolvePass`**. Scene VFX
+The pass classes are implemented and `distortion_haze_ps.hlsl` has a body, but
+`distortion_ps.hlsl` and `distortion_resolve_ps.hlsl` are one-line pixel shaders
+returning opaque black (since `bd4db199`). The engine compiles neither; only the
+VFX viewport demo builds a fullscreen resolve PSO from `distortion_resolve_ps`
+(`runtime/demos/vfx_viewport/vfx_viewport_demo.cpp:551`) (corrected 2026-10-08).
+**There is no wiring in `frame_postprocess.cpp` or `frame_particles.cpp` that
+calls `AddDistortionAccumulationPass` or `AddDistortionResolvePass`**. Scene VFX
 entities that flag themselves as distortion emitters will NOT render any
-refraction until the pass is added to the frame graph.
+refraction until the pass is added to the frame graph. Open, owner:
+`<stub-shader task>`.
 
 ---
 
@@ -1056,7 +1488,11 @@ Listed in the Phase 3 task list but never implemented. ECS has no
 ### Particle system — `PARTIAL` (MOSTLY FUNCTIONAL)
 Spawn/update/render compute pipeline works. Mesh particle rendering
 works. Trails work. Known gaps:
-- **Collision** via SDF exists but only tested against Brixelizer global SDF
+- **Collision** via SDF exists (the `SceneSDF` data interface); its CPU pieces are unit-tested:
+  the analytic sphere/box SDFs and their central-difference gradient
+  (`runtime/tests/engine/vfx/test_vfx_scene_sdf.cpp:61-118`) and the collision push-out with
+  hand-fed distance/gradient values (`:124-179`). The earlier "only tested against Brixelizer
+  global SDF" was wrong: no VFX code references Brixelizer.
 - **Vector fields / curl noise** helpers exist but no integration test
 - **Ribbons / trails** interpolation has a minor popping artifact at
   segment transitions
@@ -1115,7 +1551,11 @@ opacity (the AO kept), the other targets and the depth untouched, out of the sha
 D1 PASS), the positions under the decal sit on the wall (|y| 0.029 cm; D2 PASS), no shadow (D3 PASS);
 Sponza Camera A: positions changed only inside the decal bounds (D4 PASS), the footprint's boundary
 contrast 0.530 → 0.120 (D5 PASS). Open: only the albedo blends (roughness
-and normal stay the stone's); the reflection-probe capture still draws the quads opaque.
+and normal stay the stone's); the reflection-probe capture still draws the quads opaque; the TLAS still
+holds them as opaque instances, as it holds every translucent draw (`TLASManager::Rebuild` takes every
+draw command, `tlas_manager.cpp:76-81`), so the DXR GI writer traces occluders the distance field and the
+shadows do not have, the decals since 513e2983 and translucent draws always (open, owner:
+phase0_lighting-ddgi-sdf-writer-parity-head, proposed at followup-01's closure).
 
 **Addendum (2026-10-08, the Sponza recalibration item):** the dirt-decal mesh had also been a
 distance-field occluder. `decals_1st_floor1_dirt_decal_0` (7036 vertices, bounds spanning the atrium)
@@ -1129,6 +1569,34 @@ guard in the bake.
 ### Decals — `DONE`
 Deferred decal system (DBuffer) works. Decal material graph integration
 works. No known issues.
+
+---
+
+## Input / editor navigation
+
+### Editor free camera (F5) and the input frame boundary — `OPEN` (found 2026-10-08 by the parity-06 closure review)
+**Files**: [frame_setup.cpp](../../runtime/engine/renderer/frame/frame_setup.cpp), [frame_overlay.cpp](../../runtime/engine/renderer/frame/frame_overlay.cpp), [scene_renderer_init.cpp](../../runtime/engine/renderer/scene/scene_renderer_init.cpp)
+
+From reading the sources (not from a run):
+- **The F5 free camera cannot be moved.** F5 pushes an `EditorFreeCam` (`frame_setup.cpp:287-303`),
+  but the fly controller runs only while the active camera id is 0 (`:339`) and `fly_camera.lua`
+  moves only the ECS camera, so WASD and the right mouse button do nothing to it;
+  `docs/analysis/rendering/sponza-test-handoff.md:45` promises F5 + WASD. SponzaTest also runs the
+  controller for the free camera and re-initialises its yaw and pitch (`InitFromCamera`) on the push
+  and the pop.
+- **With `r.ShadowDebug` 1 every key toggle fires again each frame.** The only
+  `InputSystem::EndFrame()` runs inside the OverlayPass (`frame_overlay.cpp:396`), which is not
+  registered when `r.ShadowDebug` is 1 (`:188`), so press edges and the scroll / raw deltas are never
+  cleared and `IsKeyJustPressed` stays true (F5, F, G, the number keys, Lua
+  `uz.input.is_key_just_pressed`). SponzaTest ends the input frame unconditionally at the end of
+  `RenderFrame`; merge `31b5c14a` dropped that call as a duplicate.
+- The C++ fly controller moves at 5 cm/s (`scene_renderer_init.cpp:177`) in the hosts that never call
+  `SetMoveSpeed`: the standalone `uzengine.exe` and the runtime C API viewport of the VS Code scene
+  editor (`runtime/engine/app/runtime.cpp`); the `Application` host applies
+  `AppConfig::cameraMoveSpeed` (500, `application.cpp:174`).
+
+Open, owner: `phase0_sponza-parity-06-qa-harness-validation` item 1.4 (engine changes and the
+`scripts/test_editor_navigation.ps1` run in its notes.md, "Closure review (2026-10-08)").
 
 ---
 
@@ -1192,6 +1660,39 @@ Spec exists in `docs/specs/`, no implementation.
 All of these have specs in `docs/specs/` and tasks in `.rulebook/tasks/`
 but no code yet.
 
+### One-line stub shaders — `STUB`, 29 files (audit 2026-10-08)
+
+Requested by `phase0_sponza-parity-01` (notes.md:130-150) so that "the pass is
+wired up" is not read as "the pass works". Each file has been a single line since
+`bd4db199` (2026-03-31): the compute shaders are
+`[numthreads(8,8,1)] void main(uint3 DTid:SV_DispatchThreadID){}` (they write
+nothing), the pixel shaders `return float4(0,0,0,1);` (opaque black). The
+2026-09-07 sweep found 32; filled since: `mesh_sdf_bake_cs` and
+`global_sdf_composite_cs` (parity-03, committed in `7eea6b95`) and
+`cluster_assign_cs` (block B.7, `58340259`).
+
+- Compiled by the engine through `EngineShader::` (20): `atmosphere/sky_cubemap_ps`
+  (SM5 fallback of `sky_cubemap_cs`), `compute/gpu_cull_cs` (`r.GpuCull`),
+  `debug/pixel_debug_cs`, `debug/vis_fullscreen_ps` (pass-inspector visualisation,
+  `frame_overlay.cpp`), `gbuffer/gbuffer_debug_ps`, `postprocess/color_grading_lut_cs`,
+  `postprocess/dof_setup_cs`, `postprocess/dof_blur_cs`, `postprocess/fsr_easu_cs`,
+  `postprocess/fsr_rcas_cs`, `postprocess/lensflare_cs`, `postprocess/motion_blur_cs`,
+  `postprocess/motionblur_tilemax_cs`, `postprocess/motionblur_neighbormax_cs`,
+  `postprocess/smaa_edge_ps`, `postprocess/smaa_blend_ps`, `postprocess/smaa_resolve_ps`,
+  `postprocess/tsr_resolve_cs`, `shadows/dfs_cone_trace_cs`, `shadows/dfs_cull_objects_cs`.
+- Compiled only by the VFX viewport demo (1): `vfx/distortion_resolve_ps`
+  (`runtime/demos/vfx_viewport/vfx_viewport_demo.cpp:551`).
+- Named only in comments (4): `postprocess/bloom_downsample_ps`, `bloom_blur_h_ps`,
+  `bloom_blur_v_ps`, `bloom_composite_ps` (`postprocess_stack.h`; the live bloom is the
+  compute chain `bloom_threshold_cs` / `bloom_downsample_cs` / `bloom_upsample_cs`).
+- Not referenced (4): `compute/draw_compact_cs`, `compute/mipgen_cs`,
+  `shadows/dfs_upsample_cs`, `vfx/distortion_ps`.
+
+The entries above for `r.TSR`, `r.FSR`, `r.SMAA`, `r.DFS`, `r.DOF`, `r.LensFlare`,
+`r.MotionBlur` and Distortion describe the features these files leave
+unimplemented. Repro:
+`find runtime/shaders -name '*.hlsl' | while read f; do [ "$(wc -l < "$f")" -le 2 ] && echo "$f"; done`
+
 ---
 
 ## Build / Tooling
@@ -1230,8 +1731,10 @@ runs.
 ### Pass-dump — `IMPROVED (2026-04-07)`
 Recent session added `DumpChannel` for split views (gbuffer.ao, metallic,
 roughness from packed RTs) and enabled gbuffer depth dump via a sqrt curve.
-Volfog inscattering/integrated + Brixelizer diffuse/specular outputs are
-now registered. Shadow atlas depth still skipped.
+Volfog inscattering/integrated outputs are now registered; the Brixelizer
+diffuse/specular targets listed with them register only for an initialised
+pass (`frame_lighting.cpp:348-359`), so never since 2026-04-10. Shadow atlas
+depth still skipped.
 
 ---
 
@@ -1242,7 +1745,10 @@ now registered. Shadow atlas depth still skipped.
 2. **RT Shadows via inline ray query** — `diharaw/hybrid-rendering` pattern.
    Replaces the view-dependent contact shadow march. Most visible quality
    upgrade.
-3. **Rewrite SSGI march** — or formally retire it in favor of Brixelizer GI.
+3. **Rewrite SSGI march** — or formally retire it in favor of the world-space
+   SDF final gather (`r.GI.FinalGather`), the diffuse GI that runs on Sponza.
+   (Brixelizer GI, named here on 2026-04-07, has been dormant since then; its
+   task was closed as superseded on 2026-10-08.)
 4. **Wire distortion passes** into frame_postprocess — zero new code,
    just graph registration. Unlocks heat haze / refraction VFX.
 5. **GTAO validation + AO-map authoring path** — for when assets actually

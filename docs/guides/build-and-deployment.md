@@ -269,10 +269,28 @@ runtime/build/bin/uzengine.exe --project sample/projects/pbr_showcase.uzproject 
   frame on, the probes stop updating and the converged SH buffer is held; -1 = never). The region
   dump preset `--region-fields components|full` adds the per-pixel lighting components and the
   active-path bitmask. Guard: `scripts/test_lighting_components.py`.
+- Later followup-12 diagnostics (default to production behaviour; added 2026-09-10..16, listed here
+  2026-10-08): `r.GI.FinalGather.FreezeAfterFrame` (after that absolute frame, i.e. frame index > N,
+  the final gather is no longer dispatched, so its output texture holds its last contents while the
+  deferred lighting keeps reading it; -1 = off; ledger H-28c), `r.GI.FinalGather.SampleRotation`
+  (0 = the shipping radical inverse, 1 = Kronecker candidate, 2 = independent per frame, a reference
+  generator only; H-31, H-34, H-36), `r.GI.SDF.SampleFrameOffset` (shifts only the diffuse gather's
+  sample sequence by whole frames; H-31) and `r.Translucency.DepthTest` (0 builds the forward
+  translucent pipeline without a depth test, which changes the image and is never a shipping
+  setting; read when the pipeline is created; H-47). `--component-replay <file>` replays recorded AO
+  and specular per frame and per pixel (built by `scripts/make_component_replay.py`; H-28c). The
+  region dump carries what the translucent pass consumed in LIGHTING_EXTRA +5..+10 and the TAA
+  plus-filter taps and weights in TAA_EXTRA +4..+10 (`region_dump.hlsli`); the gather studies
+  (H-30..H-32) read the final gather's own stages and its eight rays through
+  `--region-fields gather` (or `gather+extra`). `scripts/test_diagnostic_resources.py` guards the
+  replay buffer's release; the CVars have no standing guard, and each study script checks its own
+  controls.
 - GDF diagnostic CVars (default to production behaviour, added 2026-09-09 for followup-13):
   `r.GI.GDF.FreezeCenter` (stop the clipmaps recentring; only valid while the measured geometry stays
-  inside the coverage the field already had) and `r.GI.GDF.CenterPhaseOffset` (shift the voxel
-  snapping grid in centimetres, so the same camera path crosses boundaries at different frames).
+  inside the coverage the field already had) and `r.GI.GDF.CenterPhaseOffset` (an offset in
+  centimetres added to the camera position before snapping, so the same camera path crosses
+  boundaries at different frames; since ce2caa5e the voxel grid itself does not move,
+  `global_distance_field.cpp:204-214`).
   The region dump format is now version 3: a 144-byte camera block (unjittered view-projection, the
   previous frame's, camera position) follows the header, which is what lets an analysis track a world
   point across frames; `--region-fields motion` is the cheap preset for that (48 bytes per pixel).
@@ -301,10 +319,21 @@ runtime/build/bin/uzengine.exe --project sample/projects/pbr_showcase.uzproject 
   of an identical configuration differ in up to 795 of 786 432 recorded values, by up to 1.6e-2 in
   linear radiance. Aggregates over a 256-frame run reproduce to ~1e-13, so run-to-run comparison of
   statistics is sound, but any assertion of bit-identity must instead compare against a measured
-  per-configuration floor (`scripts/diagnose_cvar_ulp.py`). Closing the render window aborts a
-  capture with exit code 0 after a few frames; `runner.run_capture` now raises with that
-  explanation. The engine's `headless` mode only creates a device and exits, so captures need a
-  real 1920x1080 window.
+  per-configuration floor (`scripts/diagnose_cvar_ulp.py`). Measure that floor from repeats, not
+  from one pair. Since 2026-10-08, `scripts/test_correction_gates.py` captures 4 interleaved repeats
+  per configuration and judges an equivalence by max(between) <= max(within) on max |delta|, because
+  its single-pair floor passed or failed depending on which pair formed it (followup-14 notes,
+  Close-out (2026-10-08)). Processes land in a few discrete states: the eight captures of
+  `40-default-vs-explicit` include two bit-identical pairs, and the rest are 9.5e-7 to 3.9e-3 apart
+  in 57 to 5 751 of 1.57 M values (the RGB records of the window ROI, frames 237-252). An
+  equivalence rule comparing a few processes therefore fails by chance when the states split by
+  configuration: on those RGB records, max(between) <= max(within) on max |delta| fails on 16 of 280
+  splits at 3 vs 3 processes and 1 of 35 at 4 vs 4 (on per-pixel luminance, which
+  `test_correction_gates.py` compares, all 35 splits at 4 vs 4 pass; followup-14 notes). Read a
+  failure as a change only if it repeats (`scripts/run_display_study.py`, `indistinguishable()`).
+  Closing the render window aborts a capture with exit code 0 after a few frames;
+  `runner.run_capture` now raises with that explanation. The engine's `headless` mode only creates a
+  device and exits, so captures need a real 1920x1080 window.
 - `--run-manifest <path>`: writes the run's manifest as JSON — executable path and hash, project and
   scene, output and render resolution, output encoding, frames rendered, CPU frame-time statistics
   (from `--timing-first N`, default 200), effective exposure, camera pose, region-dump file and

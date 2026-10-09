@@ -200,3 +200,25 @@ def recovery_tolerance_usable(tolerance: float, noise: float) -> bool:
     """
     return _require_finite(tolerance, 'tolerance') > _require_finite(noise, 'noise')
 
+
+def spread_verdict(between, within, guard: float = 1e-12) -> str:
+    """Between-condition distances against within-condition (repeat) distances, on one statistic.
+
+    'INDISTINGUISHABLE' when max(between) <= max(within): every cross-condition distance sits inside
+    the spread the conditions show against their own repeats. 'SEPARATED' when
+    min(between) > max(within). 'OVERLAPPING' otherwise, which does not support a claim of sameness.
+    `guard` keeps two perfectly reproducible conditions (a within spread of exactly 0) from failing
+    on numerical dust. Use it on max |delta|: on mean |delta| the cross-process differences of this
+    renderer behave like continuous noise and the rule fails by chance (followup-14, 2026-10-08).
+    Raises on non-finite or empty input.
+    """
+    b = _require_finite_array(between, 'between')
+    w = _require_finite_array(within, 'within')
+    if b.size == 0 or w.size == 0:
+        raise ValueError('spread_verdict needs at least one between and one within distance')
+    top = max(float(w.max()), _require_finite(guard, 'guard'))
+    if float(b.max()) <= top:
+        return 'INDISTINGUISHABLE'
+    if float(b.min()) > top:
+        return 'SEPARATED'
+    return 'OVERLAPPING'

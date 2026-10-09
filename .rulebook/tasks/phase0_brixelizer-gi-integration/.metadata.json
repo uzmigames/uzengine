@@ -1,5 +1,7 @@
 {
-  "status": "pending",
+  "status": "completed",
   "createdAt": "2026-04-06T17:13:07.123Z",
-  "updatedAt": "2026-04-06T17:13:07.123Z"
+  "updatedAt": "2026-10-09T12:23:47.000Z",
+  "resolution": "closed as superseded 2026-10-08 (not finished). Brixelizer GI has not run since 2026-04-07:\n- 29c83ba5 made RegisterBrixelizerGIPasses return at its first statement (frame_gi_passes.cpp:387).\n- c84a8bce (2026-04-10) commented out the construction (scene_renderer_init.cpp:666-674): ffxBrixelizerContextCreate failed with FFX_ERROR_BACKEND_API_ERROR on non-AMD GPUs, and that was never diagnosed.\n- build.zig defines UZ_BRIXELIZER_ENABLED only when an MSVC-built uz_brixelizer.dll exists, and the repo never builds one, so every build compiles the no-op stub.\n- The deferred-lighting composite is a branch that is never taken.\n\nThe GI in use is the SDF radiance cache with the SDF final gather and SDF reflections, with DDGI as the DXR option (blocks A/B). Brixelizer was abandoned in favour of that stack, not covered by it: the Camera C interior level is still open (lighting-block-b-2026-10.md:126-128). 28 of the 39 ticks are doubtful and itemised in the tasks.md reconciliation note. 8.1-8.6, 10.2 and 10.3 are n/a. Docs were corrected on 2026-10-08: gi-system.md, ibl-pipeline.md, brixelizer-gi-guide.md, runtime/CHANGELOG.md, notes in the overnight and lumen-gap analyses, the known-issues entries (seven places) and the README GI row (2026-10-09). The dormant source is kept; removing it is a separate decision.",
+  "closure": "superseded (not finished); reopen to revive"
 }

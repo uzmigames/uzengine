@@ -91,6 +91,10 @@ Checked against captured data, not against the shader source, by
   deterministic at a given frame index), and the recorded values exceed the display range.
   `taa_output.w` is the TAA HDR-weight exposure (`r.TAA.ExposureScale`), a different quantity from
   the tonemap exposure in the header.
+  **Correction (2026-10-08):** the run-to-run floor is not zero in general: separate processes are
+  not bit-reproducible (`docs/analysis/flicker-hypothesis-ledger.md`, "The renderer is not
+  bit-reproducible across processes"). The negative control holds on the run aggregate, which is
+  what `scripts/test_region_capture.py` check 3 judges since this date.
 * **Record identity** — the resolve's own blend equation, recomputed from the recorded filtered
   colour, clamped history, blend weight and weight exposure, reproduces the recorded output to
   9.2e-07 relative error. Any other meaning for those fields would not close that identity.
@@ -103,3 +107,7 @@ Auto-exposure adapts with the frame time (`auto_exposure.cpp` uses `dt`), so **a
 moves the displayed image: instrumented and uninstrumented runs of identical settings differ by one
 code value with auto-exposure on, and are bit-identical with the exposure fixed. Every
 display-referred comparison in this programme fixes the exposure.
+
+**Correction (2026-10-08):** "bit-identical with the exposure fixed" was measured on each recorded
+run, not guaranteed: two processes are not bit-reproducible, so check 5 of
+`scripts/test_region_capture.py` now compares the run aggregate and reports bit-identity.

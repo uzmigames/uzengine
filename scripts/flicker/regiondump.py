@@ -160,7 +160,7 @@ YCOCG_Y = (0.25, 0.5, 0.25)
 #: Record counts per field group, in field-bit order, for every layout that has been written.
 #: Format 4 carries its own layout in the header, so this table only serves formats 2 and 3, which
 #: did not. Those are told apart by the header's own `recordsPerPixel`; a total matching none of
-#: them, or more than one, is rejected rather than guessed at.
+#: them, or several that disagree on a group the file carries, is rejected rather than guessed at.
 LEGACY_LAYOUTS = (
     (2, 5, 1, 3, 4, 0),   # up to 2026-09-09
     (2, 5, 1, 4, 4, 0),   # 2026-09-10, after the TAA history sample position was added
@@ -192,7 +192,9 @@ def resolve_layout(version: int, fields: int, records: int, packed: int) -> tupl
 
     Format 4 states it outright. Formats 2 and 3 do not, so the layout is recovered by matching the
     header's `recordsPerPixel` against the layouts in use while that format was written, and only
-    accepted when exactly one matches. An unknown, newer format is rejected: a reader that assumes
+    accepted when every layout that matches agrees on the groups the file carries (the legacy layouts
+    differ only in TAA_EXTRA and LIGHTING_EXTRA, so a file without those groups matches all three and
+    reads the same under each). An unknown, newer format is rejected: a reader that assumes
     the layout has not changed is how every LIGHTING_EXTRA channel came to be read one slot early.
     """
     if version > MAX_SUPPORTED_VERSION:
@@ -208,7 +210,8 @@ def resolve_layout(version: int, fields: int, records: int, packed: int) -> tupl
         return layout
     matches = [c for c in LEGACY_LAYOUTS
                if sum(n for i, n in enumerate(c) if fields & (1 << i)) == records]
-    if len(matches) != 1:
+    carried = {tuple(n for i, n in enumerate(c) if fields & (1 << i)) for c in matches}
+    if len(carried) != 1:
         raise ValueError(
             f'format {version} carries no layout, and fields={fields} with {records} records per '
             f'pixel matches {len(matches)} known historical layouts — cannot be read unambiguously')

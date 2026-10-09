@@ -249,7 +249,7 @@ def main():
         'cost_ms': cost, 'passed': PASS, 'failed': FAIL,
     }
     os.makedirs(args.out, exist_ok=True)
-    path = os.path.join(args.out, f'candidate_{args.phase}.json')
+    path = runner.report_path(args.out, f'candidate_{args.phase}.json', args.reuse)
     with open(path, 'w', encoding='utf-8') as fh:
         json.dump(report, fh, indent=2)
     print(f'\n{len(PASS)} passed, {len(FAIL)} failed  ->  {path}')

@@ -59,6 +59,8 @@ The 14:19 build after the Karis edit produced **identical numbers to the decimal
 
 Keep `r.TAA: 1` in the Sponza project (done) and give the SDF reflection path a filter (item 4.1). Until then, any project that runs `r.GI.Reflections=1` without TAA will sparkle next to bright openings.
 
+*Correction (2026-10-08): no filter was built (item 4.1 closed by decision on 2026-09-23, ledger H-68), so the sparkle without TAA stays: a project that runs `r.GI.Reflections=1` must set `r.TAA` to 1, as the Sponza project does.*
+
 ## Addendum — the whole-scene flash (item 4.4)
 
 After `r.TAA: 1` the user reported that the whole scene flickers while flying. The live log
@@ -156,16 +158,22 @@ Fix (radiance_cache.{h,cpp}, radiance_cache_trace_cs.hlsl, frame_constants.cpp):
   coordinate is outside the grid or the history probe was invalid (inside geometry). 15/16 of the
   probes keep their history on a one-axis recentre; the entering slab starts fresh.
 
+*Correction (2026-10-08): block B-02 (0a9cc732) grew the struct to 464 bytes. The shift row's pad became `regionCount`, and 16 change-box rows follow it: probes inside a box blend at `r.GI.RadianceCache.RegionBlendAlpha`, which defaults to 1, a replace. Block B-06 (edfd7942) moved the DDGI mirror into `ddgi_probe_common.hlsli`. Change boxes come only from GDF instance changes (`global_distance_field.cpp:349, 376-385`, `frame_gi_passes.cpp:255-268`), so a pure recentre still keeps the history of every probe that stays in the grid.*
+
 Guard: `scripts/test_rc_recentre_scroll.ps1` — 40 checks (CB layout and row order in both mirrors,
 the C++ gates, the shader paths, a CPU model of the index mapping for shifts ±1 / diagonal / beyond
 the grid, and an EMA model of the blink: replace → −40 %, blend with feedback → < 2 %, recovery of
 the old behaviour ≥ 15 frames).
+
+*Correction (2026-10-08): the guard failed 5 of its 40 checks from 0a9cc732 on and 7 from edfd7942 on, by a Python emulation of its regexes on those commits' sources; the same emulation gives 40/40 on 7eea6b95. It was re-anchored to the current layout: 42 checks, 42/42 against 4501fa74's sources (closure review below).*
 
 Build notes: `test_gi_gpu.cpp` carried its own `== 192` static_assert (now 208 + two `offsetof`
 checks). While that assert failed, clang also reported a `gtest-printers.h` char16_t→char32_t
 conversion as an *error* in the same TU; it vanished with the assert fixed. PowerShell harness
 gotchas that cost a run each: `$v` and `$V` are the same variable, and `@($x + $s[0], $y)` parses
 as `$x + ($s[0], $y)` — parenthesise each element.
+
+*2026-10-08: that assert is `== 464` since 0a9cc732, but its comment and message still say 208 (`test_gi_gpu.cpp:774-779`).*
 
 ## Re-counted with the validated instrumentation, before any filter (2026-09-15)
 
@@ -266,6 +274,8 @@ look like a measurement:
   image. `gbuffer.depth` and `shadow.atlas` are depth formats; `gbuffer.position` is RGBA32F, whose
   padded rows come to 33 MB, over the 16 MB readback cap.
 
+*Correction (2026-10-08): the 1.000 in the two triples above is the alpha channel, which the lighting pass writes as 1.0 (`deferred_lighting_ps.hlsl:1484-1486`), not a reading of light. The targets this item named first - `gbuffer.emissive`, `lighting.direct/indirect/shadow`, `hdr` - are still validated on all four channels, constant channels included. `gbuffer.emissive` still reads 0 / 16.484375 / 4.121094 (OK) on 2026-10-08: RGB emissive 0 and RT3.a = specular + 16 x shading model, averaged (closure review below).*
+
 **After the fix:**
 
 | target | before | now |
@@ -285,6 +295,8 @@ is now flagged `WARN_ZERO`, which is correct for a measured zero.
 
 **Still zero and not investigated here:** `volfog.inscattering`, `volfog.integrated` and `hiz.mip0`
 report measured zeros. Whether that is correct for this scene is not part of this item.
+
+*Correction (2026-10-08): both are explained since. Nothing writes the volfog volumes in Sponza. The froxel pass runs only for a `height_fog` entity with volumetric fog enabled (`frame_atmosphere_passes.cpp:129-141`), and `sponza.uzscene` has none (block B-04, 8851f37e, `docs/analysis/lighting-block-b-04-froxel-fog.md`). The Hi-Z pyramid was built before the GBuffer pass had written depth; 9f1be63f moved it after. The 2026-10-08 `--diag` reads `hiz.mip0` at 0.002337-0.002343, with the two volfog targets still WARN_ZERO.*
 
 **Known limit, now recorded rather than discovered again:** the validator samples a 4x4 block at the
 CENTRE of each target and averages the selected channels. A target whose centre does not change
@@ -307,3 +319,123 @@ lets the IBL fallback in and triples the region's mean, and the isolation rule i
 neighbourhood median. The overlap reading has no confound and says the output's isolated pixels are
 not where the reflection term's are. Verdict **NOT JUSTIFIED**; no filter built, item closed.
 Data: `.screenshots/flicker-elimination/53-door-firefly-attribution/door_fireflies.json`.
+
+*Addendum (2026-10-08, read from the same file, no new capture; ledger H-68b).* With translucency
+off the door's isolated output pixels fall only 16 % in number (about 204 -> 170 per frame; 16 % is
+H-68's worst-against-best cut), but their share of the region's output luminance falls from
+13.9-14.3 % to 1.6 %, while the region's mean output luminance goes from 1.20-1.23e-02 to
+0.99-1.03e-02. Share x mean falls from 1.71e-03 to 1.61-1.62e-04: about 90 % of their summed
+luminance goes with the translucent pass, the door mechanism recorded by followup-12 (H-38, H-45..H-48)
+and owned by the proposed `phase0_sponza-flicker-correction`.
+The ~170 per frame left carry little energy and are not reflection pixels either (overlap
+3.5-4.7 %). Nothing attributes them, and they are not tracked, because nothing shows them to be
+visible. H-68's repeats agree within 1 pixel/frame except for translucency off at `rear_door`
+(169.9 / 171.2 / 170.2).
+
+## Closure review (2026-10-08)
+
+Every item was re-checked against the sources at 4501fa74 by reading only: no build, no capture.
+HEAD moved to 8246ab5c during the review; none of the files cited here changed. *2026-10-09, HEAD
+5fcd62e5: of the files cited here only `runtime/tools/uzengine.cpp` has changed since (7eee2d00;
+see the `--screenshot-frames` item below).*
+
+**Still in place.** Karis and horizon weights at `sdf_reflections.hlsli:268, 283-285` (only
+ce2caa5e, the toroidal GDF addressing, has touched the file since). `probeFacing` at
+`deferred_lighting_ps.hlsl:932`. Readiness at `radiance_cache.h:227-229`. Lighting's completed
+origin at `frame_constants.cpp:811`. History shift at `radiance_cache.cpp:776-778`, shifted blend
+at `radiance_cache_trace_cs.hlsl:596-633`. Debug-view cases at `debug_view_ps.hlsl:90-100,
+147-176`. Per-channel validation and SKIPPED at `inspector_pass_validate.cpp:98-121` and
+`inspector_pass_report.cpp:83-91`.
+
+**Guards**, checked by Python emulations of their regexes (each pattern checked to appear verbatim
+in the script):
+- `test_sdf_reflection_firefly.ps1`: 18/18.
+- `test_rc_recentre_scroll.ps1`: 33/40 before this review; re-anchored, now 42/42. The emulation
+  gives 40/40 on 7eea6b95. Seven one-point source mutations (size, offsets, a row after the shift
+  row, a DDGI include, a DDGI row, the pre-B-02 blend, a recentre that resets history) each fail
+  exactly their own check. The edited script parses without errors. It does not check what
+  precedes the shift row in the HLSL mirrors, nor where change boxes come from: a row inserted
+  before the shift row, or `fieldChanged` set on a recentre, still passes 42/42 (the original
+  guard had the first gap too). *2026-10-09: a shader that set `fieldChanged` for every probe with
+  history passed 42/42 too; `blend_replace_without_history` now also pins
+  `fieldChanged = hasHistory && InChangedRegion(probePos)` (`radiance_cache_trace_cs.hlsl:621`), so
+  that mutation fails that check alone. Still 42 checks: 42/42 by emulation, the seven mutations
+  above unchanged. Change boxes pushed by the C++ on a recentre would still pass.*
+
+**Dispositions.**
+- No reflection filter (4.1, H-68):
+  - Accepted and documented: sparkle without TAA. `r.TAA` defaults to false
+    (`frame_setup.cpp:47`), so a project that enables `r.GI.Reflections` sets `r.TAA 1`.
+  - Declined: the exposure-relative or clamped Karis weight that followup-08 4.1 handed here. The
+    output's isolated pixels are not reflection pixels (H-68). The bias is quantified: 88 %
+    retained in the layered fixture, under 1 % error with a uniform environment.
+    `r.GI.Reflections.HdrWeight=0` gives the plain mean. The energy check on a constant-albedo
+    enclosure that `sdf_reflections.hlsli:279-282` still lists as open is that fixture run
+    (`test_sdf_reflection_energy.ps1`, followup-08 4.1).
+  - H-68 measured the 2026-09-23 build. Pose A's render has changed since, at least through b8ff5077:
+    it changed the sky cubemap capture that escaping SDF reflection rays sample
+    (`sdf_reflections.hlsli:218-220`, `frame_constants.cpp:839`), as do the radiance-cache probes'
+    escaping rays (`radiance_cache.cpp:870`). The other renderer commits since 2026-09-23 were not
+    assessed for pose A. *Corrected 2026-10-09: this item said 9f1be63f's Hi-Z pyramid is read by
+    GTAO and SSGI, as 9f1be63f's message says. At pose A nothing that runs reads it: the GTAO shader
+    ignores the Hi-Z index it is passed (`gtao_cs.hlsl:20, 237`), the SSGI trace disables it
+    (`ssgi_renderer.cpp:578`), and the GPU culling that reads it is off by default (`r.GpuCull`,
+    `r.DepthPrepass`, `scene_renderer_init.cpp:1093-1094`, `frame_sync.cpp:108`).* 9f1be63f's SSR
+    layering and ea13ab21's env-MIS specular do not run at pose A: `r.SSR` is off there, and env-MIS
+    is unbound while the SDF reflections are on
+    (`frame_lighting_pass.cpp:207-212`). Pose A's scene (`scripts/sponza-flicker-a.uzscene`,
+    unchanged since 7eea6b95) did not get the sqrt 3 that 4501fa74 and 8e3470f8 put back into the
+    three Sponza scenes. The region dump still records the SDF term before the SSR blend
+    (`deferred_lighting_ps.hlsl:543, 1162, 1477`), so `run_door_firefly_attribution.py` remains
+    the re-test.
+- The door's isolated output pixels: see the addendum above.
+- By design and documented: the 4.2 modes are bindless-only (`debug_view_ps.hlsl:147-149`), and the
+  validator reads a 4x4 centre block (`inspector_pass_validate.cpp:1-5`).
+- `run_debug_view_check.py` passes `--screenshot-frames 39`, which uzengine.exe rejects because it
+  takes A-B (`runtime/tools/uzengine.cpp:749-753`; each run.log warns). It then captures the first
+  fully loaded frame (`uzengine.cpp:1175-1182`). The capture is deterministic: six of the seven
+  modes are byte-identical across the 09-16, 09-21 and 10-05 binaries. *2026-10-09: 7eee2d00
+  (2026-10-08 17:02) makes uzengine.exe take a single frame N as N-N (`uzengine.cpp:744-757` at
+  5fcd62e5; the lines above are 8246ab5c's). A binary built from it captures render 39 only, and
+  only if the scene is fully loaded by then. Pose A's preload took 37 frames in all three runs
+  ("Pre-load complete ... after 37 frames" in each run.log); if a rebuilt binary needs more, the
+  harness stops with "no screenshot was written" and `--frames 60` moves the capture to render 59.*
+
+**Left before closing** (engine changes, then runs; the exact text is in the closure output):
+1. 4.3 residue: an RGB channel selector in the pass inspector (`inspector_pass.h:60-66`,
+   `inspector_pass_validate.cpp:103-109`, `inspector_pass_dump.cpp:134-139, 154`).
+   `gbuffer.emissive`, `hdr`, `lighting.direct` and `lighting.indirect` are registered as RGB and
+   `lighting.shadow` as R (`frame_lighting.cpp:263, 363-377`). Then `scripts/verify_sponza_loading.ps1`
+   and its DIAG_JSON.
+2. Comments that still give the 208-byte layout or name 4.1 as open: `sdf_reflections.hlsli:279-282`,
+   `radiance_cache.h:431-432, 437-441`, `radiance_cache_trace_cs.hlsl:91`, `test_gi_gpu.cpp:774-779`.
+3. Runs:
+   - Both guards in PowerShell (18/18, 42/42).
+   - `python scripts/run_debug_view_check.py` on the current binary (7/7).
+   - The GTAO-off `ao` fallback against the lit level of the `shadows` view, both with `r.Bloom 0`.
+     Debug views are tonemapped like the lit image: the 0/1 shadow mask shows its lit pixels at 172
+     code values in the 37-debug-views captures. A display-referred 0.25 therefore does not by
+     itself show a wrong G-buffer alpha. The view and the lighting read the same
+     `m_gbuffer.albedoSRV` alpha (`frame_lighting_pass.cpp:154, 202`, `debug_view_ps.hlsl:70, 99`,
+     `deferred_lighting_ps.hlsl:442, 448, 489`).
+4. Optional:
+   - The vertical sweep (`scripts/sponza-vertical-camera.*`), because 0a9cc732 rewrote the blend
+     around the 4.5 fix.
+   - The long sweep's single `SSGI activation` line (4.4).
+   - H-68 on the current build.
+
+**Outside this task, found on the way.** Since 9f1be63f the `reflections` debug view loads the SSR
+texture through the sentinel index when SSR is inactive (`frame_lighting_pass.cpp:163`,
+`debug_view_ps.hlsl:60, 178-185`).
+*2026-10-09: no other task owns it (the known-issues note under `r.SSR` says so). The review of
+this closure proposes making the fix and its check closure conditions here: the same sentinel
+test at the top of case 18, then a `--view-mode reflections` capture with `r.SSR 0` and
+`r.Exposure 1.0` (the exposure `run_debug_view_check.py` uses; pose A's scene sets 0.5) that shows
+the "no data" magenta.*
+
+**Not editable here, handed to the closure.** Corrections to:
+- `docs/analysis/known-issues-and-partial-implementations.md`: this task's entry, the DDGI
+  paragraph, the `--diag` GDF line under `r.RadianceCache`, the `r.TAA` entry, and an open note
+  under `r.SSR` for the `reflections` view (the defect above).
+- `docs/engine/12-rendering/33-sdf-gi-final-gather.md`.
+- The ledger: H-68b, and the H-28b..H-72 rows that sit inside the "Results marked invalid" table.

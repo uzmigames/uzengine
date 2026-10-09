@@ -154,3 +154,96 @@ was fixed. That defect lived in this task's subject area and is noted here so th
 it is not a reason to reopen this task.
 
 **Not re-run.** No experiment from this task was repeated to produce this note.
+
+
+## Correction (2026-10-08)
+
+Closure review against the code, the git history and the evidence package. Nothing was re-run for
+this note. The text above stands as written and is corrected here.
+
+* **"Nothing committed" (top of this file).** Everything this task added (the four diagnostic
+  CVars, the `taa+extra` records, `scripts/flicker/taa_model.py`, `validate_taa_model.py`,
+  `test_taa_modes.py`, the `run_taa_*.py` harnesses, the motion sequence, the docs and this task
+  folder) landed in `7eea6b95` (2026-10-04).
+* **Jitter length 1** is the constant (0, −0.167) px = Halton23(1) on every frame, as written
+  above. `tasks.md` 1.2 said (0.125, 0.278), which is Halton23(5); corrected there.
+* **"The variance clamp (~35 %)" and "the AABB alone behaves like no clamp at all (0.0315 vs
+  0.0314)"** are boundary-mask figures (5 127 px). Per mask, production / variance box only / AABB
+  only / no clamp: boundary 0.04855 / 0.04855 / 0.03147 / 0.03144; bright 0.02317 / 0.02342 /
+  0.02314 / 0.01072; whole ROI 0.00952 / 0.00959 / 0.00862 / 0.00490. Over the whole window the
+  clamp contributes 48.5 % and the AABB alone keeps 80 % of it; on the bright pane either box alone
+  keeps all of it. The two boxes are redundant everywhere except on the boundary (superseding ledger
+  row H-04c, handed over by this review).
+* **"Nothing was adopted. followup-14 owns that decision"**: decided, the candidate was rejected.
+  `r.TAA.ReconstructionHdrWeightExponent=0` is the same arithmetic as `ReconstructionMode=1`.
+  Measured 3 x (200 + 256) frames on poses W, A and C, it reproduces this task's numbers (9.5215e-03
+  / 6.1541e-03 against 0.00952 / 0.00615) and fails G1, G2, G6 and G7 (ledger H-21..H-23), so the
+  default stays 1.0 and the knob is opt-in. followup-14 was reopened on 2026-09-16 for its own
+  harness (`test_correction_gates.py`) and is in progress; its notes say no verdict about the
+  candidate rests on that.
+* **The motion table** used a recovery tolerance of 2 % of the phase-1 reference's 99th percentile
+  (`run_taa_motion_check.py`; 0.166 on the baseline) over the ROI 770,200,192,256. followup-14's G6
+  uses 2 % of the converged mean (0.049) over 770,150,192,512, so the two recovery counts are not
+  comparable: the same variant reads 1 -> 16 frames here and 16 -> 60 there. Reconstruction 2
+  (centre tap only, −53 % static) and reconstruction 1 + blend 1 (−50 %) never ran this sequence,
+  and no reason was recorded. Clamp 3 got no verdict here; followup-14 rejected it in H-23 on one
+  run per variant (its notes, 2026-09-15: "stage_motion gave extra variants a single run"), not
+  re-run since; independently of that, its static residual falls only 9.5 % against G1's 50 %
+  (followup-14 `matrix.json`: 8.6205e-03 against 9.5215e-03, matching 0.00862 here), which rejects
+  it as a correction on its own. The cut back to the same pose measures recovery from invalidated
+  history, not newly revealed surfaces. Disocclusion does occur in the sequence: the strafe's
+  parallax covers and uncovers the bright surfaces behind the bars
+  (`sponza-flicker-w-motion.lua:10-11`). On pose W at frame 237
+  (`15-isolate-clamp-bounds/raw/full-recurrence`, masks by this task's rule,
+  `run_taa_window_experiments.py:95-97`, over frames 237-244) the own-pixel view distance
+  (`lighting_normal.w`) has a median of 252 cm on the dark mask against 361 cm on the bright mask:
+  the bars stand about 1.1 m in front of the lit surfaces. The TAA's recorded centre depth
+  (`taa_clip_min.w`) is not used for this: it is the nearest of the centre and four diagonal taps
+  2 px away (`taa_resolve_cs.hlsl:257-286`), not the pixel's own depth. No metric isolates those
+  pixels (the off-screen history fraction is 0 throughout), so "a disocclusion" in item 1.7 was
+  exercised but never measured as such.
+* **"One run per variant (the renderer is deterministic at a given frame index ...)"**: the ledger
+  later corrected the premise ("The renderer is not bit-reproducible across processes", section "Two
+  findings about the measurement itself"). Aggregate statistics reproduce closely but not always
+  exactly (up to 2.4e-04 relative in oscillation between processes on A `rear_door`, the ledger's
+  "Corrected 2026-09-15", far below the smallest effect reported here, about 1 %), and single values
+  do not reproduce. Every GPU variant here remains a single run (24 measured frames per still-camera
+  variant, one pass of the motion sequence per motion variant), and the package keeps summaries only
+  (no dumps, CSV, masks, plots or logs; git-ignored).
+* **`r.TAA.BlendMode=1` held the weight at a hardcoded 0.04 in these runs**, not at
+  `r.TAA.CurrentFrameWeight`, which nothing read until the H-39 fix (followup-12; in `7eea6b95`).
+  The default is 0.04, so the blend-1 numbers stand. `test_taa_modes.py` could not see this: its
+  BlendMode check never set the CVar, and its jitter negative control ended in `or True`; its
+  clip-box check never compared with `taa_clip_max`. All three were fixed on 2026-10-08 (see
+  `tasks.md` 2.2) and have not yet been run on the GPU.
+* **Record reconciled (2026-09-15).** "The index shows this task complete" was true of the generated
+  index then (still ✅ at `7eea6b95` and `31b5c14a`). But the index is generated from
+  `.metadata.json`, whose status has said `pending` since 2026-09-09, and the regeneration in
+  `088b8f40` (2026-10-05) turned the row to ⬚, as the generated `.rulebook/tasks/README.md` shows
+  (line 42 at `8246ab5c`).
+  "Costs a third of the bar's contrast, so it was not adopted" misstates the reason. On the thin
+  bright bar the constant offset loses 31.1 % (length 1) or 34.1 % (`JitterScale=0`) of the energy,
+  against production's 48.4 %: less, not more. It was a control and never a candidate, because it
+  removes the residual by removing the sub-pixel sampling the TAA anti-aliases with. "Nothing here
+  is awaiting a further experiment" holds for this task's own checklist only. The window's static
+  residual and the HDR-weighting energy bias stay open, and no open task item owns their next step:
+  followup-12's acceptance criteria of 2026-09-17 gate the rear-door glass and the walls, not the
+  window. The untested interventions (cycle-averaged or slowly filtered clamp bounds, ledger H-25b;
+  an exact history read during accumulation, H-26) are recorded only in
+  `known-issues-and-partial-implementations.md` and the ledger.
+  *(2026-10-09: `.rulebook/tasks/phase0_sponza-flicker-correction`, created that day from
+  followup-12's close-out with the window task proposed as followup-15 by the followup-10 and
+  followup-14 close-outs merged in, now owns them: item 1.1 adds the W window to the acceptance
+  criteria, 1.3 runs the untested interventions and the AABB motion repeats, 1.4 asks for the
+  judgement on the residual. As created, its item 1.3 does not list the cut-sequence runs of
+  reconstruction 2 and reconstruction 1 + blend 1 (`tasks.md` 1.7) or the H-01b period at jitter
+  lengths 4 and 16.)*
+* **H-01 hand-off.** The ledger's H-01 waited for this task to repeat jitter lengths 1/4/16 in
+  linear units. Item 1.2 measured the linear amplitude (ROI std 0.00528 / 0.00952 / 0.01298 at
+  4 / 8 / 16, 0.00000 at length 1) but not the period, and no row recorded it. This review hands the
+  ledger a superseding row H-01b, with the period at 4 and 16 left open.
+* **Stale unit tests.** Item 2.3 handed them to followup-14 item 1.6, which diagnosed both and
+  changed neither. They were fixed on 2026-10-08 in `8246ab5c`, outside this task:
+  `PerFrameCB_Is768Bytes` was removed and `PrefilteredMipLevelsDefaultIsFive` became
+  `PrefilteredMipLevelsDefaultMatchesTheBaker`. Its commit message records the filtered gtest run
+  at 47/47; not re-run for this note (see `tasks.md` 2.3).

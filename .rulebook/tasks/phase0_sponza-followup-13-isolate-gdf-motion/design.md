@@ -41,3 +41,18 @@ Two tracking bugs were found and fixed before any conclusion: a single mid-depth
 reversed-Z (21 px error, 10 % coverage) and the absolute-pixel comparison that carried the jitter and
 a sub-centimetre camera/matrix offset into every sample. Coverage is now 88 % and is reported with
 every number. Full tables in notes.md; ledger rows H-07b and H-20.
+
+## Correction (2026-10-08)
+
+The result above ("supported") is withdrawn. `run_gdf_motion_study.py` placed its moving-frame mask
+at FIRST + seg x 140 + 41..100 with FIRST = 157, while `scripts/sponza-gdf-boundary.lua` counts its
+segments from its on_start frame (logged `base_frame=37`): the mask ran 120 frames late, 160 of its
+360 frames were still, and every recentre is a moving frame. With the windows the trajectory logs,
+the near-event residual is 1.09x (shadowed wall) and 0.89x (lit wall) the rest, and the fixed-centre
+control, which has no recentre at all, gives the same residual at the same frames (per frame
+0.99943-1.00022 of it, 16 event frames). The phase-shifted runs show the same thing: the elevation
+follows the frames selected, not the grid. A recentre therefore has no measurable effect on the
+motion-compensated residual in this scope (ledger H-07c supersedes H-07b; H-40b voids H-40). H-20's
+rejection stands, on corrected grounds (H-20b). The 88 % coverage is the mean over all dumped frames;
+on the moving frames it is 76 % and 86 %. Full numbers, method and what was fixed in the harnesses:
+notes.md, "Correction (2026-10-08)".

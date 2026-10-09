@@ -98,7 +98,7 @@ def main():
             raise SystemExit(f'{mode}: no screenshot was written')
         images[mode] = load_png(shots[-1])
         report['modes'][mode] = {'screenshot': shots[-1], 'before_the_fix': MODES[mode],
-                                 **measure(images[mode])}
+                                 'identity': runner.capture_identity(work), **measure(images[mode])}
 
     ref = images[REFERENCE]
     failures = []

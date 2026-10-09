@@ -61,3 +61,22 @@ static number in the study, bought with history that never clears (peak error af
 
 Full numbers: `.screenshots/flicker-elimination/10-isolate-taa-window/report.md` and notes.md.
 Ledger rows H-04b, H-11..H-14 in `docs/analysis/flicker-hypothesis-ledger.md`.
+
+**Correction (2026-10-08).** Four statements above need scoping; the text is left as written.
+(1) "Amplified about 35 % by the variance clamp" holds on the boundary mask only. Over the whole
+window rectangle the clamp contributes 48.5 % of the residual (0.00952 -> 0.00490 with no clamp)
+and the AABB alone keeps 80 % of that (0.00862); on the bright mask either box alone keeps all of it
+(notes.md, Correction (2026-10-08); ledger H-04c).
+(2) "`r.TAA.ReconstructionMode=1` is the best candidate so far" was overtaken by followup-14, as
+the proposal intended. As `r.TAA.ReconstructionHdrWeightExponent=0` it fails gates G1, G2, G6 and
+G7 (ledger H-21..H-23) and stays opt-in. Its cut-recovery cost there is 16 -> 60 frames, under a
+tolerance of 2 % of the converged mean rather than the 2 % of the 99th percentile used here.
+(3) In this task's runs `r.TAA.BlendMode=1` held the weight at a hardcoded 0.04:
+`r.TAA.CurrentFrameWeight` was read by nothing until the H-39 fix (followup-12, in `7eea6b95`). The
+default is 0.04, so the numbers stand.
+(4) The evidence package is git-ignored and local only. It keeps `report.md`, five JSON summaries
+and the run manifests, not the dumps, per-frame CSV, masks, plots and logs listed under "Artifacts
+and reproducibility", and every GPU variant is a single run (24 measured frames for a still-camera
+variant, one pass of the motion sequence for a motion variant) rather than the shared protocol's
+three runs of 200 + 256 frames. Only the baseline and `ReconstructionMode=1` were later re-measured
+under that protocol (H-21).

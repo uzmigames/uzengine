@@ -8,10 +8,15 @@ task `phase0_lighting-block-b-02-gdf-incremental` (design.md has the decisions).
 
 **Before.** Every recentre of a clipmap rewrote all of its `res^3` voxels over every instance
 (`CompositeFromMeshSDFs`, 512-instance batches). On the long sweep of Sponza (project configuration,
-256^3, 138 instances) that is **~125 ms of GPU per clipmap-0 recentre** (`GDF_Composite` mean
-1.27 ms over 297 frames with three recentres, `73-b02-baseline/manifest-sweep.json`), a hitch the
-flicker programme had measured as a lighting step (H-40 and followers). H-49 / H-54 had shown the
-overlapping voxels come out bit-identical, so all but the entering slab of that work was redundant.
+256^3, 138 instances) `GDF_Composite` averaged 1.27 ms over 297 frames
+(`73-b02-baseline/manifest-sweep.json`; 1.33 ms in the Incremental 0 run of G5). Those frames hold 46
+clipmap-0 recentres, plus 11 of clipmap 1 and 3 of clipmap 2
+(`test-gdf-incremental/g5-incremental-off/run.log`), so a recentre cost at most ~8.6 ms of GPU.
+*(Corrected 2026-10-08: this first read "~125 ms of GPU per clipmap-0 recentre ... with three
+recentres", which counted the 3 radiance-cache recentres of the sweep (frames 128/172/216). It also
+called the cost "a hitch the flicker programme had measured as a lighting step (H-40 and
+followers)"; that step was a mask artefact, ledger H-07c.)* H-49 / H-54 had shown the overlapping
+voxels come out bit-identical, so all but the entering slab of that work was redundant.
 
 **Change.** World voxel `k` lives in texel `k mod resolution`; the window centre is always a whole
 number of voxels, so a voxel keeps its texel across recentres. `Update()` accumulates the whole-voxel
