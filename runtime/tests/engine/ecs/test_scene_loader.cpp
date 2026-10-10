@@ -401,7 +401,9 @@ TEST_F(SceneLoaderTest, CameraComponent_DefaultValues_WhenFieldsAbsent) {
     EXPECT_NEAR(cam.fov,       60.0f,   1e-4f);
     EXPECT_NEAR(cam.nearPlane,  0.1f,   1e-5f);
     EXPECT_NEAR(cam.farPlane, 1000.0f,  1e-3f);
-    EXPECT_FALSE(cam.isActive);
+    // A scene camera without an "active" key is active: the loader default is
+    // true, so a single authored camera drives the view without extra keys.
+    EXPECT_TRUE(cam.isActive);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

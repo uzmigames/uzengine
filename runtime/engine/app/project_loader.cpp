@@ -23,7 +23,7 @@ namespace {
 
 /// Extracts a string field from a JSON object, returning `defaultValue` if the
 /// key is absent or the value is not a string.
-[[nodiscard]] std::string JsonString(const nlohmann::json& obj,
+[[nodiscard]] std::string JsonString(const nlohmann::ordered_json& obj,
                                      const char* key,
                                      const std::string& defaultValue = {}) {
     auto it = obj.find(key);
@@ -35,7 +35,7 @@ namespace {
 
 /// Extracts an integer field from a JSON object, returning `defaultValue` if
 /// the key is absent or the value is not a number.
-[[nodiscard]] int JsonInt(const nlohmann::json& obj, const char* key, int defaultValue) {
+[[nodiscard]] int JsonInt(const nlohmann::ordered_json& obj, const char* key, int defaultValue) {
     auto it = obj.find(key);
     if (it == obj.end() || !it->is_number_integer()) {
         return defaultValue;
@@ -45,7 +45,7 @@ namespace {
 
 /// Extracts a boolean field from a JSON object, returning `defaultValue` if
 /// the key is absent or the value is not a boolean.
-[[nodiscard]] bool JsonBool(const nlohmann::json& obj, const char* key, bool defaultValue) {
+[[nodiscard]] bool JsonBool(const nlohmann::ordered_json& obj, const char* key, bool defaultValue) {
     auto it = obj.find(key);
     if (it == obj.end() || !it->is_boolean()) {
         return defaultValue;
@@ -57,7 +57,7 @@ namespace {
 ///
 /// All sub-fields are optional. Defaults are taken from `cfg` as already
 /// populated by the struct initializer.
-void ParseWindowSection(const nlohmann::json& root, ProjectConfig& cfg) {
+void ParseWindowSection(const nlohmann::ordered_json& root, ProjectConfig& cfg) {
     auto it = root.find("window");
     if (it == root.end() || !it->is_object()) {
         return;
@@ -70,7 +70,7 @@ void ParseWindowSection(const nlohmann::json& root, ProjectConfig& cfg) {
 }
 
 /// Parses the "render" sub-object into the relevant ProjectConfig fields.
-void ParseRenderSection(const nlohmann::json& root, ProjectConfig& cfg) {
+void ParseRenderSection(const nlohmann::ordered_json& root, ProjectConfig& cfg) {
     auto it = root.find("render");
     if (it == root.end() || !it->is_object()) {
         return;
@@ -87,10 +87,10 @@ void ParseRenderSection(const nlohmann::json& root, ProjectConfig& cfg) {
 ///   - boolean → stored as 0.0f / 1.0f
 /// Strings, arrays, and nested objects are silently skipped with a warning,
 /// matching the "unknown keys are ignored" policy used elsewhere in the
-/// loader. Order of iteration follows JSON object insertion order (nlohmann
-/// preserves it for ordered_json; for default `json` the order is
-/// insertion order as well in practice).
-void ParseCvarsSection(const nlohmann::json& root, ProjectConfig& cfg) {
+/// loader. Entries are appended in file order: the document is parsed as
+/// `ordered_json`, whose objects keep insertion order (the default `json`
+/// stores objects in a std::map and would iterate them alphabetically).
+void ParseCvarsSection(const nlohmann::ordered_json& root, ProjectConfig& cfg) {
     auto it = root.find("cvars");
     if (it == root.end() || !it->is_object()) {
         return;
@@ -124,10 +124,12 @@ std::optional<ProjectConfig> LoadProject(const std::string& path) {
         return std::nullopt;
     }
 
-    nlohmann::json root;
+    // ordered_json keeps object keys in file order, which the "cvars" block
+    // relies on (ProjectConfig::cvarOverrides documents parse order).
+    nlohmann::ordered_json root;
     try {
         file >> root;
-    } catch (const nlohmann::json::parse_error& ex) {
+    } catch (const nlohmann::ordered_json::parse_error& ex) {
         UZ_LOG(Config, Error,
                "LoadProject: JSON parse error in '{}' at byte {}: {}",
                path, ex.byte, ex.what());

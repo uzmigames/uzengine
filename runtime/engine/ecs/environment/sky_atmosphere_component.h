@@ -163,10 +163,12 @@ struct SkyAtmosphereComponent {
     /// When a linked DirectionalLight exists, lightSourceAngle is used instead.
     float sunAngularRadius = 0.00872665f;
 
-    /// Sun disk brightness multiplier. Scales the visible sun circle in the sky.
-    /// sunIlluminance (20) * sunDiskIntensity gives the HDR value of the sun disk.
-    /// 0.1 = sun disk HDR ~2.0 (visible bright spot, not blown out without bloom).
-    float sunDiskIntensity = 0.1f;
+    /// Sun disk brightness multiplier. Scales the visible sun circle in the sky
+    /// (sky_atmosphere_ps.hlsl). Default 1.0: the identity scale, so the disk
+    /// keeps the luminance the sun illuminance gives it; exposure, not this
+    /// factor, brings it into display range.
+    /// @ref Hillaire 2020 "A Scalable and Production Ready Sky and Atmosphere Rendering Technique"
+    float sunDiskIntensity = 1.0f;
 
     /// Direction TOWARDS the sun used for the sky when no DirectionalLight exists in the world
     /// (a scene without a sun entity). Scene key `sun_direction` [x, y, z], normalized at use. A

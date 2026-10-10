@@ -181,7 +181,7 @@ Sun direction, color, and intensity are driven by a `DirectionalLightComponent` 
 ```cpp
 Vec3  sunIlluminance = {20.f, 20.f, 20.f};    // Fallback illuminance
 float sunAngularRadius = 0.00872665f;         // ~0.5° (Earth's sun)
-float sunDiskIntensity = 0.1f;                // Sun disk brightness multiplier
+float sunDiskIntensity = 1.0f;                // Sun disk brightness multiplier (identity scale)
 Vec3  sunDirection = {0.5f, 0.3f, 0.8f};      // Direction TOWARDS the sun when no DirectionalLight exists (scene key sun_direction)
 ```
 
