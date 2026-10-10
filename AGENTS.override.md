@@ -52,3 +52,19 @@ cd demos/<name> && zig build               # Demo (rebuild runtime first)
 
 | Runtime | `%LOCALAPPDATA%/UzEngine/logs/uzengine_*.log` |
 | Crashes | `{engine_dir}/crashes/*/crash.{dmp,txt,json}` |
+
+## RULEBOOK EXECUTION PRIORITY
+
+- Read `.rulebook/PRIORITIES.md` before selecting work. It overrides phase-number,
+  alphabetical and stale `in-progress` ordering; native status still records task state.
+- Prioritize the current Windows renderer/editor stabilization objective. Execute
+  only the named milestone scope when the owner is a broad audit/roadmap task.
+- Classify new tasks in `.rulebook/task-priorities.json`. After Rulebook create,
+  update or archive operations, run `python scripts/tools/rulebook_queue.py`;
+  verify with `python scripts/tools/rulebook_queue.py --check`.
+- Do not manually edit the generated priority views. The stock Rulebook task
+  index sorts by phase; the project generator restores the priority view.
+- Review-only entries need scope reconciliation before implementation. Completed
+  metadata with open work is not an accepted prerequisite or an automatic archive.
+- Claude: the user requested completed-task archival; read
+  `docs/planning/claude-rulebook-archive-handoff.md` and report results/exceptions.

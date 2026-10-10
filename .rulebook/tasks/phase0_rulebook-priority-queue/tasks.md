@@ -1,0 +1,9 @@
+- [x] 1.1 Inspect current tasks, closure metadata, unchecked work and stale ownership instead of sorting by phase names.
+- [x] 1.2 Assign every non-completed task an execution, review or coordination lane with a reason, priority and dependency order.
+- [x] 1.3 Record the user's archive request for Claude, including 38 initial candidates and three completed-status exceptions.
+- [x] 1.4 Implement a deterministic generator that reads live Rulebook status/checklists and archived dependencies, detects invalid plans and renders the priority queue/index.
+- [x] 1.5 Route future sessions to the queue and record how to refresh after native Rulebook mutations (AGENTS.override.md, PLANS.md and analysis execution-plan link).
+- [x] 1.6 Verify complete task coverage, dependency order, current links, generation idempotence and native Rulebook format (Rulebook 7.4.0 valid; --check passed; 248 planning links resolved at verification time).
+- [x] 2.1 Update or create documentation covering the implementation, priority rationale, status limits and archive handoff.
+- [x] 2.2 Write tests covering the new behavior, including invalid dependencies, cycles, missing classification, checklist gates and archived predecessors (nine isolated behavioral tests).
+- [x] 2.3 Run tests and confirm they pass, then refresh the queue with this planning task's actual completion state (Python compile check and 9/9 tests passed; no runtime code changed).

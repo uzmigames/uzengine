@@ -4,17 +4,7 @@
 # Local toolchains pinned to project (e.g. zig 0.15.2 download)
 .tools/
 
-# Rulebook - ignore runtime data, keep specs and tasks
-/.rulebook/*
-!/.rulebook/specs/
-!/.rulebook/tasks/
-!/.rulebook/tasks/**/*.md
-!/.rulebook/decisions/
-!/.rulebook/knowledge/
-!/.rulebook/learnings/
-!/.rulebook/archive/
 !/.rulebook/rules/
-!/.rulebook/rulebook.json
 
 # Patterns added by @hivellm/rulebook
 # Added at: 2026-03-10T17:05:03.334Z
@@ -143,3 +133,15 @@ CLAUDE.local.md
 /scripts/lumen-siggraph2022-reference.txt
 # Downloaded by scripts/setup.ps1; do not vendor a second DirectX header tree.
 /runtime/thirdparty/agility/
+
+# Rulebook - ignore runtime data, keep specs, tasks and project memory
+/.rulebook/*
+!/.rulebook/specs/
+!/.rulebook/tasks/
+!/.rulebook/archive/
+!/.rulebook/decisions/
+!/.rulebook/knowledge/
+!/.rulebook/learnings/
+!/.rulebook/rulebook.json
+!/.rulebook/task-priorities.json
+!/.rulebook/PRIORITIES.md

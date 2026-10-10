@@ -1,71 +1,69 @@
-<!-- RULEBOOK:START v5.3.0 — DO NOT EDIT BY HAND. Regenerated on `rulebook update`.
-     Put project-specific content in AGENTS.override.md or CLAUDE.local.md.
-     Anything outside the RULEBOOK:START/END sentinels is preserved across updates. -->
+<!-- RULEBOOK:START v7.0.0 — generated; put custom content outside this block. -->
 
 # CLAUDE.md
 
-This project is managed by [@hivehub/rulebook](https://github.com/hivellm/rulebook).
-The authoritative rules come from the imports below. Claude Code loads all of them
-automatically at session start (see [Anthropic memory docs](https://code.claude.com/docs/en/memory#claude-md-imports)).
+Managed by @hivehub/rulebook — few rules, all deliberate.
 
-## Project identity & live state
-@.rulebook/STATE.md
-
-## Core standards (team-shared, versioned)
-@AGENTS.md
-
-## Project-specific overrides (user-owned, survives `rulebook update`)
+## Project overrides (user-owned, survive updates, win on conflict)
 @AGENTS.override.md
 
-## Session scratchpad (human notes)
-@.rulebook/PLANS.md
+## Commands
+- Before each commit: type-check + lint + tests covering the change.
+- Before push/PR/task archive: FULL quality gate (type-check → lint → full
+  suite), all green. Never bypass hooks — pre-commit/pre-push wiring is the floor.
+- Type-check before tests; it is the faster signal.
+- No OS schedules (cron, systemd, launchd, schtasks): scheduling lives in the app.
 
-## Critical rules (highest precedence — apply on every turn)
+## Values
+1. Complete implementations — no stubs or TODO markers; finish, or say concretely why you can't.
+2. Root causes, not workarounds — diagnose before changing code; never guess at bug causes.
+3. Surgical diffs — touch only what the task needs; match existing style.
+4. Simplicity first — the least code that solves the problem; nothing unrequested.
+5. Fix forward — never discard uncommitted work.
+6. State assumptions — if interpretations diverge, say so instead of picking silently.
 
-1. **Read `AGENTS.md` and `AGENTS.override.md`** before making changes. These contain project-specific conventions that override generic guidance.
-2. **Never revert or discard uncommitted work** — fix forward. Treat the working tree as sacred; investigate before destructive operations.
-3. **Edit files sequentially**, not in parallel. When a task touches 3+ files, decompose into 1–2 file sub-tasks.
-4. **Run `check`/type-check before `test`** — diagnostic-first. Cheap diagnostics catch issues that expensive test suites miss or take longer to surface.
-5. **If a fix fails twice, escalate** — stop, research, or open a team. Do not retry the same approach a third time.
-6. **Prefer MCP tools** (`mcp__rulebook__*` and project-specific MCP servers) over shell commands when the equivalent tool exists.
-7. **Capture learnings**: at the end of significant work, save patterns and anti-patterns to `.rulebook/knowledge/` and insights to `.rulebook/learnings/`.
-8. **Never archive a task** without docs updated, tests written, and tests passing — the task tail enforces this structurally.
+## Communication
+- Plain words over jargon; gloss a term when it isn't obvious from context.
+- Answer first, reasoning after.
+- Cut what the reader knows and options you didn't take. Length follows
+  the result, not the effort behind it.
 
-## Persistent memory
+## Git safety (requires explicit user authorization)
+`reset --hard` · `checkout -- .` / `restore .` · `clean -f` · `push --force` ·
+`rebase` on shared branches · `stash` · `branch -D` · switching a shared checkout
+with changes you did not author. Yours: status/diff/log/add/commit,
+branches you create (create/switch/merge), `git worktree`, PRs via `gh`.
+Worktrees live outside the repo tree and come out via `git worktree remove` —
+never `rm -rf` a worktree, never delete or move a `.git`.
 
-This project uses the Rulebook MCP server for persistent memory across sessions.
+## Orchestration
+Gate first: act on Jev `routing` from the prompt hook, else from
+`rulebook_gate {prompt}`; unavailable or undecided → these rules. Main session never does the work itself — delegate each task to one subagent, model set
+per call: Fable 5.1 architecture, hard bugs, review; Opus 5.5 edits, tests, docs,
+refactors (never Fable for simple work); Haiku 4.5 research, summaries. Plan first;
+parallelize independent agents; read reports, not files. Subagents archive their task.
+Monitor; pause/restart stalled agents; review, then update CHANGELOG.
+See `.rulebook/specs/orchestration.md`.
 
-- **Start of session**: `rulebook_memory_search` for relevant prior context.
-- **During work**: `rulebook_memory_save` for decisions, bugs, discoveries, user preferences.
-- **End of session**: `rulebook_session_end` to write a session summary.
-
-Memory is auto-captured for tool interactions (task create/update/archive, skill enable/disable). Manual saves are required for everything else worth remembering.
-
-## Knowledge base
-
-Before implementing anything non-trivial:
-
-- `rulebook_knowledge_list` — check existing patterns and anti-patterns.
-- `rulebook_learn_list` — review past learnings.
-- `rulebook_decision_list` — review architectural decisions.
-
-After implementing, capture at least one entry per task:
-
-- `rulebook_knowledge_add` for reusable patterns or anti-patterns to avoid.
-- `rulebook_learn_capture` for implementation insights that don't belong in code comments.
-- `rulebook_decision_create` for significant architectural choices.
-
-## Task workflow
-
-**MANDATORY: ALWAYS use the Rulebook MCP tools for task management.** Never create task directories or files manually — use `rulebook_task_create`, `rulebook_task_update`, `rulebook_task_archive`, `rulebook_task_list`, `rulebook_task_show`, `rulebook_task_validate`. These tools enforce naming conventions, mandatory tail items, phase structure, and metadata that manual file creation skips.
-
-1. `rulebook_task_list` to see pending work.
-2. `rulebook_task_create` to create new tasks — **never `mkdir` + `Write` manually**.
-3. Pick the **first unchecked item from the lowest-numbered phase** — never reorder.
-4. Read the task's `proposal.md` and `tasks.md` before touching code.
-5. Implement step by step. Run lint + type-check after each significant change.
-6. `rulebook_task_update` to change task status as you progress.
-7. Mark items `[x]` in `tasks.md` as you finish them.
-8. The mandatory tail (docs + tests + verify) is **not optional** — `rulebook_task_archive` will refuse to close the task otherwise.
+## Rulebook (on demand — no ceremony for small fixes)
+- Multi-session or multi-phase work: track via the `rulebook` MCP (`rulebook_task`).
+  Checklist order = dependencies; independent items may run in parallel.
+- Undecidable choice? `rulebook_task {action:"ask"}`, show the form. Same request
+  again? Capture a learning under one title; at 2+ promote it to a skill.
+- Optional: `rulebook_session` (context), `rulebook_memory` (learnings).
+- Read a `.rulebook/specs/` spec when work touches its area.
+- Analyses: `docs/analysis/<slug>/`, numbered files, one theme each.
+- `/compact <focus>` at a task boundary (~60% context); after an archive
+  `/clear` is free — state lives in `.rulebook/`.
 
 <!-- RULEBOOK:END -->
+
+## User handoff for Claude (2026-10-10)
+
+The user explicitly requested: archive the completed Rulebook tasks.
+Read [the archive handoff](docs/planning/claude-rulebook-archive-handoff.md):
+38 initial candidates and three completed-status exceptions with unchecked work.
+Validate closure evidence and use Rulebook archive operations; preserve unresolved
+work in linked successors. Report archived IDs and remaining exceptions. Codex is
+organizing the priority queue, so refresh its generated views after archiving as
+specified in `AGENTS.override.md`.

@@ -1,0 +1,28 @@
+- [x] 0.1 Review the working tree and record source findings, executed checks and limits for the 2026-10-10 audit.
+- [x] 0.2 Organize F-001 through F-022 into numbered analysis files with priorities, evidence, confidence, impact and acceptance criteria; map existing task ownership.
+- [x] 0.3 Validate the completed Rulebook proposal, checklist, design and spec delta; check documentation links and finding coverage (Rulebook 7.4.0 passed; 11 Markdown files, 118 local links and 22 findings checked on 2026-10-10).
+- [ ] 1.1 Establish a reproducible source/build manifest and align clean-checkout dependencies, lockfiles and the C++23/Zig contract (F-013, F-017; execution-plan stage 0).
+- [ ] 1.2 Correct PowerShell gate roots and source coverage, then verify invocation from unrelated directories and paths with spaces (F-016; after 1.1).
+- [ ] 1.3 Fix extension lint, required test discovery, fixture failure semantics and coverage dependencies; reconcile current native failures with phase0_preexisting-test-failures (F-014; after 1.1).
+- [ ] 1.4 Make required Falcor comparisons reject missing, mismatched and below-35-dB evidence, including negative-control cases (F-015).
+- [ ] 1.5 Capture a current-build diagnostic baseline and provenance before rendering edits; do not reuse old binaries as current evidence (after 1.1 and relevant gates).
+- [ ] 2.1 Correct ECS slot/version bookkeeping with bounded-memory churn and stale-handle compatibility tests (F-009; after 1.1).
+- [ ] 2.2 Establish owner-thread world mutation and queued scene/property commands; verify concurrent rendering, resize and shutdown (F-010; after 2.1).
+- [ ] 2.3 Make scene-load outcomes explicit and preserve existing scene/resources/CVars on validation failure (F-011; after 2.2).
+- [ ] 2.4 Reject self-parenting and ancestor cycles at the shared hierarchy boundary and verify unchanged state on rejection (F-012; after 2.1).
+- [ ] 2.5 Bound native/IPC queues and pending requests with deadlines, shutdown errors and H.264 recovery semantics (F-020; after 2.2).
+- [ ] 2.6 Replace absolute DLSS discovery paths with supported discovery/configuration and verify path-agnostic behavior (F-021).
+- [ ] 3.1 Reconcile phase0_render-graph-state-registry ownership, complete its required migrations there, and verify remaining UAV ordering, transient reuse and true dependency edges here (F-003; after 1.5).
+- [ ] 3.2 Separate temporal matrix/content/state validity and validate first frames, TAA toggles, camera cuts, scene changes and resize using the migrated state tracking (F-001; after 3.1).
+- [ ] 3.3 Guard unavailable or failed upscalers so only valid output reaches tonemapping; coordinate SDK-enabled implementation with phase2_fsr2-full-integration (F-005; after 3.2).
+- [ ] 3.4 Implement and verify previous-frame rigid/skinned/supported-deformation velocity inputs and the consumer convention (F-002; after 1.5, before moving-object temporal acceptance).
+- [ ] 3.5 Supply real generated-material context and verify time, positions, vertex color and multiple viewport dimensions (F-004; after 1.5).
+- [ ] 3.6 Define and verify the supported glass geometry/material contract, coordinating general transmission with existing material tasks (F-007; after 3.5).
+- [ ] 3.7 Publish the internal path tracer's verification limits and reconcile actual post-process capabilities with phase0_postprocess-chain-restore without wiring unfinished effects (F-006, F-008).
+- [ ] 4.1 Run the execution-plan rendering matrix with matched Falcor references and consecutive-frame diagnostics; retain provenance and explicit unavailable cases (after 1.4 and applicable 3.x corrections).
+- [ ] 5.1 Measure unused instance-batch preparation; fix and validate instanced correctness before enabling the path, then compare draw counts and timings (F-018; after 4.1).
+- [ ] 5.2 Measure loose-file VFS concurrency, narrow locking where justified, and verify data integrity and mount lifetime (F-019; after 1.1).
+- [ ] 5.3 Establish tested CPU/HLSL layout contracts, a current capability matrix and targeted module boundaries with unchanged accepted behavior (F-022; after 4.1).
+- [ ] 6.1 Update or create documentation covering the implementation and link each closed finding to its revision, diagnostics and accepted evidence.
+- [ ] 6.2 Write tests covering the new behavior, including meaningful negative controls and applicable rendering scenarios.
+- [ ] 6.3 Run tests and confirm they pass, including required native, TypeScript, integration and visual gates; never mark missing or skipped required evidence as passing.
