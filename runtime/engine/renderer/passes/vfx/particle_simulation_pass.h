@@ -65,7 +65,7 @@ namespace uz {
 /// Must be byte-identical to the HLSL cbuffer layout in particle_spawn_cs.hlsl.
 /// All emitter parameters + bindless descriptor indices for SM6.6 resource access.
 ///
-/// Total size: 192 bytes (12 x float4, 256-byte aligned by CBRingAllocator).
+/// Total size: 304 bytes (19 x float4, 256-byte aligned by CBRingAllocator).
 ///
 /// @ref UzEngine VFX system -- GPU particle simulation pipeline
 struct ParticleSpawnConstants {
@@ -162,7 +162,7 @@ static_assert(sizeof(ParticleSpawnConstants) == 304,
 /// Contains physics parameters and descriptor heap indices for both READ (SRV)
 /// and WRITE (UAV) buffer sets.
 ///
-/// Total size: 384 bytes (24 x float4, 256-byte aligned by CBRingAllocator).
+/// Total size: 432 bytes (27 x float4, 256-byte aligned by CBRingAllocator).
 ///
 /// @ref Harada 2007 "Real-Time Particle System on the GPU"
 struct ParticleUpdateConstants {

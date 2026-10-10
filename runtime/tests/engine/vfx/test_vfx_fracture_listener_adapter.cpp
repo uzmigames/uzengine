@@ -43,7 +43,11 @@ TEST(VfxFractureListenerAdapter, SetBridgeRebinds) {
 
 TEST(VfxFractureListenerAdapter, RegisterAndForward) {
     PhysicsListenerRegistry reg;
-    VfxPhysicsFractureBridge bridge(nullptr, "fracture");
+    // A bound queue is required: a bridge with a null target never forwards
+    // and never counts (VfxPhysicsFractureBridge contract — "Null disables
+    // forwarding", covered by VfxFractureBridge.NullTargetRejectsForward).
+    VFXEventQueue queue;
+    VfxPhysicsFractureBridge bridge(&queue, "fracture");
     VfxFractureListenerAdapter adapter(&bridge);
 
     auto handle = reg.RegisterFractureListener(&adapter);
@@ -58,14 +62,20 @@ TEST(VfxFractureListenerAdapter, RegisterAndForward) {
 
     reg.DispatchFracture(input);
 
-    // The bridge received it (even though queue is null, OnFracture
-    // ran and incremented the forward count).
+    // registry -> adapter -> bridge -> queue.
     EXPECT_EQ(bridge.ForwardedCount(), 1u);
+    const auto drained = queue.Drain();
+    ASSERT_EQ(drained.size(), 1u);
+    EXPECT_EQ(drained[0].name, "fracture");
+    EXPECT_EQ(drained[0].payloads.size(), 1u);
 }
 
 TEST(VfxFractureListenerAdapter, UnregisterStopsForwarding) {
     PhysicsListenerRegistry reg;
-    VfxPhysicsFractureBridge bridge(nullptr, "fracture");
+    // Bound queue so a forwarded event WOULD be counted — makes the
+    // zero-count assertion below prove the unregister, not a null target.
+    VFXEventQueue queue;
+    VfxPhysicsFractureBridge bridge(&queue, "fracture");
     VfxFractureListenerAdapter adapter(&bridge);
 
     auto handle = reg.RegisterFractureListener(&adapter);
@@ -77,6 +87,7 @@ TEST(VfxFractureListenerAdapter, UnregisterStopsForwarding) {
     reg.DispatchFracture(input);
 
     EXPECT_EQ(bridge.ForwardedCount(), 0u);
+    EXPECT_FALSE(queue.HasPending());
 }
 
 TEST(VfxFractureListenerAdapter, EmptyPiecesNoPayloads) {

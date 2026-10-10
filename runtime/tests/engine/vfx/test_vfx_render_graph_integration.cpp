@@ -294,17 +294,19 @@ TEST(VFXRenderGraph_Simulation, EmitterSimDispatch_DefaultIndirectDrawArgsUavInd
 // 7.1.4: Simulation constant buffer structs are correct sizes
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// ParticleSpawnConstants must be exactly 192 bytes to match the HLSL cbuffer
-/// layout (VFXSpawnConstants: 12 x float4).
-TEST(VFXRenderGraph_Simulation, ParticleSpawnConstants_Size_Is192Bytes) {
-    EXPECT_EQ(sizeof(ParticleSpawnConstants), 192u)
-        << "ParticleSpawnConstants must be 192 bytes to match HLSL VFXSpawnConstants";
+/// ParticleSpawnConstants must be exactly 304 bytes to match the HLSL cbuffer
+/// layout (VFXSpawnConstants: 19 x float4 — 192 base bytes + 80 bytes of
+/// user-attribute slots + 32 bytes of spline data-interface fields).
+TEST(VFXRenderGraph_Simulation, ParticleSpawnConstants_Size_Is304Bytes) {
+    EXPECT_EQ(sizeof(ParticleSpawnConstants), 304u)
+        << "ParticleSpawnConstants must be 304 bytes to match HLSL VFXSpawnConstants";
 }
 
-/// ParticleUpdateConstants must be exactly 384 bytes (24 x float4).
-TEST(VFXRenderGraph_Simulation, ParticleUpdateConstants_Size_Is384Bytes) {
-    EXPECT_EQ(sizeof(ParticleUpdateConstants), 384u)
-        << "ParticleUpdateConstants must be 384 bytes to match HLSL VFXUpdateConstants";
+/// ParticleUpdateConstants must be exactly 432 bytes (27 x float4 — 384 base
+/// bytes + 48 bytes of spline data-interface fields).
+TEST(VFXRenderGraph_Simulation, ParticleUpdateConstants_Size_Is432Bytes) {
+    EXPECT_EQ(sizeof(ParticleUpdateConstants), 432u)
+        << "ParticleUpdateConstants must be 432 bytes to match HLSL VFXUpdateConstants";
 }
 
 /// ParticleIndirectArgsConstants must be exactly 16 bytes (1 x float4).
@@ -369,7 +371,9 @@ TEST(VFX_GPUParticleBuffer, ParticleAttributeSet_SubImageIndices_RequiredForIsVa
 
     // Assign every field *except* subImageIndices to a fake-valid handle and
     // confirm IsValid() still reports false (i.e. subImageIndices is required).
-    RHIBufferHandle handle{1};
+    // RHIHandle validity is generational (generation 0 == invalid), so the
+    // fake handle needs a non-zero generation, not just a non-zero index.
+    RHIBufferHandle handle{1, 1};
     set.positions  = handle;
     set.velocities = handle;
     set.ages       = handle;
@@ -430,10 +434,11 @@ TEST(VFXRenderGraph_Simulation, ParticleUpdateConstants_FlipbookTotalFrames_Defa
     EXPECT_EQ(c.flipbookTotalFrames, 1u);
 }
 
-/// VFXBillboardCB must be 304 bytes (19 x float4) to match HLSL layout.
-TEST(VFXRenderGraph_Billboard, VFXBillboardCB_Size_Is304Bytes) {
-    EXPECT_EQ(sizeof(VFXBillboardCB), 304u)
-        << "VFXBillboardCB must be 304 bytes to match the HLSL VFXBillboardCB layout";
+/// VFXBillboardCB must be 320 bytes (20 x float4) to match HLSL layout — the
+/// last float4 carries flipbookFPS / spriteChannelMask / vfxTotalTime.
+TEST(VFXRenderGraph_Billboard, VFXBillboardCB_Size_Is320Bytes) {
+    EXPECT_EQ(sizeof(VFXBillboardCB), 320u)
+        << "VFXBillboardCB must be 320 bytes to match the HLSL VFXBillboardCB layout";
 }
 
 TEST(VFXRenderGraph_Billboard, VFXBillboardCB_Default_SoftFadeDistance_Is50) {

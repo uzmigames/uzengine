@@ -48,7 +48,7 @@ VFXEmitterSignificance MakeEmitter(
 } // anonymous namespace
 
 // =============================================================================
-// ComputeScore — formula: priority * (1/(1+dist*0.01)) * (visible ? 1.0 : 0.1)
+// ComputeScore — formula: priority * (1/(1+dist_cm*0.0001)) * (visible ? 1.0 : 0.1)
 // =============================================================================
 
 TEST(UZ_VFXSignificanceManager_ComputeScore, ZeroPriority_ReturnsZero) {
@@ -58,7 +58,7 @@ TEST(UZ_VFXSignificanceManager_ComputeScore, ZeroPriority_ReturnsZero) {
 }
 
 TEST(UZ_VFXSignificanceManager_ComputeScore, AtOrigin_Visible_ReturnsExactlyPriority) {
-    // distance=0 → distanceFactor = 1/(1+0*0.01) = 1.0
+    // distance=0 → distanceFactor = 1/(1+0*0.0001) = 1.0
     // visibility=true → factor = 1.0
     // score = priority * 1.0 * 1.0 = priority
     const float score = VFXSignificanceManager::ComputeScore(50u, 0.0f, true);
@@ -81,9 +81,9 @@ TEST(UZ_VFXSignificanceManager_ComputeScore, VisibleVsNotVisible_RatioIsTen) {
 }
 
 TEST(UZ_VFXSignificanceManager_ComputeScore, At100m_HalfwayAttenuation) {
-    // At dist=100: factor = 1/(1+100*0.01) = 1/2 = 0.5
+    // World units are cm. At dist=10000 cm (100 m): factor = 1/(1+10000*0.0001) = 0.5
     // score = 100 * 0.5 * 1.0 = 50
-    const float score = VFXSignificanceManager::ComputeScore(100u, 100.0f, true);
+    const float score = VFXSignificanceManager::ComputeScore(100u, 10000.0f, true);
     EXPECT_NEAR(score, 50.0f, 1e-3f)
         << "At 100m the distance factor must be 0.5 (1% per metre falloff)";
 }
@@ -111,9 +111,9 @@ TEST(UZ_VFXSignificanceManager_ComputeScore, NegativeDistance_TreatedAsZero) {
 }
 
 TEST(UZ_VFXSignificanceManager_ComputeScore, LargeDistance_ScoreApproachesZero) {
-    // At 10000m: factor = 1/(1+100) = ~0.0099
+    // At 10000 m (1,000,000 cm): factor = 1/(1+1000000*0.0001) = 1/101 = ~0.0099
     // score = 1 * 0.0099 * 1 = very small but positive
-    const float score = VFXSignificanceManager::ComputeScore(1u, 10000.0f, true);
+    const float score = VFXSignificanceManager::ComputeScore(1u, 1000000.0f, true);
     EXPECT_GT(score, 0.0f)
         << "Score must be positive even at very large distances";
     EXPECT_LT(score, 0.1f)

@@ -59,14 +59,14 @@ TEST(UZ_CollisionModule, DefaultConfig_DepthBufferCollision_IsTrue) {
     EXPECT_TRUE(m.GetConfig().depthBufferCollision);
 }
 
-TEST(UZ_CollisionModule, DefaultConfig_CollisionOffset_IsPointZeroOne) {
+TEST(UZ_CollisionModule, DefaultConfig_CollisionOffset_IsOneCentimetre) {
     CollisionModule m;
-    EXPECT_FLOAT_EQ(m.GetConfig().collisionOffset, 0.01f);
+    EXPECT_FLOAT_EQ(m.GetConfig().collisionOffset, 1.0f);  // cm (world units)
 }
 
-TEST(UZ_CollisionModule, DefaultConfig_MinBounceSpeed_IsPointOne) {
+TEST(UZ_CollisionModule, DefaultConfig_MinBounceSpeed_IsTenCentimetresPerSecond) {
     CollisionModule m;
-    EXPECT_FLOAT_EQ(m.GetConfig().minBounceSpeed, 0.1f);
+    EXPECT_FLOAT_EQ(m.GetConfig().minBounceSpeed, 10.0f);  // cm/s
 }
 
 // =============================================================================
@@ -287,8 +287,8 @@ TEST(UZ_CollisionModule_ParseConfig, EmptyObject_UsesAllDefaults) {
     EXPECT_EQ(cfg.response, CollisionResponse::Bounce);
     EXPECT_FLOAT_EQ(cfg.restitution, 0.6f);
     EXPECT_TRUE(cfg.depthBufferCollision);
-    EXPECT_FLOAT_EQ(cfg.collisionOffset, 0.01f);
-    EXPECT_FLOAT_EQ(cfg.minBounceSpeed, 0.1f);
+    EXPECT_FLOAT_EQ(cfg.collisionOffset, 1.0f);  // cm
+    EXPECT_FLOAT_EQ(cfg.minBounceSpeed, 10.0f);  // cm/s
 }
 
 TEST(UZ_CollisionModule_ParseConfig, MissingRestitution_UsesDefault) {

@@ -31,6 +31,7 @@ namespace uz {
 /// | strength  | Float | 1.0     | Force magnitude multiplier               |
 /// | frequency | Float | 0.5     | Spatial frequency (higher = tighter noise)|
 /// | octaves   | Int   | 3       | FBM octave count (clamped to [1, 8])     |
+/// | use_curl_mode | Bool | false | Curl (divergence-free) noise instead of FBM |
 class TurbulenceModule final : public IVFXModule {
 public:
     TurbulenceModule() = default;

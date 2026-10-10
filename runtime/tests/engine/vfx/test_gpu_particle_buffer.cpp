@@ -31,9 +31,11 @@ TEST(ParticleAttributeSet, DefaultConstruct_IsInvalid) {
         << "Default ParticleAttributeSet must be invalid (all handles at generation=0)";
 }
 
-/// IsValid() returns true only when every one of the seven attribute buffers
-/// carries a non-zero generation.
-TEST(ParticleAttributeSet, AllSevenHandlesValid_ReturnsTrue) {
+/// IsValid() returns true only when every one of the eight required attribute
+/// buffers (the seven core channels plus the SubImageIndex flipbook channel)
+/// carries a non-zero generation. Optional channels (persistentIDs, user
+/// attributes) are not required.
+TEST(ParticleAttributeSet, AllEightRequiredHandlesValid_ReturnsTrue) {
     ParticleAttributeSet s;
     s.positions  = {1, 1};
     s.velocities = {2, 1};
@@ -42,9 +44,10 @@ TEST(ParticleAttributeSet, AllSevenHandlesValid_ReturnsTrue) {
     s.sizes      = {5, 1};
     s.colors     = {6, 1};
     s.rotations  = {7, 1};
+    s.subImageIndices = {8, 1};
 
     EXPECT_TRUE(s.IsValid())
-        << "ParticleAttributeSet must be valid when all seven handles have generation=1";
+        << "ParticleAttributeSet must be valid when all eight required handles have generation=1";
 }
 
 /// If exactly one handle is invalid, IsValid() must return false.
@@ -57,6 +60,7 @@ TEST(ParticleAttributeSet, MissingPositions_IsInvalid) {
     s.sizes      = {5, 1};
     s.colors     = {6, 1};
     s.rotations  = {7, 1};
+    s.subImageIndices = {8, 1};
 
     EXPECT_FALSE(s.IsValid())
         << "Missing positions handle must make IsValid() return false";
@@ -70,6 +74,7 @@ TEST(ParticleAttributeSet, MissingVelocities_IsInvalid) {
     s.sizes      = {5, 1};
     s.colors     = {6, 1};
     s.rotations  = {7, 1};
+    s.subImageIndices = {8, 1};
 
     EXPECT_FALSE(s.IsValid());
 }
@@ -82,6 +87,7 @@ TEST(ParticleAttributeSet, MissingAges_IsInvalid) {
     s.sizes      = {5, 1};
     s.colors     = {6, 1};
     s.rotations  = {7, 1};
+    s.subImageIndices = {8, 1};
 
     EXPECT_FALSE(s.IsValid());
 }
@@ -94,6 +100,7 @@ TEST(ParticleAttributeSet, MissingLifespans_IsInvalid) {
     s.sizes      = {5, 1};
     s.colors     = {6, 1};
     s.rotations  = {7, 1};
+    s.subImageIndices = {8, 1};
 
     EXPECT_FALSE(s.IsValid());
 }
@@ -106,6 +113,7 @@ TEST(ParticleAttributeSet, MissingSizes_IsInvalid) {
     s.lifespans  = {4, 1};
     s.colors     = {6, 1};
     s.rotations  = {7, 1};
+    s.subImageIndices = {8, 1};
 
     EXPECT_FALSE(s.IsValid());
 }
@@ -118,6 +126,7 @@ TEST(ParticleAttributeSet, MissingColors_IsInvalid) {
     s.lifespans  = {4, 1};
     s.sizes      = {5, 1};
     s.rotations  = {7, 1};
+    s.subImageIndices = {8, 1};
 
     EXPECT_FALSE(s.IsValid());
 }
@@ -130,6 +139,7 @@ TEST(ParticleAttributeSet, MissingRotations_IsInvalid) {
     s.lifespans  = {4, 1};
     s.sizes      = {5, 1};
     s.colors     = {6, 1};
+    s.subImageIndices = {8, 1};
 
     EXPECT_FALSE(s.IsValid());
 }
@@ -200,20 +210,27 @@ TEST(GPUParticleBuffer, Create_Success_CapacityMatchesRequested) {
 
 /// Create() must allocate exactly the expected number of GPU buffers.
 ///
-/// Per attribute set: 7 attribute buffers.
-/// Two sets: 14 attribute buffers.
+/// Per attribute set: 8 required attribute buffers (positions, velocities,
+///          ages, lifespans, sizes, colors, rotations, subImageIndices).
+///          Optional persistentIDs / user channels are not created here.
+/// Two sets: 16 attribute buffers.
 /// Shared: aliveCount, freeList, freeListHead, idToIndex, indirectDrawArgs,
 ///          indirectDispatchArgs = 6 shared buffers.
+/// Alive-count readback ring: kAliveReadbackRingSize (3) buffers.
 /// Sort: sortKeys, sortIndices = 2 sort buffers.
-/// Total: 14 + 6 + 2 = 22 CreateBuffer calls.
+/// Total: 16 + 6 + 3 + 2 = 27 CreateBuffer calls.
 TEST(GPUParticleBuffer, Create_AllocatesCorrectBufferCount) {
     MockRHIDevice device;
     GPUParticleBuffer buf;
 
     buf.Create(&device, 100u);
 
-    EXPECT_EQ(device.buffersCreated.load(), 22u)
-        << "Create() must allocate exactly 22 GPU buffers (14 attribute + 6 shared + 2 sort)";
+    constexpr uint32_t kExpectedBuffers =
+        2u * 8u + 6u + GPUParticleBuffer::kAliveReadbackRingSize + 2u;
+    static_assert(kExpectedBuffers == 27u);
+    EXPECT_EQ(device.buffersCreated.load(), kExpectedBuffers)
+        << "Create() must allocate exactly 27 GPU buffers "
+           "(16 attribute + 6 shared + 3 alive readback + 2 sort)";
 
     buf.Destroy(&device);
 }
