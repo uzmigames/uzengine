@@ -240,8 +240,10 @@ TEST(VfxStackPanelWidget, HitTest_CardHitOutsideCheckbox) {
     }
     ASSERT_NE(card, nullptr);
 
-    // Hit the far-right side of the card (outside the checkbox region).
-    const float cx = card->rect.x + card->rect.width - 4.0f;
+    // Hit the card body just left of the right-edge overflow menu (phase
+    // 12.2 sub-rect, which outranks the card) and right of the checkbox.
+    const float cx = card->rect.x + card->rect.width - w.overflowMenuWidth - 4.0f;
+    ASSERT_GT(cx, card->rect.x + w.dragHandleWidth + w.checkboxWidth);
     const float cy = card->rect.y + card->rect.height * 0.5f;
     const auto hit = w.HitTest(layout, cx, cy);
     EXPECT_EQ(hit.type, VfxStackItemType::ModuleCard);

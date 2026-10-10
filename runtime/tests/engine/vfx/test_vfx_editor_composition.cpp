@@ -57,9 +57,11 @@ TEST(VfxEditorLayout, DefaultFractions_1920x1080) {
     EXPECT_FLOAT_EQ(r.timelineBar.height, cfg.timelineBarHeight);
     EXPECT_FLOAT_EQ(r.timelineBar.y + r.timelineBar.height, 1080.0f);
 
-    // Vertical stripe between bars.
-    const float midTop    = cfg.menuBarHeight;
-    const float midHeight = 1080.0f - cfg.menuBarHeight - cfg.timelineBarHeight;
+    // Vertical stripe between bars. Phase 14.10 docks the toolbar strip
+    // below the menu bar and the status strip above the timeline.
+    const float midTop    = cfg.menuBarHeight + cfg.toolbarBarHeight;
+    const float midHeight = 1080.0f - cfg.menuBarHeight - cfg.toolbarBarHeight -
+                            cfg.statusBarHeight - cfg.timelineBarHeight;
     EXPECT_FLOAT_EQ(r.stackPanel.y, midTop);
     EXPECT_FLOAT_EQ(r.stackPanel.height, midHeight);
 

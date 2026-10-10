@@ -3,9 +3,11 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <cstring>
 #include <string>
 
+#include "editor/font/bitmap_font.h"
 #include "engine/vfx/editor/vfx_editor_icons.h"
 #include "engine/vfx/editor/vfx_editor_theme.h"
 
@@ -75,13 +77,16 @@ TEST(VfxEditorTheme, SpacingScaleIsMonotonic) {
 }
 
 TEST(VfxEditorTheme, TypographyScaleIsMonotonic) {
+    // Phase 14.1.0 UE5 ladder: menu 9 < body 10 < caption 11 < header 12
+    // < title 14 (captions sit between body and header, not below body).
     const auto& t = VfxThemeTypography();
-    EXPECT_LT(t.captionPx, t.bodyPx);
-    EXPECT_LT(t.bodyPx,    t.headerPx);
+    EXPECT_LT(t.menuPx,    t.bodyPx);
+    EXPECT_LT(t.bodyPx,    t.captionPx);
+    EXPECT_LT(t.captionPx, t.headerPx);
     EXPECT_LT(t.headerPx,  t.titlePx);
-    // codePx sits between captionPx and bodyPx (monospace choice)
-    EXPECT_LE(t.captionPx, t.codePx);
-    EXPECT_LE(t.codePx,    t.bodyPx);
+    // codePx sits between bodyPx and captionPx (monospace choice)
+    EXPECT_LE(t.bodyPx, t.codePx);
+    EXPECT_LE(t.codePx, t.captionPx);
 }
 
 TEST(VfxEditorTheme, RadiusScaleIsMonotonic) {
@@ -145,16 +150,30 @@ TEST(VfxEditorIcons, EveryGlyphIsNonEmptyCString) {
     }
 }
 
-TEST(VfxEditorIcons, EveryGlyphIsAsciiPrintable) {
-    // BitmapFont bakes ASCII 32-126 only. Any non-ASCII glyph would
-    // render as '?'.
+TEST(VfxEditorIcons, EveryGlyphIsInDefaultGlyphRanges) {
+    // Phase 13.2.0: the editor font bakes `GetDefaultGlyphRanges()`
+    // (ASCII + Arrows + Box Drawing + Block Elements + Geometric Shapes
+    // + Misc Symbols + Dingbats) and icons are UTF-8. A malformed
+    // sequence or a codepoint outside those ranges would render as '?'.
+    const auto& ranges = GetDefaultGlyphRanges();
+    const auto isBaked = [&ranges](uint32_t cp) {
+        for (const GlyphRange& r : ranges) {
+            if (cp >= r.first && cp <= r.last) return true;
+        }
+        return false;
+    };
+
     const VfxIconEntry* table = VfxAllIcons();
     for (int i = 0; i < kVfxIconCount; ++i) {
-        const char* g = table[i].glyph;
-        for (const char* p = g; *p != '\0'; ++p) {
-            const unsigned char c = static_cast<unsigned char>(*p);
-            EXPECT_GE(c, 32u) << "entry " << table[i].name << " byte 0x" << std::hex << int(c);
-            EXPECT_LE(c, 126u) << "entry " << table[i].name << " byte 0x" << std::hex << int(c);
+        const std::string glyph(table[i].glyph);
+        EXPECT_FALSE(glyph.empty()) << "entry " << table[i].name;
+        size_t pos = 0;
+        while (pos < glyph.size()) {
+            const uint32_t cp = DecodeUtf8Codepoint(glyph, pos);
+            EXPECT_NE(cp, 0xFFFDu) << "entry " << table[i].name
+                                   << " has malformed UTF-8";
+            EXPECT_TRUE(isBaked(cp)) << "entry " << table[i].name
+                                     << " codepoint U+" << std::hex << cp;
         }
     }
 }

@@ -129,15 +129,22 @@ TEST(VfxUndoStack, Clear_EmptiesBothStacks) {
 }
 
 TEST(VfxUndoStack, ClearRedoTail_KeepsUndo) {
+    // Two pushes + one undo leaves one command on each side; with a single
+    // push the undo side would already be empty before ClearRedoTail.
     int state = 0;
     VfxUndoStack s;
     state += 1;
     s.Push(std::make_unique<CounterCommand>(&state, 1));
+    state += 2;
+    s.Push(std::make_unique<CounterCommand>(&state, 2));
     s.Undo();
+    EXPECT_TRUE(s.CanUndo());
     EXPECT_TRUE(s.CanRedo());
     s.ClearRedoTail();
     EXPECT_TRUE(s.CanUndo());
+    EXPECT_EQ(s.UndoDepth(), 1u);
     EXPECT_FALSE(s.CanRedo());
+    EXPECT_EQ(state, 1);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
