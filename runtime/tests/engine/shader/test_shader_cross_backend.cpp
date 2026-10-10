@@ -52,9 +52,10 @@ struct ShaderFileResult {
 };
 
 static ShaderFileResult ReadShaderFile(const std::string& shaderFilename) {
-    // Shader subdirectories — shaders are organised by theme.
+    // Shader subdirectories — shaders are organised by theme under
+    // runtime/shaders/runtime/ (mesh/gbuffer shaders live in gbuffer/).
     static const std::vector<std::string> kSubdirs = {
-        "", "geometry/", "lighting/", "post/", "compute/", "ibl/"
+        "", "gbuffer/", "lighting/", "compute/", "ibl/"
     };
     // Base search prefixes (varying CWD/build layouts).
     static const std::vector<std::string> kBases = {
