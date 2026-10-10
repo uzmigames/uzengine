@@ -41,6 +41,9 @@ The rendering pipeline system is split across multiple documents covering archit
 | [26-height-fog.md](26-height-fog.md) | **Done (1.3)** | **Height-based exponential fog, two layers, directional inscattering (sun halo), artist parameters** | **Atmospheric depth & distance** |
 | [27-sky-atmosphere.md](27-sky-atmosphere.md) | **Done (1.3)** | **Physical sky (Hillaire 2020), Rayleigh/Mie scattering, transmittance LUT, SkyAtmosphereComponent** | **Realistic sky rendering** |
 | [30-scene-loading.md](30-scene-loading.md) | **Done (Phase 0-2.36.0)** | **Mesh upload batching, texture trickle-loading, deferred SDF baking, PSO pre-warming** | **Scene load optimization** |
+| [31-energy-and-bias-corrections.md](31-energy-and-bias-corrections.md) | **Done (sponza-parity-01)** | **Euler composition order, Karis DFG fit, SSR double-decompression, shadow bias/cascade fade, sky radiance vs irradiance, DDGI constant packing** | **Correct light energy & bias** |
+| [32-graph-material-draw-metadata.md](32-graph-material-draw-metadata.md) | **Done (sponza-parity-02)** | **blendMode/twoSided round trip, materialFlags layout, authored Specular → F0/F90, translucent shadow exclusion + emission, directional light fields** | **Authored material data reaches every consumer** |
+| [33-sdf-gi-final-gather.md](33-sdf-gi-final-gather.md) | **Done (sponza-parity-03/04)** | **Mesh SDF bake (BVH, two-sided), raw + expanded GDF clipmaps, validity-tracked radiance cache, hemisphere final gather, SDF reflections with SSR before the BRDF; switches, cost, known-open, instrument caveats** | **World-space GI** |
 
 ## Quick Navigation
 

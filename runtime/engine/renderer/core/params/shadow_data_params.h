@@ -99,11 +99,11 @@ struct ShadowDataParams {
     uint32_t dfsOutputSrvIndex     = UINT32_MAX;          ///< SRV index for DFS result texture.
     uint32_t localShadowAtlasIndex = UINT32_MAX;          ///< SRV index for local light shadow atlas.
     uint32_t localShadowCount      = 0;                   ///< Number of active local light shadows.
-    float    _pad2[16]             = {};                  ///< Pad CSM section to 768 bytes.
+    float    localShadowNormalOffset = 0.005f;            ///< r.Shadow.Local.NormalOffset (block A.1).
+    float    _pad2[15]             = {};                  ///< Pad CSM section to 768 bytes.
 
     // ── Local Light Shadow Data ──────────────────────────────────────────
-    LocalLightShadowData localShadows[kMaxLocalLightShadows] = {}; ///< Per-light shadow data (16 * 80 = 1280B).
-    float    _pad3[64]             = {};                  ///< Pad to 2304 bytes.
+    LocalLightShadowData localShadows[kMaxLocalLightShadows] = {}; ///< Per-light shadow data (16 * 96 = 1536B).
 
     // ── Resource handles (NOT copied to CB) ──────────────────────────────
 

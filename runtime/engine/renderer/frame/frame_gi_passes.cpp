@@ -5,6 +5,7 @@
 /// Extracted from frame_lighting.cpp. All functions are private methods of
 /// SceneRenderer, called by RegisterLightingPasses().
 
+// radiance cache readiness: see HasProducedResult() in radiance_cache.h
 #include "scene_renderer.h"
 
 // Umbrella headers
@@ -29,12 +30,18 @@
 // SSR per-pass CVars (idempotent registration — same CVar pointers as frame_lighting.cpp)
 static auto* cv_SSRMaxRoughness    = UZ_CVAR_FLOAT("r.SSR.MaxRoughness", 0.35f, "SSR max roughness cutoff", 0.05f, 1.0f);
 static auto* cv_SSRIntensity       = UZ_CVAR_FLOAT("r.SSR.Intensity", 1.0f, "SSR reflection intensity", 0.0f, 5.0f);
+static auto* cv_GatherFreezeAfterFrame = UZ_CVAR_INT("r.GI.FinalGather.FreezeAfterFrame", -1,
+    "Diagnostic (followup-12): from this absolute frame on, stop dispatching the final "
+    "gather so its output texture holds its last converged contents while the deferred "
+    "lighting pass keeps reading it. Unlike skipping UpdateProbes (which disables the GI "
+    "path) or freezing the sampling seed (which reuses one noise pattern), this removes "
+    "only the gather's per-frame variation. -1 = off.", -1, 100000);
 static auto* cv_SSRTrace           = UZ_CVAR_FLOAT("r.SSR.Trace", 1.0f, "Enable SSR trace pass (0=skip)", 0.0f, 1.0f);
 static auto* cv_SSRResolve         = UZ_CVAR_FLOAT("r.SSR.Resolve", 1.0f, "Enable SSR resolve pass (0=skip)", 0.0f, 1.0f);
 static auto* cv_SSRTemporal        = UZ_CVAR_FLOAT("r.SSR.Temporal", 1.0f, "Enable SSR temporal pass (0=skip)", 0.0f, 1.0f);
 static auto* cv_SSRSpatialDenoise  = UZ_CVAR_FLOAT("r.SSR.SpatialDenoise", 1.0f, "Enable SSR spatial denoise pass (0=skip)", 0.0f, 1.0f);
-static auto* cv_SSRComposite       = UZ_CVAR_FLOAT("r.SSR.Composite", 1.0f, "Enable SSR post-TAA composite (0=skip)", 0.0f, 1.0f);
-static auto* cv_SSRCopy            = UZ_CVAR_FLOAT("r.SSR.CopyPrev", 1.0f, "Enable SSR prev-frame color copy (0=skip)", 0.0f, 1.0f);
+// r.SSR.Composite is registered where it is read (frame_postprocess.cpp); the copy that lived here was never
+// read (block A.8 list, removed 2026-10-08).
 static auto* cv_SSRNumSteps        = UZ_CVAR_INT("r.SSR.NumSteps", 16, "SSR ray march step count", 8, 64);
 static auto* cv_SSRStartMip        = UZ_CVAR_FLOAT("r.SSR.StartMipLevel", 1.0f, "SSR initial HZB mip level", 0.f, 3.f);
 static auto* cv_SSRSlopeTolerance  = UZ_CVAR_FLOAT("r.SSR.SlopeToleranceScale", 4.0f, "SSR slope tolerance scale", 1.f, 16.f);
@@ -43,26 +50,50 @@ static auto* cv_SSRSlopeTolerance  = UZ_CVAR_FLOAT("r.SSR.SlopeToleranceScale", 
 /// Requires DXR 1.1 (`RayQuery<>`) and a built TLAS. When the device does not
 /// support DXR or the TLAS is not yet ready, the runtime falls back to the
 /// SDF radiance cache shader transparently. @ref Majercik 2019 "DDGI"
-static auto* cv_RayTracingGI       = UZ_CVAR_BOOL("r.RayTracing.GI", false, "Use DXR ray-traced probe update (DDGI) instead of SDF sphere-tracing");
-
-/// Average scene diffuse albedo used as the hit-surface albedo by the probe
-/// tracers' surface-cache-lite shading (gi_hit_lighting.hlsli). The GDF has
-/// no per-hit material identity, so a scene-wide average is the honest input;
-/// 0.35 matches the measured Sponza GBuffer albedo average. A per-instance
-/// material table (DXR path) supersedes this for RayQuery hits.
-static auto* cv_GISceneAlbedo      = UZ_CVAR_FLOAT("r.GI.SceneAlbedo", 0.35f, "Average scene diffuse albedo for probe hit shading", 0.f, 1.f);
+// r.RayTracing.GI is registered in rt_manager.cpp (read there); this file reads it through the registry
+// (one registration per CVar, 2026-10-08).
+static const uz::CVar* RayTracingGICVar() {
+    static const uz::CVar* cvar = uz::CVarRegistry::Get().Find("r.RayTracing.GI");
+    return cvar;
+}
 
 #include <cstring>
 
+static auto* cv_RCFreezeAfter = UZ_CVAR_INT("r.GI.RadianceCache.FreezeAfterFrame", -1,
+    "Diagnostic (followup-12/13): from this absolute frame index on, the radiance-cache probes "
+    "stop updating and the last converged SH buffer is held. -1 (default) never freezes. The "
+    "frame is a parameter because freezing from the first frame holds a state that never "
+    "converged, which measures the warm-up instead of stale lighting.", -1, 100000);
+// Block B.2 phase 4: how the radiance cache reacts to a regional field change. 1 = retrace every
+// probe keeping the history except inside the change boxes; 0 = discard the whole history as a
+// whole-window recompose does (A/B control).
+static auto* cv_GdfRegionalRetrace = UZ_CVAR_BOOL("r.GI.GDF.RegionalRetrace", true, "Radiance cache on a regional distance-field change: 1 = retrace keeping the history outside the change boxes, 0 = discard the history (control)");
+static auto* cv_GDFFreezeCentre = UZ_CVAR_BOOL("r.GI.GDF.FreezeCenter", false,
+    "Diagnostic (followup-13): stops the global distance field clipmaps recentring. Valid only "
+    "while the measured geometry stays inside the coverage the field already had.");
+static auto* cv_GDFCentrePhase = UZ_CVAR_FLOAT("r.GI.GDF.CenterPhaseOffset", 0.f,
+    "Diagnostic (followup-13): shifts the clipmap voxel snapping grid by this many centimetres, "
+    "so the same camera path crosses clipmap boundaries at different frames. Separates a "
+    "grid-boundary effect from a feature of the trajectory.", -1000.f, 1000.f);
+
 namespace uz {
 
-// ── SSGI Compute Passes (after GTAO, before SSR and lighting) ───────────────
-// Dispatches 5 compute passes: PrevColorReduce, Trace, SpatialDenoise,
-// TemporalAccum, BilateralUpsample. The result SRV indices are written
-// to PerFrameCB in frame_setup.cpp for the deferred lighting shader.
+// Shared diffuse gather follows GDF/RC updates and precedes lighting.
+// World mode uses current surface rays; legacy SSGI also reduces previous HDR.
+// Both reconstruct filtered E/pi for deferred lighting.
 
 void SceneRenderer::RegisterSSGIPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
-    if (!m_showFlags.Get(ShowFlag::SSGI)) return;
+    if (!m_showFlags.Get(ShowFlag::SSGI) && ctx.perFrame.sdfDiffuseSamples == 0) return;
+    // Diagnostic (followup-12): hold the gather's OUTPUT from this frame on. The dispatch is
+    // skipped, so its texture keeps its last converged contents and the deferred lighting pass
+    // goes on reading it — the lighting path stays active and only the gather's per-frame
+    // variation is removed. This is the control that skipping UpdateProbes (which disabled the
+    // path) and freezing the sampling seed (which reuses one noise pattern, H-19) both failed to
+    // be. Costs nothing when off.
+    if (cv_GatherFreezeAfterFrame->value >= 0
+        && static_cast<int>(ctx.frameIndex) > cv_GatherFreezeAfterFrame->value) {
+        return;
+    }
     // Screen-space global illumination — traces against the depth buffer for indirect light.
     const bool ssgiActive = m_ssgiRenderer.IsReady()
                           && m_device->IsBindless()
@@ -92,7 +123,16 @@ void SceneRenderer::RegisterSSGIPasses(rg::RgBuilder& rgBuilder, FrameContext& c
             ssgiParams.perFrameOffset  = ctx.perFrameAlloc.offsetBytes;
             ssgiParams.perFrameCpuPtr  = ctx.perFrameAlloc.cpuPtr;
             ssgiParams.perFrameSize    = sizeof(PerFrameCB);
-            ssgiParams.frameIndex      = ctx.frameIndex;
+            // Diagnostic (followup-12): `r.GI.Reflections.FreezeSeed` also freezes the world
+            // gather's sampling seed, otherwise "freeze the seed" would only cover the deferred
+            // reflections and the gather would keep re-sampling every frame.
+            ssgiParams.frameIndex      = ctx.perFrame.timeParams.w >= 0.f
+                                       ? static_cast<uint32_t>(ctx.perFrame.timeParams.w)
+                                       : ctx.frameIndex;
+            ssgiParams.worldGather = ctx.perFrame.sdfDiffuseSamples != 0;
+            ssgiParams.resetHistory = !m_prevViewProjValid;
+            ssgiParams.sceneRevision = m_globalDistanceField.GetSceneRevision();
+            ssgiParams.changedRegions = &m_globalDistanceField.GetChangedRegions();   // read at execution (block B.2)
             ssgiParams.renderWidth     = static_cast<uint32_t>(ctx.renderWidth);
             ssgiParams.renderHeight    = static_cast<uint32_t>(ctx.renderHeight);
 
@@ -113,12 +153,15 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
                            && m_radianceCache.IsInitialized()
                            && m_device->IsBindless()
                            && m_passInspector.IsPassEnabled("sdf_gi");
+    if (ctx.frameIndex % 120 == 0) {
+        UZ_LOG(Renderer, Debug, "SDF GI: frame={}, active={}, probesReady={}, probeSrv={}",
+               ctx.frameIndex, sdfGiActive, m_radianceCache.HasProducedResult(),
+               m_radianceCache.GetProbeSHBufferSrv());
+    }
     if (!sdfGiActive) return;
 
     // ── Pass: GDF Composite ──────────────────────────────────────────
-    // Collect mesh SDFs and world transforms from all StaticMeshComponent
-    // entities, then composite them into the global distance field clipmaps.
-    // Composite all per-mesh SDFs into the cascaded GDF clipmaps.
+    // Composite distance and average diffuse reflectance from resolved scene draws.
     rgBuilder.AddPass("GDF_Composite", [&](rg::RgPassBuilder& pb) {
         pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
             UZ_PROFILE_SCOPE("GDF::Composite");
@@ -128,43 +171,76 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
 
             // Update clipmap centers to track camera
             Vec3 camPos = ctx.perFrame.cameraPos.xyz();
+            m_globalDistanceField.SetDiagnosticCentreControls(cv_GDFFreezeCentre->value >= 0.5f,
+                                                             cv_GDFCentrePhase->value);
             m_globalDistanceField.Update(camPos);
+            {
+                // Recentre events, logged with the frame index so temporal analyses can
+                // align lighting steps with them (phase0 flicker sampling, 2026-09-09).
+                // previousCenter = the clipmap centre seen on the previous frame (tracked every frame,
+                // so the first logged event after loading reports the real previous centre).
+                static Vec3 prevCenter[GlobalDistanceField::kNumClipmaps];
+                static bool prevCenterValid = false;
+                uint32_t dirtyMask = 0;
+                for (uint32_t i = 0; i < GlobalDistanceField::kNumClipmaps; ++i)
+                    if (m_globalDistanceField.GetClipmap(i).dirty) dirtyMask |= 1u << i;
+                if (dirtyMask != 0 && m_globalDistanceField.GetSceneRevision() != 0) {
+                    for (uint32_t i = 0; i < GlobalDistanceField::kNumClipmaps; ++i) {
+                        if (!(dirtyMask & (1u << i))) continue;
+                        const auto& c = m_globalDistanceField.GetClipmap(i);
+                        const Vec3 pc = prevCenterValid ? prevCenter[i] : c.center;
+                        const bool moved = pc.x != c.center.x || pc.y != c.center.y || pc.z != c.center.z;
+                        UZ_LOG(Renderer, Info, "GI recentre: frame={} gdfClipmap={} reason={} previousCenter=({},{},{}) newCenter=({},{},{}) camera=({},{},{})",
+                               ctx.frameIndex, i, moved ? "recentre" : (prevCenterValid ? "revoxelise" : "initial"),
+                               pc.x, pc.y, pc.z, c.center.x, c.center.y, c.center.z, camPos.x, camPos.y, camPos.z);
+                    }
+                }
+                for (uint32_t i = 0; i < GlobalDistanceField::kNumClipmaps; ++i) prevCenter[i] = m_globalDistanceField.GetClipmap(i).center;
+                prevCenterValid = true;
+            }
 
-            // Collect mesh SDFs from the ECS, precompute inverse transforms.
+            // The draw list contains the full scene before frustum culling and
+            // resolves streamed material textures and instance parameters.
             std::vector<MeshSDF> meshSDFs;
             std::vector<Mat4> meshTransforms;
 
-            if (ctx.world) {
-                auto meshView = ctx.world->GetRegistry().view<StaticMeshComponent, SceneComponent>();
-                for (auto [enttEntity, meshComp, sceneComp] : meshView.each()) {
-                    if (meshComp.meshId >= m_meshes.size()) continue;
-                    const GPUMesh& gpuMesh = m_meshes[meshComp.meshId];
-                    if (!gpuMesh.HasSDF()) continue;
+            for (const auto& draw : ctx.drawList.GetCommands()) {
+                // Translucent draws and mesh decals (bit 4) are not distance-field occluders.
+                if ((draw.materialFlags & 0x3u) >= 2u || (draw.materialFlags & 0x10u) != 0u || draw.meshId >= m_meshes.size()) continue;
+                const GPUMesh& gpuMesh = m_meshes[draw.meshId];
+                if (!gpuMesh.HasSDF()) continue;
 
-                    MeshSDF sdfCopy = gpuMesh.sdf;
-                    // Precompute world-to-local inverse transform (cached in MeshSDF)
-                    Mat4 worldMat = sceneComp.GetWorldMatrix();
-                    Mat4 inv = worldMat.Inverse();
-                    sdfCopy.invTransform[0]  = inv.m._11;
-                    sdfCopy.invTransform[1]  = inv.m._12;
-                    sdfCopy.invTransform[2]  = inv.m._13;
-                    sdfCopy.invTransform[3]  = inv.m._14;
-                    sdfCopy.invTransform[4]  = inv.m._21;
-                    sdfCopy.invTransform[5]  = inv.m._22;
-                    sdfCopy.invTransform[6]  = inv.m._23;
-                    sdfCopy.invTransform[7]  = inv.m._24;
-                    sdfCopy.invTransform[8]  = inv.m._31;
-                    sdfCopy.invTransform[9]  = inv.m._32;
-                    sdfCopy.invTransform[10] = inv.m._33;
-                    sdfCopy.invTransform[11] = inv.m._34;
+                MeshSDF sdfCopy = gpuMesh.sdf;
+                sdfCopy.albedoSrv = draw.albedoSrvIndex;
+                sdfCopy.metallicSrv = (draw.materialFlags & 0x4u) != 0
+                    ? draw.aoSrvIndex : draw.metallicSrvIndex;
+                sdfCopy.baseColorTint[0] = draw.baseColorTintR;
+                sdfCopy.baseColorTint[1] = draw.baseColorTintG;
+                sdfCopy.baseColorTint[2] = draw.baseColorTintB;
+                sdfCopy.metallicMultiplier = draw.metallicMultiplier;
+                sdfCopy.materialFlags = draw.materialFlags;
+                sdfCopy.instanceKey   = draw.entityId;
+                Mat4 worldMat = draw.worldMatrix;
+                Mat4 inv = worldMat.Inverse();
+                sdfCopy.invTransform[0]  = inv.m._11;
+                sdfCopy.invTransform[1]  = inv.m._21;
+                sdfCopy.invTransform[2]  = inv.m._31;
+                sdfCopy.invTransform[3]  = inv.m._41;
+                sdfCopy.invTransform[4]  = inv.m._12;
+                sdfCopy.invTransform[5]  = inv.m._22;
+                sdfCopy.invTransform[6]  = inv.m._32;
+                sdfCopy.invTransform[7]  = inv.m._42;
+                sdfCopy.invTransform[8]  = inv.m._13;
+                sdfCopy.invTransform[9]  = inv.m._23;
+                sdfCopy.invTransform[10] = inv.m._33;
+                sdfCopy.invTransform[11] = inv.m._43;
 
-                    meshSDFs.push_back(sdfCopy);
-                    meshTransforms.push_back(worldMat);
-                }
+                meshSDFs.push_back(sdfCopy);
+                meshTransforms.push_back(worldMat);
             }
 
             const auto sdfCount = static_cast<uint32_t>(meshSDFs.size());
-
+            const uint64_t previousRevision = m_globalDistanceField.GetSceneRevision();
             m_globalDistanceField.CompositeFromMeshSDFs(
                 cmd,
                 sdfCount > 0 ? meshSDFs.data() : nullptr,
@@ -176,6 +252,24 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
                 ctx.perFrameAlloc.offsetBytes,
                 ctx.perFrameAlloc.cpuPtr,
                 sizeof(PerFrameCB));
+            if (m_globalDistanceField.GetSceneRevision() != previousRevision) {
+                m_radianceCache.InvalidateHistory();      // whole windows rewritten: the history is gone
+            } else if (!m_globalDistanceField.GetChangedRegions().empty()) {
+                // Only the neighbourhood of changed instances was recomposed (block B.2): retrace
+                // every probe but keep the history, as a recentre does.
+                const auto& regions = m_globalDistanceField.GetChangedRegions();
+                std::vector<RadianceCache::FieldRegion> boxes;
+                boxes.reserve(regions.size());
+                for (const auto& r : regions) boxes.push_back({r.lo, r.hi});
+                if (cv_GdfRegionalRetrace->value != 0.0f) {
+                    m_radianceCache.RetraceKeepingHistory(boxes.data(), boxes.size());
+                } else {
+                    m_radianceCache.InvalidateHistory();
+                }
+                UZ_LOG(Renderer, Info, "GDF regional recompose: frame={} regions={} first=({},{},{})-({},{},{})",
+                       ctx.frameIndex, regions.size(), regions[0].lo.x, regions[0].lo.y, regions[0].lo.z,
+                       regions[0].hi.x, regions[0].hi.y, regions[0].hi.z);
+            }
         });
     });
 
@@ -187,27 +281,40 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
     // atlases used by the Chebyshev sampler in deferred lighting.
     // @ref Majercik 2019 "DDGI" — atlases + Chebyshev visibility
     rgBuilder.AddPass("RadianceCache_Trace", [&](rg::RgPassBuilder& pb) {
+        // Mode 3's visible-surface seeds read the G-buffer world position (r.GI.RadianceCache.ReachVisibleSeeds).
+        pb.Read(ctx.positionRes, RHIResourceState::ShaderResource);
         pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
             UZ_PROFILE_SCOPE("RadianceCache::Trace");
 
             // Always run the SDF SH path so the existing deferred lighting
             // SH sample stays populated regardless of DXR availability.
             auto rcPipeline = ctx.pipelines->GetRadianceCacheTrace();
+            if (ctx.frameIndex % 120 == 0) {
+                UZ_LOG(Renderer, Debug, "SDF GI trace: frame={}, pipelineValid={}",
+                       ctx.frameIndex, rcPipeline.IsValid());
+            }
             if (rcPipeline.IsValid()) {
                 Vec3 camPos = ctx.perFrame.cameraPos.xyz();
                 m_radianceCache.Update(camPos);
-
-                // Surface-cache-lite hit inputs: scene-average albedo (the
-                // GDF carries no per-hit material identity) + the atmosphere
-                // sky cubemap for directional miss radiance. The cubemap
-                // holds last frame's capture — sky changes slowly, and the
-                // EMA-blended probes absorb the 1-frame lag.
-                const float avgAlbedo = cv_GISceneAlbedo->value;
-                const Vec3 sceneAlbedo{avgAlbedo, avgAlbedo, avgAlbedo};
-                const uint32_t skySrv =
-                    (m_skyCubemap.IsValid() && m_skyCubemapSrv != UINT32_MAX)
-                        ? m_skyCubemapSrv : UINT32_MAX;
-
+                if (m_radianceCache.IsDirty() && m_radianceCache.HasProducedResult()) {
+                    const Vec3 o = m_radianceCache.GetGridOrigin();
+                    const Vec3 c = m_radianceCache.GetCompletedGridOrigin();
+                    const int32_t* sh = m_radianceCache.GetPendingHistoryShift();
+                    const bool recentred = sh[0] != 0 || sh[1] != 0 || sh[2] != 0;
+                    UZ_LOG(Renderer, Info, "GI recentre: frame={} radianceCache reason={} shiftProbes=({},{},{}) previousOrigin=({},{},{}) newOrigin=({},{},{})",
+                           ctx.frameIndex, recentred ? (m_radianceCache.IsHistoryInvalid() ? "recentre+invalidate" : "recentre")
+                                                     : (m_radianceCache.IsHistoryInvalid() ? "invalidate" : "retrace"),
+                           sh[0], sh[1], sh[2], c.x, c.y, c.z, o.x, o.y, o.z);
+                }
+                m_radianceCache.SetFrozen(cv_RCFreezeAfter->value >= 0.f
+                                          && ctx.frameIndex >= static_cast<uint32_t>(cv_RCFreezeAfter->value));
+                // The probe side classifier is only built when the candidate classification is on
+                // (r.GI.RadianceCache.ProbeClassification, followup-01); the current rule needs nothing.
+                // Mode 3 (reachability from the camera) replaces the classifier with its own passes.
+                const uint32_t classificationMode = RadianceCache::ClassificationMode();
+                const RHIPipelineHandle sidePipeline = classificationMode == 3 ? ctx.pipelines->GetProbeReach()
+                    : classificationMode != 0 ? ctx.pipelines->GetProbeSide() : RHIPipelineHandle::Invalid();
+                m_radianceCache.SetVisibleSeedSource(m_gbuffer.positionWSSRV, ctx.renderWidth, ctx.renderHeight);
                 m_radianceCache.UpdateProbes(
                     cmd, m_globalDistanceField, rcPipeline,
                     m_cbRing.get(),
@@ -216,92 +323,59 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
                     ctx.perFrameAlloc.cpuPtr,
                     sizeof(PerFrameCB),
                     ctx.frameIndex,
-                    sceneAlbedo,
-                    skySrv);
+                    sidePipeline);
             }
 
-            // DDGI atlas writer — only when DXR + TLAS + CVar are ready.
-            // Read the CVar through the registry (file-static pointers go
-            // stale across module init — see the r.GTAO gating incident).
-            const bool wantDdgi =
-                CVarRegistry::Get().GetBool("r.RayTracing.GI", false)
-                && m_rtManager && m_rtManager->IsReady()
-                && m_ddgiSystem.IsInitialized();
+            // DDGI atlas writer — only when DXR is ON (master switch `r.RayTracing`
+            // AND `r.RayTracing.GI`), the TLAS actually holds instances and the
+            // system is initialised. `IsReady()` alone was not enough: with the
+            // master switch off RTManager::BeginFrame never rebuilds the TLAS, so
+            // the writer ran against an EMPTY TLAS — every RayQuery missed and the
+            // probes were filled with pure sky (the "brighter DXR path" of
+            // followup-01; caught by scripts/test_gi_energy_gpu.ps1, skyFraction 1.0).
+            const bool rtGiOn = m_rtManager && m_rtManager->IsGIEnabled();
+            const uint32_t tlasInstances = m_rtManager ? m_rtManager->GetTLASInstanceCount() : 0u;
+            const bool wantDdgi = rtGiOn && tlasInstances > 0u && m_ddgiSystem.IsInitialized();
+            const uz::CVar* rayTracingGI = RayTracingGICVar();
+            if (rayTracingGI && rayTracingGI->value && !wantDdgi && !m_ddgiSkipLogged) {
+                m_ddgiSkipLogged = true;
+                UZ_LOG(Renderer, Warning,
+                       "DDGI: r.RayTracing.GI=1 but the writer is skipped (r.RayTracing master switch on={}, TLAS instances={}, ddgi initialised={}); deferred lighting stays on the SDF radiance cache",
+                       m_rtManager && m_rtManager->IsEnabled(), tlasInstances, m_ddgiSystem.IsInitialized());
+            }
             if (wantDdgi) {
-                auto ddgiPipeline = ctx.pipelines->GetDdgiProbeUpdate();
-                if (ddgiPipeline.IsValid()) {
-                    (void)UpdateGIMaterialTable(ctx);
-
-                    const float avgAlbedo = cv_GISceneAlbedo->value;
+                auto ddgiPipeline   = ctx.pipelines->GetDdgiProbeUpdate();
+                auto tracePipeline  = ctx.pipelines->GetDdgiProbeTrace();   // block B.6; invalid = per-texel trace
+                auto borderPipeline = ctx.pipelines->GetDdgiBorderFill();
+                if (ddgiPipeline.IsValid() && borderPipeline.IsValid()) {
                     const uint32_t tlasSrv = m_rtManager->GetTLASSRVIndex();
+
+                    // VFX emissive feed — `GatherAndUploadVfxEmissiveSamples`
+                    // runs earlier in the frame (after the simulation tick)
+                    // and stages the top-N most-emissive samples into the
+                    // bindless StructuredBuffer. When the `r.VFX.DDGIInjection`
+                    // CVar is off the gather path calls `Reset()` which forces
+                    // `GetSampleCount() == 0`, so passing the values verbatim
+                    // here naturally disables the in-shader accumulation
+                    // without an extra branch on the C++ side.
+                    const uint32_t vfxSrv =
+                        m_vfxDDGIEmissiveFeed.IsInitialized()
+                            ? m_vfxDDGIEmissiveFeed.GetBufferSrvIndex()
+                            : UINT32_MAX;
+                    const uint32_t vfxCount =
+                        m_vfxDDGIEmissiveFeed.IsInitialized()
+                            ? m_vfxDDGIEmissiveFeed.GetSampleCount()
+                            : 0u;
+
                     m_ddgiSystem.DispatchUpdate(
-                        cmd, ddgiPipeline, tlasSrv,
+                        cmd, ddgiPipeline, tracePipeline, borderPipeline, tlasSrv,
                         m_cbRing.get(), ctx.frameIndex,
-                        &m_globalDistanceField,
-                        ctx.perFrameAlloc.cpuPtr,
-                        Vec3{avgAlbedo, avgAlbedo, avgAlbedo},
-                        (m_skyCubemap.IsValid()
-                         && m_skyCubemapSrv != UINT32_MAX)
-                            ? m_skyCubemapSrv : UINT32_MAX,
-                        m_giMaterialTableSrv,
-                        m_radianceCache.GetProbeSHBufferSrv());
+                        &m_globalDistanceField, ctx.perFrameAlloc.cpuPtr,
+                        vfxSrv, vfxCount);
                 }
             }
         });
     });
-}
-
-// ── GI material table (shared: DDGI atlas writer + reference path tracer) ──
-
-uint32_t SceneRenderer::UpdateGIMaterialTable(const FrameContext& ctx) {
-    // Indexed by TLAS InstanceID (= meshId). Refreshed every frame from the
-    // draw list — a 2 KB Upload-heap memcpy. The albedo TEXTURE average is
-    // sampled in-shader at the mip tail; here we only record tint + SRV.
-    const uint32_t meshCap = static_cast<uint32_t>(m_meshes.size());
-    if (meshCap > 0
-        && (!m_giMaterialTable.IsValid()
-            || m_giMaterialTableCapacity < meshCap)) {
-        if (m_giMaterialTable.IsValid()) {
-            m_device->DestroyBuffer(m_giMaterialTable);
-            m_giMaterialTable = {};
-            m_giMaterialTableSrv = UINT32_MAX;
-        }
-        RHIBufferDesc desc{};
-        desc.sizeBytes = static_cast<uint64_t>(meshCap)
-                       * sizeof(GIMeshMaterialGPU);
-        desc.stride    = sizeof(GIMeshMaterialGPU);
-        desc.usage     = RHIBufferUsage::StructuredBuffer;
-        desc.memory    = RHIMemoryType::Upload;
-        desc.debugName = "GI_MaterialTable";
-        m_giMaterialTable = m_device->CreateBuffer(desc);
-        m_giMaterialTableSrv = m_giMaterialTable.IsValid()
-            ? m_device->GetBufferSRVIndex(m_giMaterialTable)
-            : UINT32_MAX;
-        m_giMaterialTableCapacity = meshCap;
-    }
-    if (m_giMaterialTable.IsValid()) {
-        auto* entries = static_cast<GIMeshMaterialGPU*>(
-            m_device->MapBuffer(m_giMaterialTable));
-        if (entries) {
-            for (uint32_t e = 0; e < meshCap; ++e) {
-                entries[e] = {1.f, 1.f, 1.f, UINT32_MAX};
-            }
-            for (const auto& dc : ctx.drawList.GetCommands()) {
-                if (dc.meshId >= meshCap) continue;
-                auto& entry = entries[dc.meshId];
-                entry.tintR = dc.baseColorTintR;
-                entry.tintG = dc.baseColorTintG;
-                entry.tintB = dc.baseColorTintB;
-                // Slot 0 doubles as "unset" in DrawCommand.
-                entry.albedoSrv =
-                    (dc.albedoSrvIndex != 0
-                     && dc.albedoSrvIndex != UINT32_MAX)
-                        ? dc.albedoSrvIndex : UINT32_MAX;
-            }
-            m_device->UnmapBuffer(m_giMaterialTable);
-        }
-    }
-    return m_giMaterialTableSrv;
 }
 
 // ── Brixelizer GI (AMD FidelityFX sparse SDF voxel GI) ─────────────────────
@@ -440,6 +514,7 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
 
     // ── SSR Prepare Indirect Args ───────────────────────────────────────
     rgBuilder.AddPass("SSR_PrepareIndirect", [&](rg::RgPassBuilder& pb) {
+        pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);   // block B.5: keeps it after the tile classify
         pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources&) {
             UZ_PROFILE_SCOPE("SSR::PrepareIndirect");
 
@@ -622,6 +697,12 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
                                  || !m_ssrHistory[ssrReadIdx].IsValid();
 
         rgBuilder.AddPass("SSR_Temporal", [&, ssrWriteIdx, ssrReadIdx, ssrFirstFrame](rg::RgPassBuilder& pb) {
+            // Block B.5: the depth read was undeclared, so the graph (which orders passes only through
+            // the resources they declare) scheduled this pass right after the velocity pass, before the
+            // trace and the resolve; it read last frame's resolved texture, the denoise then read its
+            // stale history and wrote zeros that it read back the next frame: no reflection ever reached
+            // the lighting while the denoise was on.
+            pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);
             pb.Read(ctx.velocityRes, RHIResourceState::ShaderResource);
 
             pb.SetExecutionCallback([this, &ctx, ssrWriteIdx, ssrReadIdx, ssrFirstFrame](IRHICommandList* cmd, const rg::RgPassResources&) {
@@ -769,6 +850,7 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
 // post-process modifies the HDR buffer (bloom, tonemap, etc.).
 
 void SceneRenderer::RegisterSSGIPrevColorCopy(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
+    if (ctx.perFrame.sdfDiffuseSamples != 0) return;
     const bool ssgiActive = m_ssgiRenderer.IsReady()
                           && m_device->IsBindless()
                           && m_passInspector.IsPassEnabled("ssgi");

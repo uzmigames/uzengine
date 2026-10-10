@@ -12,6 +12,7 @@
     bool m_editorMode = false;            ///< When true, editor grid + stats overlay are rendered.
     bool m_gameViewMode = false;          ///< When true (G key), all editor overlays are hidden.
     bool m_editorFlyCamInitialized = false; ///< True once the editor fly cam has been seeded from the scene's active ECS camera.
+    bool m_flipbookDebugEnabled = false;  ///< When true, a debug flipbook quad is drawn in the top-right corner (VFX verification).
     uint32_t m_editorCameraInitFrame = 0;   ///< Frame counter for deferred editor camera init (waits for Lua scripts).
     Entity m_selectedEntity{};            ///< Currently selected entity for editor outline/gizmo rendering.
     uint8_t m_gizmoMode = 0;             ///< GizmoMode: 0=Translate, 1=Rotate, 2=Scale.
@@ -35,8 +36,14 @@
     std::unique_ptr<FlyCameraController> m_cameraCtrl;
     std::unique_ptr<ViewportToolbar> m_viewportToolbar;
     bool m_viewportToolbarInitialized = false; ///< True after ViewportToolbar::Init() succeeds.
+    std::unique_ptr<TechPanel> m_techPanel;    ///< Runtime lighting-technology switchboard (F3 / r.TechPanel.Show).
+    bool m_techPanelInitialized = false;       ///< True after TechPanel::Init() succeeds.
     CameraId m_editorFreeCamId = kInvalidCameraId;     ///< Editor free-cam ID (kInvalidCameraId = not active).
     std::unique_ptr<rg::RgResourcePool> m_rgPool;
+    /// Resource states between render graphs (render_graph_states.h). Stage 0 of
+    /// phase0_render-graph-state-registry: it records the end states and reports the explicit import
+    /// claims that disagree with them; no import takes its state from it yet.
+    std::unique_ptr<rg::RgStateRegistry> m_rgStates;
 
     // ── Fallback Textures (SM5 unconditional sampling) ────────────────────
 
@@ -153,6 +160,9 @@
     uint32_t m_skyCubemapSrv = UINT32_MAX;         ///< SRV index for IBL baker input.
     uint32_t m_skyCubemapUav = UINT32_MAX;         ///< UAV index for compute write.
     bool m_skyIBLDirty = true;                     ///< True when sky cubemap needs re-capture.
+    /// Sun direction, sky sun colour, angular radius and passes-since-bake of the last sky IBL
+    /// bake (AtmosphereFrameContext::skyBakeSignature). -1e30 = not baked yet.
+    float m_skyBakeSignature[8] = {-1e30f, -1e30f, -1e30f, -1e30f, -1e30f, -1e30f, -1e30f, 0.f};
     bool m_skyCubemapFilled = false;               ///< True once the sky cubemap has been captured at least once.
     IBLBaker::BakeResult m_iblResult;              ///< Irradiance + prefiltered SRV indices.
     uint32_t m_brdfLutSrvIndex = UINT32_MAX;       ///< BRDF LUT SRV (baked once at init).
@@ -161,11 +171,13 @@
     // ── Environment Map Importance Sampling ──────────────────────────────
     std::unique_ptr<EnvMapSampler> m_envMapSampler;  ///< Alias table + luminance pyramid for MIS.
     std::unique_ptr<EnvMISPass>    m_envMISPass;     ///< Temporal accumulation pass for env MIS specular.
+    bool m_envMisEnabled = true;                     ///< r.EnvMIS, read once per frame (frame_constants.cpp).
 
     // ── HDRI environment override ────────────────────────────────────────
     RHITextureHandle m_hdriCubemap;            ///< Cubemap converted from HDRI equirect (owned, must destroy).
     uint32_t m_hdriCubemapSrv = UINT32_MAX;    ///< SRV for the HDRI cubemap.
     bool m_hdriActive = false;                 ///< True when using external HDRI instead of procedural sky.
+    bool m_prefilteredIsPmrem = false;         ///< The bound prefiltered cubemap is a PMREM (Three.js roughness curve), not the engine's linear bake.
 
     // ── Reflection Probes ────────────────────────────────────────────────
     ReflectionProbeRenderer m_reflectionProbes;   ///< Per-probe cubemap capture, IBL bake, and GPU upload.
@@ -315,6 +327,40 @@
     uint32_t m_taaHistoryIndex = 0;            ///< Index of current write target (0 or 1).
     bool     m_taaEnabled = true;              ///< Enables jitter + temporal upscaler dispatch (DLSS/TSR/TAA).
     Mat4     m_prevViewProj;                   ///< Previous frame's unjittered viewProj for reprojection.
+
+    /// Region dump (diagnostics): writes `<dir>/region_<frame>.bin` from readback slot `slot`
+    /// and validates the GPU frame stamps against the frame that slot holds. Every value the
+    /// header needs was captured when the copy was queued, so this also runs at shutdown to
+    /// flush the frames still in flight (otherwise the last frames of a range would be missing).
+    void WriteRegionDumpFile(uint32_t slot);
+
+    // ── Region dump (diagnostics, SetRegionDump) ───────────────────────────
+    std::string                    m_regionDumpDir;
+    std::vector<RegionRect>        m_regionRects;
+    std::vector<uint32_t>          m_regionRectBase;      ///< float4 offset of each rect's records.
+    uint32_t         m_regionFirstFrame = 0, m_regionLastFrame = 0;
+    uint32_t         m_regionFields = 0;                  ///< Field-group bitmask (region_dump.hlsli).
+    uint32_t         m_regionRecordsPerPixel = 0;
+    uint64_t         m_regionBufferBytes = 0;
+    RHIBufferHandle  m_regionDumpBuffer{};
+    RHIBufferHandle  m_regionRectBuffer{};                ///< Upload buffer holding the rect table.
+    uint32_t         m_regionDumpUav = UINT32_MAX;
+    uint32_t         m_regionRectSrv = UINT32_MAX;
+    RHIBufferHandle  m_regionReadback[3]{};
+    uint32_t         m_regionReadbackFrame[3] = {UINT32_MAX, UINT32_MAX, UINT32_MAX};
+    float            m_regionReadbackJitter[3][2] = {};
+    float            m_regionReadbackExposure[3] = {};
+    uint32_t         m_regionReadbackJitterIdx[3] = {};
+    uint32_t         m_regionReadbackRes[3][4] = {};   ///< renderW, renderH, outputW, outputH per slot.
+    Mat4             m_regionReadbackViewProj[3]{};   ///< Unjittered view-projection of the frame in the slot.
+    Mat4             m_regionReadbackPrevViewProj[3]{};
+    Vec3             m_regionReadbackCamera[3]{};     ///< Camera position of the frame in the slot.
+    bool             m_regionReadbackTaa[3] = {};      ///< TAA active on the frame the slot holds.
+    bool             m_regionDumpRequested = false;
+    bool             m_regionDumpActive = false;
+    uint32_t         m_regionStampMismatches = 0;
+    uint32_t         m_regionFilesWritten = 0;
+    float            m_lastFrameExposure = 1.0f;
     bool     m_prevViewProjValid = false;      ///< False on first frame (no valid previous viewProj).
 
     // ── CB Update Optimization (dirty flag skip) ────────────────────────
@@ -366,16 +412,36 @@
     /// probe-update CS and the deferred lighting Chebyshev sampler.
     /// @ref Majercik 2019 "Dynamic Diffuse Global Illumination"
     DDGISystem m_ddgiSystem;
+    bool m_ddgiSkipLogged = false; ///< One warning per run when r.RayTracing.GI is set but DDGI cannot run (frame_gi_passes.cpp).
 
-    /// Per-mesh material table for probe hit shading (GIMeshMaterialGPU,
-    /// indexed by TLAS InstanceID = meshId). Upload-heap StructuredBuffer,
-    /// refreshed from the draw list before the DDGI dispatch.
+    // ── VFX -> DDGI emissive injection (phase16 lumen-gi-contribution) ─
+    /// GPU buffer holding up to 32 top-emissive particle samples, fed
+    /// into the DDGI probe-update CS so explosions / fire / magic VFX
+    /// contribute bounce light to the probe grid. The on-frame gather
+    /// + UploadFrame wiring lives in
+    /// `SceneRenderer::GatherAndUploadVfxEmissiveSamples`; the actual
+    /// probe-update CS reading the buffer is gated by
+    /// `phase16_vfx-lumen-gi-hardware-validation` (CB layout extension
+    /// requires DX12 to verify).
+    VfxDDGIEmissiveFeed m_vfxDDGIEmissiveFeed;
+
+    /// Per-mesh material table for the reference path tracer's bounce-hit
+    /// shading (GIMeshMaterialGPU, indexed by TLAS InstanceID = meshId).
+    /// Upload-heap StructuredBuffer, refreshed from the draw list each
+    /// path-traced frame.
     RHIBufferHandle m_giMaterialTable{};
     uint32_t        m_giMaterialTableSrv = UINT32_MAX;
     uint32_t        m_giMaterialTableCapacity = 0;  ///< Entries allocated.
 
     // ── Brixelizer GI (AMD FidelityFX sparse SDF voxel GI) ─────────────────
     std::unique_ptr<BrixelizerGIPass> m_brixelizerGI;  ///< FFX Brixelizer GI pass (diffuse + specular indirect).
+
+    // ── Clustered light lists (block B.7) ──────────────────────────────────
+    RHIBufferHandle  m_clusterListBuffer;           ///< StructuredBuffer<uint>: per cluster a count and kClusterSlotsMax light slots.
+    uint64_t         m_clusterListBytes = 0;        ///< Capacity; grows with the render resolution.
+    uint32_t         m_clusterListSrv = UINT32_MAX; ///< Read by the deferred lighting (LightingCB::clusterListSrv).
+    uint32_t         m_clusterListUav = UINT32_MAX; ///< Written by the cull pass.
+    RHIResourceState m_clusterListState = RHIResourceState::Common;
 
     // ── SSR (Screen-Space Reflections) ─────────────────────────────────────
 
@@ -436,7 +502,7 @@
 
     bool m_gpuProfileEnabled = false;   ///< When true, GPU timestamp profiling is active and results are logged.
 
-    bool m_depthPrepassEnabled = true;  ///< When true, depth prepass runs before GBuffer.
+    bool m_depthPrepassEnabled = false; ///< r.DepthPrepass (block B.4c): the depth-only GBuffer pass before the colour pass.
 
     bool m_gpuOcclusionCullingEnabled = false;  ///< When true, GPU cull pass performs HiZ occlusion test.
 
@@ -571,6 +637,16 @@
     int m_shadowReadbackPhase = 0;           ///< 0=issue copy, 1=wait+read, 2=done.
     uint32_t m_width = 0;                  ///< Display resolution width (backbuffer / swapchain).
     uint32_t m_height = 0;                 ///< Display resolution height (backbuffer / swapchain).
+    /// Diagnostic clamp-box storage for r.TAA.ClampFreezeAfterFrame (0 = min, 1 = max).
+    RHITextureHandle m_taaClampBox[2]{};
+    uint32_t m_taaClampBoxSrv[2]{UINT32_MAX, UINT32_MAX};
+    uint32_t m_taaClampBoxUav[2]{UINT32_MAX, UINT32_MAX};
+    bool     m_taaClampBoxInitialised = false;  ///< False until the box has been written once.
+    /// Component replay (diagnostic): recorded AO and specular, per frame and per pixel.
+    RHIBufferHandle m_componentReplay;
+    uint32_t m_componentReplaySrv = UINT32_MAX;
+    std::string m_componentReplayLoaded;   ///< Path currently resident ("" = none).
+
     uint32_t m_renderWidth = 0;            ///< Internal render resolution width (screen percentage applied).
     uint32_t m_renderHeight = 0;           ///< Internal render resolution height (screen percentage applied).
 
@@ -610,20 +686,19 @@
 
     // ── Deferred SDF Baking ─────────────────────────────────────────────────
 
-    /// Pending SDF bake request — holds CPU mesh data and mesh index for
-    /// deferred batch bake after all mesh uploads are flushed.
-    struct PendingSdfBake {
-        uint32_t meshIndex;                 ///< Index into m_meshes to receive the baked SDF.
-        std::vector<uint8_t> vertexData;    ///< CPU vertex bytes (moved from Mesh).
-        uint32_t vertexCount;               ///< Number of vertices.
-        uint32_t vertexStride;              ///< Byte stride between vertices.
-        std::vector<uint8_t> indexData;     ///< CPU index bytes (moved from Mesh).
-        uint32_t indexCount;                ///< Number of indices.
-    };
-
-    /// Pending SDF bakes accumulated during mesh loading.
-    /// Flushed in a single batch after mesh uploads complete.
-    std::vector<PendingSdfBake> m_pendingSdfBakes;
+    /// Asynchronous, disk-cached mesh SDF bakes (block B.3): worker threads prepare the bakes
+    /// and the cache, the GPU half is recorded in the frame's command list and completes by
+    /// `m_bakeFence`, signalled after every frame's Execute with `m_bakeFenceValue`.
+    std::unique_ptr<MeshSdfBakeQueue> m_sdfBakeQueue;
+    IRHIFence* m_bakeFence = nullptr;
+    uint64_t   m_bakeFenceValue = 0;
+    bool       m_preloading = false;
+    /// SDF GI switched on after meshes loaded without fields: the missing bakes are queued a
+    /// few per frame, the CPU meshes re-read by path (ServiceSdfBakes).
+    bool       m_sdfRetriggerPending = false;
+    bool       m_sdfGiEnabledLast = false;
+    bool       m_sdfServiceStarted = false;
+    uint32_t   m_sdfRetriggerCursor = 0;
 
     // ── Loaded Assets ──────────────────────────────────────────────────────
 
@@ -751,6 +826,13 @@
     /// Indexed by the component's runtimeEmitterIdx field.
     std::vector<std::unique_ptr<ParticleEmitter>> m_runtimeEmitters;
 
+    /// Compound VfxSystemInstance instances created from VfxSystemComponent
+    /// ECS data. Each instance owns N child ParticleEmitter* which are also
+    /// registered with the global VFXSystem (but NOT stored in
+    /// m_runtimeEmitters — ownership is with the system instance).
+    /// Indexed by the component's runtimeInstanceIdx field.
+    std::vector<std::unique_ptr<VfxSystemInstance>> m_runtimeSystems;
+
     /// Hot-reload watcher for .uzfx and .uzvfx files (dev builds only).
     std::unique_ptr<VFXHotReload> m_vfxHotReload;
 
@@ -794,19 +876,14 @@
     /// * `cmdList` — Command list in recording state.
     void IntegrateAsyncMeshLoads(IRHICommandList* cmdList);
 
-    /// Batch-bakes all pending mesh SDFs in a single GPU submission.
-    ///
-    /// Called after `FlushDeferredMeshUploads()` completes so mesh vertex/index
-    /// data is on the GPU and the command list is in recording state.
-    ///
-    /// Each bake dispatches the mesh_sdf_bake_cs compute shader via
-    /// `MeshSdfBaker::BakeMeshGPU`. The resulting `MeshSDF` is stored in the
-    /// corresponding `m_meshes[meshIndex].sdf`. Temporary triangle upload
-    /// buffers are deferred for destruction after the GPU finishes.
-    ///
-    /// # Arguments
-    /// * `cmdList` — Command list in recording state.
-    void FlushSdfBakes(IRHICommandList* cmdList);
+    /// Once per frame, at the end of the sync (block B.3): queues the bakes of meshes that
+    /// loaded without SDF GI when it was switched on since, then starts, advances and
+    /// completes the asynchronous mesh SDF bakes (`MeshSdfBakeQueue::Service`).
+    void ServiceSdfBakes(IRHICommandList* cmdList);
+
+    /// Hands a loaded mesh to the bake queue: bake options captured now, 16-bit indices
+    /// widened, the vertex bytes moved out of `cpuMesh`.
+    void QueueSdfBake(uint32_t meshIndex, Mesh& cpuMesh);
 
     /// Creates the shadow atlas depth texture.
     // Shadow atlas creation moved to ShadowAtlas::Init()
@@ -883,8 +960,8 @@
     void RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
 
     /// (Re)creates + refreshes the per-mesh GI material table (tint + albedo
-    /// SRV, indexed by TLAS InstanceID = meshId). Shared by the DDGI atlas
-    /// writer and the reference path tracer. Safe to call every frame — the
+    /// SRV, indexed by TLAS InstanceID = meshId) read by the reference path
+    /// tracer. Safe to call every frame — the
     /// buffer is Upload-heap and grows on demand. Returns the table SRV
     /// (UINT32_MAX when no meshes / creation failed).
     uint32_t UpdateGIMaterialTable(const FrameContext& ctx);
@@ -897,6 +974,8 @@
 
     /// Registers the deferred lighting pass (or debug view / GBuffer debug).
     void RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, FrameContext& ctx);
+    /// Block B.7: the light cull compute pass (clusters of the view frustum -> light index lists).
+    void RegisterLightCullPass(rg::RgBuilder& rgBuilder, FrameContext& ctx);
 
     /// Registers atmosphere, height fog, and volumetric cloud composite passes.
     void RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);

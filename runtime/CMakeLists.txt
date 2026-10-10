@@ -265,14 +265,288 @@ endif()
 # ─────────────────────────────────────────────────────────────────────────────
 # Static Library
 # ─────────────────────────────────────────────────────────────────────────────
+# Thirdparty — fastgltf (+ bundled simdjson) and meshoptimizer sources,
+# mirroring build.zig (C++17 upstream code).
+set(JPEGTURBO_SOURCES
+    thirdparty/libjpeg-turbo/src/jaricom.c
+    thirdparty/libjpeg-turbo/src/jcomapi.c
+    thirdparty/libjpeg-turbo/src/jdapimin.c
+    thirdparty/libjpeg-turbo/src/jdapistd.c
+    thirdparty/libjpeg-turbo/src/jdarith.c
+    thirdparty/libjpeg-turbo/src/jdatasrc.c
+    thirdparty/libjpeg-turbo/src/jdcoefct.c
+    thirdparty/libjpeg-turbo/src/jdcolor.c
+    thirdparty/libjpeg-turbo/src/jddctmgr.c
+    thirdparty/libjpeg-turbo/src/jddiffct.c
+    thirdparty/libjpeg-turbo/src/jdhuff.c
+    thirdparty/libjpeg-turbo/src/jdicc.c
+    thirdparty/libjpeg-turbo/src/jdinput.c
+    thirdparty/libjpeg-turbo/src/jdlhuff.c
+    thirdparty/libjpeg-turbo/src/jdlossls.c
+    thirdparty/libjpeg-turbo/src/jdmainct.c
+    thirdparty/libjpeg-turbo/src/jdmarker.c
+    thirdparty/libjpeg-turbo/src/jdmaster.c
+    thirdparty/libjpeg-turbo/src/jdmerge.c
+    thirdparty/libjpeg-turbo/src/jdphuff.c
+    thirdparty/libjpeg-turbo/src/jdpostct.c
+    thirdparty/libjpeg-turbo/src/jdsample.c
+    thirdparty/libjpeg-turbo/src/jdtrans.c
+    thirdparty/libjpeg-turbo/src/jerror.c
+    thirdparty/libjpeg-turbo/src/jidctflt.c
+    thirdparty/libjpeg-turbo/src/jidctfst.c
+    thirdparty/libjpeg-turbo/src/jidctint.c
+    thirdparty/libjpeg-turbo/src/jidctred.c
+    thirdparty/libjpeg-turbo/src/jmemmgr.c
+    thirdparty/libjpeg-turbo/src/jmemnobs.c
+    thirdparty/libjpeg-turbo/src/jpeg_nbits.c
+    thirdparty/libjpeg-turbo/src/jquant1.c
+    thirdparty/libjpeg-turbo/src/jquant2.c
+    thirdparty/libjpeg-turbo/src/jutils.c
+    thirdparty/libjpeg-turbo/src/jcapimin.c
+    thirdparty/libjpeg-turbo/src/jcapistd.c
+    thirdparty/libjpeg-turbo/src/jcarith.c
+    thirdparty/libjpeg-turbo/src/jccoefct.c
+    thirdparty/libjpeg-turbo/src/jccolor.c
+    thirdparty/libjpeg-turbo/src/jcdctmgr.c
+    thirdparty/libjpeg-turbo/src/jcdiffct.c
+    thirdparty/libjpeg-turbo/src/jchuff.c
+    thirdparty/libjpeg-turbo/src/jcicc.c
+    thirdparty/libjpeg-turbo/src/jcinit.c
+    thirdparty/libjpeg-turbo/src/jclhuff.c
+    thirdparty/libjpeg-turbo/src/jclossls.c
+    thirdparty/libjpeg-turbo/src/jcmainct.c
+    thirdparty/libjpeg-turbo/src/jcmarker.c
+    thirdparty/libjpeg-turbo/src/jcmaster.c
+    thirdparty/libjpeg-turbo/src/jcparam.c
+    thirdparty/libjpeg-turbo/src/jcphuff.c
+    thirdparty/libjpeg-turbo/src/jcprepct.c
+    thirdparty/libjpeg-turbo/src/jcsample.c
+    thirdparty/libjpeg-turbo/src/jctrans.c
+    thirdparty/libjpeg-turbo/src/jdatadst.c
+    thirdparty/libjpeg-turbo/src/jfdctflt.c
+    thirdparty/libjpeg-turbo/src/jfdctfst.c
+    thirdparty/libjpeg-turbo/src/jfdctint.c
+    thirdparty/libjpeg-turbo/src/transupp.c
+    thirdparty/libjpeg-turbo/src/wrapper/jdapistd-12.c
+    thirdparty/libjpeg-turbo/src/wrapper/jdcoefct-12.c
+    thirdparty/libjpeg-turbo/src/wrapper/jdcolor-12.c
+    thirdparty/libjpeg-turbo/src/wrapper/jddctmgr-12.c
+    thirdparty/libjpeg-turbo/src/wrapper/jddiffct-12.c
+    thirdparty/libjpeg-turbo/src/wrapper/jdlossls-12.c
+    thirdparty/libjpeg-turbo/src/wrapper/jdmainct-12.c
+    thirdparty/libjpeg-turbo/src/wrapper/jdmerge-12.c
+    thirdparty/libjpeg-turbo/src/wrapper/jdpostct-12.c
+    thirdparty/libjpeg-turbo/src/wrapper/jdsample-12.c
+    thirdparty/libjpeg-turbo/src/wrapper/jidctflt-12.c
+    thirdparty/libjpeg-turbo/src/wrapper/jidctfst-12.c
+    thirdparty/libjpeg-turbo/src/wrapper/jidctint-12.c
+    thirdparty/libjpeg-turbo/src/wrapper/jidctred-12.c
+    thirdparty/libjpeg-turbo/src/wrapper/jquant1-12.c
+    thirdparty/libjpeg-turbo/src/wrapper/jquant2-12.c
+    thirdparty/libjpeg-turbo/src/wrapper/jutils-12.c
+    thirdparty/libjpeg-turbo/src/wrapper/jcapistd-12.c
+    thirdparty/libjpeg-turbo/src/wrapper/jccoefct-12.c
+    thirdparty/libjpeg-turbo/src/wrapper/jccolor-12.c
+    thirdparty/libjpeg-turbo/src/wrapper/jcdctmgr-12.c
+    thirdparty/libjpeg-turbo/src/wrapper/jcdiffct-12.c
+    thirdparty/libjpeg-turbo/src/wrapper/jclossls-12.c
+    thirdparty/libjpeg-turbo/src/wrapper/jcmainct-12.c
+    thirdparty/libjpeg-turbo/src/wrapper/jcprepct-12.c
+    thirdparty/libjpeg-turbo/src/wrapper/jcsample-12.c
+    thirdparty/libjpeg-turbo/src/wrapper/jfdctfst-12.c
+    thirdparty/libjpeg-turbo/src/wrapper/jfdctint-12.c
+    thirdparty/libjpeg-turbo/src/wrapper/jdapistd-16.c
+    thirdparty/libjpeg-turbo/src/wrapper/jdcolor-16.c
+    thirdparty/libjpeg-turbo/src/wrapper/jddiffct-16.c
+    thirdparty/libjpeg-turbo/src/wrapper/jdlossls-16.c
+    thirdparty/libjpeg-turbo/src/wrapper/jdmainct-16.c
+    thirdparty/libjpeg-turbo/src/wrapper/jdpostct-16.c
+    thirdparty/libjpeg-turbo/src/wrapper/jdsample-16.c
+    thirdparty/libjpeg-turbo/src/wrapper/jutils-16.c
+    thirdparty/libjpeg-turbo/src/wrapper/jcapistd-16.c
+    thirdparty/libjpeg-turbo/src/wrapper/jccolor-16.c
+    thirdparty/libjpeg-turbo/src/wrapper/jcdiffct-16.c
+    thirdparty/libjpeg-turbo/src/wrapper/jclossls-16.c
+    thirdparty/libjpeg-turbo/src/wrapper/jcmainct-16.c
+    thirdparty/libjpeg-turbo/src/wrapper/jcprepct-16.c
+    thirdparty/libjpeg-turbo/src/wrapper/jcsample-16.c
+    thirdparty/mikktspace/mikktspace.c
+)
+set(UFBX_SOURCES thirdparty/ufbx/ufbx.c)
+# spng PNG decode (per build.zig: SPNG_USE_MINIZ=0 → links system zlib)
+set(SPNG_SOURCES thirdparty/spng/spng/spng.c)
+set_source_files_properties(${SPNG_SOURCES}
+    PROPERTIES COMPILE_DEFINITIONS "SPNG_USE_MINIZ=0;SPNG_STATIC"
+)
+# xatlas lightmap UV generation (per build.zig)
+set(XATLAS_SOURCES thirdparty/xatlas/source/xatlas/xatlas.cpp)
+# libpng (PNG IO for msdfgen ext and texture tooling, per build.zig)
+set(LIBPNG_SOURCES
+    thirdparty/libpng/png.c thirdparty/libpng/pngerror.c thirdparty/libpng/pngget.c
+    thirdparty/libpng/pngmem.c thirdparty/libpng/pngpread.c thirdparty/libpng/pngread.c
+    thirdparty/libpng/pngrio.c thirdparty/libpng/pngrtran.c thirdparty/libpng/pngrutil.c
+    thirdparty/libpng/pngset.c thirdparty/libpng/pngtrans.c thirdparty/libpng/pngwio.c
+    thirdparty/libpng/pngwrite.c thirdparty/libpng/pngwtran.c thirdparty/libpng/pngwutil.c
+)
+set_source_files_properties(${LIBPNG_SOURCES}
+    PROPERTIES COMPILE_DEFINITIONS "PNG_ARM_NEON_OPT=0;PNG_STATIC"
+)
+# msdfgen core + ext (multi-channel SDF font atlas, per build.zig)
+set(MSDFGEN_SOURCES
+    thirdparty/msdfgen/core/Contour.cpp thirdparty/msdfgen/core/DistanceMapping.cpp
+    thirdparty/msdfgen/core/EdgeHolder.cpp thirdparty/msdfgen/core/MSDFErrorCorrection.cpp
+    thirdparty/msdfgen/core/Projection.cpp thirdparty/msdfgen/core/Scanline.cpp
+    thirdparty/msdfgen/core/Shape.cpp thirdparty/msdfgen/core/contour-combiners.cpp
+    thirdparty/msdfgen/core/convergent-curve-ordering.cpp thirdparty/msdfgen/core/edge-coloring.cpp
+    thirdparty/msdfgen/core/edge-segments.cpp thirdparty/msdfgen/core/edge-selectors.cpp
+    thirdparty/msdfgen/core/equation-solver.cpp thirdparty/msdfgen/core/export-svg.cpp
+    thirdparty/msdfgen/core/msdf-error-correction.cpp thirdparty/msdfgen/core/msdfgen.cpp
+    thirdparty/msdfgen/core/rasterization.cpp thirdparty/msdfgen/core/render-sdf.cpp
+    thirdparty/msdfgen/core/save-bmp.cpp thirdparty/msdfgen/core/save-fl32.cpp
+    thirdparty/msdfgen/core/save-rgba.cpp thirdparty/msdfgen/core/save-tiff.cpp
+    thirdparty/msdfgen/core/sdf-error-estimation.cpp thirdparty/msdfgen/core/shape-description.cpp
+    thirdparty/msdfgen/ext/import-font.cpp thirdparty/msdfgen/ext/import-svg.cpp
+    thirdparty/msdfgen/ext/resolve-shape-geometry.cpp thirdparty/msdfgen/ext/save-png.cpp
+)
+# MSDFGEN_PUBLIC= (empty) bypasses the CMake-generated msdfgen-config.h (build.zig trick)
+set_source_files_properties(${MSDFGEN_SOURCES}
+    PROPERTIES COMPILE_DEFINITIONS "MSDFGEN_PUBLIC="
+)
+# etcpak BC1/BC3/BC4/BC5/BC7 texture compression (per build.zig)
+set(ETCPAK_SOURCES
+    thirdparty/etcpak/ProcessDxtc.cpp
+    thirdparty/etcpak/Tables.cpp
+    thirdparty/etcpak/Dither.cpp
+    thirdparty/etcpak/bc7enc.cpp
+)
+set(FASTGLTF_SOURCES
+    thirdparty/fastgltf/deps/simdjson/simdjson.cpp
+    thirdparty/fastgltf/src/fastgltf.cpp
+    thirdparty/fastgltf/src/base64.cpp
+    thirdparty/fastgltf/src/io.cpp
+)
+set(MESHOPT_SOURCES
+    thirdparty/meshoptimizer/src/allocator.cpp
+    thirdparty/meshoptimizer/src/clusterizer.cpp
+    thirdparty/meshoptimizer/src/indexcodec.cpp
+    thirdparty/meshoptimizer/src/indexgenerator.cpp
+    thirdparty/meshoptimizer/src/overdrawanalyzer.cpp
+    thirdparty/meshoptimizer/src/overdrawoptimizer.cpp
+    thirdparty/meshoptimizer/src/quantization.cpp
+    thirdparty/meshoptimizer/src/simplifier.cpp
+    thirdparty/meshoptimizer/src/spatialorder.cpp
+    thirdparty/meshoptimizer/src/stripifier.cpp
+    thirdparty/meshoptimizer/src/vcacheanalyzer.cpp
+    thirdparty/meshoptimizer/src/vcacheoptimizer.cpp
+    thirdparty/meshoptimizer/src/vertexcodec.cpp
+    thirdparty/meshoptimizer/src/vertexfilter.cpp
+    thirdparty/meshoptimizer/src/vfetchanalyzer.cpp
+    thirdparty/meshoptimizer/src/vfetchoptimizer.cpp
+)
+
+
+# Complete engine source dirs, mirroring build.zig addCppDir(runtime_mod, ...)
+set(RUNTIME_EXTRA_DIRS
+    engine/asset/formats
+    engine/asset/mesh
+    engine/asset/importers
+    engine/renderer/core/shader
+    engine/renderer/core/pipeline
+    engine/renderer/material
+    engine/renderer/upload
+    engine/renderer/passes/geometry
+    engine/renderer/passes/lighting
+    engine/renderer/passes/atmosphere
+    engine/renderer/passes/postprocess
+    engine/renderer/passes/debug
+    engine/renderer/passes/vfx
+    engine/renderer/passes/ibl
+    engine/renderer/passes/raytracing
+    engine/renderer/passes/gi
+    engine/renderer/passes/pathtracing
+    engine/renderer/lighting
+    engine/renderer/atmosphere
+    engine/renderer/fog
+    engine/renderer/ibl
+    engine/renderer/gi
+    engine/renderer/probes
+    engine/renderer/raytracing
+    engine/renderer/scene
+    engine/renderer/frame
+    engine/ecs/core
+    engine/ecs/scene
+    engine/ecs/lighting
+    engine/ecs/mesh
+    engine/ecs/update
+    engine/ecs/loaders
+    engine/scripting/editor
+    engine/scripting/animation
+    engine/ipc
+    engine/vfx/material
+    engine/animation
+    engine/debug
+)
+set(RUNTIME_EXTRA_SOURCES)
+foreach(d IN LISTS RUNTIME_EXTRA_DIRS)
+    file(GLOB _srcs ${d}/*.cpp)
+    list(APPEND RUNTIME_EXTRA_SOURCES ${_srcs})
+endforeach()
+# Windows-only sources pulled in by the extra dirs: Brixelizer loader is
+# DX12/LoadLibrary-based; the particle sim pass compiles shaders at runtime
+# through the Windows-only ShaderCompiler.
+if(NOT WIN32)
+    list(FILTER RUNTIME_EXTRA_SOURCES EXCLUDE REGEX "brixelizer_loader\\.cpp$")
+    list(FILTER RUNTIME_EXTRA_SOURCES EXCLUDE REGEX "particle_simulation_pass\\.cpp$")
+endif()
+
+# LZ4 (pak compression) and FreeType (font rasterization for msdfgen/font_manager),
+# mirroring build.zig.
+set(LZ4_SOURCES
+    thirdparty/lz4/lib/lz4.c
+    thirdparty/lz4/lib/lz4frame.c
+    thirdparty/lz4/lib/lz4hc.c
+    thirdparty/lz4/lib/xxhash.c
+)
+set(FREETYPE_SOURCES
+    thirdparty/freetype/src/base/ftsystem.c
+    thirdparty/freetype/src/base/ftinit.c
+    thirdparty/freetype/src/base/ftdebug.c
+    thirdparty/freetype/src/base/ftbase.c
+    thirdparty/freetype/src/base/ftbbox.c
+    thirdparty/freetype/src/base/ftbitmap.c
+    thirdparty/freetype/src/base/ftglyph.c
+    thirdparty/freetype/src/base/ftmm.c
+    thirdparty/freetype/src/truetype/truetype.c
+    thirdparty/freetype/src/sfnt/sfnt.c
+    thirdparty/freetype/src/smooth/smooth.c
+    thirdparty/freetype/src/autofit/autofit.c
+    thirdparty/freetype/src/psnames/psnames.c
+    thirdparty/freetype/src/gzip/ftgzip.c
+)
+set_source_files_properties(${FREETYPE_SOURCES}
+    PROPERTIES COMPILE_DEFINITIONS "FT2_BUILD_LIBRARY;FT_CONFIG_OPTION_SYSTEM_ZLIB=0"
+)
+
 add_library(uzengine_runtime STATIC
     ${RUNTIME_SOURCES}
+    ${RUNTIME_EXTRA_SOURCES}
     ${SPDLOG_SOURCES}
     ${TRACY_SOURCES}
     ${SPIRV_REFLECT_SOURCES}
     ${VOLK_SOURCES}
     ${ASTCENC_SOURCES}
     ${BASIS_UNIVERSAL_SOURCES}
+    ${FASTGLTF_SOURCES}
+    ${UFBX_SOURCES}
+    ${LZ4_SOURCES}
+    ${ETCPAK_SOURCES}
+    ${XATLAS_SOURCES}
+    ${JPEGTURBO_SOURCES}
+    ${SPNG_SOURCES}
+    ${LIBPNG_SOURCES}
+    ${MSDFGEN_SOURCES}
+    ${FREETYPE_SOURCES}
+    ${MESHOPT_SOURCES}
     ${MINIZ_SOURCES}
     $<$<PLATFORM_ID:Windows>:${WINDOWS_SOURCES}>
     $<$<PLATFORM_ID:Darwin>:${MACOS_PLATFORM_SOURCES}>
@@ -315,13 +589,22 @@ set_source_files_properties(thirdparty/volk/volk.c
     PROPERTIES LANGUAGE C COMPILE_DEFINITIONS "VK_NO_PROTOTYPES"
 )
 
-# Metal backend — set .mm files as Objective-C++
+# Metal backend — all files compile as Objective-C++: even the .cpp files
+# include <Metal/Metal.h> (ObjC syntax) per the Zig build.
 if(APPLE)
-    foreach(mm_src IN LISTS SRC_RHI_METAL_MM)
-        set_source_files_properties(${mm_src}
+    foreach(metal_src IN LISTS SRC_RHI_METAL)
+        set_source_files_properties(${metal_src}
             PROPERTIES LANGUAGE OBJCXX
         )
     endforeach()
+    # Tracy's Metal wrapper requires ARC (matches the Zig build).
+    set_source_files_properties(engine/rhi/metal/metal_tracy_gpu.mm
+        PROPERTIES COMPILE_OPTIONS "-fobjc-arc"
+    )
+    # drag_drop.mm uses __weak — written for ARC.
+    set_source_files_properties(platform/macos/drag_drop.mm
+        PROPERTIES COMPILE_OPTIONS "-fobjc-arc"
+    )
 endif()
 
 # basis_universal needs BASISD_SUPPORT_KTX2_ZSTD=0 (no zstd dependency)
@@ -345,6 +628,7 @@ endif()
 # Engine includes
 target_include_directories(uzengine_runtime PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
+    engine
     engine/app
     engine/logging
     engine/assertions
@@ -355,76 +639,97 @@ target_include_directories(uzengine_runtime PUBLIC
     engine/containers
     engine/random
     engine/rhi
+    engine/rhi/optimization
+    engine/rhi/vulkan
     engine/shader
     engine/paths
-    engine
+    engine/core
     engine/renderer
-    engine/renderer/core
-    engine/renderer/core/gbuffer
-    engine/renderer/core/lighting
-    engine/renderer/core/lod
-    engine/renderer/core/memory
-    engine/renderer/core/params
-    engine/renderer/core/pipeline
-    engine/renderer/core/shader
-    engine/renderer/atmosphere
     engine/renderer/camera
-    engine/renderer/fog
-    engine/renderer/frame
-    engine/renderer/gi
-    engine/renderer/ibl
-    engine/renderer/lighting
+    engine/renderer/core
+    engine/renderer/core/params
+    engine/renderer/core/gbuffer
+    engine/renderer/core/shader
+    engine/renderer/core/pipeline
+    engine/renderer/core/memory
+    engine/renderer/core/lod
+    engine/renderer/core/lighting
     engine/renderer/material
+    engine/material
+    engine/material/compiler
     engine/renderer/memory
     engine/renderer/mesh
+    engine/renderer/upload
+    engine/renderer/render_graph
+    engine/renderer/shadows
+    engine/renderer/ibl
+    engine/renderer/gi
+    engine/renderer/probes
+    engine/renderer/lighting
+    engine/renderer/atmosphere
+    engine/renderer/fog
+    engine/renderer/scene
+    engine/renderer/frame
     engine/renderer/passes
-    engine/renderer/passes/atmosphere
-    engine/renderer/passes/debug
     engine/renderer/passes/geometry
     engine/renderer/passes/lighting
+    engine/renderer/passes/atmosphere
     engine/renderer/passes/postprocess
     engine/renderer/postprocess
-    engine/renderer/probes
-    engine/renderer/render_graph
-    engine/renderer/scene
-    engine/renderer/shadows
-    engine/renderer/upload
+    engine/renderer/passes/debug
+    engine/renderer/passes/ibl
+    engine/renderer/passes/gi
+    engine/renderer/passes/pathtracing
+    engine/renderer/raytracing
+    engine/asset
+    engine/asset/formats
+    engine/asset/mesh
+    engine/asset/importers
+    engine/job
+    engine/ecs
+    engine/ecs/core
+    engine/ecs/scene
+    engine/ecs/lighting
+    engine/ecs/mesh
+    engine/ecs/environment
+    engine/ecs/metadata
+    engine/ecs/update
+    engine/ecs/loaders
     engine/scripting
     engine/scripting/scene
     engine/scripting/core
     engine/scripting/renderer
-    engine/ecs
-    engine/asset
-    engine/material
-    engine/material/compiler
+    engine/scripting/editor
+    engine/scripting/animation
+    engine/ipc
+    engine/vfx
     engine/vfx/core
     engine/vfx/components
     engine/vfx/curves
     engine/vfx/modules
-    engine/vfx/passes
     engine/vfx/asset
     engine/vfx/parameters
     engine/vfx/events
-    engine/vfx/scripting
+    engine/renderer/passes/vfx
     engine/vfx/decals
     engine/vfx/trails
     engine/vfx/lod
     engine/vfx/budget
-    engine/vfx
-    engine/core
+    engine/vfx/editor
+    engine/vfx/material
+    engine/animation
     engine/event
-    engine/job
     engine/property
-    engine/asset/formats
-    engine/asset/importers
-    engine/ecs/core
-    engine/ecs/environment
-    engine/ecs/loaders
-    engine/ecs/scene
-    engine/ecs/update
-    engine/ecs/lighting
-    engine/rhi/optimization
+    engine/debug
+    editor/grid
+    editor/outline
+    editor/gizmo
+    editor/font
+    editor/stats
     editor/screenshot
+    editor/input
+    editor/selection
+    editor/toolbar
     ${CMAKE_CURRENT_BINARY_DIR}/generated/shaders
 )
 
@@ -440,17 +745,35 @@ target_include_directories(uzengine_runtime PUBLIC
     thirdparty/spirv-reflect
     thirdparty/spirv-reflect/include
     thirdparty/xxhash
+    thirdparty/lz4/lib
     thirdparty/stb
+    thirdparty/spng/spng
     thirdparty/tinyexr
     thirdparty/libjpeg-turbo
+    thirdparty/libjpeg-turbo/src
     thirdparty/basis_universal/transcoder
     thirdparty/astcenc/Source
     thirdparty/vulkan_headers/include
     thirdparty/volk
     thirdparty/vma/include
+    thirdparty/fastgltf/include
+    thirdparty/fastgltf/deps/simdjson
+    thirdparty/meshoptimizer/src
+    thirdparty/mikktspace
+    thirdparty/entt/single_include
     thirdparty/luajit/src
+    thirdparty/ufbx
+    thirdparty/etcpak
+    thirdparty/xatlas/source/xatlas
+    thirdparty/libpng
+    thirdparty/msdfgen
+    thirdparty/msdfgen/core
+    thirdparty/msdfgen/ext
+    thirdparty/freetype/include
+    thirdparty/smaa
+    thirdparty/ffmpeg/include
+    thirdparty/slang/include
 )
-
 # Windows-only includes
 if(WIN32)
     target_include_directories(uzengine_runtime PUBLIC
@@ -511,15 +834,43 @@ if(APPLE)
     find_library(QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
     find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)
     find_library(APPKIT_FRAMEWORK AppKit)
+    # system_info.mm reads battery/hardware info through IOKit
+    find_library(IOKIT_FRAMEWORK IOKit REQUIRED)
+    # libpng links the system zlib
+    find_library(ZLIB_LIBRARY z REQUIRED)
+    # LuaJIT is built via its own Makefile (scripts or `make -C runtime/thirdparty/luajit/src`)
+    set(LUAJIT_LIB ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/luajit/src/libluajit.a)
+    if(NOT EXISTS ${LUAJIT_LIB})
+        message(FATAL_ERROR "libluajit.a not found — run: make -C runtime/thirdparty/luajit/src MACOSX_DEPLOYMENT_TARGET=15.0")
+    endif()
 
     target_link_libraries(uzengine_runtime PUBLIC
         ${METAL_FRAMEWORK}
         ${QUARTZCORE_FRAMEWORK}
         ${FOUNDATION_FRAMEWORK}
+        ${IOKIT_FRAMEWORK}
+        ${ZLIB_LIBRARY}
+        ${LUAJIT_LIB}
     )
     if(APPKIT_FRAMEWORK)
         target_link_libraries(uzengine_runtime PUBLIC ${APPKIT_FRAMEWORK})
     endif()
+endif()
+
+# Slang shader compiler runtime (dlopen'd by slang_compiler.cpp) — deploy the
+# vendored dylibs next to executables under the wrapper's relative layout and
+# add an rpath so its @rpath dependencies resolve.
+if(APPLE)
+    set(SLANG_DEPLOY_DIR ${CMAKE_CURRENT_BINARY_DIR}/thirdparty/slang/bin)
+    file(GLOB SLANG_DYLIBS ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/slang/bin/*.dylib)
+    file(MAKE_DIRECTORY ${SLANG_DEPLOY_DIR})
+    add_custom_target(deploy_slang ALL
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${SLANG_DYLIBS} ${SLANG_DEPLOY_DIR}/
+        DEPENDS ${SLANG_DYLIBS}
+    )
+    # Binaries link @rpath so libslang's own @rpath deps resolve from its dir
+    add_link_options(-Wl,-rpath,@executable_path/thirdparty/slang/bin)
+    add_dependencies(uzengine_runtime deploy_slang)
 endif()
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -540,6 +891,26 @@ target_include_directories(gtest PRIVATE
 target_compile_definitions(gtest PUBLIC
     GTEST_HAS_PTHREAD=0
 )
+
+
+# engine/ecs/{environment,metadata} compile into executables directly (build.zig design)
+file(GLOB SRC_ECS_ENV      engine/ecs/environment/*.cpp)
+file(GLOB SRC_ECS_METADATA engine/ecs/metadata/*.cpp)
+set(ECS_ENV_SOURCES ${SRC_ECS_ENV} ${SRC_ECS_METADATA})
+
+
+# Editor static library (mirrors build.zig editor_mod)
+set(EDITOR_DIRS
+    editor/grid editor/outline editor/gizmo editor/font editor/stats
+    editor/screenshot editor/input editor/selection editor/toolbar
+)
+set(EDITOR_SOURCES)
+foreach(d IN LISTS EDITOR_DIRS)
+    file(GLOB _esrcs ${d}/*.cpp)
+    list(APPEND EDITOR_SOURCES ${_esrcs})
+endforeach()
+add_library(uzengine_editor STATIC ${EDITOR_SOURCES})
+target_link_libraries(uzengine_editor PUBLIC uzengine_runtime)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Test Executable (auto-discovered via GLOB_RECURSE)
@@ -586,6 +957,14 @@ foreach(src IN LISTS ALL_TEST_SOURCES)
         list(APPEND TEST_SOURCES ${src})
     endif()
 endforeach()
+
+# H.264 encoder tests need FFmpeg (Windows-only vendored libs)
+if(NOT WIN32)
+    list(FILTER TEST_SOURCES EXCLUDE REGEX "test_h264_encoder\\.cpp$")
+endif()
+
+# debug_skin_reference is a standalone exe with its own main() (zig: dbg_exe)
+list(FILTER TEST_SOURCES EXCLUDE REGEX "debug_skin_reference")
 
 # MSVC: exclude tests that depend on embedded shaders (C2026 string limit),
 # <thread> (_beginthreadex), or Vulkan/scripting headers
@@ -659,13 +1038,23 @@ endif()
 
 add_executable(test_runtime
     ${TEST_SOURCES}
+    ${ECS_ENV_SOURCES}
     $<$<PLATFORM_ID:Windows>:${WINDOWS_TEST_SOURCES}>
     $<$<PLATFORM_ID:Darwin>:${APPLE_TEST_SOURCES}>
 )
 
 target_link_libraries(test_runtime PRIVATE
+    uzengine_editor
     uzengine_runtime
     gtest
+)
+
+# Test-only include roots (mocks shared across suites)
+target_include_directories(test_runtime PRIVATE
+    tests
+    tests/engine
+    tests/engine/rhi
+    tests/engine/vfx
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -678,9 +1067,9 @@ file(GLOB TOOL_SOURCES tools/*.cpp)
 list(FILTER TOOL_SOURCES EXCLUDE REGEX "uzembed\\.cpp$")
 foreach(tool_src IN LISTS TOOL_SOURCES)
     get_filename_component(tool_name ${tool_src} NAME_WE)
-    set(TOOL_EXE_SOURCES ${tool_src})
+    set(TOOL_EXE_SOURCES ${tool_src} ${ECS_ENV_SOURCES})
     add_executable(${tool_name} ${TOOL_EXE_SOURCES})
-    target_link_libraries(${tool_name} PRIVATE uzengine_runtime)
+    target_link_libraries(${tool_name} PRIVATE uzengine_editor uzengine_runtime)
 endforeach()
 
 # --- Demo executables ---
@@ -690,9 +1079,20 @@ foreach(demo_dir IN LISTS DEMO_DIRS)
         continue()
     endif()
     get_filename_component(demo_name ${demo_dir} NAME)
+    # vfx_viewport demos drive the full engine VFX renderer, whose runtime
+    # shader compilation is Windows-only today.
+    if(NOT WIN32 AND demo_name MATCHES "^vfx_viewport")
+        continue()
+    endif()
     file(GLOB DEMO_SOURCES ${demo_dir}/*.cpp)
-    add_executable(${demo_name}_demo ${DEMO_SOURCES})
-    target_link_libraries(${demo_name}_demo PRIVATE uzengine_runtime)
+    # demos/common hosts the shared DemoApplication (used by non-triangle demos)
+    file(GLOB DEMO_COMMON_SOURCES demos/common/demo_application*.cpp)
+    add_executable(${demo_name}_demo ${DEMO_SOURCES} ${ECS_ENV_SOURCES})
+    target_include_directories(${demo_name}_demo PRIVATE demos/common)
+    if(demo_name MATCHES "^vfx_viewport")
+        target_sources(${demo_name}_demo PRIVATE ${DEMO_COMMON_SOURCES})
+    endif()
+    target_link_libraries(${demo_name}_demo PRIVATE uzengine_editor uzengine_runtime)
 endforeach()
 
 # ─────────────────────────────────────────────────────────────────────────────

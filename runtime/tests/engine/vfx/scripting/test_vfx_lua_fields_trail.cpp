@@ -182,20 +182,20 @@ TEST_F(VFXLuaFieldsTrailTest, SpawnVelocity_Vec3Table_RoundTrips) {
     delete e;
 }
 
-/// set_field / get_field for gravity (Vec3 table {0,-5,0}).
+/// set_field / get_field for gravity (Vec3 table {0,0,-500} — Z-up, cm/s^2).
 TEST_F(VFXLuaFieldsTrailTest, Gravity_Vec3Table_RoundTrips) {
     uz::ParticleEmitter* e = RegisterEmitter();
     ASSERT_TRUE(SpawnHandle());
 
-    ASSERT_TRUE(DoString("uz.vfx:set_field(h, 'gravity', {0, -5, 0})"));
+    ASSERT_TRUE(DoString("uz.vfx:set_field(h, 'gravity', {0, 0, -500})"));
 
-    EXPECT_DOUBLE_EQ(EvalNumber("uz.vfx:get_field(h, 'gravity').x"),  0.0);
-    EXPECT_DOUBLE_EQ(EvalNumber("uz.vfx:get_field(h, 'gravity').y"), -5.0);
-    EXPECT_DOUBLE_EQ(EvalNumber("uz.vfx:get_field(h, 'gravity').z"),  0.0);
+    EXPECT_DOUBLE_EQ(EvalNumber("uz.vfx:get_field(h, 'gravity').x"),    0.0);
+    EXPECT_DOUBLE_EQ(EvalNumber("uz.vfx:get_field(h, 'gravity').y"),    0.0);
+    EXPECT_DOUBLE_EQ(EvalNumber("uz.vfx:get_field(h, 'gravity').z"), -500.0);
 
-    EXPECT_FLOAT_EQ(e->gravity.x,  0.0f);
-    EXPECT_FLOAT_EQ(e->gravity.y, -5.0f);
-    EXPECT_FLOAT_EQ(e->gravity.z,  0.0f);
+    EXPECT_FLOAT_EQ(e->gravity.x,    0.0f);
+    EXPECT_FLOAT_EQ(e->gravity.y,    0.0f);
+    EXPECT_FLOAT_EQ(e->gravity.z, -500.0f);
 
     delete e;
 }

@@ -43,10 +43,11 @@ static constexpr uint32_t kIndirectDrawArgsStride = 20;
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/// Sorts emitters back-to-front by distance to camera.
+/// Sorts emitters for correct alpha blending layering.
 ///
-/// Emitters farther from the camera are drawn first, ensuring correct
-/// alpha blending when particles from different emitters overlap.
+/// Primary key: `renderPriority` ascending — higher priority draws LAST
+/// so it appears ON TOP (Niagara `EmitterSortPriority` parity).
+/// Tie-breaker: back-to-front by `distanceToCamera` (farther first).
 ///
 /// # Arguments
 /// * `emitters` -- Mutable reference to the emitter array. Sorted in-place.
@@ -54,6 +55,9 @@ static void SortEmittersBackToFront(std::vector<EmitterRenderData>& emitters)
 {
     std::sort(emitters.begin(), emitters.end(),
               [](const EmitterRenderData& a, const EmitterRenderData& b) {
+                  if (a.renderPriority != b.renderPriority) {
+                      return a.renderPriority < b.renderPriority;
+                  }
                   return a.distanceToCamera > b.distanceToCamera;
               });
 }
@@ -143,6 +147,14 @@ void AddParticleRenderPass(rg::RgBuilder& builder,
             pb.Write(passDesc.colorTarget, RHIResourceState::RenderTarget);
         }
 
+        // Velocity target (MRT slot 1): read-modify-write so the foreground
+        // particle dominates (blend is disabled, back-to-front draw order).
+        // @ref Karis 2014 "High Quality Temporal Supersampling"
+        if (passDesc.velocityTarget.IsValid()) {
+            pb.Read(passDesc.velocityTarget, RHIResourceState::RenderTarget);
+            pb.Write(passDesc.velocityTarget, RHIResourceState::RenderTarget);
+        }
+
         // Depth target: used for depth testing (no depth write in PSO).
         // Use DepthStencilWrite state to allow DSV binding without read-only flag.
         // The PSO has depthWrite=false so no actual writes occur.
@@ -179,6 +191,16 @@ void AddParticleRenderPass(rg::RgBuilder& builder,
             rpDesc.colorAttachmentCount = 1;
             rpDesc.colorAttachments[0].texture = passDesc.colorTexture;
             rpDesc.colorAttachments[0].clear   = false;
+            // Bind velocity target as MRT slot 1 when available. The particle
+            // PSO declares RT[1]=RG16Float so the PS SV_Target1 motion vector
+            // output is written here. When the caller does not provide a
+            // velocity texture (tests / isolated passes), MRT slot 1 is left
+            // unbound and the GPU discards the extra PS output.
+            if (passDesc.velocityTexture.IsValid()) {
+                rpDesc.colorAttachmentCount = 2;
+                rpDesc.colorAttachments[1].texture = passDesc.velocityTexture;
+                rpDesc.colorAttachments[1].clear   = false;
+            }
             rpDesc.hasDepth = true;
             rpDesc.depthAttachment.texture = passDesc.depthTexture;
             rpDesc.depthAttachment.clear   = false;
@@ -197,16 +219,32 @@ void AddParticleRenderPass(rg::RgBuilder& builder,
                 cmd->SetScissor(sr);
             }
 
-            // Pipeline + root signature (resets all root param bindings).
-            cmd->SetPipeline(passDesc.billboardPipeline);
+            // Phase 15.15 — the pass now switches PSO per emitter so a
+            // system that mixes Fire (additive) + Smoke (alpha blend)
+            // renders each emitter with its own blend state. The
+            // default `passDesc.billboardPipeline` only matters for
+            // emitters that didn't override the per-emitter pipeline.
+            RHIPipelineHandle currentPipeline = passDesc.billboardPipeline;
+            cmd->SetPipeline(currentPipeline);
 
             // Re-bind PerFrameCB at slot 1 (b1) — viewProj, camera, etc.
             if (passDesc.perFrameCB.gpuAddr != 0) {
                 cmd->SetRootCBV(kSlotPerFrame, passDesc.perFrameCB.gpuAddr);
             }
 
-            // Draw each emitter (sorted back-to-front).
+            // Draw each emitter (sorted back-to-front). Flip the PSO
+            // only when it changes to avoid redundant state thrash.
             for (const auto& emitter : passDesc.emitters) {
+                const RHIPipelineHandle want = emitter.pipeline.IsValid()
+                    ? emitter.pipeline : passDesc.billboardPipeline;
+                if (want != currentPipeline) {
+                    currentPipeline = want;
+                    cmd->SetPipeline(currentPipeline);
+                    if (passDesc.perFrameCB.gpuAddr != 0) {
+                        cmd->SetRootCBV(kSlotPerFrame,
+                                        passDesc.perFrameCB.gpuAddr);
+                    }
+                }
                 DrawEmitterBillboards(cmd, emitter);
             }
 

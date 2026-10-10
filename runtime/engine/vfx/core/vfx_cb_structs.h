@@ -77,10 +77,27 @@ struct VFXSpawnCB {
     uint32_t dynamicParamsUavIndex = UINT32_MAX; // 168
     uint32_t _pad1 = 0;                // 172
 
-    // ── Padding to 192 bytes (12 x float4) ──────────────────────────────
-    float _pad2[4] = {};                // 176-191
+    // ── SubUV + padding to 192 bytes (12 x float4) ────────────────────
+    uint32_t subImageIndicesUavIndex = 0;          // 176 (HLSL not yet updated)
+    uint32_t flipbookTotalFrames = 1;              // 180
+    float _pad2[2] = {};                           // 184-191
+
+    // ── User-declared per-particle attribute UAV indices + defaults ───
+    //
+    // Layout is tuned to HLSL cbuffer packing rules (scalars/vectors must
+    // not cross 16-byte boundaries). The memory image below matches a
+    // `uint4 userFloatUav; uint2 userVec4Uav; float2 _pad3; float4
+    // userFloatDefault; float4 userVec4Default0; float4 userVec4Default1`
+    // HLSL declaration byte-for-byte.
+    uint32_t userFloatUav[4]     = {UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX}; // 192-207
+    uint32_t userVec4Uav[2]      = {UINT32_MAX, UINT32_MAX};                         // 208-215
+    float    _pad3[2]            = {};                                               // 216-223
+    float    userFloatDefault[4] = {0.0f, 0.0f, 0.0f, 0.0f};                          // 224-239
+    float    userVec4Default0[4] = {0.0f, 0.0f, 0.0f, 0.0f};                          // 240-255
+    float    userVec4Default1[4] = {0.0f, 0.0f, 0.0f, 0.0f};                          // 256-271
 };
-static_assert(sizeof(VFXSpawnCB) == 192, "VFXSpawnCB must be 192 bytes to match HLSL layout");
+static_assert(sizeof(VFXSpawnCB) == 272,
+              "VFXSpawnCB must be 272 bytes to match HLSL layout");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VFXUpdateCB — matches VFXUpdateConstants in particle_update_cs.hlsl (register b1)
@@ -111,7 +128,7 @@ struct VFXUpdateCB {
     uint32_t sizesSrvIndex = UINT32_MAX;        // 48
     uint32_t colorsSrvIndex = UINT32_MAX;       // 52
     uint32_t rotationsSrvIndex = UINT32_MAX;    // 56
-    uint32_t _padSrv0 = 0;                     // 60
+    uint32_t subImageIndicesSrvIndex = 0;      // 60 (replaces _padSrv0; HLSL updated in Phase 3b-3.91.0 Phase 2)
 
     // ── Write-set UAV indices (bytes 64-95) ─────────────────────────────
     uint32_t positionsUavIndex = UINT32_MAX;    // 64
@@ -122,7 +139,7 @@ struct VFXUpdateCB {
     uint32_t sizesUavIndex = UINT32_MAX;        // 80
     uint32_t colorsUavIndex = UINT32_MAX;       // 84
     uint32_t rotationsUavIndex = UINT32_MAX;    // 88
-    uint32_t _padUav0 = 0;                     // 92
+    uint32_t subImageIndicesUavIndex = 0;      // 92 (replaces _padUav0; HLSL updated in Phase 3b-3.91.0 Phase 2)
 
     // ── Shared buffer UAV indices (bytes 96-111) ────────────────────────
     uint32_t freeListUavIndex = UINT32_MAX;     // 96
@@ -202,7 +219,7 @@ struct VFXUpdateCB {
 
     float vectorFieldTightness = 0.0f;  // 304
     float vectorFieldScale = 1.0f;      // 308
-    uint32_t _padVF0 = 0;              // 312
+    uint32_t flipbookTotalFrames = 1;  // 312  SubUV total frames for subImageIndex computation
     uint32_t _padVF1 = 0;              // 316
 };
 static_assert(sizeof(VFXUpdateCB) == 320, "VFXUpdateCB must be 320 bytes to match HLSL layout");

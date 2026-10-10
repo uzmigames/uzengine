@@ -225,7 +225,10 @@ static int RendererGetDebugView(lua_State* L) {
 /// uz.renderer.set_lens_flare_enabled(enabled)
 ///
 /// Enables or disables screen-space lens flare at runtime.
-/// Default: OFF. Must be explicitly enabled.
+/// Default: OFF. Must be explicitly enabled. Sets the `r.LensFlare` CVar too
+/// (SceneRenderer::SetLensFlareEnabled), so the toggle survives ApplyCVars().
+/// Inert for now: no lens flare pass is registered in the post chain and its
+/// shader is a no-op scaffold (see the note at the end of frame_postprocess.cpp).
 static int RendererSetLensFlareEnabled(lua_State* L) {
     const bool enabled = lua_toboolean(L, 1) != 0;
     SceneRenderer* renderer = GetRenderer(L);

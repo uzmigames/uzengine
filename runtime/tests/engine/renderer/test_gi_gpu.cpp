@@ -19,6 +19,7 @@
 #include "gi/global_distance_field.h"
 #include "gi/radiance_cache.h"
 #include "gi/mesh_sdf_baker.h"
+#include "gi/mesh_sdf_bake_queue.h"
 
 #include <gtest/gtest.h>
 
@@ -411,7 +412,7 @@ TEST_F(GIGpuTest, Create3DR16FTexture64Cubed) {
 // Test 7.3a: GDF Clipmap Resource Lifecycle
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Creates the full GlobalDistanceField (4 cascaded R16F 3D clipmap textures),
+/// Creates the full GlobalDistanceField (4 expanded RGBA16F/raw R16F 3D pairs),
 /// verifies all resources are valid, then destroys them without leaks.
 TEST_F(GIGpuTest, GDFClipmapResourceLifecycle) {
     uz::GlobalDistanceField gdf;
@@ -419,7 +420,7 @@ TEST_F(GIGpuTest, GDFClipmapResourceLifecycle) {
     // Before creation, should not be initialized
     EXPECT_FALSE(gdf.IsInitialized());
 
-    // Create all 4 clipmap textures
+    // Create all four expanded/raw clipmap pairs
     const bool created = gdf.CreateResources(m_device.get());
     ASSERT_TRUE(created) << "GlobalDistanceField::CreateResources() failed";
     EXPECT_TRUE(gdf.IsInitialized());
@@ -429,6 +430,24 @@ TEST_F(GIGpuTest, GDFClipmapResourceLifecycle) {
         const auto& clipmap = gdf.GetClipmap(i);
         EXPECT_TRUE(clipmap.texture.IsValid())
             << "Clipmap " << i << " texture is invalid";
+        ASSERT_TRUE(clipmap.rawTexture.IsValid()) << "Raw clipmap " << i << " is invalid";
+        EXPECT_NE(clipmap.srvIndex, UINT32_MAX);
+        EXPECT_NE(clipmap.uavIndex, UINT32_MAX);
+        EXPECT_NE(clipmap.rawSrvIndex, UINT32_MAX);
+        EXPECT_NE(clipmap.rawUavIndex, UINT32_MAX);
+        EXPECT_NE(clipmap.rawSrvIndex, clipmap.srvIndex);
+        EXPECT_NE(clipmap.rawUavIndex, clipmap.uavIndex);
+        const auto expandedDesc = m_device->GetTextureDesc(clipmap.texture);
+        const auto rawDesc = m_device->GetTextureDesc(clipmap.rawTexture);
+        EXPECT_EQ(expandedDesc.format, uz::RHIFormat::RGBA16Float);
+        EXPECT_EQ(rawDesc.format, uz::RHIFormat::R16Float);
+        EXPECT_TRUE(expandedDesc.is3D);
+        EXPECT_TRUE(rawDesc.is3D);
+        EXPECT_EQ(rawDesc.width, expandedDesc.width);
+        EXPECT_EQ(rawDesc.height, expandedDesc.height);
+        EXPECT_EQ(rawDesc.depthOrArraySize, expandedDesc.depthOrArraySize);
+        EXPECT_EQ(rawDesc.mipLevels, expandedDesc.mipLevels);
+        EXPECT_FALSE(clipmap.hasData);
         EXPECT_EQ(clipmap.extent, uz::GlobalDistanceField::kClipmapExtents[i])
             << "Clipmap " << i << " extent mismatch";
     }
@@ -444,6 +463,16 @@ TEST_F(GIGpuTest, GDFClipmapResourceLifecycle) {
     // Destroy — should not crash or leak
     gdf.DestroyResources();
     EXPECT_FALSE(gdf.IsInitialized());
+    for (uint32_t i = 0; i < uz::GlobalDistanceField::kNumClipmaps; ++i) {
+        const auto& clipmap = gdf.GetClipmap(i);
+        EXPECT_FALSE(clipmap.texture.IsValid());
+        EXPECT_FALSE(clipmap.rawTexture.IsValid());
+        EXPECT_EQ(clipmap.srvIndex, UINT32_MAX);
+        EXPECT_EQ(clipmap.uavIndex, UINT32_MAX);
+        EXPECT_EQ(clipmap.rawSrvIndex, UINT32_MAX);
+        EXPECT_EQ(clipmap.rawUavIndex, UINT32_MAX);
+        EXPECT_FALSE(clipmap.hasData);
+    }
 }
 
 /// Verifies double-destroy of GDF resources is safe (no crash, no double-free).
@@ -474,14 +503,14 @@ TEST_F(GIGpuTest, RadianceCacheResourceLifecycle) {
     ASSERT_TRUE(created) << "RadianceCache::CreateResources() failed";
     EXPECT_TRUE(rc.IsInitialized());
 
-    // SRV and UAV indices should be valid (not UINT32_MAX)
-    EXPECT_NE(rc.GetProbeSHBufferSrv(), UINT32_MAX)
-        << "RadianceCache SH buffer SRV index is invalid";
+    EXPECT_FALSE(rc.HasProducedResult());
+    EXPECT_EQ(rc.GetProbeSHBufferSrv(), UINT32_MAX)
+        << "Unwritten radiance cache probes must not be exposed to lighting";
     EXPECT_NE(rc.GetProbeSHBufferUav(), UINT32_MAX)
         << "RadianceCache SH buffer UAV index is invalid";
 
     // Probe spacing should be positive and consistent with the grid size
-    const float expectedSpacing = (5000.0f * 2.0f) / static_cast<float>(uz::RadianceCache::kProbesPerAxis);
+    const float expectedSpacing = (5000.0f * 2.0f) / static_cast<float>(uz::RadianceCache::kProbesPerAxis - 1);
     EXPECT_NEAR(rc.GetProbeSpacing(), expectedSpacing, 0.01f)
         << "Probe spacing doesn't match expected value for 5000cm extent, "
         << uz::RadianceCache::kProbesPerAxis << " probes per axis";
@@ -489,6 +518,15 @@ TEST_F(GIGpuTest, RadianceCacheResourceLifecycle) {
     // Destroy should not crash
     rc.DestroyResources();
     EXPECT_FALSE(rc.IsInitialized());
+    EXPECT_FALSE(rc.HasProducedResult());
+    EXPECT_EQ(rc.GetProbeSHBufferSrv(), UINT32_MAX);
+    EXPECT_EQ(rc.GetProbeSHBufferUav(), UINT32_MAX);
+
+    ASSERT_TRUE(rc.CreateResources(m_device.get(), 1500.0f));
+    EXPECT_FALSE(rc.HasProducedResult());
+    EXPECT_EQ(rc.GetProbeSHBufferSrv(), UINT32_MAX);
+    EXPECT_FLOAT_EQ(rc.GetGridExtent(), 1500.0f);
+    EXPECT_FLOAT_EQ(rc.GetProbeSpacing(), 200.0f);
 }
 
 /// Verifies double-destroy of radiance cache is safe.
@@ -657,6 +695,12 @@ TEST_F(GIGpuTest, RadianceCacheGridGeometry) {
     EXPECT_NEAR(origin.y, -5000.0f, 1.0f);
     EXPECT_NEAR(origin.z, -5000.0f, 1.0f);
 
+    const float gridDiameter = rc.GetProbeSpacing()
+        * static_cast<float>(uz::RadianceCache::kProbesPerAxis - 1);
+    EXPECT_NEAR(origin.x + gridDiameter, center.x + rc.GetGridExtent(), 0.01f);
+    EXPECT_NEAR(origin.y + gridDiameter, center.y + rc.GetGridExtent(), 0.01f);
+    EXPECT_NEAR(origin.z + gridDiameter, center.z + rc.GetGridExtent(), 0.01f);
+
     // Move camera and verify grid tracks
     rc.Update(uz::Vec3{1000.0f, 500.0f, -200.0f});
     const uz::Vec3 newCenter = rc.GetGridCenter();
@@ -706,37 +750,55 @@ TEST_F(GIGpuTest, StructuredBufferSHProbeSize) {
 /// alignments. These structs are passed directly to GPU root constants and
 /// structured buffers — size mismatches cause silent data corruption.
 TEST_F(GIGpuTest, GDFShaderConstantStructLayout) {
-    // GdfMeshSdfGPU must be exactly 96 bytes (GPU-friendly, fits 6 float4 rows)
-    static_assert(sizeof(uz::GdfMeshSdfGPU) == 96,
-        "GdfMeshSdfGPU must be 96 bytes for StructuredBuffer packing");
+    // Distance transforms and material data occupy eight float4 registers.
+    static_assert(sizeof(uz::GdfMeshSdfGPU) == 128,
+        "GdfMeshSdfGPU must be 128 bytes for cbuffer packing");
 
-    // GdfCompositeConstants must be exactly 32 bytes (8 uint32 root constants)
-    static_assert(sizeof(uz::GdfCompositeConstants) == 32,
-        "GdfCompositeConstants must be 32 bytes (8 root constants)");
+    // Eight original DWORDs retain their offsets; rawOutputUav appends the ninth.
+    static_assert(sizeof(uz::GdfCompositeConstants) == 52,
+        "GdfCompositeConstants must be 52 bytes (13 root constants)");
+    static_assert(offsetof(uz::GdfCompositeConstants, outputUav) == 0);
+    static_assert(offsetof(uz::GdfCompositeConstants, meshCount) == 4);
+    static_assert(offsetof(uz::GdfCompositeConstants, accumulate) == 8);
+    static_assert(offsetof(uz::GdfCompositeConstants, resolution) == 12);
+    static_assert(offsetof(uz::GdfCompositeConstants, clipmapCenterX) == 16);
+    static_assert(offsetof(uz::GdfCompositeConstants, clipmapCenterY) == 20);
+    static_assert(offsetof(uz::GdfCompositeConstants, clipmapCenterZ) == 24);
+    static_assert(offsetof(uz::GdfCompositeConstants, clipmapExtent) == 28);
+    static_assert(offsetof(uz::GdfCompositeConstants, rawOutputUav) == 32);
+    static_assert(offsetof(uz::GdfCompositeConstants, regionOrigin) == 36);
+    static_assert(offsetof(uz::GdfCompositeConstants, regionSize) == 40);
+    static_assert(offsetof(uz::GdfCompositeConstants, windowOrigin) == 44);
+    static_assert(offsetof(uz::GdfCompositeConstants, band) == 48);
 
-    // RadianceCacheTraceConstants must be exactly 208 bytes (176 + the
-    // surface-cache-lite block: sceneAlbedo RGB + skyCubemapSrv + the DXR
-    // material-table/feedback SRVs + padding).
-    static_assert(sizeof(uz::RadianceCacheTraceConstants) == 208,
-        "RadianceCacheTraceConstants must be 208 bytes");
+    // RadianceCacheTraceConstants is 464 bytes: the 176-byte trace constants, the
+    // phase16 VFX→DDGI emissive injection row (16 bytes), the grid-recentre
+    // history-shift row (16 bytes, phase0_sponza-followup-06 item 4.5) and 16
+    // change-box rows (block B-02). The DDGI mirror declares the first 13 rows.
+    static_assert(sizeof(uz::RadianceCacheTraceConstants) == 464,
+        "RadianceCacheTraceConstants must be 464 bytes");
+    static_assert(offsetof(uz::RadianceCacheTraceConstants, historyShiftX) == 192);
+    static_assert(offsetof(uz::RadianceCacheTraceConstants, historyShiftZ) == 200);
 
     // Verify field offsets for GdfCompositeConstants (matches root constant layout)
     uz::GdfCompositeConstants cc{};
     cc.outputUav      = 42;
     cc.meshCount      = 7;
-    cc.clipmapIndex   = 2;
+    cc.accumulate    = 1;
     cc.resolution     = 64;
     cc.clipmapCenterX = 100.0f;
     cc.clipmapCenterY = 200.0f;
     cc.clipmapCenterZ = 300.0f;
     cc.clipmapExtent  = 2500.0f;
+    cc.rawOutputUav   = 43;
 
     // Interpret as uint32 array — this is how SetRootConstants reads it
     const auto* asUints = reinterpret_cast<const uint32_t*>(&cc);
     EXPECT_EQ(asUints[0], 42u);   // outputUav
     EXPECT_EQ(asUints[1], 7u);    // meshCount
-    EXPECT_EQ(asUints[2], 2u);    // clipmapIndex
+    EXPECT_EQ(asUints[2], 1u);
     EXPECT_EQ(asUints[3], 64u);   // resolution
+    EXPECT_EQ(asUints[8], 43u);   // independent raw output UAV
 
     // Float fields: verify they appear at the expected uint32 offsets
     float centerX = 0.0f;
@@ -831,6 +893,107 @@ TEST_F(GIGpuTest, BufferUploadCopyReadback) {
     m_device->DestroyBuffer(readbackBuf);
     m_device->DestroyBuffer(gpuBuf);
     m_device->DestroyBuffer(uploadBuf);
+}
+
+
+// ---------------------------------------------------------------------------
+// Block B.3: the on-disk mesh SDF cache entry (header + LZ4 block) round-trips and
+// rejects damage. No device: the encoder and decoder are static.
+// ---------------------------------------------------------------------------
+
+static uz::MeshSdfCacheHeader MakeCacheHeader(uint32_t res, uint32_t triangles, uint32_t nodes) {
+    uz::MeshSdfCacheHeader h{};
+    h.resolution = res;
+    h.twoSided = 1;
+    h.triangleCount = triangles;
+    h.nodeCount = nodes;
+    h.volumeBytes = static_cast<uint64_t>(res) * res * res * 2u;
+    h.recordBytes = (static_cast<uint64_t>(triangles) + nodes) * 64u;
+    h.voxelSize = 1.5f;
+    h.volumeCenter[0] = 1.0f;
+    h.volumeHalfExtent[1] = 2.0f;
+    h.volumeMin[2] = -3.0f;
+    h.orientedTriangleCount = 7;
+    return h;
+}
+
+static std::vector<uint8_t> MakeCacheBody(const uz::MeshSdfCacheHeader& h) {
+    std::vector<uint8_t> body(static_cast<size_t>(h.volumeBytes + h.recordBytes));
+    for (size_t i = 0; i < body.size(); ++i) body[i] = static_cast<uint8_t>((i * 7919u + (i >> 5)) & 0xffu);
+    return body;
+}
+
+TEST(MeshSdfCacheEntry, RoundTripKeepsEveryByteAndField) {
+    const uz::MeshSdfCacheHeader h = MakeCacheHeader(8, 5, 3);
+    const std::vector<uint8_t> body = MakeCacheBody(h);
+    const std::vector<uint8_t> entry = uz::MeshSdfBakeQueue::EncodeCacheEntry(h, body);
+    ASSERT_FALSE(entry.empty());
+    ASSERT_GT(entry.size(), sizeof(uz::MeshSdfCacheHeader));
+    uz::MeshSdfCacheHeader decoded{};
+    std::vector<uint8_t> body2;
+    ASSERT_TRUE(uz::MeshSdfBakeQueue::DecodeCacheEntry(entry, decoded, body2));
+    EXPECT_EQ(body2, body);
+    EXPECT_EQ(decoded.magic, uz::kMeshSdfCacheMagic);
+    EXPECT_EQ(decoded.version, uz::kMeshSdfCacheVersion);
+    EXPECT_EQ(decoded.resolution, 8u);
+    EXPECT_EQ(decoded.twoSided, 1u);
+    EXPECT_EQ(decoded.triangleCount, 5u);
+    EXPECT_EQ(decoded.nodeCount, 3u);
+    EXPECT_EQ(decoded.orientedTriangleCount, 7u);
+    EXPECT_EQ(decoded.volumeBytes, h.volumeBytes);
+    EXPECT_EQ(decoded.recordBytes, h.recordBytes);
+    EXPECT_EQ(decoded.compressedBytes, entry.size() - sizeof(uz::MeshSdfCacheHeader));
+    EXPECT_FLOAT_EQ(decoded.voxelSize, 1.5f);
+    EXPECT_FLOAT_EQ(decoded.volumeCenter[0], 1.0f);
+    EXPECT_FLOAT_EQ(decoded.volumeHalfExtent[1], 2.0f);
+    EXPECT_FLOAT_EQ(decoded.volumeMin[2], -3.0f);
+}
+
+// The regression of 2026-10-05: a header whose record size was read from a moved-from vector
+// (0 bytes) described a body it did not match, and every entry came back as corrupt.
+TEST(MeshSdfCacheEntry, HeaderThatDoesNotDescribeTheBodyIsNotEncoded) {
+    uz::MeshSdfCacheHeader h = MakeCacheHeader(8, 5, 3);
+    const std::vector<uint8_t> body = MakeCacheBody(h);
+    h.recordBytes = 0;
+    EXPECT_TRUE(uz::MeshSdfBakeQueue::EncodeCacheEntry(h, body).empty());
+    h = MakeCacheHeader(8, 5, 3);
+    EXPECT_TRUE(uz::MeshSdfBakeQueue::EncodeCacheEntry(h, std::vector<uint8_t>{}).empty());
+}
+
+TEST(MeshSdfCacheEntry, TruncatedEntryIsRejected) {
+    const uz::MeshSdfCacheHeader h = MakeCacheHeader(8, 5, 3);
+    std::vector<uint8_t> entry = uz::MeshSdfBakeQueue::EncodeCacheEntry(h, MakeCacheBody(h));
+    ASSERT_FALSE(entry.empty());
+    uz::MeshSdfCacheHeader decoded{};
+    std::vector<uint8_t> body;
+    std::vector<uint8_t> half(entry.begin(), entry.begin() + static_cast<std::ptrdiff_t>(entry.size() / 2));
+    EXPECT_FALSE(uz::MeshSdfBakeQueue::DecodeCacheEntry(half, decoded, body));
+    std::vector<uint8_t> shortHeader(entry.begin(), entry.begin() + static_cast<std::ptrdiff_t>(sizeof(uz::MeshSdfCacheHeader) - 1));
+    EXPECT_FALSE(uz::MeshSdfBakeQueue::DecodeCacheEntry(shortHeader, decoded, body));
+}
+
+TEST(MeshSdfCacheEntry, DamagedBlockOrHeaderIsRejected) {
+    const uz::MeshSdfCacheHeader h = MakeCacheHeader(8, 5, 3);
+    const std::vector<uint8_t> good = uz::MeshSdfBakeQueue::EncodeCacheEntry(h, MakeCacheBody(h));
+    ASSERT_FALSE(good.empty());
+    uz::MeshSdfCacheHeader decoded{};
+    std::vector<uint8_t> body;
+    std::vector<uint8_t> flipped = good;
+    flipped[sizeof(uz::MeshSdfCacheHeader) + 3] ^= 0x5au;    // the LZ4 block or the checksum catches it
+    EXPECT_FALSE(uz::MeshSdfBakeQueue::DecodeCacheEntry(flipped, decoded, body));
+    std::vector<uint8_t> otherVersion = good;
+    uz::MeshSdfCacheHeader hv{};
+    std::memcpy(&hv, otherVersion.data(), sizeof(hv));
+    hv.version += 1;
+    std::memcpy(otherVersion.data(), &hv, sizeof(hv));
+    EXPECT_FALSE(uz::MeshSdfBakeQueue::DecodeCacheEntry(otherVersion, decoded, body));
+    std::vector<uint8_t> otherCount = good;
+    uz::MeshSdfCacheHeader hc{};
+    std::memcpy(&hc, otherCount.data(), sizeof(hc));
+    hc.triangleCount += 1;                                   // the record size no longer matches the counts
+    std::memcpy(otherCount.data(), &hc, sizeof(hc));
+    EXPECT_FALSE(uz::MeshSdfBakeQueue::DecodeCacheEntry(otherCount, decoded, body));
+    EXPECT_TRUE(uz::MeshSdfBakeQueue::DecodeCacheEntry(good, decoded, body));
 }
 
 } // namespace

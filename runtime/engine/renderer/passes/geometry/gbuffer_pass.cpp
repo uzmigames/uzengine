@@ -36,49 +36,57 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
     UZ_CHECKF(desc.drawList != nullptr, "GBufferPass: drawList must not be null");
     UZ_CHECKF(desc.cbAllocator != nullptr, "GBufferPass: cbAllocator must not be null");
 
-    builder.AddPass("GBuffer", [desc](rg::RgPassBuilder& pb) {
-        pb.Write(desc.albedoTarget,   RHIResourceState::RenderTarget);
-        pb.Write(desc.normalTarget,   RHIResourceState::RenderTarget);
-        pb.Write(desc.positionTarget, RHIResourceState::RenderTarget);
-        pb.Write(desc.emissiveTarget, RHIResourceState::RenderTarget);
+    // Block B.4c: in depth-only mode this pass is the depth prepass (graph name "DepthPrepass");
+    // with `keepDepth` the colour pass reuses the prepass's depth instead of clearing it.
+    builder.AddPass(desc.depthOnly ? "DepthPrepass" : "GBuffer", [desc](rg::RgPassBuilder& pb) {
+        if (!desc.depthOnly) {
+            pb.Write(desc.albedoTarget,   RHIResourceState::RenderTarget);
+            pb.Write(desc.normalTarget,   RHIResourceState::RenderTarget);
+            pb.Write(desc.positionTarget, RHIResourceState::RenderTarget);
+            pb.Write(desc.emissiveTarget, RHIResourceState::RenderTarget);
+        }
         pb.Write(desc.depthBuffer,    RHIResourceState::DepthStencilWrite);
 
         pb.SetExecutionCallback([desc](IRHICommandList* cmd, const rg::RgPassResources& res) {
             UZ_PROFILE_SCOPE("GBuffer::Execute");
 
-            auto albedo    = res.GetTexture(desc.albedoTarget);
-            auto normal    = res.GetTexture(desc.normalTarget);
-            auto positionT = res.GetTexture(desc.positionTarget);
-            auto emissiveT = res.GetTexture(desc.emissiveTarget);
-
-            // ── Clear render targets ─────────────────────────────────────
-            constexpr float kClearBlack[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-            cmd->ClearRenderTarget(albedo,    kClearBlack);
-            cmd->ClearRenderTarget(normal,    kClearBlack);
-            cmd->ClearRenderTarget(positionT, kClearBlack);
-            cmd->ClearRenderTarget(emissiveT, kClearBlack);
-            cmd->ClearDepthStencil(desc.depthTexture, kDepthFar, 0);
-
-            // ── Begin render pass with 4 color attachments + depth ───────
             RHIRenderPassDesc passDesc{};
-            passDesc.colorAttachmentCount = 4;
+            if (!desc.depthOnly) {
+                auto albedo    = res.GetTexture(desc.albedoTarget);
+                auto normal    = res.GetTexture(desc.normalTarget);
+                auto positionT = res.GetTexture(desc.positionTarget);
+                auto emissiveT = res.GetTexture(desc.emissiveTarget);
 
-            passDesc.colorAttachments[0].texture = albedo;
-            passDesc.colorAttachments[0].clear   = false;
+                // ── Clear render targets ─────────────────────────────────
+                constexpr float kClearBlack[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+                cmd->ClearRenderTarget(albedo,    kClearBlack);
+                cmd->ClearRenderTarget(normal,    kClearBlack);
+                cmd->ClearRenderTarget(positionT, kClearBlack);
+                cmd->ClearRenderTarget(emissiveT, kClearBlack);
 
-            passDesc.colorAttachments[1].texture = normal;
-            passDesc.colorAttachments[1].clear   = false;
-
-            passDesc.colorAttachments[2].texture = positionT;
-            passDesc.colorAttachments[2].clear   = false;
-
-            passDesc.colorAttachments[3].texture = emissiveT;
-            passDesc.colorAttachments[3].clear   = false;
+                // ── 4 color attachments + depth ──────────────────────────
+                passDesc.colorAttachmentCount = 4;
+                passDesc.colorAttachments[0].texture = albedo;
+                passDesc.colorAttachments[0].clear   = false;
+                passDesc.colorAttachments[1].texture = normal;
+                passDesc.colorAttachments[1].clear   = false;
+                passDesc.colorAttachments[2].texture = positionT;
+                passDesc.colorAttachments[2].clear   = false;
+                passDesc.colorAttachments[3].texture = emissiveT;
+                passDesc.colorAttachments[3].clear   = false;
+            } else {
+                passDesc.colorAttachmentCount = 0;   // depth prepass
+            }
+            // The depth is cleared unless the prepass wrote it this frame (block B.4c); until then
+            // the colour pass always cleared it, which is why the prepass bought nothing.
+            if (!desc.keepDepth) {
+                cmd->ClearDepthStencil(desc.depthTexture, kDepthFar, 0);
+            }
 
             passDesc.hasDepth = true;
             passDesc.depthAttachment.texture    = desc.depthTexture;
             passDesc.depthAttachment.clearDepth = kDepthFar;
-            passDesc.depthAttachment.clear      = true;
+            passDesc.depthAttachment.clear      = !desc.keepDepth;
 
             cmd->BeginRenderPass(passDesc);
 
@@ -201,7 +209,18 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                 // commands sorted by mesh ID (the sort key places mesh ID in LSBs).
                 uint32_t lastBoundMeshId = UINT32_MAX;
 
+                // Mesh decals (materialFlags bit 4) blend over the finished opaque G-buffer: the
+                // commands run twice, the opaque and masked draws first and the decals second (their
+                // PSO blends the albedo and writes no depth); the depth-only pass has no decals.
+                for (int drawPhase = 0; drawPhase < 2; ++drawPhase)
                 for (const auto& drawCmd : commands) {
+                    const bool meshDecal = (drawCmd.materialFlags & 0x10u) != 0u;
+                    if (meshDecal != (drawPhase == 1)) {
+                        continue;
+                    }
+                    if (meshDecal && desc.depthOnly) {
+                        continue;
+                    }
                     // Skip translucent and additive draws — they are rendered in
                     // a separate forward pass after deferred lighting.
                     const uint32_t blendMode = drawCmd.materialFlags & 0x3u;
@@ -215,6 +234,13 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                     const GPUMesh& mesh = desc.meshes[drawCmd.meshId];
                     if (!mesh.IsValid()) {
                         continue; // Guard: mesh not yet uploaded.
+                    }
+
+                    // Block B.4c: the depth prepass writes standard opaque geometry only; masked and
+                    // material-graph draws are not in it and test Greater (with writes) in the colour
+                    // pass, which is what their own pipelines do.
+                    if (desc.depthOnly && (blendMode == 1 || drawCmd.materialGraphPipeline.IsValid())) {
+                        continue;
                     }
 
                     // Select PSO based on blend mode: Masked materials use the
@@ -340,7 +366,7 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                         cmd->SetRootCBV(kSlotPerObject, objAlloc.bufferHandle, objAlloc.offsetBytes,
                                         objAlloc.cpuPtr, sizeof(PerObjectCB));
 
-                        if (!desc.bindless) {
+                        if (!desc.bindless && !desc.depthOnly) {
                             cmd->InvalidateDescriptorBlock();
                             cmd->SetFragmentTexture(0, drawCmd.albedoTexture.IsValid()    ? drawCmd.albedoTexture    : desc.fallbackWhite);
                             cmd->SetFragmentTexture(1, drawCmd.normalTexture.IsValid()    ? drawCmd.normalTexture    : desc.fallbackNormal);

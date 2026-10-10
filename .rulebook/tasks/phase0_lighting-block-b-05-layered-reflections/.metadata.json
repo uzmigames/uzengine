@@ -1,0 +1,6 @@
+{
+  "status": "completed",
+  "createdAt": "2026-10-07T11:01:16.050Z",
+  "updatedAt": "2026-10-07T21:35:32.000Z",
+  "resolution": "done 2026-10-07, commit 9f1be63f: Hi-Z pyramid after the GBuffer, the SSR chain ordered through declared reads, SSR blended before the BRDF over the SDF / IBL layer; test_layered_reflections.py 7/7"
+}

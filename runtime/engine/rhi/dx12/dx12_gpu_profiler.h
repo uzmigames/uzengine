@@ -58,7 +58,8 @@ public:
     ///
     /// # Arguments
     /// * `cmdList` — Active command list to record the timestamp query on.
-    /// * `name` — Human-readable scope name (string literal, not copied).
+    /// * `name` — Human-readable scope name (copied into the slot, truncated to
+    ///   `kGpuProfilerNameCapacity - 1` characters).
     void BeginTimestamp(ID3D12GraphicsCommandList* cmdList, const char* name);
 
     /// Records an end timestamp for the current scope.
@@ -77,10 +78,11 @@ public:
     /// * `cmdList` — Active command list to record the resolve command on.
     void EndFrame(ID3D12GraphicsCommandList* cmdList);
 
-    /// Reads back resolved timestamps from 2 frames ago and computes millisecond deltas.
+    /// Reads back the resolved timestamps of the oldest ring slot (frame N-3, whose fence the
+    /// CPU already waited) and computes millisecond deltas, labelled with that slot's names.
     ///
     /// Call this after the GPU has completed the frame whose timestamps are being read
-    /// (i.e., after a fence wait for frame N-2).
+    /// (i.e., after a fence wait for frame N-3).
     void ResolveFrame();
 
     /// Returns the most recent resolved timing results.
@@ -107,11 +109,18 @@ private:
     ComPtr<ID3D12Resource>  m_readbackBuffer;
 
     uint64_t m_gpuFrequency = 0;        ///< GPU timestamp ticks per second
-    uint32_t m_currentFrame = 0;        ///< Current frame index (0..2)
-    uint32_t m_timestampCount = 0;      ///< Number of timestamp pairs this frame
+    uint32_t m_currentFrame = 0;        ///< Ring slot being recorded (0..kProfilerFramesInFlight-1)
+    uint32_t m_timestampCount = 0;      ///< Number of timestamp pairs recorded this frame
 
-    /// Names for each timestamp pair, indexed by pair index.
-    std::array<const char*, kMaxGpuTimestamps> m_names = {};
+    /// What one ring slot recorded: its pass names (copied) and how many pairs its
+    /// ResolveQueryData wrote. ResolveFrame reads exactly `count` pairs of the slot it resolves,
+    /// under that slot's own names (one shared name table labelled frame N-3's timings with
+    /// frame N's pass list until 2026-10-05).
+    struct FrameSlot {
+        std::array<std::array<char, kGpuProfilerNameCapacity>, kMaxGpuTimestamps> names{};
+        uint32_t count = 0;
+    };
+    std::array<FrameSlot, kProfilerFramesInFlight> m_slots{};
 
     std::vector<GpuTimingResult> m_results;
     float m_frameTimeMs = 0.0F;

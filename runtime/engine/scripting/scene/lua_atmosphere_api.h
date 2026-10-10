@@ -62,6 +62,8 @@
 /// - `uz.scene.get_atmosphere_sun_angular_radius(entity)` → number | nil
 /// - `uz.scene.set_atmosphere_sun_disk_intensity(entity, intensity)` → void
 /// - `uz.scene.get_atmosphere_sun_disk_intensity(entity)` → number | nil
+/// - `uz.scene.set_atmosphere_sun_direction(entity, x, y, z)` → void (sky sun direction without a DirectionalLight)
+/// - `uz.scene.get_atmosphere_sun_direction(entity)` → x, y, z | nil
 /// - `uz.scene.set_atmosphere_enabled(entity, enabled)` → void
 
 struct lua_State;

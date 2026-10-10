@@ -72,6 +72,7 @@ Default camera position: (0, -40, 25), yaw=90°, pitch=-30°, move speed=15 unit
 | 3 / 4 | Increase / decrease particle size (×1.5) |
 | 5 / 6 | Decrease / increase gravity Y (±2.0) |
 | Y | Toggle trail/ribbon rendering |
+| Shift+Y | Cycle ribbon strand count (1→2→3→4→1) |
 | D | Toggle decal projection |
 | X | Toggle distortion (heat-haze) |
 

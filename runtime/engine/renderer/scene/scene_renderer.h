@@ -57,10 +57,12 @@
 #include "gi/radiance_cache.h"
 #include "gi/irradiance_probe_grid.h"
 #include "gi/ddgi_system.h"
+#include "engine/vfx/lighting/vfx_ddgi_emissive_feed.h"
 #include "engine/ecs/environment/light_probe_volume_component.h"
 #include "passes/gi/brixelizer_gi_pass.h"
 #include "async_texture_decoder.h"  // TextureDecodeResult for m_deferredDecoded
 #include "async_mesh_loader.h"      // MeshLoadResultCPU for m_asyncMeshReady
+#include "gi/mesh_sdf_bake_queue.h" // MeshSdfBakeQueue (block B.3)
 #include "inspector_pass.h"        // PassInspector for render target visualization
 #include "upload_ring.h"           // UploadRing for zero-alloc texture staging
 
@@ -98,6 +100,7 @@ class EditorGrid;
 class EditorInputHandler;
 class StatsOverlay;
 class ViewportToolbar;
+class TechPanel;
 class VfxEditorOverlay;
 class OutlinePass;
 class GizmoRenderer;
@@ -123,7 +126,8 @@ class RTUVTestPass;
 class MaterialPipeline;
 class MaterialManager;
 struct ParticleEmitter;
-namespace rg { class RgResourcePool; }
+class VfxSystemInstance;
+namespace rg { class RgResourcePool; class RgStateRegistry; }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SceneRenderer
@@ -162,6 +166,13 @@ public:
     [[nodiscard]] bool IsSceneFullyLoaded() const;
     /// Debug variant — also logs which async loads are still outstanding.
     [[nodiscard]] bool IsSceneFullyLoadedDebug() const;
+
+    /// Scene preload (nothing is presented): the asynchronous mesh SDF bakes run unthrottled
+    /// while this is set (block B.3). The host sets it around its preload loop.
+    void SetPreloading(bool preloading) { m_preloading = preloading; }
+
+    /// Forwards to AutoExposure::ResetHistory (no-op when auto exposure is off).
+    void ResetExposureHistory(IRHICommandList* cmdList);
 
     /// Returns true if there are async texture decodes still in flight,
     /// decoded textures awaiting GPU upload, or copy-queue uploads pending
@@ -275,6 +286,14 @@ public:
     /// - `vfx`: Non-owning pointer to an externally-managed VFX system,
     ///          or nullptr to restore use of the internally-owned system.
     void SetVFXSystem(VFXSystem* vfx) { m_vfxSystemOverride = vfx; }
+
+    /// Returns the active VFX system pointer. The override (set by
+    /// `SetVFXSystem`) takes precedence; otherwise the internally-owned
+    /// system is returned. Result is nullptr only when neither has been
+    /// constructed yet (pre-Init).
+    [[nodiscard]] VFXSystem* GetVFXSystem() const noexcept {
+        return m_vfxSystemOverride ? m_vfxSystemOverride : m_vfxSystem.get();
+    }
 
     /// Sets the decal manager reference for deferred decal rendering.
     ///
@@ -406,6 +425,30 @@ public:
     /// Returns the current shadow debug mode.
     [[nodiscard]] uint32_t GetShadowDebugMode() const { return m_shadowDebugMode; }
 
+    /// One rectangle of a region dump (diagnostics).
+    struct RegionRect {
+        std::string name;                       ///< Short label stored in the file (<= 15 chars).
+        uint32_t x = 0, y = 0, w = 0, h = 0;    ///< Screen rectangle in output-resolution pixels.
+    };
+
+    /// Region dump (diagnostics): for every frame in [firstFrame, lastFrame] writes
+    /// `<dir>/region_<frame>.bin` with per-pixel linear-HDR records for each rectangle.
+    /// `fields` is the bitmask of shaders/runtime/common/region_dump.hlsli
+    /// (1 = deferred-lighting records, 2 = TAA resolve records, 4 = TAA output only).
+    /// The GPU stamps every rectangle with the frame it rendered; the readback (three
+    /// frames later, no WaitIdle) rejects any file whose stamps disagree with the frame
+    /// the CPU believes it read, so a stale or partial readback is never analysed as data.
+    /// File layout: see `RegionFileHeader` in frame_postprocess.cpp.
+    void SetRegionDump(std::string dir, std::vector<RegionRect> rects,
+                       uint32_t firstFrame, uint32_t lastFrame, uint32_t fields);
+
+    /// Number of region-dump files rejected because a GPU frame stamp did not match.
+    [[nodiscard]] uint32_t GetRegionDumpMismatchCount() const noexcept { return m_regionStampMismatches; }
+    /// Number of region-dump files written.
+    [[nodiscard]] uint32_t GetRegionDumpFileCount() const noexcept { return m_regionFilesWritten; }
+    /// Exposure the last rendered frame used (auto-exposure result x r.Exposure).
+    [[nodiscard]] float GetLastFrameExposure() const noexcept { return m_lastFrameExposure; }
+
     /// Enables or disables shadow caching at runtime.
     ///
     /// Controls the shadow cache toggle at runtime.
@@ -528,7 +571,9 @@ public:
 
     /// Enables or disables screen-space lens flare at runtime.
     /// Default: OFF. Enable via Lua `uz.renderer.set_lens_flare_enabled(true)`.
-    void SetLensFlareEnabled(bool enabled) { m_lensFlareEnabled = enabled; }
+    /// Also sets the `r.LensFlare` CVar: ApplyCVars() re-reads the member from it
+    /// every frame, so a write to the member alone was undone on the next frame.
+    void SetLensFlareEnabled(bool enabled);
 
     /// Returns whether lens flare is currently enabled.
     [[nodiscard]] bool IsLensFlareEnabled() const { return m_lensFlareEnabled; }
@@ -614,6 +659,15 @@ public:
     ///
     /// # Arguments
     /// * `pct` — Screen percentage [10, 200]. Clamped internally.
+    /// Loads or releases the component-replay buffer (diagnostic, off by default).
+    void EnsureComponentReplay(const std::string& path);
+
+    /// Enables the component replay from a file built by scripts/make_component_replay.py.
+    void SetComponentReplay(const std::string& path) { EnsureComponentReplay(path); }
+
+    /// Creates or releases the r.TAA.ClampFreezeAfterFrame storage (diagnostic, off by default).
+    void EnsureTaaClampBoxResources(bool wanted);
+
     void SetScreenPercentage(float pct);
 
     /// Returns the current screen percentage (10-200, default 100).
@@ -912,6 +966,50 @@ private:
     /// The render graph only handles rendering (billboard draw) and barrier
     /// tracking for the SRV transitions needed by the draw pass.
     void DispatchVFXSimulation(IRHICommandList* cmdList, float dt, uint32_t frameIndex);
+
+    /// Dispatches the bitonic depth sort for emitters that need back-to-front
+    /// rendering. Runs inline immediately after `DispatchVFXSimulation` so the
+    /// post-update particle attributes are visible to the sort CS.
+    ///
+    /// Emitters that opt in:
+    /// - Sprite emitters with `blendMode == AlphaBlend` (mode 0). Sort uses
+    ///   `GpuSortMode::ViewDepth`.
+    /// - Mesh emitters where `MeshRenderModule::sortMode != None`. Mode is
+    ///   forwarded to the sort CS (ViewDepth or CustomAttribute).
+    ///
+    /// Other emitters (additive sprites, unsorted meshes) are skipped — alpha
+    /// blend on additive is order-independent, and unsorted meshes opt out
+    /// explicitly.
+    ///
+    /// The sort consumes positions / ages / lifespans (and optionally a
+    /// custom-attribute SRV) from `gpuBuf.WriteSet()` and produces the
+    /// `gpuBuf.sort.sortIndices` buffer, which downstream passes index into
+    /// to translate logical "back-to-front draw slot N" -> source particle
+    /// index.
+    void DispatchVFXSort(IRHICommandList* cmdList);
+
+    /// Walks the active emitter list and produces up to
+    /// `VfxDDGIEmissiveFeed::kMaxSamples` `VfxEmissiveSample` entries
+    /// for the brightest emitters this frame, then forwards them to
+    /// `m_vfxDDGIEmissiveFeed.UploadFrame` for GPU upload.
+    ///
+    /// CVar gates:
+    /// - `r.VFX.DDGIInjection` (default 1): when 0, the function is a
+    ///   logged no-op and `m_vfxDDGIEmissiveFeed.GetSampleCount() == 0`.
+    /// - `r.VFX.DDGIInjection.MaxEmitters` (default 32, clamped to
+    ///   `kMaxSamples`): hard cap on the number of emitters considered
+    ///   so a runaway content count cannot starve the readback path.
+    ///
+    /// Each produced sample uses the emitter's world position, the
+    /// emitter's `initialColor.rgb * emissiveIntensity` as the radiance,
+    /// and `spawnRadius * 4` (clamped to a minimum) as the influence
+    /// radius. Emitters with zero alive particles or zero emissive
+    /// intensity are skipped before the top-N sort. The DDGI probe-
+    /// update CS reading the buffer is gated by
+    /// `phase16_vfx-lumen-gi-hardware-validation` — until that ships
+    /// the gather + upload still runs but the probe shader does not yet
+    /// consume the SRV index.
+    void GatherAndUploadVfxEmissiveSamples();
 };
 
 } // namespace uz

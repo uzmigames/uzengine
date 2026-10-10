@@ -17,6 +17,7 @@
 #include "engine/rhi/rhi_types.h"
 #include "mat4.h"
 
+#include <cstddef>
 #include <cstdint>
 
 namespace uz {
@@ -77,11 +78,22 @@ struct VolumetricFogCB {
     float    emissiveB;            ///< Fog emissive B.
     float    fogStartDistance;     ///< Min depth for fog grid (cm). Pushes slice 0 away from camera.
     float    nearFadeInDistance;   ///< Fade-in ramp distance (cm). 0 = no fade.
-    float    _pad[13] = {};        ///< Pad to 256 bytes (204 data + 52 pad = 256).
+    float    cameraFarZ = 0.0f;    ///< Camera far plane (cm): the composite linearises depth with it (block B.4).
+    uint32_t sunShadowEnabled = 1; ///< r.VolumetricFog.SunShadow: the sun in-scatter is shadowed by the CSM.
+    uint32_t debugMode = 0;        ///< r.VolumetricFog.Debug (offset 212): the composite writes its depth / slice / transmittance.
+    float    _pad[10] = {};        ///< Pad to 256 bytes (216 data + 40 pad = 256).
 };
 
 static_assert(sizeof(VolumetricFogCB) == 256,
     "VolumetricFogCB must be 256 bytes (D3D12 CB alignment)");
+// The HLSL copies declare scalars where a float3 would be padded (scripts/test_cbuffer_layouts.py, block B.4).
+static_assert(offsetof(VolumetricFogCB, extinctionScale) == 180);
+static_assert(offsetof(VolumetricFogCB, emissiveR) == 184);
+static_assert(offsetof(VolumetricFogCB, fogStartDistance) == 196);
+static_assert(offsetof(VolumetricFogCB, nearFadeInDistance) == 200);
+static_assert(offsetof(VolumetricFogCB, cameraFarZ) == 204);
+static_assert(offsetof(VolumetricFogCB, sunShadowEnabled) == 208);
+static_assert(offsetof(VolumetricFogCB, debugMode) == 212);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VolumetricFogPass — manages 3D textures and dispatches
@@ -99,6 +111,8 @@ public:
     bool IsInitialized() const { return m_initialized; }
 
     /// Register inject + scatter + composite passes in the render graph.
+    /// `shadowAtlasRes` / `shadowAlloc`: the cascaded shadow atlas and ShadowDataCB of the frame; the
+    /// inject pass reads the atlas (so it runs after the shadow pass) and binds the CB at b4 (block B.4).
     void RegisterPasses(
         rg::RgBuilder& rgBuilder,
         rg::RgResourceId hdrRes,
@@ -108,7 +122,9 @@ public:
         CBRingAllocator& cbRing,
         PipelineLibrary* pipelines,
         bool bindless,
-        float vpWidth, float vpHeight);
+        float vpWidth, float vpHeight,
+        rg::RgResourceId shadowAtlasRes = {},
+        const CBAllocation& shadowAlloc = {});
 
     // ── Accessors ─────────────────────────────────────────────────────
     RHITextureHandle GetInscatteringTexture() const { return m_inscattering; }

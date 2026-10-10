@@ -18,9 +18,11 @@ namespace uz {
 /// - Mouse position and delta left at default (will update on first move)
 void InputSystem::Init() {
     std::memset(m_keyCurrent, 0, sizeof(m_keyCurrent));
-    std::memset(m_keyPrevious, 0, sizeof(m_keyPrevious));
+    std::memset(m_keyPressed, 0, sizeof(m_keyPressed));
+    std::memset(m_keyReleased, 0, sizeof(m_keyReleased));
     std::memset(m_mouseCurrent, 0, sizeof(m_mouseCurrent));
-    std::memset(m_mousePrevious, 0, sizeof(m_mousePrevious));
+    std::memset(m_mousePressed, 0, sizeof(m_mousePressed));
+    std::memset(m_mouseReleased, 0, sizeof(m_mouseReleased));
 }
 
 void InputSystem::Shutdown() {
@@ -28,13 +30,23 @@ void InputSystem::Shutdown() {
 }
 
 void InputSystem::BeginFrame() {
-    std::memcpy(m_keyPrevious, m_keyCurrent, sizeof(m_keyCurrent));
-    std::memcpy(m_mousePrevious, m_mouseCurrent, sizeof(m_mouseCurrent));
+    EndFrame();
+    PrepareFrame();
+}
+
+void InputSystem::EndFrame() {
+    std::memset(m_keyPressed, 0, sizeof(m_keyPressed));
+    std::memset(m_keyReleased, 0, sizeof(m_keyReleased));
+    std::memset(m_mousePressed, 0, sizeof(m_mousePressed));
+    std::memset(m_mouseReleased, 0, sizeof(m_mouseReleased));
+    m_scrollDelta = 0.f;
+}
+
+void InputSystem::PrepareFrame() {
     m_mouseDX = m_mouseX - m_prevMouseX;
     m_mouseDY = m_mouseY - m_prevMouseY;
     m_prevMouseX = m_mouseX;
     m_prevMouseY = m_mouseY;
-    m_scrollDelta = 0.f;
 }
 
 bool InputSystem::IsKeyDown(Key key) const {
@@ -44,12 +56,12 @@ bool InputSystem::IsKeyDown(Key key) const {
 
 bool InputSystem::IsKeyJustPressed(Key key) const {
     uint16_t k = static_cast<uint16_t>(key);
-    return k < kMaxKeys && m_keyCurrent[k] && !m_keyPrevious[k];
+    return k < kMaxKeys && m_keyPressed[k];
 }
 
 bool InputSystem::IsKeyJustReleased(Key key) const {
     uint16_t k = static_cast<uint16_t>(key);
-    return k < kMaxKeys && !m_keyCurrent[k] && m_keyPrevious[k];
+    return k < kMaxKeys && m_keyReleased[k];
 }
 
 bool InputSystem::IsMouseDown(MouseButton btn) const {
@@ -59,12 +71,12 @@ bool InputSystem::IsMouseDown(MouseButton btn) const {
 
 bool InputSystem::IsMouseJustPressed(MouseButton btn) const {
     int b = static_cast<int>(btn);
-    return b < kMaxMouseButtons && m_mouseCurrent[b] && !m_mousePrevious[b];
+    return b < kMaxMouseButtons && m_mousePressed[b];
 }
 
 bool InputSystem::IsMouseJustReleased(MouseButton btn) const {
     int b = static_cast<int>(btn);
-    return b < kMaxMouseButtons && !m_mouseCurrent[b] && m_mousePrevious[b];
+    return b < kMaxMouseButtons && m_mouseReleased[b];
 }
 
 void InputSystem::RegisterAction(const std::string& name, Key key) {
@@ -86,13 +98,17 @@ bool InputSystem::IsActionJustPressed(const std::string& name) const {
 }
 
 void InputSystem::OnKeyDown(uint16_t vk) {
-    if (vk < kMaxKeys)
+    if (vk < kMaxKeys && !m_keyCurrent[vk]) {
+        m_keyPressed[vk] = true;
         m_keyCurrent[vk] = true;
+    }
 }
 
 void InputSystem::OnKeyUp(uint16_t vk) {
-    if (vk < kMaxKeys)
+    if (vk < kMaxKeys && m_keyCurrent[vk]) {
+        m_keyReleased[vk] = true;
         m_keyCurrent[vk] = false;
+    }
 }
 
 void InputSystem::OnMouseMove(float x, float y) {
@@ -102,8 +118,11 @@ void InputSystem::OnMouseMove(float x, float y) {
 
 void InputSystem::OnMouseButton(MouseButton btn, bool down) {
     int b = static_cast<int>(btn);
-    if (b < kMaxMouseButtons)
+    if (b < kMaxMouseButtons && m_mouseCurrent[b] != down) {
+        if (down) m_mousePressed[b] = true;
+        else m_mouseReleased[b] = true;
         m_mouseCurrent[b] = down;
+    }
 }
 
 void InputSystem::OnMouseScroll(float delta) {

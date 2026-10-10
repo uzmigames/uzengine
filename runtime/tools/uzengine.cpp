@@ -23,6 +23,11 @@
 #include <stb_image.h>
 
 #include "../engine/app/project_loader.h"
+#include "../engine/core/cvar.h"   // run manifest: effective CVar values
+
+// The command line, verbatim, for the run manifest. `cli` and `cvars` could not tell an explicit
+// `--cvar X=<default>` from an omitted one (followup-14, 2026-09-16); argv can.
+static std::vector<std::string> g_argv;
 #include "world.h"
 #include "scene_loader.h"
 #include "../engine/ecs/scene/camera_component.h"
@@ -52,9 +57,12 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
+#include <map>
 #include <string>
+#include <sstream>
 #include <thread>
 #include <vector>
 
@@ -482,6 +490,244 @@ static int RunFlip(const RHIDeviceDesc& deviceDesc,
 }
 
 /// Runs the windowed render loop with animated clear screen, optional scene + Lua scripting.
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Diagnostics: region-dump rectangles and the run manifest
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Parses `--regions "name:x,y,w,h;name2:x,y,w,h"` (name optional) into rectangles.
+/// Rectangles are screen pixels in the output (viewport) resolution. At most 8 are kept:
+/// every extra rectangle costs one more per-pixel record block in the dump buffer.
+static std::vector<uz::SceneRenderer::RegionRect> ParseRegionSpecs(const std::string& spec) {
+    std::vector<uz::SceneRenderer::RegionRect> out;
+    size_t pos = 0;
+    while (pos < spec.size() && out.size() < 8) {
+        const size_t end = spec.find(';', pos);
+        std::string item = spec.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+        pos = (end == std::string::npos) ? spec.size() : end + 1;
+        if (item.empty()) continue;
+        uz::SceneRenderer::RegionRect rect;
+        const size_t colon = item.find(':');
+        if (colon != std::string::npos) {
+            rect.name = item.substr(0, colon);
+            item = item.substr(colon + 1);
+        } else {
+            rect.name = "roi" + std::to_string(out.size());
+        }
+        unsigned x = 0, y = 0, w = 0, h = 0;
+        if (std::sscanf(item.c_str(), "%u,%u,%u,%u", &x, &y, &w, &h) != 4 || w == 0 || h == 0) {
+            UZ_LOG(Engine, Warning, "--regions: '{}' not understood (expected [name:]x,y,w,h)", item);
+            continue;
+        }
+        rect.x = x; rect.y = y; rect.w = w; rect.h = h;
+        if (rect.name.size() > 15) {
+            // The file format stores a 16-byte nul-terminated name; truncating silently would make
+            // an analysis look up a rectangle that does not exist under the name it asked for.
+            UZ_LOG(Engine, Warning, "--regions: name '{}' truncated to 15 characters", rect.name);
+            rect.name.resize(15);
+        }
+        out.push_back(rect);
+    }
+    return out;
+}
+
+/// Maps `--region-fields` to the bitmask of shaders/runtime/common/region_dump.hlsli.
+/// `output` (1 record/pixel) is the cheap preset for long sequences; `taa` adds the
+/// resolve's intermediates and the lighting records; `gather` adds the final gather's internal
+/// stages; `full` is currently `taa+extra` plus the lighting components.
+static uint32_t ParseRegionFields(const std::string& name) {
+    if (name == "output") return 4u;
+    if (name == "lighting") return 1u;
+    if (name == "taa") return 1u | 2u;
+    if (name == "taa+extra") return 1u | 2u | 8u;
+    if (name == "extra") return 8u;
+    if (name == "components") return 1u | 2u | 16u;
+    // `motion` is the cheap preset for long trajectories: the TAA output plus the normal and
+    // view distance needed to track a world point across frames (48 bytes per pixel).
+    if (name == "motion") return 1u | 4u;
+    // `gather` is the chain the final gather's own stages belong to: the accumulator and the
+    // reconstruction (32), what the lighting made of them (16), and what the TAA did with the
+    // result (2). 21 records per pixel.
+    if (name == "gather") return 1u | 2u | 16u | 32u;
+    if (name == "gather+extra") return 1u | 2u | 8u | 16u | 32u;
+    if (name == "full" || name.empty()) return 1u | 2u | 8u | 16u;
+    UZ_LOG(Engine, Warning,
+           "--region-fields '{}' not understood "
+           "(output|lighting|taa|taa+extra|extra|components|motion|gather|gather+extra|full)", name);
+    return 1u | 2u;
+}
+
+/// Statistics a run reports in its manifest so a capture can be reproduced and compared.
+struct RunStats {
+    uint32_t framesRendered = 0;
+    uint32_t preloadFrames = 0;      ///< Frames the scene pre-load took (capture reproducibility depends on it).
+    uint32_t measuredFirst = 0;      ///< First frame included in the timing statistics.
+    std::vector<float> frameMs;      ///< CPU wall time per frame from the measured window on.
+    float    exposure = 0.f;
+    float    cameraPos[3] = {};
+    float    cameraTarget[3] = {};
+    uint32_t regionFiles = 0;
+    uint32_t regionInvalid = 0;
+    uint32_t renderWidth = 0, renderHeight = 0;
+    /// Per-pass GPU time over the measured window: sum, sample count, min and max ms.
+    /// G5 asks about GPU cost; CPU wall time is a different quantity and cannot stand in for it.
+    struct GpuAcc { double sum = 0.0; uint32_t count = 0; float minMs = 0.f; float maxMs = 0.f; };
+    std::map<std::string, GpuAcc> gpuMs;
+    /// GPU frame span (first pass begin to last pass end) of each measured frame, ms.
+    std::vector<float> gpuFrameMs;
+};
+
+static std::string JsonEscape(const std::string& in) {
+    std::string out;
+    for (char c : in) {
+        if (c == '\\' || c == '"') { out += '\\'; out += c; }
+        else if (c == '\n') out += "\\n";
+        else if (static_cast<unsigned char>(c) < 0x20) continue;
+        else out += c;
+    }
+    return out;
+}
+
+/// FNV-1a 64 of a file's bytes — identifies the exact binary/asset a capture used.
+static std::string HashFile(const std::string& path) {
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return "";
+    uint64_t h = 1469598103934665603ull;
+    unsigned char buf[64 * 1024];
+    size_t n;
+    while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0)
+        for (size_t i = 0; i < n; ++i) { h ^= buf[i]; h *= 1099511628211ull; }
+    std::fclose(f);
+    char out[32];
+    std::snprintf(out, sizeof(out), "fnv1a64:%016llx", static_cast<unsigned long long>(h));
+    return out;
+}
+
+/// Writes the run manifest (`--run-manifest`): executable identity, effective CVars, scene,
+/// resolution, jitter, exposure, camera pose, frame timing and region-dump integrity counters.
+/// Everything a later comparison needs in order to claim two captures are comparable.
+static void WriteRunManifest(const std::string& path, const uz::Config& config,
+                             const std::string& projectPath, const std::string& scenePath,
+                             int width, int height, const RunStats& stats) {
+    std::string exePath;
+#ifdef _WIN32
+    char exeBuf[MAX_PATH] = {};
+    if (GetModuleFileNameA(nullptr, exeBuf, MAX_PATH) > 0) exePath = exeBuf;
+#endif
+    std::vector<float> ms = stats.frameMs;
+    std::sort(ms.begin(), ms.end());
+    const auto pick = [&ms](double q) {
+        return ms.empty() ? 0.f : ms[std::min(ms.size() - 1, static_cast<size_t>(q * ms.size()))];
+    };
+    double sum = 0.0;
+    for (float v : ms) sum += v;
+
+    std::ostringstream o;
+    o << "{\n";
+    o << "  \"schema\": \"uzengine.run-manifest/1\",\n";
+    o << "  \"executable\": {\"path\": \"" << JsonEscape(exePath) << "\", \"hash\": \"" << HashFile(exePath) << "\"},\n";
+    o << "  \"project\": \"" << JsonEscape(projectPath) << "\",\n";
+    o << "  \"scene\": \"" << JsonEscape(scenePath) << "\",\n";
+    o << "  \"resolution\": {\"output\": [" << width << ", " << height << "], \"render\": ["
+      << stats.renderWidth << ", " << stats.renderHeight << "]},\n";
+    if (!stats.gpuMs.empty()) {
+        o << "  \"gpu_ms\": {";
+        bool first = true;
+        double total = 0.0;
+        for (const auto& [name, acc] : stats.gpuMs) {
+            if (acc.count == 0) continue;
+            const double mean = acc.sum / acc.count;
+            total += mean;
+            o << (first ? "\n" : ",\n") << "    \"" << JsonEscape(name) << "\": " << mean;
+            first = false;
+        }
+        double frameSum = 0.0;
+        for (float v : stats.gpuFrameMs) frameSum += v;
+        // _total = sum of the per-pass means; _frame = mean GPU span of a frame (gaps included).
+        o << (first ? "" : ",\n") << "    \"_total\": " << total
+          << ",\n    \"_frame\": " << (stats.gpuFrameMs.empty() ? 0.0 : frameSum / static_cast<double>(stats.gpuFrameMs.size()))
+          << "\n  },\n";
+    }
+    o << "  \"output_encoding\": \"screenshots: 8-bit sRGB PNG; region dump: linear HDR float32 RGB\",\n";
+    o << "  \"frames\": {\"rendered\": " << stats.framesRendered
+      << ", \"preload\": " << stats.preloadFrames
+      << ", \"timing_from\": " << stats.measuredFirst
+      << ", \"timing_samples\": " << ms.size() << "},\n";
+    o << "  \"frame_ms\": {\"mean\": " << (ms.empty() ? 0.0 : sum / ms.size())
+      << ", \"min\": " << (ms.empty() ? 0.f : ms.front())
+      << ", \"p50\": " << pick(0.50) << ", \"p95\": " << pick(0.95)
+      << ", \"max\": " << (ms.empty() ? 0.f : ms.back()) << "},\n";
+    o << "  \"exposure\": " << stats.exposure << ",\n";
+    o << "  \"camera\": {\"position\": [" << stats.cameraPos[0] << ", " << stats.cameraPos[1] << ", " << stats.cameraPos[2]
+      << "], \"target\": [" << stats.cameraTarget[0] << ", " << stats.cameraTarget[1] << ", " << stats.cameraTarget[2] << "]},\n";
+    o << "  \"region_dump\": {\"files\": " << stats.regionFiles << ", \"invalid\": " << stats.regionInvalid << "},\n";
+
+    o << "  \"cli\": {";
+    bool firstCli = true;
+    for (const char* key : {"regions", "region-fields", "region-first", "region-last", "screenshot",
+                            "screenshot-frames", "frames", "view-mode", "run-manifest"}) {
+        const std::string v = config.GetString(key, "");
+        if (v.empty()) continue;
+        if (!firstCli) o << ", ";
+        firstCli = false;
+        o << "\"" << key << "\": \"" << JsonEscape(v) << "\"";
+    }
+    o << "},\n";
+
+    // Effective CVars: every registered CVar with its current value, plus the subset that
+    // differs from the built-in default (what a project/scene/CLI actually changed).
+    const auto& all = uz::CVarRegistry::Get().GetAll();
+    std::vector<std::string> names;
+    names.reserve(all.size());
+    for (const auto& kv : all) names.push_back(kv.first);
+    std::sort(names.begin(), names.end());
+    // The complete command line and every override as applied, in order (project file first,
+    // then the command line), so the condition a capture ran under is in its own record.
+    o << "  \"argv\": [";
+    for (size_t i = 0; i < g_argv.size(); ++i) {
+        if (i) o << ", ";
+        o << "\"" << JsonEscape(g_argv[i]) << "\"";
+    }
+    o << "],\n";
+    o << "  \"cvar_overrides\": [";
+    {
+        bool firstOv = true;
+        for (const auto& [name, value] : config.GetPendingCvarOverrides()) {
+            if (!firstOv) o << ", ";
+            firstOv = false;
+            o << "{\"name\": \"" << JsonEscape(name) << "\", \"value\": " << value << "}";
+        }
+    }
+    o << "],\n";
+    o << "  \"cvars_non_default\": {";
+    bool firstCv = true;
+    for (const auto& n : names) {
+        const auto& cv = all.at(n);
+        if (cv.value == cv.defaultValue) continue;
+        if (!firstCv) o << ", ";
+        firstCv = false;
+        o << "\"" << JsonEscape(n) << "\": " << cv.value;
+    }
+    o << "},\n";
+    o << "  \"cvars\": {";
+    firstCv = true;
+    for (const auto& n : names) {
+        if (!firstCv) o << ", ";
+        firstCv = false;
+        o << "\"" << JsonEscape(n) << "\": " << all.at(n).value;
+    }
+    o << "}\n}\n";
+
+    if (FILE* f = std::fopen(path.c_str(), "wb")) {
+        const std::string text = o.str();
+        std::fwrite(text.data(), 1, text.size(), f);
+        std::fclose(f);
+        UZ_LOG(Engine, Info, "Run manifest written: {}", path);
+    } else {
+        UZ_LOG(Engine, Error, "Run manifest: cannot open '{}'", path);
+    }
+}
+
 static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, int maxFrames,
                        const std::string& windowTitle,
                        const std::string& projectDir,
@@ -496,7 +742,28 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
                        int pixelDebugX = 960,
                        int pixelDebugY = 540,
                        bool passDump = false,
-                       Config* configPtr = nullptr) {
+                       Config* configPtr = nullptr,
+                       const std::string& screenshotFrames = {}) {
+    // --screenshot-frames A-B[:step]: capture EVERY frame of the range from this one
+    // process (numbered <screenshot base>_<frame>.png). Consecutive frames then share
+    // history, loading state and timing — what a static-vs-motion flicker analysis
+    // needs; separate `--screenshot-frame K` runs only approximate that.
+    uint32_t seqFirst = 0, seqLast = 0, seqStep = 1; bool seqActive = false;
+    if (!screenshotFrames.empty() && !screenshotPath.empty()) {
+        unsigned a = 0, b = 0, st = 1;
+        const int n = std::sscanf(screenshotFrames.c_str(), "%u-%u:%u", &a, &b, &st);
+        // A single frame "N" means "N-N". Until 2026-10-08 it was rejected with a warning and the harnesses
+        // that passed one number (test_layered_reflections.py, test_env_mis.py, test_cloud_noise_assets.py)
+        // got the default screenshot frame (5) instead of the one they named.
+        if (n == 1) { b = a; }
+        if (n >= 1 && b >= a) { seqFirst = a; seqLast = b; seqStep = std::max(st, 1u); seqActive = true; }
+        else UZ_LOG(Engine, Warning, "--screenshot-frames '{}' not understood (expected N, A-B or A-B:step)", screenshotFrames);
+    }
+    std::string seqBase = screenshotPath, seqExt = ".png";
+    if (seqActive) {
+        const size_t dot = screenshotPath.find_last_of('.');
+        if (dot != std::string::npos && dot > screenshotPath.find_last_of("/\\") + 0) { seqBase = screenshotPath.substr(0, dot); seqExt = screenshotPath.substr(dot); }
+    }
     // --diag / --pixel-debug / --pass-dump: enforce a frame limit
     int effectiveMaxFrames = maxFrames;
     if ((diagMode || pixelDebugEnabled || passDump) && maxFrames == kInfiniteFrames) {
@@ -562,6 +829,9 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     }
 
     // ── Per-frame fences ────────────────────────────────────────────────
+    RunStats runStats{};
+    if (configPtr) runStats.measuredFirst = static_cast<uint32_t>(configPtr->GetInt("timing-first", 200));
+
     IRHIFence* frameFences[kFramesInFlight] = {};
     uint64_t fenceValues[kFramesInFlight] = {};
 
@@ -686,6 +956,52 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         UZ_LOG(Engine, Info, "Shadow debug mode set to {}", shadowDebugMode);
     }
 
+    // Region dump (diagnostics): --region-dump <dir> with either
+    //   --regions "name:x,y,w,h;name2:x,y,w,h"   (up to 8 rectangles), or
+    //   --region-x X --region-y Y --region-w W --region-h H   (single rectangle),
+    // plus --region-fields output|lighting|taa|full and --region-first/--region-last.
+    // Per-pass GPU timestamps are off by default (they cost a pair of queries per pass), so a
+    // manifest would otherwise report CPU wall time only — which is a different quantity from the
+    // GPU cost an acceptance gate asks about. Enabled when a manifest is requested, for --diag
+    // (its report carries the per-pass statistics) and for --gpu-profile.
+    if (sceneRendererReady && configPtr
+        && (diagMode || configPtr->GetBool("gpu-profile", false)
+            || !configPtr->GetString("run-manifest", "").empty())) {
+        sceneRenderer.SetGpuProfileEnabled(true);
+    }
+
+    // --component-replay <file>: replay recorded AO and specular per frame and per pixel
+    // (followup-12 H-28 isolation). Built by scripts/make_component_replay.py.
+    if (sceneRendererReady && configPtr) {
+        const std::string replay = configPtr->GetString("component-replay", "");
+        if (!replay.empty()) sceneRenderer.SetComponentReplay(replay);
+    }
+
+    if (sceneRendererReady && configPtr) {
+        const std::string regionDir = configPtr->GetString("region-dump", "");
+        if (!regionDir.empty()) {
+            std::vector<uz::SceneRenderer::RegionRect> rects =
+                ParseRegionSpecs(configPtr->GetString("regions", ""));
+            if (rects.empty()) {
+                uz::SceneRenderer::RegionRect one;
+                one.name = "roi";
+                one.x = static_cast<uint32_t>(configPtr->GetInt("region-x", 0));
+                one.y = static_cast<uint32_t>(configPtr->GetInt("region-y", 0));
+                one.w = static_cast<uint32_t>(configPtr->GetInt("region-w", 0));
+                one.h = static_cast<uint32_t>(configPtr->GetInt("region-h", 0));
+                if (one.w != 0 && one.h != 0) rects.push_back(one);
+            }
+            if (rects.empty()) {
+                UZ_LOG(Engine, Warning, "--region-dump given without any rectangle (--regions or --region-w/h)");
+            } else {
+                sceneRenderer.SetRegionDump(regionDir, std::move(rects),
+                    static_cast<uint32_t>(configPtr->GetInt("region-first", 0)),
+                    static_cast<uint32_t>(configPtr->GetInt("region-last", 1000000)),
+                    ParseRegionFields(configPtr->GetString("region-fields", "")));
+            }
+        }
+    }
+
     // Apply editor mode from CLI (--editor)
     if (editorMode && sceneRendererReady) {
         sceneRenderer.SetEditorMode(true);
@@ -773,27 +1089,48 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     }
 
     if (sceneRendererReady && !defaultScene.empty()) {
-        UZ_LOG(Engine, Info, "Pre-loading scene textures...");
+        UZ_LOG(Engine, Info, "Pre-loading scene geometry, distance fields and textures...");
+#ifdef _WIN32
+        const std::string loadingTitle = std::string(winDesc.title) + " - Loading scene...";
+        window.SetTitle(loadingTitle.c_str());
+#endif
+        // The old preload presented one frame and drained only the textures the
+        // first meshes had requested; the 4-meshes-per-frame budget kept
+        // streaming geometry for seconds afterwards while lighting computed
+        // through missing occluders was already on screen. Pump batches and
+        // window messages until readiness, presenting nothing.
+        sceneRenderer.SetPreloading(true);   // mesh SDF bakes unthrottled while nothing is presented (block B.3)
+        while (window.PumpMessages() && window.IsOpen()) {
+            sceneRenderer.RenderFrame(cmdList, swapChain, &world, &vfs, 0.016f, frameIndex);
+            device->WaitIdle();
+            ++frameIndex;
 
-        // First frame triggers lazy material texture loads via SyncWorldToDrawList.
-        sceneRenderer.RenderFrame(cmdList, swapChain, &world, &vfs, 0.016f, 0);
-        swapChain->Present(false);
-        globalFenceValue++;
-        fenceValues[0] = globalFenceValue;
-        frameFences[0]->Signal(globalFenceValue);
-        frameIndex = 1;
-
-        // Wait for frame 0 to finish before draining textures on the same command list.
-        frameFences[0]->WaitCPU(globalFenceValue);
-
-        // Drain all pending async texture decodes + GPU uploads.
-        cmdList->Begin();
-        sceneRenderer.DrainPendingTextureLoads(cmdList, &vfs);
-        cmdList->End();
-        cmdList->Execute();
-        device->WaitIdle();
-
-        UZ_LOG(Engine, Info, "Pre-load complete, all textures loaded");
+            cmdList->Begin();
+            sceneRenderer.DrainPendingTextureLoads(cmdList, &vfs);
+            cmdList->End();
+            cmdList->Execute();
+            device->WaitIdle();
+            if (sceneRenderer.IsSceneFullyLoaded()) {
+                // Exposure reads the previous HDR frame, then its result returns
+                // through a one-frame GPU readback. Seed both with the ready scene.
+                sceneRenderer.RenderFrame(cmdList, swapChain, &world, &vfs, 0.0f, frameIndex++);
+                device->WaitIdle();
+                cmdList->Begin();
+                sceneRenderer.ResetExposureHistory(cmdList);
+                cmdList->End();
+                cmdList->Execute();
+                device->WaitIdle();
+                sceneRenderer.RenderFrame(cmdList, swapChain, &world, &vfs, 0.0f, frameIndex++);
+                device->WaitIdle();
+                UZ_LOG(Engine, Info, "Pre-load complete: assets ready and exposure seeded after {} frames; no partial scene presented", frameIndex);
+                runStats.preloadFrames = frameIndex;   // run manifest: frames.preload
+                break;
+            }
+        }
+        sceneRenderer.SetPreloading(false);
+#ifdef _WIN32
+        window.SetTitle(winDesc.title);
+#endif
     }
 
     // ── Render Loop ─────────────────────────────────────────────────────
@@ -803,6 +1140,12 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     // frameLimit accounts for pre-load frames so --frames N means N frames after pre-load.
     const uint32_t frameLimit = effectiveMaxFrames == kInfiniteFrames
         ? 0 : (frameIndex + static_cast<uint32_t>(effectiveMaxFrames));
+    // --diag measures GPU timings inside its own frame budget: unless --timing-first was given,
+    // the window opens after the first quarter of the budget (the default of 200 lies beyond
+    // the 120-frame diagnostic run and collected nothing).
+    if (diagMode && configPtr && frameLimit > 0 && configPtr->GetString("timing-first", "").empty()) {
+        runStats.measuredFirst = frameIndex + static_cast<uint32_t>(effectiveMaxFrames) / 4;
+    }
     UZ_LOG(Engine, Info, "Starting render loop (frames={})", effectiveMaxFrames);
 
     while (window.PumpMessages() && window.IsOpen()) {
@@ -837,6 +1180,26 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         const float dt = std::chrono::duration<float>(now - prevTime).count();
         prevTime = now;
 
+        // Run manifest (diagnostics): CPU wall time per frame once loading is over, so the
+        // cost of instrumentation can be compared between runs instead of assumed.
+        if (frameIndex >= runStats.measuredFirst) {
+            runStats.frameMs.push_back(dt * 1000.f);
+            if (sceneRendererReady && sceneRenderer.GetDevice()) {
+                const auto& results = sceneRenderer.GetDevice()->GpuProfilerGetResults();
+                for (const auto& r : results) {
+                    if (!r.name) continue;
+                    auto& acc = runStats.gpuMs[r.name];
+                    if (acc.count == 0 || r.ms < acc.minMs) acc.minMs = r.ms;
+                    if (acc.count == 0 || r.ms > acc.maxMs) acc.maxMs = r.ms;
+                    acc.sum += static_cast<double>(r.ms);
+                    acc.count += 1u;
+                }
+                if (!results.empty()) {
+                    runStats.gpuFrameMs.push_back(sceneRenderer.GetDevice()->GpuProfilerGetFrameTimeMs());
+                }
+            }
+        }
+
         // Update editor input (before scripts, so editor hotkeys take priority)
         if (editorMode && sceneRendererReady) {
             editorInput.Update(dt);
@@ -869,14 +1232,27 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
 
         // Screenshot capture — waits for all assets (meshes, textures) to finish loading
         // before capturing, so async-loaded scenes appear fully rendered.
-        if (sceneRendererReady && !screenshotPath.empty() && !screenshotRequested
+        if (!seqActive && sceneRendererReady && !screenshotPath.empty() && !screenshotRequested
             && frameIndex >= static_cast<uint32_t>(screenshotFrame)) {
             // Log asset loading state once per frame until ready
             if (frameIndex % 30 == 0) (void)sceneRenderer.IsSceneFullyLoadedDebug();
         }
-        if (sceneRendererReady && !screenshotPath.empty() && !screenshotRequested
+        if (seqActive) {
+            // RenderFrame(frameIndex) has already run at this point, so a request issued now is
+            // captured from the NEXT frame's render: name the file by the frame it will contain
+            // (renderIdx) so `<base>_<N>.png` and the region dump's `region_<N>.bin` refer to the
+            // same render. Captures made before 2026-09-09 carry the old naming (file N = render N+1).
+            const uint32_t renderIdx = frameIndex + 1;
+            if (sceneRendererReady && renderIdx >= seqFirst && renderIdx <= seqLast
+                && (renderIdx - seqFirst) % seqStep == 0 && sceneRenderer.IsSceneFullyLoaded()) {
+                sceneRenderer.RequestScreenshot(seqBase + "_" + std::to_string(renderIdx) + seqExt);
+            }
+        } else if (sceneRendererReady && !screenshotPath.empty() && !screenshotRequested
             && frameIndex >= static_cast<uint32_t>(screenshotFrame)
-            && (sceneRenderer.IsSceneFullyLoaded() || frameIndex >= static_cast<uint32_t>(screenshotFrame) + 120)) {
+            // No 120-frame timeout bypass: readiness is now exact (budget-deferred
+            // meshes, uploads, SDF bakes and async slots all count), so waiting for
+            // it cannot hang, and capturing a partial scene is never acceptable.
+            && sceneRenderer.IsSceneFullyLoaded()) {
             sceneRenderer.RequestScreenshot(screenshotPath);
             screenshotRequested = true;
         }
@@ -888,6 +1264,37 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         frameFences[allocFrame]->Signal(globalFenceValue);
 
         frameIndex++;
+    }
+
+    // ── Run manifest (diagnostics) ──────────────────────────────────────
+    if (configPtr) {
+        const std::string manifestPath = configPtr->GetString("run-manifest", "");
+        if (!manifestPath.empty()) {
+            runStats.framesRendered = frameIndex;
+            // The *internal* render resolution, which is the window size scaled by
+            // r.ScreenPercentage — not the window size. Writing `width`/`height` here made every
+            // manifest claim a full-resolution render even when the renderer had resized (a
+            // 50 % capture logged "screen percentage set to 50.0%" while its manifest still said
+            // 1920x1080). Same formula as SceneRenderer::Resize.
+            runStats.renderWidth = static_cast<uint32_t>(width);
+            runStats.renderHeight = static_cast<uint32_t>(height);
+            if (sceneRendererReady) {
+                const float pct = sceneRenderer.GetScreenPercentage();
+                runStats.renderWidth =
+                    std::max(1u, static_cast<uint32_t>(static_cast<float>(width) * pct / 100.f));
+                runStats.renderHeight =
+                    std::max(1u, static_cast<uint32_t>(static_cast<float>(height) * pct / 100.f));
+                runStats.exposure = sceneRenderer.GetLastFrameExposure();
+                runStats.regionFiles = sceneRenderer.GetRegionDumpFileCount();
+                runStats.regionInvalid = sceneRenderer.GetRegionDumpMismatchCount();
+                const auto& cam = sceneRenderer.GetCamera();
+                const Vec3 p = cam.GetPosition();
+                const Vec3 tgt = cam.GetPosition() + cam.GetForward();
+                runStats.cameraPos[0] = p.x; runStats.cameraPos[1] = p.y; runStats.cameraPos[2] = p.z;
+                runStats.cameraTarget[0] = tgt.x; runStats.cameraTarget[1] = tgt.y; runStats.cameraTarget[2] = tgt.z;
+            }
+            WriteRunManifest(manifestPath, *configPtr, configPtr->GetString("project", projectDir), defaultScene, width, height, runStats);
+        }
     }
 
     // ── Cleanup (reverse order of creation) ─────────────────────────────
@@ -907,6 +1314,35 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     // ── Diagnostic output (JSON to stdout) ──────────────────────────────
     if (diagMode && sceneRendererReady) {
         auto& inspector = sceneRenderer.GetPassInspector();
+        // Per-pass GPU statistics of the measured window (mean / min / max / samples) plus the
+        // GPU frame span, from the same accumulation the run manifest reports.
+        std::vector<PassTimingEntry> timing;
+        for (const auto& [name, acc] : runStats.gpuMs) {
+            if (acc.count == 0) continue;
+            PassTimingEntry e{};
+            e.name      = name;
+            e.gpuTimeMs = static_cast<float>(acc.sum / acc.count);
+            e.minMs     = acc.minMs;
+            e.maxMs     = acc.maxMs;
+            e.samples   = acc.count;
+            timing.push_back(std::move(e));
+        }
+        if (!runStats.gpuFrameMs.empty()) {
+            PassTimingEntry e{};
+            e.name  = "_frame";
+            e.minMs = runStats.gpuFrameMs.front();
+            e.maxMs = e.minMs;
+            double sum = 0.0;
+            for (float v : runStats.gpuFrameMs) {
+                sum += v;
+                e.minMs = std::min(e.minMs, v);
+                e.maxMs = std::max(e.maxMs, v);
+            }
+            e.gpuTimeMs = static_cast<float>(sum / static_cast<double>(runStats.gpuFrameMs.size()));
+            e.samples   = static_cast<uint32_t>(runStats.gpuFrameMs.size());
+            timing.push_back(std::move(e));
+        }
+        inspector.SetTimingData(timing);
         DiagnosticReport report = inspector.GenerateReport(device, cmdList, frameIndex);
         std::printf("DIAG_JSON:%s\n", report.ToJSON().c_str());
         std::fflush(stdout);
@@ -965,6 +1401,7 @@ int main(int argc, char** argv) {
     uz::LogInit();
 
     // Config: project file + CLI overrides
+    g_argv.assign(argv, argv + argc);
     uz::Config config = uz::BuildConfig(argc, argv);
 
     // --rt-test: enable RT and the UV test pass via CVar overrides
@@ -1021,13 +1458,15 @@ int main(int argc, char** argv) {
             if (!config.Has("height")) height = projectCfg->windowHeight;
 
             // Push the project's "cvars" block onto the pending override
-            // queue. These are flushed in the same place as `--cvar` CLI
-            // overrides (just before SceneRenderer::Init), so init-time
-            // gating CVars see the project values. CLI overrides added
-            // below — e.g., `--cvar` or `--rt-test` — are appended after
-            // these and therefore take precedence on duplicate names.
+            // queue as *defaults*. They are flushed in the same place as the
+            // `--cvar` CLI overrides (just before SceneRenderer::Init), so
+            // init-time gating CVars see them — but the CLI entries were queued
+            // earlier, during argument parsing, so appending here would put the
+            // project AFTER the command line and let it win (that was the
+            // `0, 0, 1` flush order). Front-insertion keeps explicit CLI values
+            // last, and therefore authoritative, on duplicate names.
             for (const auto& [name, value] : projectCfg->cvarOverrides) {
-                config.AddPendingCvarOverride(name, value);
+                config.AddPendingCvarOverrideDefault(name, value);
             }
             if (!projectCfg->cvarOverrides.empty()) {
                 UZ_LOG(Engine, Info,
@@ -1075,7 +1514,7 @@ int main(int argc, char** argv) {
                                     windowTitle, projectDir, contentRoot, defaultScene,
                                     ssPath, ssFrame, shadowDebug, editorMode,
                                     diagMode, pixelDebugEnabled, pixelDebugX, pixelDebugY,
-                                    passDump, &config);
+                                    passDump, &config, config.GetString("screenshot-frames"));
 #else
         UZ_LOG(Engine, Error, "Windowed mode not supported on this platform yet");
         exitCode = uz::kExitRenderError;

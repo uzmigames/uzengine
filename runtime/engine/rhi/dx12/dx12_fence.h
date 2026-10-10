@@ -13,6 +13,11 @@
 
 namespace uz {
 
+/// Period of the GPU wait watchdog: a CPU wait on a fence (frame fence, WaitIdle) that lasts
+/// longer than this logs an error with the device-removed reason and keeps waiting. A hung
+/// GPU used to stop the process in an INFINITE wait with nothing in the log.
+static constexpr uint32_t kGpuWaitWatchdogMs = 10000;
+
 using Microsoft::WRL::ComPtr;
 
 // ─────────────────────────────────────────────────────────────────────────────

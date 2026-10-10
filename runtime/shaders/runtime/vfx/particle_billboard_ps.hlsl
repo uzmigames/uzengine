@@ -34,6 +34,7 @@
 
 #include "../include/depth_common.hlsli"
 #include "vfx_flipbook.hlsli"
+#include "vfx_motion_vectors.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -60,6 +61,11 @@ struct PSInput {
     float4 prevPositionCS : TEXCOORD5;   ///< Previous frame clip-space position (for motion vector PS).
     float  speedFactor    : TEXCOORD6;   ///< Normalized speed [0,1] from VS for color-by-speed.
     float4 dynamicParams  : TEXCOORD7;   ///< Per-particle dynamic material parameters (Task 4.14.0). X=normalizedAge, YZW=user.
+    // ── Niagara-style flipbook UVs (computed in VS, interpolated to PS) ──
+    /// @ref Niagara NiagaraSpriteVertexFactory.ush — VS-precomputed atlas UVs
+    float2 flipbookUV0    : TEXCOORD8;   ///< Atlas UV for current frame (interpolated).
+    float2 flipbookUV1    : TEXCOORD9;   ///< Atlas UV for next frame.
+    float  flipbookLerp   : TEXCOORD10;  ///< Inter-frame blend factor.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -92,7 +98,8 @@ cbuffer VFXBillboardConstants : register(b0) {
     uint spriteTextureIdx;     ///< Reserved (always UINT32_MAX, no sprite texture).
     uint depthBufferIdx;       ///< SRV index: Texture2D<float> scene depth (reversed-Z).
     uint dynamicParamsBufferIdx; ///< SRV index: StructuredBuffer<float4> dynamic params (Task 4.14.0). Not read by PS.
-    uint _vfxPad1;
+    /// @ref Niagara SubImageIndex module — declared for layout (read by VS only).
+    uint subImageIndexBufferIdx; ///< SRV index: StructuredBuffer<float> subImageIndices. Not read by PS.
 };
 #else
 /// SM5 fallback: explicit texture bindings.
@@ -162,7 +169,7 @@ cbuffer VFXBillboardCB : register(b2) {
     float4   colorLifeStart;       ///< RGBA color at birth.
     float4   colorLifeEnd;         ///< RGBA color at death.
     // ── Billboard facing mode + custom direction (16 bytes, declared for layout) ──
-    uint     facingMode;           ///< 0=FaceCamera, 1=VelocityAligned, 2=FaceCameraPlane, 3=CustomVector, 4=FaceCameraPosition (not read by PS).
+    uint     facingMode;           ///< 0=FaceCamera, 1=VelocityAligned, 2=FaceCameraPlane, 3=CustomVector, 4=FaceCameraPosition, 5=PlaneAxis, 6=WorldZAligned (not read by PS).
     float    customFacingX;        ///< Custom facing direction X (not read by PS).
     float    customFacingY;        ///< Custom facing direction Y (not read by PS).
     float    customFacingZ;        ///< Custom facing direction Z (not read by PS).
@@ -182,6 +189,11 @@ cbuffer VFXBillboardCB : register(b2) {
     uint     flipbookRows;          ///< Sprite sheet rows (1 = no flipbook).
     uint     flipbookCols;          ///< Sprite sheet columns (1 = no flipbook).
     uint     flipbookTotalFrames;   ///< Total valid frames (rows*cols or less for partial sheets).
+    // ── Flipbook FPS + channel mask (16 bytes) ───────────────────────────
+    float    flipbookFPS;           ///< Flipbook playback rate (frames per second).
+    uint     spriteChannelMask;     ///< 0=RGBA, 1=R, 2=G, 3=B, 4=A.
+    float    vfxTotalTime;          ///< Global total time (s) — same as debug quad.
+    uint     _vfxBillboardPad1;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -248,9 +260,50 @@ float ComputeSoftParticleFade(float4 screenPos, float2 screenSize, float fadeDis
     return saturate(depthDifference / fadeDistance);
 }
 
+/// Applies the user-selected sprite channel mask to a sampled sprite color.
+///
+/// Selecting a single channel splats that channel to RGB and A so downstream
+/// multiplication by particle color/tint produces expected grayscale alpha
+/// mattes (common for single-channel smoke / alpha-only sprite sheets).
+///
+/// # Parameters
+/// - sample: sampled sprite RGBA.
+/// - mask: channel selector (0=RGBA, 1=R, 2=G, 3=B, 4=A).
+///
+/// # Returns
+/// Masked RGBA color.
+float4 ApplyChannelMask(float4 sample, uint mask) {
+    if (mask == 1u) return float4(sample.rrr, sample.r);
+    if (mask == 2u) return float4(sample.ggg, sample.g);
+    if (mask == 3u) return float4(sample.bbb, sample.b);
+    if (mask == 4u) return float4(sample.aaa, sample.a);
+    return sample;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Pixel Shader Entry Point
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// Multi-target output for particle billboard pixel shader.
+///
+/// SV_Target0: HDR scene color (RGBA16F, alpha-blended per blendModeHint).
+/// SV_Target1: Per-pixel screen-space motion vector (RG16F, UV space).
+///
+/// The motion vector is the difference between the current frame's screen-space
+/// UV and the previous frame's screen-space UV for this fragment. Consumers
+/// (TAA / DLSS / FSR) reproject the previous frame's color using this vector.
+///
+/// The velocity RT is bound with blend disabled so the last-drawn particle
+/// dominates the motion vector at each pixel. This matches the alpha-sort order
+/// (back-to-front) — the foreground particle's motion is the one that matters
+/// for reprojection of the visible pixel.
+///
+/// @ref Karis 2014 "High Quality Temporal Supersampling" — per-object motion vectors
+/// @ref UE5 NiagaraSpriteVertexFactory motion-vector output
+struct PSOutput {
+    float4 color          : SV_Target0;   ///< HDR scene color.
+    float2 motionVector   : SV_Target1;   ///< Screen-space UV delta (RG16F).
+};
 
 /// Generates a procedural soft circle, applies vertex color, color over
 /// lifetime, and computes soft-particle depth fade.
@@ -259,31 +312,27 @@ float ComputeSoftParticleFade(float4 screenPos, float2 screenSize, float fadeDis
 /// - input: interpolated vertex data from the billboard VS.
 ///
 /// # Returns
-/// Final RGBA color for alpha-blended compositing.
-float4 main(PSInput input) : SV_Target {
-    // ── Sprite color: flipbook SubUV or procedural soft circle ──
+/// Final RGBA color for alpha-blended compositing and per-pixel motion vector.
+PSOutput main(PSInput input) {
+    PSOutput output;
     float4 spriteColor;
 
     if (flipbookTotalFrames > 1u) {
-        // Flipbook SubUV blending: compute frame UVs from particle age,
-        // sample both frames, and lerp for smooth inter-frame transitions.
-        /// @ref Nguyen 2007 "GPU Gems 3" ch. 23 — SubUV sprite sheet animation
-        float fps = 30.0f; // Default playback rate; override via CB when available.
-        FlipbookResult fb = ComputeFlipbookFrame(
-            input.age, input.lifetime,
-            flipbookRows, flipbookCols, fps, flipbookTotalFrames);
-
-        float2 atlasUV0 = SampleFlipbookUV(input.texcoord, fb.uv0, fb.frameSize);
-        float2 atlasUV1 = SampleFlipbookUV(input.texcoord, fb.uv1, fb.frameSize);
-
+        // ── Niagara flipbook sample ──────────────────────────────────────
+        // The VS has already computed per-vertex atlas UVs from the
+        // per-particle subImageIndex SoA channel (written by the update CS
+        // each frame). The PS just samples both frames and lerps by the
+        // interpolated blend factor. No flipbook math in the PS.
+        //
+        /// @ref Niagara NiagaraSpriteVertexFactory.ush — PS is purely stateless
 #ifdef UZ_BINDLESS
         if (spriteTextureIdx != 0xFFFFFFFF) {
             Texture2D<float4> spriteTex = ResourceDescriptorHeap[spriteTextureIdx];
-            float4 frame0 = spriteTex.SampleLevel(depthSampler, atlasUV0, 0);
-            float4 frame1 = spriteTex.SampleLevel(depthSampler, atlasUV1, 0);
-            spriteColor = lerp(frame0, frame1, fb.blendFactor);
+            float4 c0 = spriteTex.SampleLevel(depthSampler, input.flipbookUV0, 0);
+            float4 c1 = spriteTex.SampleLevel(depthSampler, input.flipbookUV1, 0);
+            spriteColor = lerp(c0, c1, input.flipbookLerp);
+            spriteColor = ApplyChannelMask(spriteColor, spriteChannelMask);
         } else {
-            // No texture bound — fall back to procedural circle with flipbook alpha.
             float2 ctr = input.texcoord * 2.0f - 1.0f;
             float d = dot(ctr, ctr);
             float a = saturate(1.0f - d);
@@ -298,6 +347,7 @@ float4 main(PSInput input) : SV_Target {
         if (spriteTextureIdx != 0xFFFFFFFF) {
             Texture2D<float4> spriteTex = ResourceDescriptorHeap[spriteTextureIdx];
             spriteColor = spriteTex.SampleLevel(depthSampler, input.texcoord, 0);
+            spriteColor = ApplyChannelMask(spriteColor, spriteChannelMask);
         } else {
             float2 ctr = input.texcoord * 2.0f - 1.0f;
             float d = dot(ctr, ctr);
@@ -317,8 +367,8 @@ float4 main(PSInput input) : SV_Target {
     }
 
     // ── Evaluate color over lifetime ──
-    // normalizedAge in [0,1] maps the particle's age to its full lifespan.
-    float normalizedAge = saturate(input.age / max(input.lifetime, 0.0001f));
+    // Use per-particle normalizedAge passed from VS via dynamicParams.x.
+    float normalizedAge = saturate(input.dynamicParams.x);
 
     // ── Color by speed override ──
     // When colorBySpeedEnabled is non-zero, replace normalizedAge with the
@@ -413,17 +463,28 @@ float4 main(PSInput input) : SV_Target {
         discard;
     }
 
+    // ── Motion vector output (SV_Target1) ──
+    // Computed from current SV_Position clip-space and the VS-provided
+    // prevPositionCS (which uses prevViewProj * prevWorldPos). TAA / DLSS /
+    // FSR use this to reproject the previous frame so fast-moving particles
+    // do not leave stale history trails.
+    //
+    // @ref Karis 2014 "High Quality Temporal Supersampling"
+    // @ref vfx_motion_vectors.hlsli — ComputeMotionVector NDC-to-UV helper
+    output.motionVector = ComputeMotionVector(input.positionCS, input.prevPositionCS);
+
     // ── Blend mode output (Niagara exact match) ──
     // Each blend mode requires a different alpha treatment to produce correct
     // results with its corresponding PSO blend state.
     if (blendModeHint == 2) {
         // AlphaComposite (One / InvSrcAlpha): premultiplied alpha output.
         // RGB is pre-multiplied by opacity so the One src factor is correct.
-        return float4(emissive * opacity, opacity);
+        output.color = float4(emissive * opacity, opacity);
     } else {
         // Additive (One / One) and Translucent (SrcAlpha / InvSrcAlpha):
         // Output straight alpha. Additive ignores alpha in blend (One/One on color),
         // Translucent uses SrcAlpha to modulate RGB in the blend hardware.
-        return float4(emissive, opacity);
+        output.color = float4(emissive, opacity);
     }
+    return output;
 }

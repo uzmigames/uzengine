@@ -38,7 +38,8 @@ bool RgResourcePool::TextureKey::operator==(const TextureKey& other) const
         && depthOrArraySize == other.depthOrArraySize
         && mipLevels == other.mipLevels
         && format == other.format
-        && usage == other.usage;
+        && usage == other.usage
+        && is3D == other.is3D;
 }
 
 bool RgResourcePool::BufferKey::operator==(const BufferKey& other) const
@@ -57,6 +58,7 @@ size_t RgResourcePool::TextureKeyHash::operator()(const TextureKey& k) const
     h = FnvMix(h, k.mipLevels);
     h = FnvMix(h, static_cast<uint64_t>(k.format));
     h = FnvMix(h, static_cast<uint64_t>(k.usage));
+    h = FnvMix(h, static_cast<uint64_t>(k.is3D ? 1u : 0u));
     return static_cast<size_t>(h);
 }
 
@@ -71,7 +73,8 @@ size_t RgResourcePool::BufferKeyHash::operator()(const BufferKey& k) const
 
 RgResourcePool::TextureKey RgResourcePool::MakeKey(const RgTextureDesc& desc)
 {
-    return { desc.width, desc.height, desc.depthOrArraySize, desc.mipLevels, desc.format, desc.usage };
+    return { desc.width, desc.height, desc.depthOrArraySize, desc.mipLevels,
+             desc.format, desc.usage, desc.is3D };
 }
 
 RgResourcePool::BufferKey RgResourcePool::MakeKey(const RgBufferDesc& desc)
@@ -103,6 +106,7 @@ RHITextureHandle RgResourcePool::AcquireTexture(const RgTextureDesc& desc, const
     rhiDesc.mipLevels = desc.mipLevels;
     rhiDesc.format = desc.format;
     rhiDesc.usage = desc.usage;
+    rhiDesc.is3D = desc.is3D; // phase 10.6.0 — propagate 3D flag to RHI layer
     rhiDesc.debugName = debugName;
 
     auto handle = m_device->CreateTexture(rhiDesc);

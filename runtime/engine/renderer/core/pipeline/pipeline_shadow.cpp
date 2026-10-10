@@ -27,6 +27,65 @@ bool PipelineLibrary::EnsureShadowShaders() {
     return true;
 }
 
+bool PipelineLibrary::EnsureLinearShadowShaders() {
+    if (!m_shadowLinearVS.IsValid()) {
+        m_shadowLinearVS = m_shaderMgr->CreateShaderWithDefines(EngineShader::ShadowDepthVS, RHIShaderStage::Vertex, "UZ_SHADOW_LINEAR=1");
+        if (!m_shadowLinearVS.IsValid()) {
+            UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile ShadowDepthVS (UZ_SHADOW_LINEAR)");
+            return false;
+        }
+    }
+    if (!m_shadowLinearPS.IsValid()) {
+        m_shadowLinearPS = m_shaderMgr->CreateShader(EngineShader::ShadowDepthLinearPS, RHIShaderStage::Pixel);
+        if (!m_shadowLinearPS.IsValid()) {
+            UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile ShadowDepthLinearPS");
+            return false;
+        }
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetShadowDepthLinear(bool bindless) {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetShadowDepthLinear called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+    auto& cached = bindless ? m_shadowDepthLinearBindless : m_shadowDepthLinear;
+    if (cached.IsValid()) {
+        return cached;
+    }
+    if (!EnsureLinearShadowShaders()) {
+        return RHIPipelineHandle::Invalid();
+    }
+    // Same state as GetShadowDepth (standard-Z Less, back-face cull, D32); the pixel shader
+    // replaces the depth with distance / radius. Rasterizer depth bias does not apply to a depth
+    // written by the pixel shader, so the bias lives in the lighting shader, in centimetres.
+    RHIGraphicsPipelineDesc desc{};
+    desc.vertexShader  = m_shadowLinearVS;
+    desc.pixelShader   = m_shadowLinearPS;
+    desc.topology      = RHIPrimitiveTopology::TriangleList;
+    desc.rasterizer.cullMode              = RHICullMode::Back;
+    desc.depthStencil.depthEnable         = true;
+    desc.depthStencil.depthWrite          = true;
+    desc.depthStencil.depthFunc           = RHICompareFunc::Less;
+    desc.renderTargetCount                = 0;
+    desc.depthStencilFormat               = RHIFormat::D32Float;
+    desc.debugName                        = bindless ? "ShadowDepthLinear_Bindless" : "ShadowDepthLinear";
+    const auto layout = VertexLayout::Standard();
+    if (!bindless) {
+        desc.inputElements     = layout.elements;
+        desc.inputElementCount = layout.count;
+        desc.vertexStride      = layout.stride;
+    }
+    cached = CreateCachedPipeline(desc);
+    if (!cached.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create ShadowDepthLinear pipeline (bindless={})", bindless);
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created ShadowDepthLinear pipeline (bindless={})", bindless);
+    }
+    return cached;
+}
+
 RHIPipelineHandle PipelineLibrary::GetShadowDepth() {
     return GetShadowDepth(m_device->IsBindless());
 }
@@ -68,8 +127,10 @@ RHIPipelineHandle PipelineLibrary::GetShadowDepth(bool bindless) {
     desc.depthStencilFormat               = RHIFormat::D32Float;
     desc.debugName                        = bindless ? "ShadowDepth_Bindless" : "ShadowDepth";
 
+    // Hoisted out of the branch: `desc.inputElements` keeps a pointer into
+    // `layout`, which must outlive the CreateCachedPipeline call below.
+    const auto layout = VertexLayout::Standard();
     if (!bindless) {
-        const auto layout = VertexLayout::Standard();
         desc.inputElements     = layout.elements;
         desc.inputElementCount = layout.count;
         desc.vertexStride      = layout.stride;

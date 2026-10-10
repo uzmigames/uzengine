@@ -131,10 +131,35 @@ cbuffer VFXSpawnConstants : register(b1) {
     float    defaultDynParam0;     ///< Default dynamic param X (overwritten to normalizedAge in update). 172
 
     float    defaultDynParam1;     ///< Default dynamic param Y (user-defined).  176
-    float    defaultDynParam2;     ///< Default dynamic param Z (user-defined).  180
-    float    defaultDynParam3;     ///< Default dynamic param W (user-defined).  184
+    /// @ref Niagara Sprite SubImageIndex module — per-particle flipbook index buffer.
+    uint     subImageIndicesUavIndex; ///< RWStructuredBuffer<float> subImageIndices UAV. 180
+    uint     flipbookTotalFrames;   ///< Total SubUV frames (for init — spawn writes 0.0). 184
     /// @ref Salmon 2011 "Parallel Random Numbers" — deterministic seed override
     uint     emitterSeed;          ///< 0=use frameNumber (non-deterministic), >0=fixed seed. 188
+
+    // ── User-declared per-particle attribute bindless UAV indices ──────
+    //
+    // 0xFFFFFFFFu means "slot not allocated". The Spawn CS may initialise
+    // each enabled channel to its declared default via user_attrs.hlsli.
+    uint4    userFloatUav;         ///< 4 float-channel UAVs (one uint per component).  192
+    uint2    userVec4Uav;          ///< 2 vec4-channel UAVs.                             208
+    float2   _pad3;                ///< Padding to 16-byte alignment.                    216
+    float4   userFloatDefault;     ///< Default values for the 4 float channels.         224
+    float4   userVec4Default0;     ///< Default float4 for vec4 slot 0.                  240
+    float4   userVec4Default1;     ///< Default float4 for vec4 slot 1.                  256
+
+    // ── Spline Data Interface (phase16 hardware-validation) ─────────────
+    // Mirrors `ParticleSpawnConstants` in particle_simulation_pass.h. Zero
+    // defaults when the emitter has no `SpawnAlongSplineModule`; the spawn
+    // CS gates spline work on `cbSplinePointCount >= 2`.
+    uint     cbSplineSrvIndex;            ///< Bindless SRV — VfxSplineBuffer. 272
+    uint     cbSplinePointCount;          ///< Valid sample count (>= 2).      276
+    float    cbSplineTotalLength;         ///< Arc-length total (cm).          280
+    uint     cbSplineSpawnStratified;     ///< 0=random U, 1=stratified.       284
+    float    cbSplineSpawnJitterRadius;   ///< Perpendicular jitter (cm).      288
+    float    cbSplineSpawnTangentOffset;  ///< Spawn offset along tangent.     292
+    float    _cbSplineSpawnPad0;          ///< 16-byte alignment pad.          296
+    float    _cbSplineSpawnPad1;          ///<                                 300
 #endif
 };
 
@@ -441,17 +466,56 @@ void main(uint3 dtid : SV_DispatchThreadID)
     colors[particleIdx]     = initialColor;
     rotations[particleIdx]  = rotation;
 
+    // ── SubImageIndex: Niagara-style per-particle flipbook channel ───────
+    // Spawn writes 0.0 (first frame). The update CS advances this to
+    // normAge * (totalFrames - 1) every frame, giving the VS a direct
+    // per-particle frame index without re-deriving from age interpolants.
+    /// @ref Niagara SubImageIndex module — per-particle flipbook animation
+#ifdef UZ_BINDLESS
+    if (subImageIndicesUavIndex != 0xFFFFFFFFu) {
+        RWStructuredBuffer<float> subImages = ResourceDescriptorHeap[subImageIndicesUavIndex];
+        subImages[particleIdx] = 0.0f;
+    }
+#endif
+
     // ── Dynamic material parameters (Task 4.14.0) ──────────────────────
     // Initialize per-particle float4 from emitter defaults. The update CS
     // overwrites .x with normalizedAge each frame; .yzw remain user-defined.
+    //
+    // Phase 3b-3.91.0 Phase 2 note: CB slots 180/184 were repurposed from
+    // `defaultDynParam2/3` to `subImageIndicesUavIndex` + `flipbookTotalFrames`
+    // to wire the per-particle SubImageIndex SoA channel. The .zw dynamic
+    // params now default to 0; callers needing them must upload a new CB.
 #ifdef UZ_BINDLESS
     if (dynamicParamsUavIndex != 0 && dynamicParamsUavIndex != 0xFFFFFFFF) {
         RWStructuredBuffer<float4> dynParams = ResourceDescriptorHeap[dynamicParamsUavIndex];
         dynParams[particleIdx] = float4(defaultDynParam0, defaultDynParam1,
-                                        defaultDynParam2, defaultDynParam3);
+                                        0.0f, 0.0f);
     }
 #else
     dynamicParams[particleIdx] = float4(0.0f, 0.0f, 0.0f, 0.0f);
+#endif
+
+    // ── User-declared per-particle attribute defaults ───────────────────
+    // Write the declared default into every allocated user channel so the
+    // first `UserAttr_Read*` call returns deterministic data.
+    // @ref docs/engine/25-vfx/98-user-custom-attributes.md
+#ifdef UZ_BINDLESS
+    [unroll] for (uint uf = 0; uf < 4; ++uf) {
+        const uint uavIdx = userFloatUav[uf];
+        if (uavIdx != 0xFFFFFFFFu) {
+            RWStructuredBuffer<float> channel = ResourceDescriptorHeap[uavIdx];
+            channel[particleIdx] = userFloatDefault[uf];
+        }
+    }
+    if (userVec4Uav.x != 0xFFFFFFFFu) {
+        RWStructuredBuffer<float4> ch0 = ResourceDescriptorHeap[userVec4Uav.x];
+        ch0[particleIdx] = userVec4Default0;
+    }
+    if (userVec4Uav.y != 0xFFFFFFFFu) {
+        RWStructuredBuffer<float4> ch1 = ResourceDescriptorHeap[userVec4Uav.y];
+        ch1[particleIdx] = userVec4Default1;
+    }
 #endif
 
     // ── Increment alive count ───────────────────────────────────────────

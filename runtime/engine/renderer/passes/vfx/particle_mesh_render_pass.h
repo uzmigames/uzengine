@@ -30,8 +30,16 @@
 ///
 /// # Root Signature Slot Layout
 /// Matches the engine's global root signature:
-/// - Slot 0 (b0): Per-pass constant buffer (view/proj matrices).
-/// - Slot 5 (t0..tN): SRV descriptor table starting at `instanceBufferSrvIndex`.
+/// - Slot 0 (b0): Per-pass root constants (`ParticleMeshPassConstants`,
+///   16 DWORDs) — carries the two bindless SRV indices for the instance
+///   transforms + instance colors buffers. View-projection rides at b1
+///   in `PerFrameCB`, inherited from the engine's global per-frame state.
+///
+/// SM6.6 bindless: SRV/UAV resources are accessed via
+/// `ResourceDescriptorHeap[idx]` using indices from the b0 root constants.
+/// No SRV descriptor table is bound at slot 5 — that slot was retired in
+/// the RC2 bindless migration. The instance transforms SRV is reached as
+/// `ResourceDescriptorHeap[instanceTransformsBufferIdx]` inside the VS.
 ///
 /// # Thread Safety
 /// NOT thread-safe. Must be called from the render thread only.
@@ -53,16 +61,30 @@ namespace uz {
 // ParticleMeshPassConstants -- CPU-side mirror of the mesh instance shader CB
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// CPU-side mirror of the mesh instance vertex shader's per-pass constant buffer (b0).
+/// CPU-side mirror of the mesh instance vertex/pixel shaders' per-pass
+/// constant buffer (b0). Both shaders read from the same b0 binding so a
+/// single root-constants push covers both stages.
 ///
-/// Contains the combined view-projection matrix used to transform each instance's
-/// pre-computed world-space TRS matrix into clip space. Must be byte-identical
-/// to the HLSL cbuffer layout.
+/// The bindless root signature pins b0 to
+/// `RootConstants(num32BitConstants=16)` = 64 bytes max. View-projection
+/// no longer lives here — it is read from PerFrameCB at b1 (engine-global)
+/// instead. Only the two per-emitter bindless descriptor indices ride this
+/// slot; the rest is reserved padding so future per-batch fields land
+/// without touching the root signature.
 ///
-/// Total size: 64 bytes (256-byte aligned by CBRingAllocator).
+/// Must be byte-identical to the HLSL `cbuffer VFXMeshRenderConstants`
+/// declarations in `particle_mesh_vs.hlsl` AND `particle_mesh_ps.hlsl`.
+///
+/// Total size: 64 bytes (16 DWORDs, exact root-constants ceiling).
 struct ParticleMeshPassConstants {
-    float viewProjection[16] = {}; ///< 0: View-projection matrix, column-major.
+    uint32_t instanceTransformsBufferIdx = 0xFFFFFFFFu; ///<  0  bindless SRV — float4x4 buffer.
+    uint32_t instanceColorsBufferIdx     = 0xFFFFFFFFu; ///<  4  bindless SRV — float4  buffer.
+    uint32_t _pad[14] = {};                              ///<  8..63 reserved.
 };
+
+static_assert(sizeof(ParticleMeshPassConstants) == 64,
+              "ParticleMeshPassConstants must be exactly 64 bytes (16 DWORDs) "
+              "to match the bindless root-constants slot at b0");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ParticleMeshBatchItem -- one instanced mesh draw batch
@@ -125,9 +147,43 @@ struct ParticleMeshBatchItem {
     /// written by the preceding instance CS dispatch.
     ///
     /// Must be in `RHIResourceState::IndirectArgument` state when this pass
-    /// executes. The caller is responsible for inserting the appropriate UAV
-    /// barrier between the instance CS and this pass.
+    /// executes. The render graph emits the UAV→IndirectArgument barrier
+    /// automatically when `indirectArgsBufferRg` below is declared as a
+    /// `pb.Read(..., IndirectArgument)` dependency in the pass setup.
     RHIBufferHandle indirectArgsBuffer;
+
+    /// Render graph resource id for the same `indirectArgsBuffer` above —
+    /// used by the pass to declare a `Read(..., IndirectArgument)`
+    /// dependency so the auto-barrier scheduler emits the
+    /// `UnorderedAccess → IndirectArgument` transition between the
+    /// preceding mesh-instance CS write and this pass's indirect draw.
+    /// MUST be set when `indirectArgsBuffer` is set; otherwise the draw
+    /// executes against a buffer still in `UnorderedAccess` state and
+    /// triggers a debug-layer error.
+    rg::RgResourceId indirectArgsBufferRg;
+
+    /// Render graph resource id for the per-instance transform buffer
+    /// (`gpuBuf.meshInstanceTransforms`) written by the preceding mesh
+    /// instance CS as `UnorderedAccess`. The vertex shader reads it via
+    /// `ResourceDescriptorHeap[g_instanceTransformsBufferIdx]` (bindless
+    /// SRV path) so it MUST be in `ShaderResource` state when this pass
+    /// executes. Without a `pb.Read(..., ShaderResource)` declaration the
+    /// render graph leaves the buffer in `UnorderedAccess`, the bindless
+    /// SRV read returns garbage / NaN values, and the resulting clip-space
+    /// triangles span the entire viewport — visually blanking the HDR
+    /// composite to black with normal lighting (or to the PS constant when
+    /// the PS is hard-coded for diagnostics).
+    /// @ref phase0_vfx-mesh-particle-visibility-debug
+    rg::RgResourceId instanceTransformsBufferRg;
+
+    /// Render graph resource id for the per-instance color buffer
+    /// (`gpuBuf.meshInstanceColors`) written by the same mesh instance
+    /// CS. The pixel shader reads per-instance RGBA via
+    /// `ResourceDescriptorHeap[g_instanceColorsBufferIdx]` so it ALSO
+    /// needs an explicit `Read(..., ShaderResource)` for the same reason
+    /// the transforms buffer does.
+    /// @ref phase0_vfx-mesh-particle-visibility-debug
+    rg::RgResourceId instanceColorsBufferRg;
 
     // ── Per-pass constant buffer ─────────────────────────────────────────────
 
@@ -156,7 +212,10 @@ struct ParticleMeshPassDesc {
 
     /// The HDR color target to draw mesh particles into (render graph resource ID).
     ///
-    /// Declared as `RHIResourceState::RenderTarget` by the pass.
+    /// Declared as `RHIResourceState::RenderTarget` by the pass — both as a
+    /// `Read` (so the DAG schedules this pass after lighting/sky writes the
+    /// HDR buffer) and a `Write` (so subsequent post-process passes see the
+    /// updated state).
     rg::RgResourceId colorTarget;
 
     /// The depth buffer (render graph resource ID).
@@ -165,6 +224,31 @@ struct ParticleMeshPassDesc {
     /// or `RHIResourceState::DepthStencilRead` for transparent batches based
     /// on `isTransparent`.
     rg::RgResourceId depthTarget;
+
+    // ── Physical RHI handles for `BeginRenderPass` ────────────────────────────
+    //
+    // The execute callback must call `cmd->BeginRenderPass(...)` so the DX12
+    // backend issues `OMSetRenderTargets` against the HDR composite slot.
+    // Without these handles the indirect draw would land on whatever RTV/DSV
+    // were bound by the previous pass (typically GBuffer slots — wrong format
+    // for HDR composite). This was the root cause of the RC3 disable.
+
+    /// Physical texture handle for the HDR color target (for `BeginRenderPass`).
+    /// MUST refer to the same physical resource backing `colorTarget` above.
+    RHITextureHandle colorTexture;
+
+    /// Physical texture handle for the depth-stencil target (for `BeginRenderPass`).
+    /// MUST refer to the same physical resource backing `depthTarget` above.
+    RHITextureHandle depthTexture;
+
+    /// Render-resolution viewport width for `SetViewport` / `SetScissor`.
+    /// Pass the renderer's internal render resolution (post-DLSS upsample
+    /// input), NOT the swapchain backbuffer size — the HDR composite is
+    /// authored at render resolution.
+    uint32_t renderWidth = 0;
+
+    /// Render-resolution viewport height for `SetViewport` / `SetScissor`.
+    uint32_t renderHeight = 0;
 
     // ── Rendering mode ────────────────────────────────────────────────────────
 

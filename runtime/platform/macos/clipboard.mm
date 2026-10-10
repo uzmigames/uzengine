@@ -18,10 +18,8 @@
 #import <AppKit/AppKit.h>
 #import <Foundation/Foundation.h>
 
-/// Forward-declare the Clipboard log category.
-/// The definition lives in the translation unit that owns this platform's
-/// category registry (same pattern as system_info.mm for Platform).
 UZ_DECLARE_LOG_CATEGORY(Clipboard);
+UZ_DEFINE_LOG_CATEGORY(Clipboard, Info);
 
 namespace uz {
 

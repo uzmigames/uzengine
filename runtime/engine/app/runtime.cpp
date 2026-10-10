@@ -27,6 +27,8 @@
 #include "selection_manager.h"
 #include "lua_editor_api.h"
 #include "vfs.h"
+#include "engine/vfx/vfx_system.h"
+#include "engine/vfx/components/particle_emitter.h"
 #include "lua_vm.h"
 #include "lua_scene_api.h"
 #include "lua_scene_io_api.h"
@@ -47,9 +49,9 @@
 
 #ifdef _WIN32
 #include "platform_window.h"
-#include "crash_handler.h"
 #include <objbase.h>  // CoInitializeEx
 #endif
+#include "crash_handler.h"
 
 #include <json.hpp>
 
@@ -245,9 +247,12 @@ void uz_set_engine_dir(const char* path) {
     }
     uz::SetEngineDir(std::filesystem::path(path));
 
+#ifdef _WIN32
     // Redirect crash reports to the engine directory instead of the host
     // exe dir (which would be VSCode's install path for .node addons).
+    // macOS crash reports always go to {exe_dir}/crashes/.
     uz::CrashHandler_SetCrashDir(path);
+#endif
 
     UZ_LOG(RuntimeAPI, Info, "Engine resource dir set to: {}", path);
 }
@@ -574,11 +579,13 @@ void uz_resize_viewport(int width, int height) {
     const uint32_t newW = static_cast<uint32_t>(width);
     const uint32_t newH = static_cast<uint32_t>(height);
 
+#ifdef _WIN32
     // No-op if dimensions haven't changed.
     if (newW == static_cast<uint32_t>(state->window.GetWidth()) &&
         newH == static_cast<uint32_t>(state->window.GetHeight())) {
         return;
     }
+#endif
 
     state->device->WaitIdle();
     state->swapChain->Resize(newW, newH);
@@ -1476,6 +1483,85 @@ void uz_set_content_root(const char* path) {
         // Before viewport creation — store for later consumption.
         s_pendingContentRoot = path;
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VFX scalability + sequencer hooks
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace {
+
+/// Resolves the active `VFXSystem*` and a named emitter in a single call.
+/// Returns `false` (logged) when either lookup fails so the C-API
+/// functions can early-out cleanly without nesting.
+bool ResolveVfxEmitterByName(const char* name,
+                              const char* fnName,
+                              uz::VFXSystem*& outVfx,
+                              uz::ParticleEmitter*& outEmitter) noexcept
+{
+    outVfx     = nullptr;
+    outEmitter = nullptr;
+
+    if (!HasViewport()) {
+        UZ_LOG(RuntimeAPI, Warning, "{}: no active viewport", fnName);
+        return false;
+    }
+    if (!name || name[0] == '\0') {
+        UZ_LOG(RuntimeAPI, Warning, "{}: name is null or empty", fnName);
+        return false;
+    }
+
+    outVfx = s_state->sceneRenderer.GetVFXSystem();
+    if (!outVfx) {
+        UZ_LOG(RuntimeAPI, Warning, "{}: VFXSystem not available", fnName);
+        return false;
+    }
+
+    outEmitter = outVfx->FindEmitterByName(std::string(name));
+    if (!outEmitter) {
+        UZ_LOG(RuntimeAPI, Warning,
+               "{}: no emitter registered with name '{}'", fnName, name);
+        return false;
+    }
+    return true;
+}
+
+} // anonymous namespace
+
+int uz_vfx_seek(const char* name, float time_seconds) {
+    uz::VFXSystem*       vfx     = nullptr;
+    uz::ParticleEmitter* emitter = nullptr;
+    if (!ResolveVfxEmitterByName(name, "uz_vfx_seek", vfx, emitter)) return 0;
+
+    emitter->Seek(time_seconds);
+    return 1;
+}
+
+int uz_vfx_pause(const char* name) {
+    uz::VFXSystem*       vfx     = nullptr;
+    uz::ParticleEmitter* emitter = nullptr;
+    if (!ResolveVfxEmitterByName(name, "uz_vfx_pause", vfx, emitter)) return 0;
+
+    emitter->isPaused = true;
+    return 1;
+}
+
+int uz_vfx_resume(const char* name) {
+    uz::VFXSystem*       vfx     = nullptr;
+    uz::ParticleEmitter* emitter = nullptr;
+    if (!ResolveVfxEmitterByName(name, "uz_vfx_resume", vfx, emitter)) return 0;
+
+    emitter->isPaused = false;
+    return 1;
+}
+
+int uz_vfx_set_time_scale(const char* name, float scale) {
+    uz::VFXSystem*       vfx     = nullptr;
+    uz::ParticleEmitter* emitter = nullptr;
+    if (!ResolveVfxEmitterByName(name, "uz_vfx_set_time_scale", vfx, emitter)) return 0;
+
+    emitter->timeScale = (scale > 0.0f) ? scale : 0.0f;
+    return 1;
 }
 
 } // extern "C"

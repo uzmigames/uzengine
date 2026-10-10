@@ -14,8 +14,8 @@ RWTexture2D<float4> g_Output : register(u0);
 // Acceleration structure (not actually used, but required for valid RTPSO)
 RaytracingAccelerationStructure g_SceneTLAS : register(t0);
 
-struct RayPayload {
-    float4 color;
+struct [raypayload] RayPayload {
+    float4 color : write(closesthit, miss) : read(caller);   // the hit and miss shaders only write it
 };
 
 [shader("raygeneration")]

@@ -65,6 +65,11 @@ namespace uz {
 /// and texture resources (PS). Both VS and PS share the same b0 layout.
 ///
 /// Total size: 48 bytes (12 x uint32, matching HLSL exactly).
+/// Fits within the 16x uint32 root-constant limit (64 bytes).
+///
+/// Phase 3b-3.91.0 Phase 2: the trailing pad slot was repurposed as the
+/// `subImageIndexBufferIdx` field — a bindless SRV index pointing at the
+/// per-particle SubImageIndex SoA channel. No size change.
 struct ParticleBillboardIndices {
     // VS indices (bytes 0-31)
     uint32_t positionBufferIdx      = 0;
@@ -79,7 +84,8 @@ struct ParticleBillboardIndices {
     uint32_t spriteTextureIdx       = UINT32_MAX; ///< Reserved (no sprite texture).
     uint32_t depthBufferIdx         = 0;          ///< SRV: Texture2D<float> scene depth.
     uint32_t dynamicParamsBufferIdx = 0;          ///< SRV: StructuredBuffer<float4> dynamic params.
-    uint32_t _vfxPad1               = 0;
+    /// @ref Niagara SubImageIndex module — per-particle flipbook SoA channel.
+    uint32_t subImageIndexBufferIdx = 0;          ///< SRV: StructuredBuffer<float> subImageIndices.
 };
 static_assert(sizeof(ParticleBillboardIndices) == 48,
               "ParticleBillboardIndices must be 48 bytes to match HLSL VFXBillboardConstants");
@@ -145,13 +151,19 @@ struct VFXBillboardCB {
     uint32_t colorRampLutSrvIndex  = 0xFFFFFFFF; ///< 280
     uint32_t screenSpaceSizeEnabled = 0;    ///< 284
 
-    // ── Color by speed (bytes 288-303) ──────────────────────────────────
+    // ── Color by speed + flipbook (bytes 288-303) ──────────────────────
     uint32_t colorBySpeedEnabled   = 0;     ///< 288
-    uint32_t _cbsPad0              = 0;     ///< 292
-    uint32_t _cbsPad1              = 0;     ///< 296
-    uint32_t _cbsPad2              = 0;     ///< 300
+    uint32_t flipbookRows          = 1;     ///< 292: Sprite sheet rows. 1 = no flipbook.
+    uint32_t flipbookCols          = 1;     ///< 296: Sprite sheet columns. 1 = no flipbook.
+    uint32_t flipbookTotalFrames   = 1;     ///< 300: Total valid frames in sprite sheet.
+
+    // ── Flipbook playback rate + channel mask (bytes 304-319) ──────────
+    float    flipbookFPS           = 30.0f; ///< 304: Flipbook playback frame rate (frames per second).
+    uint32_t spriteChannelMask     = 0;     ///< 308: 0=RGBA pass-through, 1=R, 2=G, 3=B, 4=A.
+    float    vfxTotalTime          = 0.0f;  ///< 312: Global total time (s) for flipbook cycling.
+    uint32_t _vfxBillboardPad1     = 0;     ///< 316
 };
-static_assert(sizeof(VFXBillboardCB) == 304, "VFXBillboardCB must be 304 bytes to match HLSL layout");
+static_assert(sizeof(VFXBillboardCB) == 320, "VFXBillboardCB must be 320 bytes to match HLSL layout");
 
 // ---------------------------------------------------------------------------
 // EmitterRenderData -- per-emitter data for the render pass
@@ -169,6 +181,13 @@ static_assert(sizeof(VFXBillboardCB) == 304, "VFXBillboardCB must be 304 bytes t
 struct EmitterRenderData {
     /// The emitter's GPU particle storage (read set is used for SRV binding).
     GPUParticleBuffer* buffer = nullptr;
+
+    /// Per-emitter graphics PSO. Lets the render pass switch pipelines
+    /// inside the draw loop so emitters with different `blendMode` can
+    /// coexist in a single system (Fire-additive + Smoke-alphablend,
+    /// Debris-premultiplied, etc.). Defaults to the `billboardPipeline`
+    /// selected in `ParticleRenderPassDesc` when left invalid.
+    RHIPipelineHandle pipeline = {};
 
     /// Pre-filled CB allocation for the billboard shader constants.
     CBAllocation renderCB = {};
@@ -188,6 +207,10 @@ struct EmitterRenderData {
     /// Signed distance from camera to emitter origin, used for back-to-front sorting.
     /// Larger values are drawn first (farther from camera).
     float distanceToCamera = 0.0f;
+
+    /// Render sort priority (Niagara parity). Higher = drawn later = on top.
+    /// Primary sort key; `distanceToCamera` is the tie-breaker.
+    int32_t renderPriority = 0;
 
     /// CPU-side vertex count for non-indexed draw (6 vertices per alive particle).
     /// Used as fallback until DrawIndirect command signature is added.
@@ -264,6 +287,19 @@ struct ParticleRenderPassDesc {
 
     /// Physical texture handle for the depth buffer (for BeginRenderPass).
     RHITextureHandle depthTexture;
+
+    /// Optional velocity (motion-vector) render target (MRT slot 1).
+    /// RG16Float, written by the billboard PS for TAA / DLSS / FSR reprojection.
+    /// Leave invalid to render particles without motion-vector output — the
+    /// PSO's RT[1] slot will still be declared, so the handle must match the
+    /// PSO's renderTargetCount. When invalid, AddParticleRenderPass skips the
+    /// MRT binding (for tests / isolated passes with legacy PSOs).
+    /// @ref UE5 NiagaraSpriteVertexFactory motion-vector output
+    rg::RgResourceId velocityTarget;
+
+    /// Physical handle for the velocity target (for BeginRenderPass).
+    /// Paired with velocityTarget; must be set when velocityTarget is valid.
+    RHITextureHandle velocityTexture;
 
     /// Pre-filled per-frame CB allocation (b1) — viewProj, camera pos, etc.
     /// Must be re-bound after SetPipeline resets root signature state.

@@ -57,7 +57,9 @@ cbuffer CloudCB : register(b2) {
     float   g_phaseBlend;
     float   g_layerBottomKm;
     float   g_layerHeightKm;
-    float3  g_windVelocity;
+    float   g_windVelocityX;          // scalars: a float3 at offset 152 would move to 160 and shift the tail
+    float   g_windVelocityY;
+    float   g_windVelocityZ;
     float   g_detailWindScale;
     float   g_ambientMultiplier;
     uint    g_primarySteps;
@@ -269,7 +271,7 @@ float SampleDensity(float3 samplePosKm, float innerRadius, float layerHeight) {
     if (hGrad <= 0.0f) return 0.0f;
 
     float normalizedH = saturate((sampleHeight - innerRadius) / layerHeight);
-    float3 windOffset = g_windVelocity * g_time;
+    float3 windOffset = float3(g_windVelocityX, g_windVelocityY, g_windVelocityZ) * g_time;
 
     // Noise coordinates: XY from world-space scaled for ~8 km tiling,
     // Z from normalized height stretched for vertical detail.

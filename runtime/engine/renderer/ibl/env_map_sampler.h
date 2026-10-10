@@ -26,6 +26,7 @@
 
 #include "rhi_types.h"
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace uz {
@@ -96,6 +97,17 @@ public:
     /// @return true if Rebuild() has been called successfully.
     [[nodiscard]] bool IsReady() const noexcept { return m_ready; }
 
+    /// Diagnostics (block B.5b): when set, every Rebuild() also writes the radiance the pyramid sampled
+    /// as an RGBA32F equirect (`<dir>/env_equirect.f32`, kPyramidWidth x kPyramidHeight, row-major) with
+    /// a `env_equirect.json` beside it. The renderer forwards the region-dump directory here.
+    void SetDumpDirectory(std::string dir) { m_dumpDir = std::move(dir); }
+    [[nodiscard]] bool HasDumpDirectory() const noexcept { return !m_dumpDir.empty(); }
+
+    /// Diagnostics (split-sum item): dumps any cubemap SRV at `mip` as `<dir>/<baseName>.f32` + `.json`
+    /// (the same equirect as the pyramid's), e.g. the prefiltered specular mips after the sky bake.
+    /// Needs a dump directory; synchronous (WaitIdle).
+    bool DumpRadiance(uint32_t cubemapSrvIndex, uint32_t mip, const std::string& baseName);
+
 private:
     /// Create pyramid textures (one per mip level, R32F).
     bool CreatePyramidTextures();
@@ -106,8 +118,13 @@ private:
     /// Ensure compute pipelines are compiled.
     [[nodiscard]] bool EnsurePipelines();
 
-    /// Dispatch mip 0 pass (cube → equirect luminance).
-    void DispatchMip0(IRHICommandList* cmdList, uint32_t envCubemapSrvIndex);
+    /// Dispatch mip 0 pass (cube → equirect luminance; the radiance too when colorUavIndex is set;
+    /// the source cubemap sampled at `sampleMip`).
+    void DispatchMip0(IRHICommandList* cmdList, uint32_t envCubemapSrvIndex, uint32_t colorUavIndex,
+                      uint32_t sampleMip);
+    /// Read the radiance equirect back and write `<dir>/<baseName>.f32` + `.json` (block B.5b diagnostics).
+    void WriteRadianceDump(RHITextureHandle colorTex, uint32_t envCubemapSrvIndex, const std::string& baseName,
+                           uint32_t sampleMip);
 
     /// Dispatch reduction passes (mip 1..N).
     void DispatchReductions(IRHICommandList* cmdList);
@@ -151,6 +168,7 @@ private:
 
     // ── State ────────────────────────────────────────────────────────────
     bool m_ready = false;
+    std::string m_dumpDir;   ///< Diagnostics dump directory (empty = no dump).
 };
 
 } // namespace uz

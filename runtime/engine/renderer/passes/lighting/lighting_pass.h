@@ -68,7 +68,11 @@ struct LightingPassDesc {
     uint32_t          envMisSrvIndex = UINT32_MAX; ///< SRV for env MIS accumulated specular (UINT32_MAX = disabled).
     uint32_t          iblPrefilteredSrvIndex = UINT32_MAX; ///< IBL prefiltered specular cubemap SRV (via root constants — immune to CB ring staleness).
     uint32_t          iblIrradianceSrvIndex  = UINT32_MAX; ///< IBL irradiance cubemap SRV (via root constants — immune to CB ring staleness).
-    RHITextureHandle  albedoTexture;     ///< Physical albedo texture handle (SM5 fallback binding).
+    /// CVar r.Lighting.DebugMode — lighting decomposition view (0 = off; see
+    /// deferred_lighting_ps.hlsl for the modes). A root constant because the
+    /// PerFrameCB has no free bytes left; SM6.6 bindless path only.
+    uint32_t          lightingDebugMode = 0;
+    RHITextureHandle  albedoTexture;    ///< Physical albedo texture handle (SM5 fallback binding).
     RHITextureHandle  normalTexture;     ///< Physical normal texture handle (SM5 fallback binding).
     RHITextureHandle  depthTextureForSrv;///< Physical depth texture handle (SM5 fallback binding, read as SRV).
     RHITextureHandle  positionTexture;   ///< Physical world-space position texture handle (SM5 fallback, bound at t4).
@@ -86,6 +90,9 @@ struct LightingPassDesc {
     rg::RgResourceId  apVolumeResource;///< Aerial perspective volume (read, SRV). Invalid = no AP dependency.
 
     // ── Debug MRT targets (lighting split visualization) ─────────────
+    rg::RgResourceId  debugDirectResource;   ///< RT1 as a graph resource (write). Invalid = not imported.
+    rg::RgResourceId  debugIndirectResource; ///< RT2 as a graph resource (write).
+    rg::RgResourceId  debugShadowResource;   ///< RT3 as a graph resource (write).
     RHITextureHandle  debugDirectLight;  ///< RT1: direct lighting (Lo). Invalid = skip.
     RHITextureHandle  debugIndirectLight;///< RT2: indirect lighting (ambient). Invalid = skip.
     RHITextureHandle  debugShadowMask;   ///< RT3: shadow mask (R=shadow, G=AO). Invalid = skip.

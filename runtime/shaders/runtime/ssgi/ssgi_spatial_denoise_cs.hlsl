@@ -1,177 +1,51 @@
-/// UzEngine SSGI Spatial Denoise — Cross-Bilateral Filter
-///
-/// @ref Schied et al. 2017 "Spatiotemporal Variance-Guided Filtering" (SVGF)
-///
-/// 3x3 cross-bilateral spatial filter with edge-stopping weights on:
-/// - Depth discontinuity (exponential falloff)
-/// - Normal divergence (cosine power)
-/// - Luminance variance (prevents over-blurring high-frequency detail)
-///
-/// Processes half-res trace output → half-res denoised output.
-///
-/// Root constants at b0 (8 DWORDs):
-///   [0] inputSrvIndex     — half-res trace indirect diffuse SRV
-///   [1] aoInputSrvIndex   — half-res trace AO SRV
-///   [2] depthSrvIndex     — full-res depth buffer SRV
-///   [3] normalSrvIndex    — full-res world-normal SRV
-///   [4] outputUavIndex    — half-res denoised indirect diffuse UAV
-///   [5] aoOutputUavIndex  — half-res denoised AO UAV
-///   [6] texWidth
-///   [7] texHeight
-
-#include "../common/constants.hlsli"
-#include "../common/math.hlsli"
-#include "../include/depth_common.hlsli"
-
+/// @ref Schied et al. 2017 "Spatiotemporal Variance-Guided Filtering", edge-stopping spatial filtering.
+/// @ref Wright et al. 2022 "Lumen", interpolate radiance on the receiver plane before material modulation.
+#include "ssgi_surface.hlsli"
 cbuffer RootConstants : register(b0) {
-#ifdef UZ_BINDLESS
     uint g_inputSrvIndex;
     uint g_aoInputSrvIndex;
     uint g_depthSrvIndex;
     uint g_normalSrvIndex;
     uint g_outputUavIndex;
     uint g_aoOutputUavIndex;
-#endif
     uint g_texWidth;
     uint g_texHeight;
-    uint g_sigmaDepthBits;       // CVar r.SSGI.SpatialSigmaDepth as float bits
-    uint g_sigmaNormalBits;      // CVar r.SSGI.SpatialSigmaNormal as float bits
-    uint g_sigmaLuminanceBits;   // CVar r.SSGI.SpatialSigmaLuminance as float bits
+    uint g_sigmaDepthBits;
+    uint g_sigmaNormalBits;
+    uint g_sigmaLuminanceBits;
 };
-
-cbuffer PerFrameCB : register(b1) {
-    row_major float4x4 viewProj;
-    float4 cameraPos;
-    float4 timeParams;
-    float4 lightDir;
-    float4 lightColor;
-    float4 ambientColor;
-    row_major float4x4 invViewProj;
-    float nearPlane, farPlane;
-};
-
-/// @ref Schied 2017 — edge-stopping function parameters (CVar-driven)
-#define kSigmaDepth     asfloat(g_sigmaDepthBits)
-#define kSigmaNormal    asfloat(g_sigmaNormalBits)
-#define kSigmaLuminance asfloat(g_sigmaLuminanceBits)
-
-/// @ref ITU-R BT.709 luminance weights
-float Luminance(float3 c) {
-    return dot(c, float3(0.2126, 0.7152, 0.0722));
-}
-
-/// Decodes a unit normal from RG16F octahedral encoding.
-float3 OctDecode(float2 f) {
-    f = f * 2.0 - 1.0;
-    float3 n = float3(f.x, f.y, 1.0 - abs(f.x) - abs(f.y));
-    float t = saturate(-n.z);
-    n.x += (n.x >= 0.0) ? -t : t;
-    n.y += (n.y >= 0.0) ? -t : t;
-    return normalize(n);
-}
-
-[numthreads(8, 8, 1)]
-void main(uint3 DTid : SV_DispatchThreadID) {
-    if (DTid.x >= g_texWidth || DTid.y >= g_texHeight) return;
-
-    int2 pixel = int2(DTid.xy);
-
-#ifdef UZ_BINDLESS
-    Texture2D<float4>   inputTex   = ResourceDescriptorHeap[g_inputSrvIndex];
-    Texture2D<float>    aoInputTex = ResourceDescriptorHeap[g_aoInputSrvIndex];
-    Texture2D<float>    depthTex   = ResourceDescriptorHeap[g_depthSrvIndex];
-    Texture2D<float4>   normalTex  = ResourceDescriptorHeap[g_normalSrvIndex];
-    RWTexture2D<float4> outputTex  = ResourceDescriptorHeap[g_outputUavIndex];
-    RWTexture2D<float>  aoOutput   = ResourceDescriptorHeap[g_aoOutputUavIndex];
-#endif
-
-    // Center sample
-    float4 centerColor = inputTex.Load(int3(pixel, 0));
-    float  centerAO    = aoInputTex.Load(int3(pixel, 0));
-
-    // Full-res depth and normal at center (2x mapping from half-res)
-    int2 fullPx = pixel * 2;
-    float centerDepth   = depthTex.Load(int3(fullPx, 0));
-    float centerLinZ    = LinearizeDepthReversedZ(centerDepth, nearPlane, farPlane);
-    float3 centerNormal = OctDecode(normalTex.Load(int3(fullPx, 0)).rg);
-    float centerLum     = Luminance(centerColor.rgb);
-
-    // Skip sky pixels
-    if (IsSkyDepth(centerDepth)) {
-        outputTex[pixel] = centerColor;
-        aoOutput[pixel]  = centerAO;
-        return;
+/// @constants 8x8 dispatch; 5x5 normalized spatial kernel with exp(-r^2/8) spatial falloff.
+/// No color edge stop: the input is noisy E/pi, not albedo, and isolated bright samples must be averaged.
+[numthreads(8,8,1)]
+void main(uint3 id : SV_DispatchThreadID) {
+    if (id.x >= g_texWidth || id.y >= g_texHeight) return;
+    int2 pixel = int2(id.xy);
+    Texture2D<float4> inputTex = ResourceDescriptorHeap[g_inputSrvIndex];
+    Texture2D<float> inputAO = ResourceDescriptorHeap[g_aoInputSrvIndex];
+    Texture2D<float> depthTex = ResourceDescriptorHeap[g_depthSrvIndex];
+    Texture2D<float4> normalTex = ResourceDescriptorHeap[g_normalSrvIndex];
+    RWTexture2D<float4> outputTex = ResourceDescriptorHeap[g_outputUavIndex];
+    RWTexture2D<float> outputAO = ResourceDescriptorHeap[g_aoOutputUavIndex];
+    uint2 fullSize;
+    depthTex.GetDimensions(fullSize.x,fullSize.y);
+    int2 fp = SurfacePixel(pixel,fullSize);
+    float depth = depthTex.Load(int3(fp,0));
+    if (IsSkyDepth(depth)) { outputTex[pixel] = 0.0; outputAO[pixel] = 1.0; return; }
+    float3 position = SurfacePosition(fp,depth,fullSize);
+    float3 normal = OctDecode(normalTex.Load(int3(fp,0)).rg);
+    float3 colorSum = 0.0;
+    float aoSum = 0.0, weightSum = 0.0;
+    for (int y=-2; y<=2; ++y) for (int x=-2; x<=2; ++x) {
+        int2 p = clamp(pixel+int2(x,y),int2(0,0),int2(g_texWidth,g_texHeight)-1);
+        int2 sp = SurfacePixel(p,fullSize);
+        float sd = depthTex.Load(int3(sp,0));
+        if (IsSkyDepth(sd)) continue;
+        float3 sn = OctDecode(normalTex.Load(int3(sp,0)).rg);
+        float weight = exp(-float(x*x+y*y)/8.0) * SurfaceWeight(position,normal,SurfacePosition(sp,sd,fullSize),sn,asfloat(g_sigmaNormalBits));
+        colorSum += inputTex.Load(int3(p,0)).rgb * weight;
+        aoSum += inputAO.Load(int3(p,0)) * weight;
+        weightSum += weight;
     }
-
-    // ── 3x3 cross-bilateral filter ────────────────────────────────────────
-    float3 colorSum = float3(0, 0, 0);
-    float  aoSum    = 0.0;
-    float  wSum     = 0.0;
-
-    // Compute local luminance variance for adaptive edge-stopping
-    /// @ref Schied 2017 — luminance variance edge-stopping weight
-    float lumMean  = 0.0;
-    float lumMean2 = 0.0;
-    float varCount = 0.0;
-
-    // Pre-pass: compute luminance statistics in 3x3 neighborhood
-    for (int vy = -1; vy <= 1; ++vy) {
-        for (int vx = -1; vx <= 1; ++vx) {
-            int2 np = clamp(pixel + int2(vx, vy), int2(0, 0),
-                            int2(g_texWidth - 1, g_texHeight - 1));
-            float lum = Luminance(inputTex.Load(int3(np, 0)).rgb);
-            lumMean  += lum;
-            lumMean2 += lum * lum;
-            varCount += 1.0;
-        }
-    }
-    lumMean  /= varCount;
-    lumMean2 /= varCount;
-    float lumVariance = max(lumMean2 - lumMean * lumMean, 0.0);
-    float lumStdDev   = sqrt(lumVariance);
-
-    // Main filter pass
-    for (int ky = -1; ky <= 1; ++ky) {
-        for (int kx = -1; kx <= 1; ++kx) {
-            int2 np = clamp(pixel + int2(kx, ky), int2(0, 0),
-                            int2(g_texWidth - 1, g_texHeight - 1));
-
-            float4 sampleColor = inputTex.Load(int3(np, 0));
-            float  sampleAO    = aoInputTex.Load(int3(np, 0));
-
-            // Full-res depth and normal at neighbor
-            int2 sFullPx = np * 2;
-            float sampleDepth  = depthTex.Load(int3(sFullPx, 0));
-            float sampleLinZ   = LinearizeDepthReversedZ(sampleDepth, nearPlane, farPlane);
-            float3 sampleNorm  = OctDecode(normalTex.Load(int3(sFullPx, 0)).rg);
-            float sampleLum    = Luminance(sampleColor.rgb);
-
-            // Depth edge-stopping weight
-            /// @ref Schied 2017 Eq. 3 — depth weight
-            float wDepth = exp(-abs(centerLinZ - sampleLinZ) /
-                               (kSigmaDepth * centerLinZ + 1e-6));
-
-            // Normal edge-stopping weight
-            /// @ref Schied 2017 Eq. 4 — normal weight
-            float wNormal = pow(max(dot(centerNormal, sampleNorm), 0.0), kSigmaNormal);
-
-            // Luminance edge-stopping weight (variance-guided)
-            /// @ref Schied 2017 Eq. 5 — luminance weight with variance
-            float lumDiff = abs(centerLum - sampleLum);
-            float sigmaL  = kSigmaLuminance * lumStdDev + 1e-6;
-            float wLum    = exp(-lumDiff / sigmaL);
-
-            float w = wDepth * wNormal * wLum;
-
-            colorSum += sampleColor.rgb * w;
-            aoSum    += sampleAO * w;
-            wSum     += w;
-        }
-    }
-
-    float3 filteredColor = (wSum > 0.0) ? colorSum / wSum : centerColor.rgb;
-    float  filteredAO    = (wSum > 0.0) ? aoSum / wSum : centerAO;
-
-    outputTex[pixel] = float4(filteredColor, 1.0);
-    aoOutput[pixel]  = filteredAO;
+    outputTex[pixel] = float4(colorSum / weightSum,1.0);
+    outputAO[pixel] = aoSum / weightSum;
 }

@@ -10,6 +10,7 @@
 #endif
 
 #include "demo_application.h"
+#include "platform_window.h"
 #include "uzengine.h"
 #include "compare_grid.h"
 #include "cvar.h"

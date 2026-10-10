@@ -281,9 +281,10 @@ private:
     RHIBufferHandle   m_trailIB;                              ///< StructuredBuffer<uint> for trail indices (bindless SRV).
     uint32_t          m_trailVBSrvIndex = UINT32_MAX;         ///< Bindless SRV index for trail vertex buffer.
     uint32_t          m_trailIBSrvIndex = UINT32_MAX;         ///< Bindless SRV index for trail index buffer.
-    static constexpr uint32_t kMaxTrailVertices = 1024;       ///< 512 points * 2 verts per point.
-    static constexpr uint32_t kMaxTrailIndices  = 3072;       ///< 511 segments * 6 indices per segment.
+    static constexpr uint32_t kMaxTrailVertices = 4096;       ///< 512 points * 2 verts * up to 4 strands.
+    static constexpr uint32_t kMaxTrailIndices  = 12288;      ///< 511 segments * 6 indices * up to 4 strands.
     bool m_trailEnabled = false;                              ///< Trail toggle (Y key). Off by default.
+    uint32_t m_trailStrandCount = 1;                          ///< Current ribbon strand count (Shift+Y cycles 1→2→3→4→1).
 
     // ── Decal projection system ─────────────────────────────────────────────
     RHIPipelineHandle m_decalPSO;                            ///< Forward decal graphics PSO.
@@ -323,6 +324,10 @@ private:
     uint32_t   m_killVolumeCount               = 0u; ///< Number of active kill volumes this frame.
 
     bool m_pointLightsEnabled = false;             ///< Point light toggle (L key).
+
+    // ── Sprite texture toggles (Task 3.80.0 §7.3/7.4) ──────────────────
+    bool m_spriteSRGB     = true;  ///< sRGB decode for sprite texture (I key toggles).
+    bool m_softFadeEnabled = true; ///< Soft particle depth fade (U key toggles).
 
     // ── Sub-emitter state (Task 3.87.0 — CPU-side simplified sub-emitter) ──
     /// When enabled, each primary burst fires a secondary "sparks" burst after

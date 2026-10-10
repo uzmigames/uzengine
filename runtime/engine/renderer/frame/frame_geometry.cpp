@@ -156,51 +156,34 @@ void SceneRenderer::RegisterGeometryPasses(rg::RgBuilder& rgBuilder, FrameContex
             // revealed objects in Phase 2.
             // When GPU culling is inactive or on the first frame, the prepass
             // draws all instances normally.
-            if (m_depthPrepassEnabled) {
-                DepthPrepassDesc zpDesc{};
+            bool prepassRan = false;
+            if (m_depthPrepassEnabled && !ctx.useInstancing) {
+                // Block B.4c: the prepass is the GBuffer pass in depth-only mode (the GBuffer's own
+                // vertex shader and constants, so its depths are the colour pass's bits); the
+                // colour pass below keeps that depth and tests Equal. The previous pass rendered
+                // with the shadow vertex shader, whose view-projection it never bound, against a
+                // LessEqual test on a reversed-Z clear: it drew nothing, at 0.17 ms per frame.
+                GBufferPassDesc zpDesc{};
+                zpDesc.depthOnly        = true;
                 zpDesc.depthBuffer      = ctx.depthRes;
                 zpDesc.depthTexture     = m_gbuffer.depth;
                 zpDesc.drawList         = &ctx.drawList;
                 zpDesc.cbAllocator      = m_cbRing.get();
+                zpDesc.cbRingAllocator  = m_cbRing.get();
                 zpDesc.perFrameAlloc    = ctx.perFrameAlloc;
-                zpDesc.pipeline         = pipelines->GetDepthPrepass(bindless);
+                zpDesc.perFrameParams   = &ctx.perFrame;
+                zpDesc.pipeline         = pipelines->GetGBufferDepthOnly(bindless);
                 zpDesc.meshes           = m_meshes.data();
                 zpDesc.meshCount        = static_cast<uint32_t>(m_meshes.size());
+                zpDesc.fallbackWhite    = m_fallbackWhite;
+                zpDesc.fallbackBlack    = m_fallbackBlack;
+                zpDesc.fallbackNormal   = m_fallbackNormal;
                 zpDesc.bindless         = bindless;
                 zpDesc.viewportWidth    = vpWidth;
                 zpDesc.viewportHeight   = vpHeight;
-                zpDesc.cbRingAllocator  = m_cbRing.get();
-                if (ctx.useInstancing) {
-                    zpDesc.instanced              = true;
-                    zpDesc.instancedPipeline      = pipelines->GetDepthPrepassInstanced();
-                    zpDesc.instanceBufferSrvIndex = ctx.instanceBufferSrvIndex;
-                    zpDesc.batchData              = ctx.instanceBatches.data();
-                    zpDesc.batchCount             = static_cast<uint32_t>(ctx.instanceBatches.size());
-
-                    // Use indirect draw when Phase 1 cull has run (GPU cull active
-                    // with depth prepass). This draws only Phase 1 visible instances.
-                    if (gpuCullReady && ctx.indirectArgsBuffer.IsValid()) {
-                        zpDesc.useIndirectDraw  = true;
-                        zpDesc.indirectArgsBuffer = ctx.indirectArgsBuffer;
-                    }
-                }
-                AddDepthPrepass(rgBuilder, zpDesc);
-
-                // ── Hi-Z Pyramid (runs after depth prepass) ───────────────
-                if (m_hizMipCount > 0) {
-                    HiZPyramidPassDesc hizDesc{};
-                    hizDesc.depthSource          = ctx.depthRes;
-                    hizDesc.depthSourceTexture   = m_gbuffer.depth;
-                    hizDesc.depthSourceSrvIndex  = m_gbuffer.depthSRV;
-                    hizDesc.mipCount             = m_hizMipCount;
-                    hizDesc.pipeline             = pipelines->GetHiZPyramid();
-                    hizDesc.sourceWidth          = m_renderWidth;
-                    hizDesc.sourceHeight         = m_renderHeight;
-                    hizDesc.bindless             = bindless;
-                    for (uint32_t i = 0; i < m_hizMipCount; ++i) {
-                        hizDesc.mipLevels[i] = m_hizMipLevels[i];
-                    }
-                    AddHiZPyramidPass(rgBuilder, hizDesc);
+                if (zpDesc.pipeline.IsValid()) {
+                    AddGBufferPass(rgBuilder, zpDesc);
+                    prepassRan = true;
                 }
 
                 // ── Phase 2: GPU Cull against CURRENT frame's HiZ ────────
@@ -320,6 +303,14 @@ void SceneRenderer::RegisterGeometryPasses(rg::RgBuilder& rgBuilder, FrameContex
             gbDesc.perFrameParams       = &ctx.perFrame;
             gbDesc.pipeline             = pipelines->GetGBuffer(bindless);
             gbDesc.maskedPipeline       = pipelines->GetGBufferMasked(bindless);
+            if (prepassRan) {
+                // Block B.4c: the prepass wrote the standard opaque depth; keep it, test Equal.
+                const RHIPipelineHandle equal = pipelines->GetGBufferEqual(bindless);
+                if (equal.IsValid()) {
+                    gbDesc.keepDepth = true;
+                    gbDesc.pipeline  = equal;
+                }
+            }
             gbDesc.meshes               = m_meshes.data();
             gbDesc.meshCount            = static_cast<uint32_t>(m_meshes.size());
             gbDesc.fallbackWhite        = m_fallbackWhite;
@@ -350,6 +341,25 @@ void SceneRenderer::RegisterGeometryPasses(rg::RgBuilder& rgBuilder, FrameContex
                 }
             }
             AddGBufferPass(rgBuilder, gbDesc);
+        }
+
+        // ── Hi-Z Pyramid (block B.5: after the GBuffer, where the opaque depth is complete). It ran
+        // right after the depth prepass before, and its mips came out all zero: the screen-space
+        // reflections never found a hit.
+        if (m_hizMipCount > 0) {
+            HiZPyramidPassDesc hizDesc{};
+            hizDesc.depthSource          = ctx.depthRes;
+            hizDesc.depthSourceTexture   = m_gbuffer.depth;
+            hizDesc.depthSourceSrvIndex  = m_gbuffer.depthSRV;
+            hizDesc.mipCount             = m_hizMipCount;
+            hizDesc.pipeline             = pipelines->GetHiZPyramid();
+            hizDesc.sourceWidth          = m_renderWidth;
+            hizDesc.sourceHeight         = m_renderHeight;
+            hizDesc.bindless             = bindless;
+            for (uint32_t i = 0; i < m_hizMipCount; ++i) {
+                hizDesc.mipLevels[i] = m_hizMipLevels[i];
+            }
+            AddHiZPyramidPass(rgBuilder, hizDesc);
         }
 
         // ── Decal Direct Render (after GBuffer — alpha blends onto GBuffer) ──

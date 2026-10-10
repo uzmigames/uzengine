@@ -47,22 +47,19 @@ static auto* cv_ContactShadows   = UZ_CVAR_BOOL("r.ContactShadows", true, "Conta
 // compile to nonsense). Read via cvars.GetBool("r.GTAO", false) instead.
 // SSR — disabled (resolved-history pass produces zero).
 static auto* cv_SSR              = UZ_CVAR_BOOL("r.SSR", false, "Screen-Space Reflections (stochastic VNDF + temporal denoise)");
-static auto* cv_SSRIntensity     = UZ_CVAR_FLOAT("r.SSR.Intensity", 1.0f, "SSR reflection intensity", 0.f, 2.f);
-static auto* cv_SSRMaxRoughness  = UZ_CVAR_FLOAT("r.SSR.MaxRoughness", 0.35f, "Max roughness for SSR (UE5 default)", 0.f, 1.f);
-static auto* cv_SSRNumSteps      = UZ_CVAR_INT("r.SSR.NumSteps", 16, "SSR ray march step count", 8, 32);
-static auto* cv_SSRStartMip      = UZ_CVAR_FLOAT("r.SSR.StartMipLevel", 1.0f, "SSR initial HZB mip level", 0.f, 3.f);
-static auto* cv_SSRSlopeTolerance = UZ_CVAR_FLOAT("r.SSR.SlopeToleranceScale", 4.0f, "SSR slope tolerance scale", 1.f, 16.f);
-static auto* cv_SSRCopyPrev      = UZ_CVAR_BOOL("r.SSR.CopyPrev", true, "SSR prev-frame color copy");
+// r.Fog, r.Clouds and r.SSGI are registered where they are owned (fog_renderer.cpp, cloud_pass.cpp,
+// ssgi_renderer.cpp); the copies that lived here were never read (removed 2026-10-08).
+// r.SSR.MaxRoughness / NumSteps / StartMipLevel / SlopeToleranceScale are registered where they are read
+// (frame_gi_passes.cpp); the copies that lived here were never read (block A.8 list, removed 2026-10-08).
 // SSGI
-static auto* cv_SSGI             = UZ_CVAR_BOOL("r.SSGI", false, "Screen-Space Global Illumination");
 // DFS (Distance Field Shadows)
-static auto* cv_DFS              = UZ_CVAR_BOOL("r.DFS", true, "Distance Field Shadows");
+static auto* cv_DFS              = UZ_CVAR_BOOL("r.DFS", false,
+    "Distance Field Shadows (NOT IMPLEMENTED: the dfs_*_cs.hlsl shaders are empty scaffolds and the lighting "
+    "shader never reads dfsOutputSrvIndex; left off so the passes are not dispatched)");
 // Fog
-static auto* cv_Fog              = UZ_CVAR_BOOL("r.Fog", true, "Height fog");
 // Clouds
-static auto* cv_Clouds           = UZ_CVAR_BOOL("r.Clouds", true, "Volumetric clouds");
-// Post-process (used by lighting for CAS after TAA)
-static auto* cv_CASSharpness     = UZ_CVAR_FLOAT("r.CAS.Sharpness", 0.2f, "CAS sharpening strength", 0.f, 1.f);
+// Post-process: read into m_casSharpenStrength; no CAS pass is registered (see the end of frame_postprocess.cpp)
+static auto* cv_CASSharpness     = UZ_CVAR_FLOAT("r.CAS.Sharpness", 0.2f, "CAS sharpening strength (inert: CAS pass not wired)", 0.f, 1.f);
 static auto* cv_LODBias          = UZ_CVAR_FLOAT("r.LOD.Bias", 1.f, "Global LOD bias multiplier", 0.1f, 10.f);
 // Debug
 static auto* cv_DebugView        = UZ_CVAR_BOOL("r.DebugView", false, "GBuffer debug visualization");
@@ -146,26 +143,27 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         ptDesc.shadowAlloc       = ctx.shadowAlloc;
         ptDesc.bindless          = ctx.bindless;
 
-        // Real multi-bounce transport: TLAS + the shared b2 trace constants
-        // (GDF hit normals, material table, sun/sky). Without a TLAS the
-        // shader falls back to the occlusion-free sky estimate. The b2 CB
-        // is built inside the pass execution callback — at registration
-        // time the PerFrameCB is not populated yet.
-        if (m_rtManager && m_rtManager->IsReady()) {
-            ptDesc.tlasSrvIndex = m_rtManager->GetTLASSRVIndex();
-
-            const float sceneAlbedoAvg =
-                CVarRegistry::Get().GetFloat("r.GI.SceneAlbedo", 0.35f);
-            ptDesc.giCbRing         = m_cbRing.get();
-            ptDesc.gdf              = &m_globalDistanceField;
-            ptDesc.sceneAlbedo      = Vec3{sceneAlbedoAvg, sceneAlbedoAvg,
-                                           sceneAlbedoAvg};
+        // The shared b2 trace constants (GDF hit normals and albedo, sun, the
+        // skylight colour × intensity every sky read is scaled by) are bound on
+        // every bindless frame — the shader reads the skylight scale even
+        // without a TLAS. The CB is built inside the pass execution callback:
+        // at registration time the PerFrameCB is not populated yet.
+        if (ctx.bindless) {
+            ptDesc.giCbRing = m_cbRing.get();
+            ptDesc.gdf      = &m_globalDistanceField;
+        }
+        // Real multi-bounce transport: TLAS + the material table. Without a
+        // TLAS the shader falls back to the occlusion-free sky estimate.
+        // `IsReady()` alone admits an EMPTY TLAS: with the `r.RayTracing`
+        // master switch off RTManager never rebuilds it, so every ray would
+        // miss (the DDGI writer gates the same way).
+        if (m_rtManager && m_rtManager->IsReady() && m_rtManager->IsEnabled()
+            && m_rtManager->GetTLASInstanceCount() > 0u) {
+            ptDesc.tlasSrvIndex     = m_rtManager->GetTLASSRVIndex();
             ptDesc.skyCubemapSrv    =
                 (m_skyCubemap.IsValid() && m_skyCubemapSrv != UINT32_MAX)
                     ? m_skyCubemapSrv : UINT32_MAX;
             ptDesc.materialTableSrv = UpdateGIMaterialTable(ctx);
-            ptDesc.rcProbeShSrv     = m_radianceCache.IsInitialized()
-                ? m_radianceCache.GetProbeSHBufferSrv() : UINT32_MAX;
         }
         ptDesc.viewportWidth     = static_cast<float>(ctx.renderWidth);
         ptDesc.viewportHeight    = static_cast<float>(ctx.renderHeight);
@@ -183,13 +181,14 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
     RegisterDBufferApplyPass(rgBuilder, ctx);
     RegisterGTAOPass(rgBuilder, ctx);
     RegisterDFSPasses(rgBuilder, ctx);
-    RegisterSSGIPasses(rgBuilder, ctx);
     RegisterSDFGIPasses(rgBuilder, ctx);
+    RegisterSSGIPasses(rgBuilder, ctx);
     RegisterBrixelizerGIPasses(rgBuilder, ctx);
     RegisterSSRPasses(rgBuilder, ctx);
     
     // ── Env MIS temporal accumulation (render graph compute pass) ───────
-    if (m_envMISPass && m_envMISPass->IsInitialized()
+    if (ctx.perFrame.sdfReflectionsEnabled == 0 && m_envMisEnabled
+        && m_envMISPass && m_envMISPass->IsInitialized()
         && m_envMapSampler && m_envMapSampler->IsReady()) {
 
         rgBuilder.AddPass("EnvMIS_Temporal", [&](rg::RgPassBuilder& pb) {
@@ -209,6 +208,10 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                 misParams.envCubemapSrvIdx = m_hdriActive ? m_hdriCubemapSrv : m_skyCubemapSrv;
                 misParams.frameIndex       = ctx.frameIndex;
                 misParams.temporalAlpha    = 0.05f;
+                misParams.perFrameBuffer   = ctx.perFrameAlloc.bufferHandle;
+                misParams.perFrameOffset   = ctx.perFrameAlloc.offsetBytes;
+                misParams.perFrameCpu      = ctx.perFrameAlloc.cpuPtr;
+                misParams.perFrameSize     = ctx.perFrameAlloc.sizeBytes;
 
                 m_envMISPass->Execute(cmd, *m_envMapSampler, misParams);
             });
@@ -271,6 +274,59 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
     RegisterPassInspectorTargets(ctx);
 }
 
+// ── GI material table (reference path tracer bounce-hit albedo) ──
+
+uint32_t SceneRenderer::UpdateGIMaterialTable(const FrameContext& ctx) {
+    // Indexed by TLAS InstanceID (= meshId). Refreshed every frame from the
+    // draw list — a 2 KB Upload-heap memcpy. The albedo TEXTURE average is
+    // sampled in-shader at the mip tail; here we only record tint + SRV.
+    const uint32_t meshCap = static_cast<uint32_t>(m_meshes.size());
+    if (meshCap > 0
+        && (!m_giMaterialTable.IsValid()
+            || m_giMaterialTableCapacity < meshCap)) {
+        if (m_giMaterialTable.IsValid()) {
+            m_device->DestroyBuffer(m_giMaterialTable);
+            m_giMaterialTable = {};
+            m_giMaterialTableSrv = UINT32_MAX;
+        }
+        RHIBufferDesc desc{};
+        desc.sizeBytes = static_cast<uint64_t>(meshCap)
+                       * sizeof(GIMeshMaterialGPU);
+        desc.stride    = sizeof(GIMeshMaterialGPU);
+        desc.usage     = RHIBufferUsage::StructuredBuffer;
+        desc.memory    = RHIMemoryType::Upload;
+        desc.debugName = "GI_MaterialTable";
+        m_giMaterialTable = m_device->CreateBuffer(desc);
+        m_giMaterialTableSrv = m_giMaterialTable.IsValid()
+            ? m_device->GetBufferSRVIndex(m_giMaterialTable)
+            : UINT32_MAX;
+        m_giMaterialTableCapacity = meshCap;
+    }
+    if (m_giMaterialTable.IsValid()) {
+        auto* entries = static_cast<GIMeshMaterialGPU*>(
+            m_device->MapBuffer(m_giMaterialTable));
+        if (entries) {
+            for (uint32_t e = 0; e < meshCap; ++e) {
+                entries[e] = {1.f, 1.f, 1.f, UINT32_MAX};
+            }
+            for (const auto& dc : ctx.drawList.GetCommands()) {
+                if (dc.meshId >= meshCap) continue;
+                auto& entry = entries[dc.meshId];
+                entry.tintR = dc.baseColorTintR;
+                entry.tintG = dc.baseColorTintG;
+                entry.tintB = dc.baseColorTintB;
+                // Slot 0 doubles as "unset" in DrawCommand.
+                entry.albedoSrv =
+                    (dc.albedoSrvIndex != 0
+                     && dc.albedoSrvIndex != UINT32_MAX)
+                        ? dc.albedoSrvIndex : UINT32_MAX;
+            }
+            m_device->UnmapBuffer(m_giMaterialTable);
+        }
+    }
+    return m_giMaterialTableSrv;
+}
+
 // ── PassInspector Target Registration ───────────────────────────────────────
 // Registers intermediate render targets so the PassInspector can visualize
 // them in the debug UI. Must be called after all passes are registered since
@@ -288,7 +344,9 @@ void SceneRenderer::RegisterPassInspectorTargets(FrameContext& ctx) {
     m_passInspector.RegisterTarget("gbuffer.depth",     m_gbuffer.depth,      m_gbuffer.depthSRV,      VisDisplayMode::Depth,     rw, rh,
                                     RHIResourceState::DepthStencilWrite);
     m_passInspector.RegisterTarget("gbuffer.velocity",  m_gbuffer.velocity,   m_gbuffer.velocitySRV,   VisDisplayMode::Velocity,  rw, rh);
-    m_passInspector.RegisterTarget("gbuffer.emissive",  m_gbuffer.emissive,   m_gbuffer.emissiveSRV,   VisDisplayMode::Color,     rw, rh);
+    // RGB statistics: RT3.a packs specular + 16 x shading model (gbuffer_ps.hlsl), not an emissive quantity.
+    m_passInspector.RegisterTarget("gbuffer.emissive",  m_gbuffer.emissive,   m_gbuffer.emissiveSRV,   VisDisplayMode::Color,     rw, rh,
+                                    RHIResourceState::ShaderResource, DumpChannel::RGB);
     // World-space position GBuffer (RGBA32F or RGBA16F xyz).
     if (m_gbuffer.positionWS.IsValid() && m_gbuffer.positionWSSRV != UINT32_MAX) {
         m_passInspector.RegisterTarget("gbuffer.position", m_gbuffer.positionWS, m_gbuffer.positionWSSRV,
@@ -317,7 +375,7 @@ void SceneRenderer::RegisterPassInspectorTargets(FrameContext& ctx) {
         // Shadow atlas ends the frame in DepthStencilWrite (the render graph
         // does not emit restore barriers for imported depth resources).
         m_passInspector.RegisterTarget("shadow.atlas", m_shadowAtlas.GetTexture(), m_shadowAtlas.GetSrvIndex(),
-                                        VisDisplayMode::Grayscale, kShadowResolution, kShadowResolution,
+                                        VisDisplayMode::Grayscale, m_shadowAtlas.GetResolution(), m_shadowAtlas.GetResolution(),
                                         RHIResourceState::DepthStencilWrite);
     }
 
@@ -335,14 +393,17 @@ void SceneRenderer::RegisterPassInspectorTargets(FrameContext& ctx) {
 
     // SSGI intermediate textures
     const bool ssgiActive = m_ssgiRenderer.IsReady()
+                          && ctx.perFrame.ssgiEnabled != 0
                           && m_device->IsBindless()
                           && m_passInspector.IsPassEnabled("ssgi");
     if (ssgiActive) {
         const uint32_t hw = m_ssgiRenderer.GetHalfWidth();
         const uint32_t hh = m_ssgiRenderer.GetHalfHeight();
 
-        m_passInspector.RegisterTarget("ssgi.prev_color", m_ssgiRenderer.GetPrevColorTexture(),
+        if (ctx.perFrame.sdfDiffuseSamples == 0 && m_ssgiRenderer.HasPreviousSceneColor()) {
+            m_passInspector.RegisterTarget("ssgi.prev_color", m_ssgiRenderer.GetPrevColorTexture(),
                                         m_ssgiRenderer.GetPrevColorSrvIndex(), VisDisplayMode::Color, rw, rh);
+        }
         m_passInspector.RegisterTarget("ssgi.trace", m_ssgiRenderer.GetTraceTexture(),
                                         m_ssgiRenderer.GetTraceSrvIndex(), VisDisplayMode::HDR, hw, hh);
         m_passInspector.RegisterTarget("ssgi.denoised", m_ssgiRenderer.GetDenoisedTexture(),
@@ -431,20 +492,22 @@ void SceneRenderer::RegisterPassInspectorTargets(FrameContext& ctx) {
     // ── Lighting debug MRT targets (direct / indirect / shadow+AO) ────
     if (m_debugDirectLight.IsValid() && m_debugDirectLightSrv != UINT32_MAX) {
         m_passInspector.RegisterTarget("lighting.direct", m_debugDirectLight, m_debugDirectLightSrv,
-                                        VisDisplayMode::HDR, rw, rh);
+                                        VisDisplayMode::HDR, rw, rh, RHIResourceState::ShaderResource, DumpChannel::RGB);
     }
     if (m_debugIndirectLight.IsValid() && m_debugIndirectLightSrv != UINT32_MAX) {
         m_passInspector.RegisterTarget("lighting.indirect", m_debugIndirectLight, m_debugIndirectLightSrv,
-                                        VisDisplayMode::HDR, rw, rh);
+                                        VisDisplayMode::HDR, rw, rh, RHIResourceState::ShaderResource, DumpChannel::RGB);
     }
     if (m_debugShadowMask.IsValid() && m_debugShadowMaskSrv != UINT32_MAX) {
+        // float4(shadow, ao, 0, 1): the statistics read the shadow alone.
         m_passInspector.RegisterTarget("lighting.shadow", m_debugShadowMask, m_debugShadowMaskSrv,
-                                        VisDisplayMode::Grayscale, rw, rh);
+                                        VisDisplayMode::Grayscale, rw, rh, RHIResourceState::ShaderResource, DumpChannel::R);
     }
 
     // HDR scene color (after lighting + atmosphere, before postprocess)
+    // RGB statistics: the alpha is a constant 1 and pinned every max at 1.000 (followup-06 4.3).
     m_passInspector.RegisterTarget("hdr", m_hdrSceneColor, m_hdrSceneColorSrv,
-                                    VisDisplayMode::HDR, rw, rh);
+                                    VisDisplayMode::HDR, rw, rh, RHIResourceState::ShaderResource, DumpChannel::RGB);
 
     // DFS output
     const bool dfsEnabled = m_dfsConfig.enabled
@@ -522,12 +585,42 @@ void SceneRenderer::RegisterPassInspectorTargets(FrameContext& ctx) {
                                         VisDisplayMode::Color, rw, rh);
     }
 
+    // DDGI octahedral atlases (DXR probe update). Registered only once the
+    // first full atlas write completed — before that they hold their clear
+    // value and would report a misleading all-zero range.
+    if (m_ddgiSystem.IsInitialized() && m_ddgiSystem.HasCompletedFirstUpdate()) {
+        if (m_ddgiSystem.GetIrradianceTexture().IsValid()
+            && m_ddgiSystem.GetIrradianceSrv() != UINT32_MAX) {
+            m_passInspector.RegisterTarget("gi.ddgi_irradiance",
+                                           m_ddgiSystem.GetIrradianceTexture(),
+                                           m_ddgiSystem.GetIrradianceSrv(),
+                                           VisDisplayMode::HDR,
+                                           m_ddgiSystem.GetIrradianceAtlasWidth(),
+                                           m_ddgiSystem.GetIrradianceAtlasHeight());
+        }
+        if (m_ddgiSystem.GetDepthTexture().IsValid()
+            && m_ddgiSystem.GetDepthSrv() != UINT32_MAX) {
+            m_passInspector.RegisterTarget("gi.ddgi_depth",
+                                           m_ddgiSystem.GetDepthTexture(),
+                                           m_ddgiSystem.GetDepthSrv(),
+                                           VisDisplayMode::Grayscale,
+                                           m_ddgiSystem.GetDepthAtlasWidth(),
+                                           m_ddgiSystem.GetDepthAtlasHeight());
+        }
+    }
+
     // Global Distance Field cascade 0
     if (m_sdfGiEnabled) {
         const auto& clip = m_globalDistanceField.GetClipmap(0);
-        if (clip.texture.IsValid() && clip.srvIndex != UINT32_MAX) {
+        if (clip.hasData && clip.texture.IsValid() && clip.srvIndex != UINT32_MAX) {
+            const auto desc = m_device->GetTextureDesc(clip.texture);
             m_passInspector.RegisterTarget("gi.gdf_cascade0", clip.texture, clip.srvIndex,
-                                            VisDisplayMode::Grayscale, 64, 64);
+                                            VisDisplayMode::Grayscale, desc.width, desc.height);
+            if (clip.rawTexture.IsValid() && clip.rawSrvIndex != UINT32_MAX) {
+                const auto rawDesc = m_device->GetTextureDesc(clip.rawTexture);
+                m_passInspector.RegisterTarget("gi.gdf_raw_cascade0", clip.rawTexture, clip.rawSrvIndex,
+                                               VisDisplayMode::Grayscale, rawDesc.width, rawDesc.height);
+            }
         }
     }
 }

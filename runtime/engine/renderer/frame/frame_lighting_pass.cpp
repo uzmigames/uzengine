@@ -18,8 +18,15 @@
 #include "render_graph_resources.h"
 #include "profiler.h"
 #include "rhi.h"
+#include "cvar.h"
 
 #include <cstring>
+
+/// Lighting decomposition debug view, read by deferred_lighting_ps.hlsl
+/// through the lighting pass root constants (GBufferIndices).
+static auto* cv_LightingDebug = UZ_CVAR_INT("r.Lighting.DebugMode", 0,
+    "Lighting decomposition debug: 0=off 1=direct 2=indirect 3=GI irradiance 4=SSGI/SDF gather 5=AO 6=GI source map",
+    0, 6);
 
 namespace uz {
 
@@ -53,6 +60,83 @@ static bool IsPostLightingMode(DebugViewMode m) {
         || m == DebugViewMode::Reflections;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Light cull (block B.7)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// One compute dispatch per frame (`cluster_assign_cs.hlsl`, one thread per cluster) writes, for every
+// cluster of the view frustum, the indices of the point and spot lights whose range sphere touches
+// it. The deferred lighting then evaluates those lights only (`r.Lights.Clustered`, default 1); the
+// per-pixel loop over every light of the frame stays as the A/B control and as the fallback of a
+// cluster that overflowed its slots. The list buffer is sized for the render resolution and grows
+// with it. Its bindless indices travel in LightingCB, which the lighting pass binds already.
+
+void SceneRenderer::RegisterLightCullPass(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
+    auto* lightingCB = reinterpret_cast<LightingCB*>(ctx.lightingAlloc.cpuPtr);
+    if (!lightingCB || !ctx.bindless) return;
+    if ((lightingCB->clusterFlags & kClusterFlag_Enabled) == 0u) return;   // per-pixel loop (r.Lights.Clustered 0)
+    if (lightingCB->pointLightCount == 0 && lightingCB->spotLightCount == 0) return;   // nothing to cull: the loops are empty
+
+    const uint32_t clusters = lightingCB->clusterTilesX * lightingCB->clusterTilesY * lightingCB->clusterSlices;
+    const uint64_t neededBytes = static_cast<uint64_t>(clusters) * kClusterRecordUints * sizeof(uint32_t);
+    if (clusters == 0) return;
+    if (!m_clusterListBuffer.IsValid() || m_clusterListBytes < neededBytes) {
+        if (m_clusterListBuffer.IsValid()) {
+            m_device->DestroyBuffer(m_clusterListBuffer);
+            m_clusterListBuffer = {};
+        }
+        RHIBufferDesc desc{};
+        desc.sizeBytes = neededBytes;
+        desc.stride    = sizeof(uint32_t);
+        desc.usage     = RHIBufferUsage::StructuredBuffer | RHIBufferUsage::UnorderedAccess;
+        desc.debugName = "LightClusterList";
+        m_clusterListBuffer = m_device->CreateBuffer(desc);
+        m_clusterListBytes  = m_clusterListBuffer.IsValid() ? neededBytes : 0;
+        m_clusterListSrv    = m_clusterListBuffer.IsValid() ? m_device->GetBufferSRVIndex(m_clusterListBuffer) : UINT32_MAX;
+        m_clusterListUav    = m_clusterListBuffer.IsValid() ? m_device->GetBufferUAVIndex(m_clusterListBuffer) : UINT32_MAX;
+        m_clusterListState  = RHIResourceState::Common;
+        UZ_LOG(Renderer, Info, "LightCull: cluster list {} clusters ({}x{}x{}) x {} uints = {} bytes (SRV={}, UAV={})",
+               clusters, lightingCB->clusterTilesX, lightingCB->clusterTilesY, lightingCB->clusterSlices,
+               kClusterRecordUints, neededBytes, m_clusterListSrv, m_clusterListUav);
+    }
+    const RHIPipelineHandle pipeline = ctx.pipelines->GetLightCull();
+    if (!m_clusterListBuffer.IsValid() || !pipeline.IsValid()) return;   // the lighting keeps its per-pixel loop
+
+    lightingCB->clusterListSrv = m_clusterListSrv;
+    lightingCB->clusterListUav = m_clusterListUav;
+
+    const CBAllocation perFrame = ctx.perFrameAlloc;
+    const CBAllocation lighting = ctx.lightingAlloc;
+    const RHIBufferHandle buffer = m_clusterListBuffer;
+    const uint32_t groups = (clusters + 63u) / 64u;
+    const auto depthRes = ctx.depthRes;
+    rgBuilder.AddPass("LightCull", [=, this](rg::RgPassBuilder& pb) {
+        // The graph orders passes only through declared resources and this pass reads constant
+        // buffers alone: the depth read it does not perform places it after the GBuffer and, with
+        // the lighting pass's own depth read, before the lighting (block B.5's lesson).
+        pb.Read(depthRes, RHIResourceState::ShaderResource);
+        pb.SetExecutionCallback([=, this](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
+            RHIBarrierDesc toUav{};
+            toUav.buffer      = buffer;
+            toUav.stateBefore = m_clusterListState;
+            toUav.stateAfter  = RHIResourceState::UnorderedAccess;
+            cmd->ResourceBarrier(&toUav, 1);
+
+            cmd->SetPipeline(pipeline);
+            cmd->SetRootCBV(kSlotPerFrame, perFrame.bufferHandle, perFrame.offsetBytes, perFrame.cpuPtr, sizeof(PerFrameCB));
+            cmd->SetRootCBV(kSlotPerObject, lighting.bufferHandle, lighting.offsetBytes, lighting.cpuPtr, sizeof(LightingCB));
+            cmd->Dispatch(groups, 1, 1);
+
+            RHIBarrierDesc toSrv{};
+            toSrv.buffer      = buffer;
+            toSrv.stateBefore = RHIResourceState::UnorderedAccess;
+            toSrv.stateAfter  = RHIResourceState::ShaderResource;
+            cmd->ResourceBarrier(&toSrv, 1);
+            m_clusterListState = RHIResourceState::ShaderResource;
+        });
+    });
+}
+
 void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
     // ── Deferred Lighting / Debug View / GBuffer Debug ──────────────────
     const bool debugActive = false; // Legacy GBufferDebug force-off — kept for safety
@@ -83,7 +167,17 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
         dvDesc.depthTexture      = m_gbuffer.depth;
         dvDesc.positionTexture   = m_gbuffer.positionWS;
         dvDesc.hdrSrvIndex       = m_hdrSceneColorSrv;
-        dvDesc.ssrSrvIndex       = m_ssrResolvedOutputSrv;
+        dvDesc.ssrSrvIndex       = ctx.ssrActive ? m_ssrResolvedOutputSrv : UINT32_MAX;   // block B.5: never a stale SSR
+        // Lighting split targets — what `lighting`, `shadows` and `lightingonly` show.
+        dvDesc.directGBuffer     = ctx.debugDirectRes;
+        dvDesc.indirectGBuffer   = ctx.debugIndirectRes;
+        dvDesc.shadowGBuffer     = ctx.debugShadowRes;
+        dvDesc.directSrvIndex    = m_debugDirectLightSrv;
+        dvDesc.indirectSrvIndex  = m_debugIndirectLightSrv;
+        dvDesc.shadowSrvIndex    = m_debugShadowMaskSrv;
+        // GTAO for the `ao` view; UINT32_MAX falls back to the G-buffer alpha.
+        dvDesc.gtaoSrvIndex      = (m_gtaoPass && m_gtaoPass->IsInitialized() && m_gtaoPass->IsEnabledCVar())
+                                 ? m_gtaoPass->GetFilteredAOSrvIndex() : UINT32_MAX;
         dvDesc.bindless          = ctx.bindless;
         dvDesc.viewportWidth     = ctx.renderWidth;
         dvDesc.viewportHeight    = ctx.renderHeight;
@@ -96,6 +190,10 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
         AddDebugViewPass(rgBuilder, dvDesc);
         return;
     }
+
+    // ── Light cull (block B.7): the frame's local lights assigned to the clusters of the view ──
+    // Registered before the lighting pass, which reads the list through LightingCB.
+    RegisterLightCullPass(rgBuilder, ctx);
 
     if (!debugActive) {
         LightingPassDesc lightDesc{};
@@ -113,10 +211,15 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
         lightDesc.depthSrvIndex       = m_gbuffer.depthSRV;
         lightDesc.positionSrvIndex    = m_gbuffer.positionWSSRV;
         lightDesc.emissiveSrvIndex    = m_gbuffer.emissiveSRV;
-        lightDesc.envMisSrvIndex      = (m_envMISPass && m_envMISPass->IsInitialized())
+        // The env-MIS accumulation is the prefiltered-cubemap reflection path;
+        // when the SDF trace supplies reflections it must stay out, or the
+        // deferred pass adds a second specular term on top of the traced one.
+        lightDesc.envMisSrvIndex      = (ctx.perFrame.sdfReflectionsEnabled == 0 && m_envMisEnabled
+                                        && m_envMISPass && m_envMISPass->IsInitialized())
                                         ? m_envMISPass->GetAccumulatedSrv() : UINT32_MAX;
         lightDesc.iblPrefilteredSrvIndex = m_iblResult.prefilteredSrvIndex;
         lightDesc.iblIrradianceSrvIndex  = m_iblResult.irradianceSrvIndex;
+        lightDesc.lightingDebugMode      = static_cast<uint32_t>(cv_LightingDebug->value);
         lightDesc.albedoTexture       = m_gbuffer.albedo;
         lightDesc.normalTexture       = m_gbuffer.normal;
         lightDesc.depthTextureForSrv  = m_gbuffer.depth;
@@ -156,6 +259,9 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
         }
         lightDesc.apVolumeResource    = ctx.apVolumeRes;  // AP volume (read prev frame's data)
         // Debug MRT targets — lighting split visualization for --pass-dump
+        lightDesc.debugDirectResource   = ctx.debugDirectRes;
+        lightDesc.debugIndirectResource = ctx.debugIndirectRes;
+        lightDesc.debugShadowResource   = ctx.debugShadowRes;
         lightDesc.debugDirectLight    = m_debugDirectLight;
         lightDesc.debugIndirectLight  = m_debugIndirectLight;
         lightDesc.debugShadowMask     = m_debugShadowMask;
@@ -176,10 +282,10 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
         // the lighting pass has written hdrRes, then overwrite it with the debug view.
         if (needsLightingFirst) {
             auto dvDesc = makeDebugViewDesc();
-            // HDR resource was just written by the lighting pass — declare it as an
-            // input to the debug view pass so the render graph inserts the correct
-            // RT→SRV barrier before the fullscreen triangle reads it.
-            dvDesc.hdrGBuffer = ctx.hdrRes;
+            // The debug view WRITES this same HDR resource, and clears it first, so it must not
+            // also read it: `lightingonly` rendered black that way. The post-lighting modes now
+            // read the lighting split targets (Lighting, Shadows, LightingOnly) or the SSR result
+            // (Reflections), never their own output.
             // After debug view writes the HDR resource, the rest of the pipeline
             // (tonemap, TAA) reads it as before.  No extra transitions needed.
             AddDebugViewPass(rgBuilder, dvDesc);

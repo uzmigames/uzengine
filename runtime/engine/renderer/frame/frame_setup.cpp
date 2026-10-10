@@ -30,8 +30,10 @@
 #include "editor_grid.h"
 #include "stats_overlay.h"
 #include "viewport_toolbar.h"
+#include "tech_panel.h"
 #include "engine/vfx/editor/vfx_editor_overlay.h"
 #include "halton.h"
+#include "frame/taa_jitter.h"
 #include "cvar.h"
 
 #include <algorithm>
@@ -43,10 +45,16 @@
 // CVars below are used by the main SetupFrameData orchestration and ApplyCVars.
 // TAA disabled (jitter trembling bug). No anti-aliasing until fixed.
 static auto* cv_TAA                = UZ_CVAR_BOOL("r.TAA", false, "TAA anti-aliasing");
-static auto* cv_TAACurrentWeight   = UZ_CVAR_FLOAT("r.TAA.CurrentFrameWeight", 0.04f, "TAA current frame blend weight", 0.01f, 0.2f);
 static auto* cv_TAAJitterSeqLen    = UZ_CVAR_INT("r.TAA.JitterSequenceLength", 8, "TAA Halton jitter sequence length", 1, 16);
+static auto* cv_TAAJitterScale     = UZ_CVAR_FLOAT("r.TAA.JitterScale", 1.f,
+    "Diagnostic: scales the Halton jitter offsets (1 = production). 0 gives TAA accumulation with NO "
+    "sub-pixel offset, which is not the same as JitterSequenceLength=1 (that is a constant "
+    "Halton23(1) = (0, -0.167) px offset). Used by the followup-10 reconstruction experiments.", 0.f, 2.f);
 static auto* cv_PBRMinRoughness    = UZ_CVAR_FLOAT("r.PBR.MinRoughness", 0.045f, "Minimum roughness clamp", 0.01f, 0.2f);
-static auto* cv_DepthPrepass       = UZ_CVAR_BOOL("r.DepthPrepass", true, "Depth prepass before GBuffer");
+static auto* cv_DepthPrepass       = UZ_CVAR_BOOL("r.DepthPrepass", false,
+    "Depth prepass before the GBuffer (block B.4c: the GBuffer pass in depth-only mode, the colour pass then tests Equal). "
+    "Off by default: on Sponza prepass + GBuffer costs the same as the GBuffer alone (0.524 vs 0.514 ms at 1080p); "
+    "it pays where the GBuffer is overdrawn (a 48-wall stack: 0.180 -> 0.054 + 0.019 ms).");
 static auto* cv_ShadowDebug        = UZ_CVAR_INT("r.ShadowDebug", 0, "Shadow debug grid mode (0=off, 1-8)", 0, 8);
 
 namespace uz {
@@ -68,7 +76,11 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
                 m_width, m_height, ctx.bindless)) {
             m_statsOverlayInitialized = true;
         } else {
-            UZ_LOG(Renderer, Error, "SceneRenderer: failed to init stats overlay");
+            // Disable instead of retrying every frame (each retry ran End / Execute / WaitIdle / Begin
+            // and re-uploaded the fallback textures).
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to init stats overlay — disabling");
+            m_statsOverlay->Shutdown();
+            m_statsOverlay.reset();
         }
 
         // Upload 1x1 fallback textures for SM5 unconditional sampling.
@@ -91,8 +103,12 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     }
 
     // ── Destroy GPU buffers deferred from previous frame ────────────────
-    // Previous frame's fence has completed by now (Application::WaitForFrame),
-    // so it's safe to destroy buffers that were referenced by GPU commands.
+    // The frame fence only covers N-3; these buffers may belong to newer
+    // graphics or copy work (SDF bake staging in particular, which is queued
+    // from the copy queue). Drain all queues before releasing their storage.
+    if (!m_deferredDestroyBuffers.empty()) {
+        m_device->WaitIdle();
+    }
     for (auto& buf : m_deferredDestroyBuffers) {
         if (buf.IsValid()) {
             m_device->DestroyBuffer(buf);
@@ -187,11 +203,31 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
             UZ_LOG(Renderer, Info, "ViewportToolbar: initialized OK");
         } else {
             UZ_LOG(Renderer, Warning, "ViewportToolbar: init FAILED — toolbar disabled");
+            m_viewportToolbar->Shutdown();
+            m_viewportToolbar.reset();
         }
         ctx.cmdList->End();
         ctx.cmdList->Execute();
         m_device->WaitIdle();
         tbUpload.ReleaseStaging();
+        ctx.cmdList->Begin();
+    }
+
+    // ── Tech Panel deferred init (same pattern; not gated by editor mode) ─
+    if (!m_techPanelInitialized && m_techPanel) {
+        UploadContext tpUpload(m_device);
+        if (m_techPanel->Init(m_device, ctx.cmdList, tpUpload,
+                m_shaderMgr->GetPipeline(), RHIFormat::RGBA8Unorm,
+                m_width, m_height, ctx.bindless)) {
+            m_techPanelInitialized = true;
+        } else {
+            UZ_LOG(Renderer, Warning, "TechPanel: init FAILED — panel disabled");
+            m_techPanel.reset();
+        }
+        ctx.cmdList->End();
+        ctx.cmdList->Execute();
+        m_device->WaitIdle();
+        tpUpload.ReleaseStaging();
         ctx.cmdList->Begin();
     }
 
@@ -205,20 +241,36 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     }
 
     // ── Input ───────────────────────────────────────────────────────────
-    m_input->BeginFrame();
+    // Capture scroll delta BEFORE BeginFrame clears it — the VFX overlay
+    // reads scroll in HandleMouse which runs after BeginFrame.
+    const float preFrameScrollDelta = m_input->GetScrollDelta();
+    // Snapshot only. The host pumps window messages BEFORE RenderFrame, so the
+    // press/release edges and the scroll/raw deltas recorded by that pump belong
+    // to THIS frame: they are dropped by `EndFrame()` at the end of the overlay
+    // pass, after the last UI consumer. `BeginFrame()` here (= EndFrame +
+    // PrepareFrame) discarded them before anyone read them, which is why no
+    // `IsKeyJustPressed` / `IsMouseJustPressed` fired in the standalone runner.
+    m_input->PrepareFrame();
 
     // ── VFX Editor Overlay: handle mouse AFTER BeginFrame ────────────────
     // The overlay tracks just-pressed internally from IsMouseDown,
     // so it doesn't depend on InputSystem's BeginFrame timing.
+    // Inject the pre-BeginFrame scroll delta so the panel can scroll.
     bool vfxOverlayWantsMouse = false;
     if (m_vfxEditorOverlayInitialized && m_vfxEditorOverlay &&
         m_vfxEditorOverlay->IsVisible()) {
+        m_vfxEditorOverlay->InjectScrollDelta(preFrameScrollDelta);
         vfxOverlayWantsMouse = m_vfxEditorOverlay->HandleMouse(m_input.get(), ctx.dt);
     }
 
     // ── Viewport Toolbar: update + hit-test (editor mode only) ───────────
     if (m_editorMode && m_viewportToolbarInitialized && m_viewportToolbar) {
         m_viewportToolbar->Update(m_input.get(), m_editorInputHandler, this);
+    }
+
+    // ── Tech Panel: F3 toggle + hit-test, every frame, any mode ─────────
+    if (m_techPanelInitialized && m_techPanel) {
+        m_techPanel->Update(m_input.get(), this);
     }
 
     // ── Debug mode toggle: '0' = off, '1'-'7' = G-Buffer channels ──────
@@ -259,6 +311,7 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
             if (freeCam) {
                 const Camera& current = m_cameraManager->GetActiveCamera();
                 *freeCam = current; // Copy position, orientation, projection
+                m_cameraCtrl->InitFromCamera(*freeCam);   // yaw / pitch from the copied camera
             }
             m_cameraManager->PushCamera(m_editorFreeCamId);
         } else {
@@ -266,6 +319,7 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
             m_cameraManager->PopCamera();
             m_cameraManager->DestroyCamera(m_editorFreeCamId);
             m_editorFreeCamId = kInvalidCameraId;
+            m_cameraCtrl->InitFromCamera(m_cameraManager->GetActiveCamera());
         }
     }
 
@@ -340,9 +394,16 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
         }
 
         // Fallback fly cam when no ECS camera is active (typical for empty
-        // scenes or demos without a CameraComponent).
+        // scenes or demos without a CameraComponent) AND the active camera is
+        // the default Main camera (id=0) or the editor free camera (F5) —
+        // which reaches this branch in editor mode too, since its id is not 0.
+        // Other non-default cameras are controlled by Lua scripts via
+        // mgr_set_position/mgr_look_at. Until the parity-06 close-out the F5
+        // free camera was moved by no controller.
+        const bool editorFreeCamActive = m_editorFreeCamId != kInvalidCameraId
+            && m_cameraManager->GetActiveCameraId() == m_editorFreeCamId;
         if (!cameraFromECS && !vfxOverlayWantsMouse
-                && m_cameraManager->GetActiveCameraId() == 0) {
+                && (m_cameraManager->GetActiveCameraId() == 0 || editorFreeCamActive)) {
             m_cameraCtrl->Update(m_cameraManager->GetActiveCamera(), *m_input, ctx.dt);
         }
     }
@@ -370,29 +431,33 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
                  && m_passInspector.IsPassEnabled("taa");
 
     if (ctx.taaActive) {
-        // 1-based index into Halton(2,3) sequence, cycled every 8 samples.
-        // 8-sample Halton sequence (standard TAA jitter length).
-        const int32_t jitterIdx = static_cast<int32_t>((ctx.frameIndex % kDefaultJitterSequenceLength) + 1);
+        // 1-based index into the Halton(2,3) sequence, cycled every
+        // `r.TAA.JitterSequenceLength` frames (default kDefaultJitterSequenceLength = 8;
+        // the CVar was registered but the constant was used until 2026-09-09).
+        // Length 1 = TAA accumulation with a constant jitter (no sub-pixel offset).
+        const int32_t seqLen = std::max(1, static_cast<int32_t>(cv_TAAJitterSeqLen->value));
+        const int32_t jitterIdx = static_cast<int32_t>((ctx.frameIndex % static_cast<uint32_t>(seqLen)) + 1);
         Halton23(jitterIdx, ctx.jitterX, ctx.jitterY);
+        ctx.jitterX *= cv_TAAJitterScale->value;
+        ctx.jitterY *= cv_TAAJitterScale->value;
+        ctx.jitterIndex = static_cast<uint32_t>(jitterIdx);
     }
 
     // Store unjittered viewProj for reprojection and velocity computation.
     ctx.unjitteredViewProj = camera.GetViewProjection();
 
-    // Apply jitter to the projection matrix as a sub-pixel translation in clip space.
-    // The jitter is applied as an offset to the projection matrix's [2][0] and [2][1]
-    // elements, which translates the clip-space output by a sub-pixel amount.
+    // Apply the jitter as an NDC translation of the combined view-projection
+    // (see taa_jitter.h): every vertex moves by exactly (jitterX, jitterY)
+    // render pixels regardless of depth. Adding the offset to VP[2][0]/[2][1]
+    // — correct only for a pure projection matrix — made the shift depend on
+    // world z / depth and shook near geometry by many pixels (followup-07).
     // Uses RENDER resolution (not display) because the jitter is in pixel units of the
     // rendered image, which is the viewport the geometry is rasterized into.
     ctx.jitteredViewProj = ctx.unjitteredViewProj;
     if (ctx.taaActive) {
-        const float renderW = static_cast<float>(m_renderWidth);
-        const float renderH = static_cast<float>(m_renderHeight);
-        // Equivalent: SampleX * 2.0 / ViewRect.Width(), SampleY * -2.0 / ViewRect.Height()
-        // The *2 converts from pixel units to NDC (-1 to 1 range = 2 units per viewport dim).
-        // Y is negated because clip-space Y increases upward but pixel Y increases downward.
-        ctx.jitteredViewProj.m.m[2][0] += ctx.jitterX * 2.0f / renderW;
-        ctx.jitteredViewProj.m.m[2][1] += ctx.jitterY * -2.0f / renderH;
+        ctx.jitteredViewProj = ApplyTaaJitter(ctx.unjitteredViewProj, ctx.jitterX, ctx.jitterY,
+                                              static_cast<float>(m_renderWidth),
+                                              static_cast<float>(m_renderHeight));
     }
 
     // ── Per-frame constants: PerFrameCB, shadows, local light shadows ───
@@ -426,6 +491,15 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     ctx.emissiveRes = rgBuilder.ImportTexture("GBuf_Emissive",  m_gbuffer.emissive,   albState);
     ctx.velocityRes = rgBuilder.ImportTexture("GBuf_Velocity",  m_gbuffer.velocity,   albState);
     ctx.shadowAtlasRes = rgBuilder.ImportTexture("ShadowAtlas", m_shadowAtlas.GetTexture(), RHIResourceState::ShaderResource);
+
+    // Lighting split targets (SV_Target1..3 of the deferred pass). Imported so the graph can
+    // schedule the RenderTarget -> ShaderResource transition the `lighting` / `shadows` /
+    // `lightingonly` debug views need; without it those views read a target still bound as an RT.
+    if (m_debugDirectLight.IsValid() && m_debugIndirectLight.IsValid() && m_debugShadowMask.IsValid()) {
+        ctx.debugDirectRes   = rgBuilder.ImportTexture("Light_Direct",   m_debugDirectLight,   RHIResourceState::RenderTarget);
+        ctx.debugIndirectRes = rgBuilder.ImportTexture("Light_Indirect", m_debugIndirectLight, RHIResourceState::RenderTarget);
+        ctx.debugShadowRes   = rgBuilder.ImportTexture("Light_Shadow",   m_debugShadowMask,    RHIResourceState::RenderTarget);
+    }
 
     // ── DBuffer resource imports (decal system) ──────────────────────────
     if (m_dbufferA.IsValid() && m_dbufferB.IsValid() && m_dbufferC.IsValid()) {

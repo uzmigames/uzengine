@@ -108,6 +108,7 @@ Registered in `auto_exposure.cpp`.
 | `r.AutoExposure.LogLuminanceMax` | float | 20.0 | [0, 40] | Histogram log2 luminance max |
 | `r.AutoExposure.SpeedUp` | float | 3.0 | [0.1, 20] | Bright adaptation speed (EV/s) |
 | `r.AutoExposure.SpeedDown` | float | 1.0 | [0.1, 20] | Dark adaptation speed (EV/s) |
+| `r.AutoExposure.AdaptationLinearRange` | float | 1.5 | [0.1, 10] | EV gap above which adaptation is linear at the speed (exponential below) |
 
 ## SSGI Parameters
 
@@ -136,7 +137,10 @@ Registered in `frame_setup.cpp`.
 | CVar | Type | Default | Range | Description |
 |------|------|---------|-------|-------------|
 | `r.SkyLight.Intensity` | float | 1.0 | [0, 20] | IBL ambient multiplier |
-| `r.SkyLight.MinAmbient` | float | 0.25 | [0, 1] | Minimum ambient floor |
+| `r.SkyLight.MinAmbient` | float | 0 | [0, 1] | Minimum ambient floor (0 = the SkyLightComponent value; was 0.25 until 2026-10-05) |
+| `r.SkyLight.RebakeAngleDeg` | float | 0.25 | [0.01, 30] | Re-bake the sky IBL when the sun direction moved by more than this (degrees) |
+| `r.SkyLight.RebakeIntensityDelta` | float | 0.01 | [0.001, 1] | Re-bake the sky IBL when the sky sun colour changed by more than this (relative) |
+| `r.SkyLight.RebakeMinInterval` | int | 30 | [1, 3600] | Minimum sky passes between two IBL bakes |
 
 ## Tonemap Parameters
 
@@ -168,12 +172,12 @@ Registered in `frame_setup.cpp` / `scene_lifecycle.cpp`.
 
 | CVar | Type | Default | Range | Description |
 |------|------|---------|-------|-------------|
-| `r.ContactShadow.Length` | float | 0.02 | [0, 0.2] | Contact shadow ray length (screen %) |
-| `r.ContactShadow.Steps` | int | 12 | [4, 24] | Contact shadow ray march steps |
-| `r.ContactShadow.Thickness` | float | 0.01 | [0.0001, 0.1] | Contact shadow geometry thickness |
-| `r.Shadow.AtlasResolution` | int | 2048 | [512, 8192] | Main shadow atlas resolution |
-| `r.Shadow.LocalAtlasSize` | int | 4096 | [1024, 8192] | Local light shadow atlas resolution |
-| `r.Shadow.LocalTileSize` | int | 1024 | [256, 2048] | Per-light shadow tile size |
+| `r.ContactShadow.Length` | float | 0.01 | [0, 0.05] | Contact shadow ray length as a fraction of the far plane (0 disables; steps and thickness are `r.Shadow.ContactShadowSteps` / `r.Shadow.ContactShadowThickness` below) |
+| `r.Shadow.AtlasResolution` | int | 4096 | [512, 8192] | Per-cascade shadow map resolution, read by `ShadowAtlas::Init` |
+| `r.Shadow.LocalAtlasSize` | int | 4096 | [1024, 8192] | Local light shadow atlas resolution, read by `LocalLightShadowAtlas::Init` |
+| `r.Shadow.LocalTileSize` | int | 1024 | [256, 2048] | Per-light shadow tile size (tiles = min((atlas / tile)^2, 16)) |
+| `r.Shadow.Local.NormalOffset` | float | 0.005 | [0, 0.05] | Local light shadows: receiver offset along the geometric normal, as a fraction of the distance to the light |
+| `r.Shadow.Local.NearPlane` | float | 1.0 | [0.01, 50] | Local light shadow tiles: near plane in cm |
 | `r.Shadow.PCSS.SearchSamples` | int | 16 | [8, 32] | PCSS blocker search sample count |
 | `r.Shadow.PCSS.Samples` | int | 32 | [16, 64] | PCSS PCF filter sample count |
 | `r.Shadow.PCSS.MaxSharpness` | float | 4.0 | [1, 8] | PCSS post-PCF sharpening limit |
@@ -461,7 +465,7 @@ Every CVar default matches the previously hardcoded value — zero visual regres
 | CVar | Type | Default | Range | Description |
 |------|------|---------|-------|-------------|
 | `r.Material.DielectricF0` | float | 0.04 | [0.01, 0.08] | Dielectric Fresnel F0 |
-| `r.Material.MinGGXAlpha` | float | 0.0064 | [0.001, 0.01] | Min GGX alpha (prevents aliasing) |
+| `r.Material.MinGGXAlpha` | float | 0.0016 | [0.0001, 0.01] | Min GGX alpha = min roughness squared (0.0016 = the 0.04 roughness floor that was a shader literal until 2026-10-05) |
 
 ### SSR (2 CVars — fixed deprecated CVarRegistry)
 

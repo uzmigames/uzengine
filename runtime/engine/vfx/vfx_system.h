@@ -156,6 +156,45 @@ public:
     /// Returns true if the system has been initialized.
     [[nodiscard]] bool IsInitialized() const noexcept { return initialized_; }
 
+    // ── Runtime scalability state (driven by `r.VFX.*` CVars) ───────────
+    //
+    // The CVar values are sampled once per `Tick()` and cached on the
+    // VFXSystem so per-frame inline dispatch / render code does not have
+    // to hit the registry hash lookup hundreds of times. Getters return
+    // the values cached on the most-recent Tick.
+
+    /// Returns `true` when GPU compute simulation is allowed.
+    /// Mirror of `r.VFX.AllowGPUSim` after `Tick()`.
+    [[nodiscard]] bool IsGPUSimAllowed() const noexcept { return allowGPUSim_; }
+
+    /// Returns the current quality level (0=low, 1=medium, 2=high, 3=cinematic).
+    /// Mirror of `r.VFX.QualityLevel`.
+    [[nodiscard]] uint32_t GetQualityLevel() const noexcept { return qualityLevel_; }
+
+    /// Returns the spawn-rate multiplier for the active quality level.
+    /// 0.25 (low) -> 0.5 (medium) -> 1.0 (high) -> 1.5 (cinematic).
+    [[nodiscard]] float GetQualitySpawnRateMultiplier() const noexcept;
+
+    /// Returns the LOD-distance multiplier for the active quality level.
+    /// 0.5 (low) -> 0.75 (medium) -> 1.0 (high) -> 1.5 (cinematic).
+    [[nodiscard]] float GetQualityLodDistanceMultiplier() const noexcept;
+
+    /// Returns `true` when global VFX simulation is paused
+    /// (`r.VFX.SimulatePaused = 1`). Render still runs — only sim dt is
+    /// short-circuited to zero.
+    [[nodiscard]] bool IsSimulationPaused() const noexcept { return simulationPaused_; }
+
+    /// Returns the global VFX dt multiplier (`r.VFX.TimeScale`). Default 1.0.
+    /// Slow-mo: 0..1; fast-forward: > 1; zero: same effect as
+    /// `IsSimulationPaused()` but also short-circuits emitter timeScale.
+    [[nodiscard]] float GetTimeScale() const noexcept { return timeScale_; }
+
+    /// Looks up a registered emitter by name. Returns `nullptr` when no
+    /// emitter has the given name. Used by the public C API for
+    /// `uz_vfx_seek`/`uz_vfx_pause`/etc to address emitters from outside
+    /// the engine without exposing raw pointers.
+    [[nodiscard]] ParticleEmitter* FindEmitterByName(const std::string& name) const noexcept;
+
 private:
     /// Built-in and user module factory registry.
     std::unique_ptr<ModuleRegistry> moduleRegistry_;
@@ -171,6 +210,16 @@ private:
 
     /// Whether Initialize() has been called.
     bool initialized_ = false;
+
+    /// Stored so `Tick` can poll the per-emitter `aliveCount` readback
+    /// ring without plumbing a device pointer through every call site.
+    IRHIDevice* device_ = nullptr;
+
+    // ── Cached scalability state (sampled once per `Tick()` from CVars) ──
+    bool     allowGPUSim_      = true;   ///< r.VFX.AllowGPUSim
+    uint32_t qualityLevel_     = 2u;     ///< r.VFX.QualityLevel (0..3, default High)
+    bool     simulationPaused_ = false;  ///< r.VFX.SimulatePaused
+    float    timeScale_        = 1.0f;   ///< r.VFX.TimeScale
 };
 
 } // namespace uz

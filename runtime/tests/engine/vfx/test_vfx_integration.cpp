@@ -25,7 +25,7 @@ using uz::test::MockRHIDevice;
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Creates a VFXSystem, initializes one emitter with the exact parameters from
-/// the spec (maxParticles=5000, emissionRate=1000, gravity=[0,-9.81,0],
+/// the spec (maxParticles=5000, emissionRate=1000, gravity=[0,0,-981],
 /// damping=0.98, lifetime=3.0), registers it, ticks 60 frames at dt=0.016,
 /// unregisters, and shuts down — must complete without crashes.
 ///
@@ -44,7 +44,7 @@ TEST(VFXIntegration, FullLifecycle_SingleEmitter_60Frames_NoErrors) {
     ParticleEmitter emitter;
     emitter.maxParticles  = 5000u;
     emitter.emissionRate  = 1000.0f;
-    emitter.gravity       = {0.0f, -9.81f, 0.0f};
+    emitter.gravity       = {0.0f, 0.0f, -981.0f};
     emitter.damping       = 0.98f;
     emitter.lifetime      = 3.0f;
     emitter.isEmitting    = true;

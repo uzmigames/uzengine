@@ -292,11 +292,6 @@ TEST(BuildPerFrameCB_CustomLighting, CustomSunDirection_IsReflectedInLightDir) {
     EXPECT_NEAR(cb.lightDir.z, 0.f, kEps) << "lightDir.z should be 0";
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// BuildPerFrameCB — struct size guarantee
-// ─────────────────────────────────────────────────────────────────────────────
-
-TEST(BuildPerFrameCB_StructSize, PerFrameCB_Is768Bytes) {
-    // This verifies the D3D12 CB alignment requirement is met.
-    EXPECT_EQ(sizeof(PerFrameCB), 768u);
-}
+// The PerFrameCB size test that lived here expected 768 bytes, stale since the CB grew to 1024; the size is
+// pinned by the static_assert in constant_buffers.h and by test_constant_buffers.cpp, test_ibl_atmosphere.cpp
+// and test_material.cpp (removed 2026-10-08, followup-14 item 1.6 / indoor-lighting 8.2).

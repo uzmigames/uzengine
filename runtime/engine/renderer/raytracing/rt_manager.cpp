@@ -83,6 +83,11 @@ uint32_t RTManager::GetTLASSRVIndex() const {
     return m_tlasMgr.GetTLASSRVIndex();
 }
 
+uint32_t RTManager::GetTLASInstanceCount() const {
+    if (!m_initialized) return 0;
+    return m_tlasMgr.GetLastInstanceCount();
+}
+
 bool RTManager::IsEnabled() const {
     return m_initialized && cv_RTEnabled->value >= 0.5f;
 }

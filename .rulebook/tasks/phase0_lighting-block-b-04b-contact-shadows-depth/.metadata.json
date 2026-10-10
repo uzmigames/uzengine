@@ -1,0 +1,6 @@
+{
+  "status": "completed",
+  "createdAt": "2026-10-07T00:55:24.358Z",
+  "updatedAt": "2026-10-07T21:35:32.000Z",
+  "resolution": "done 2026-10-07, commit 8aeb8917: LinearizeDepthReversedZ fixed and the contact shadow march rewritten in clip space; test_contact_shadows.py 9/9"
+}

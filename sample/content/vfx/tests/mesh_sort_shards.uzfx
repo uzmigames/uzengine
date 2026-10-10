@@ -1,0 +1,42 @@
+{
+  "_comment": "Demo asset for phase16_vfx-particle-sort-pipeline-refactor section 5.1. 200 transparent mesh particles using MeshRenderModule with sortMode=ViewDepth — exercises the inline sort dispatch + deterministic-slot mesh CS write path. Renders shards in correct back-to-front order regardless of camera angle. blendMode=2 (PremulAlpha) keeps the alpha-blend test honest; ViewDepth is required to avoid visible alpha-blend artefacts on translucent crystal shards.",
+  "maxParticles": 200,
+  "emissionRate": 40.0,
+  "lifetime": 5.0,
+  "lifetimeVariation": 0.5,
+  "spawnVelocity": [0.0, 0.0, 80.0],
+  "velocityVariation": 60.0,
+  "spreadAngle": 30.0,
+  "gravity": [0.0, 0.0, -200.0],
+  "damping": 0.05,
+  "spawnRadius": 40.0,
+  "initialSize": 18.0,
+  "initialColor": [0.65, 0.85, 1.0, 0.55],
+  "spawnShape": 1,
+  "emissiveIntensity": 0.6,
+  "blendMode": 2,
+  "softFadeDistance": 8.0,
+  "facingMode": 0,
+  "stretchFactor": 0.0,
+  "stages": [
+    {
+      "stage": "Render",
+      "modules": [
+        {
+          "type": "mesh_render",
+          "instanceId": "shard_renderer",
+          "enabled": true,
+          "config": {
+            "mesh_path": "meshes/test_shard.uzmesh",
+            "material_path": "materials/test_glass.uzmat",
+            "mesh_scale": [1.0, 1.0, 1.0],
+            "cast_shadow": false,
+            "rotation_mode": "Random",
+            "sort_mode": "ViewDepth",
+            "max_instances": 256
+          }
+        }
+      ]
+    }
+  ]
+}

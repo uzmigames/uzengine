@@ -51,9 +51,11 @@
 /// - t1: StructuredBuffer<float4>           velocities (xyz=vel, w=unused)
 /// - t2: StructuredBuffer<float>            ages
 /// - t3: StructuredBuffer<float>            lifespans
+/// - t4: StructuredBuffer<float4>           colors     (rgba per particle)
 /// - u0: RWStructuredBuffer<float4x4>       instanceTransforms
 /// - u1: RWStructuredBuffer<uint>           instanceCount (1 element)
 /// - u2: RWByteAddressBuffer                indirectArgs (20 bytes)
+/// - u3: RWStructuredBuffer<float4>         instanceColors (rgba per instance)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -66,6 +68,15 @@ static const uint MESH_INSTANCE_GROUP_SIZE = 256;
 static const uint kRotationMode_None            = 0u;
 static const uint kRotationMode_VelocityAligned = 1u;
 static const uint kRotationMode_Random          = 2u;
+
+/// Sort mode enum values -- must match MeshSortMode in mesh_render_module.h.
+/// When sortMode != None and sortedIndicesSrvIndex is valid, the CS reads
+/// sortedIndices[dtid.x] to translate a sorted output slot back to the
+/// underlying particle index, then writes the transform to slot dtid.x with
+/// no atomic. The result is an instance buffer ordered by the sort key.
+static const uint kSortMode_None            = 0u;
+static const uint kSortMode_ViewDepth       = 1u;
+static const uint kSortMode_CustomAttribute = 2u;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Indirect Args Buffer Byte Offsets
@@ -84,7 +95,18 @@ static const uint INDIRECT_START_INSTANCE_OFFSET = 16;  ///< StartInstanceLocati
 /// Per-dispatch constants uploaded by the CPU each frame.
 ///
 /// Layout is 16-byte aligned per HLSL packing rules.
-cbuffer VFXMeshInstanceConstants : register(b0) {
+// CB lives at b1 to match the bindless root signature: slot 0 is reserved
+// for `RootConstants(16 DWORDs)` (per dx12_pso_creation.cpp:182-187), and
+// slot 1 is the CBV. Other VFX compute shaders (particle_spawn_cs,
+// particle_death_spawn_cs, particle_indirect_args_cs) all bind at b1 too —
+// previously this CS was at b0, which caused `SetRootCBV(0)` to silently
+// no-op against the RootConstants slot, leaving every CB field as zero,
+// `aliveCount` reading 0, and ALL threads early-returning at
+// `if (sortedSlot >= aliveCount) return;` — the mesh CS produced zero
+// instances for any asset-driven mesh emitter.
+//
+// @ref phase0_vfx-mesh-particle-visibility-debug
+cbuffer VFXMeshInstanceConstants : register(b1) {
     // ── Simulation parameters ─────────────────────────────────────────────
     uint     aliveCount;             ///< Total alive particles to process.     0
     float    meshScaleX;             ///< Per-instance X scale.                 4
@@ -93,8 +115,8 @@ cbuffer VFXMeshInstanceConstants : register(b0) {
 
     uint     rotationMode;           ///< MeshRotationMode enum ordinal.        16
     uint     meshIndexCount;         ///< Index count for DrawIndexedInstanced. 20
-    uint     _pad0;                  ///<                                       24
-    uint     _pad1;                  ///<                                       28
+    uint     sortMode;               ///< MeshSortMode enum ordinal (0=None).   24
+    uint     sortedIndicesSrvIndex;  ///< Sort buffer SRV (UINT32_MAX = no sort).28
 
 #ifdef UZ_BINDLESS
     // ── Bindless descriptor indices: READ set (SRV) ───────────────────────
@@ -103,11 +125,17 @@ cbuffer VFXMeshInstanceConstants : register(b0) {
     uint     agesSrvIndex;           ///< StructuredBuffer<float>  ages.       40
     uint     lifespansSrvIndex;      ///< StructuredBuffer<float>  lifespans.  44
 
+    uint     colorsSrvIndex;         ///< StructuredBuffer<float4> colors.     48
+    uint     _pad_srv;               ///<                                      52
+
     // ── Bindless descriptor indices: output UAVs ──────────────────────────
-    uint     instanceTransformsUavIndex; ///< RWStructuredBuffer<float4x4>.    48
-    uint     instanceCountUavIndex;      ///< RWStructuredBuffer<uint> (1 el). 52
-    uint     indirectArgsUavIndex;       ///< RWByteAddressBuffer (20 bytes).  56
-    uint     _pad2;                      ///<                                  60
+    uint     instanceTransformsUavIndex; ///< RWStructuredBuffer<float4x4>.    56
+    uint     instanceCountUavIndex;      ///< RWStructuredBuffer<uint> (1 el). 60
+
+    uint     indirectArgsUavIndex;       ///< RWByteAddressBuffer (20 bytes).  64
+    uint     instanceColorsUavIndex;     ///< RWStructuredBuffer<float4>.      68
+    uint     _pad2;                      ///<                                  72
+    uint     _pad3;                      ///<                                  76
 #endif
 };
 
@@ -117,9 +145,11 @@ StructuredBuffer<float4>           sm5_positions       : register(t0);
 StructuredBuffer<float4>           sm5_velocities      : register(t1);
 StructuredBuffer<float>            sm5_ages            : register(t2);
 StructuredBuffer<float>            sm5_lifespans       : register(t3);
+StructuredBuffer<float4>           sm5_colors          : register(t4);
 RWStructuredBuffer<float4x4>       sm5_instanceXforms  : register(u0);
 RWStructuredBuffer<uint>           sm5_instanceCount   : register(u1);
 RWByteAddressBuffer                sm5_indirectArgs    : register(u2);
+RWStructuredBuffer<float4>         sm5_instanceColors  : register(u3);
 #endif
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -264,17 +294,21 @@ float4x4 BuildRandomTRS(float3 pos, uint particleIdx,
 [numthreads(MESH_INSTANCE_GROUP_SIZE, 1, 1)]
 void main(uint3 dtid : SV_DispatchThreadID)
 {
-    uint particleIdx = dtid.x;
+    // dtid.x maps directly to the sorted output slot when sorting is enabled.
+    // For unsorted (sortMode == None), it doubles as the source particleIdx.
+    uint sortedSlot = dtid.x;
 
     // ── Bind UAV resources ───────────────────────────────────────────────────
 #ifdef UZ_BINDLESS
-    RWStructuredBuffer<uint>    instanceCount    = ResourceDescriptorHeap[instanceCountUavIndex];
-    RWByteAddressBuffer         indirectArgs     = ResourceDescriptorHeap[indirectArgsUavIndex];
-    RWStructuredBuffer<float4x4> instanceXforms  = ResourceDescriptorHeap[instanceTransformsUavIndex];
+    RWStructuredBuffer<uint>     instanceCount    = ResourceDescriptorHeap[instanceCountUavIndex];
+    RWByteAddressBuffer          indirectArgs     = ResourceDescriptorHeap[indirectArgsUavIndex];
+    RWStructuredBuffer<float4x4> instanceXforms   = ResourceDescriptorHeap[instanceTransformsUavIndex];
+    RWStructuredBuffer<float4>   instanceColors   = ResourceDescriptorHeap[instanceColorsUavIndex];
 #else
     #define instanceCount    sm5_instanceCount
     #define indirectArgs     sm5_indirectArgs
     #define instanceXforms   sm5_instanceXforms
+    #define instanceColors   sm5_instanceColors
 #endif
 
     // ── One-time initialisation by thread 0 ─────────────────────────────────
@@ -285,18 +319,34 @@ void main(uint3 dtid : SV_DispatchThreadID)
     //
     // This avoids needing a dedicated clear dispatch before this CS runs.
     // The UAV barrier before the draw call ensures visibility.
-    if (particleIdx == 0) {
+    if (sortedSlot == 0) {
         instanceCount[0] = 0;
 
         indirectArgs.Store(INDIRECT_INDEX_COUNT_OFFSET,    meshIndexCount);
         indirectArgs.Store(INDIRECT_START_INDEX_OFFSET,    0u);
         indirectArgs.Store(INDIRECT_BASE_VERTEX_OFFSET,    0u);
         indirectArgs.Store(INDIRECT_START_INSTANCE_OFFSET, 0u);
-        // InstanceCount (offset 4) will be written by the alive-particle loop below.
+        // InstanceCount (offset 4) is written via InterlockedMax/Add by
+        // every alive thread BELOW — both sorted and unsorted paths.
     }
 
     // ── Early exit for excess threads ────────────────────────────────────────
-    if (particleIdx >= aliveCount) return;
+    if (sortedSlot >= aliveCount) return;
+
+    // ── Resolve the source particle index ────────────────────────────────────
+    // Without sort: identity mapping (slot N reads particle N).
+    // With sort:    StructuredBuffer<uint> sortedIndices[slot] is the bitonic
+    //               sort output — slot 0 is the farthest, slot aliveCount-1 is
+    //               the nearest. Writing transform[slot] in this order yields
+    //               a back-to-front instance buffer with no atomic.
+    uint particleIdx = sortedSlot;
+#ifdef UZ_BINDLESS
+    if (sortMode != kSortMode_None && sortedIndicesSrvIndex != 0xFFFFFFFFu) {
+        StructuredBuffer<uint> sortedIndices =
+            ResourceDescriptorHeap[sortedIndicesSrvIndex];
+        particleIdx = sortedIndices[sortedSlot];
+    }
+#endif
 
     // ── Read particle attributes from SRV buffers ────────────────────────────
 #ifdef UZ_BINDLESS
@@ -304,21 +354,41 @@ void main(uint3 dtid : SV_DispatchThreadID)
     StructuredBuffer<float4> velocitiesBuf = ResourceDescriptorHeap[velocitiesSrvIndex];
     StructuredBuffer<float>  agesBuf       = ResourceDescriptorHeap[agesSrvIndex];
     StructuredBuffer<float>  lifespansBuf  = ResourceDescriptorHeap[lifespansSrvIndex];
+    StructuredBuffer<float4> colorsBuf     = ResourceDescriptorHeap[colorsSrvIndex];
 #else
     #define positionsBuf   sm5_positions
     #define velocitiesBuf  sm5_velocities
     #define agesBuf        sm5_ages
     #define lifespansBuf   sm5_lifespans
+    #define colorsBuf      sm5_colors
 #endif
 
     float  age      = agesBuf[particleIdx];
-    float  lifespan = max(lifespansBuf[particleIdx], 0.001f);
+    float  lifespan = lifespansBuf[particleIdx];
 
-    // ── Skip dead particles ───────────────────────────────────────────────────
-    if (age >= lifespan) return;
+    // ── Skip dead AND unspawned particles ────────────────────────────────────
+    // The CPU dispatches `cpuAliveCount = capacity` threads (Godot pattern:
+    // GPU free-list handles slot allocation; CPU just dispatches the full
+    // buffer). For mesh particles this means many of the threads target
+    // slots that are either:
+    //   (a) dead — `age >= lifespan` (the post-decay state for a returned slot)
+    //   (b) unspawned — `lifespan == 0.0f` (the zero-init state from
+    //       GPUParticleBuffer::InitializeData; spawn writes a positive
+    //       lifespan only when it actually consumes the slot)
+    // BOTH must early-return. The previous `lifespan = max(..., 0.001f)`
+    // clamp masked case (b) — unspawned slots with lifespan=0 became
+    // `0 >= 0.001f = false` and produced a transform from garbage position
+    // / velocity / colour data, filling the indirect args' InstanceCount
+    // with the full capacity even when only a handful of particles were
+    // alive. The mesh draw then rendered ~200 garbage instances on top
+    // of the real ones.
+    //
+    // @ref phase0_vfx-mesh-particle-visibility-debug
+    if (lifespan <= 0.0f || age >= lifespan) return;
 
-    float3 pos = positionsBuf[particleIdx].xyz;
-    float3 vel = velocitiesBuf[particleIdx].xyz;
+    float3 pos   = positionsBuf[particleIdx].xyz;
+    float3 vel   = velocitiesBuf[particleIdx].xyz;
+    float4 color = colorsBuf[particleIdx];
 
     float sx = meshScaleX;
     float sy = meshScaleY;
@@ -337,29 +407,66 @@ void main(uint3 dtid : SV_DispatchThreadID)
     }
 
     // ── Claim an output slot and write the transform ──────────────────────────
-    uint instanceSlot = 0;
-    InterlockedAdd(instanceCount[0], 1, instanceSlot);
+    // Sorted path: dtid.x already IS the back-to-front draw slot, and the
+    // dispatch range is [0..aliveCount-1]. Writing transform[sortedSlot]
+    // directly (no atomic, no instance-count contention) preserves the sort
+    // order in the instance buffer, and lets thread 0 announce the final
+    // instance count up front.
+    //
+    // Unsorted path: any thread might be processing a dead particle, so the
+    // CS still needs an atomic to compact the alive set into a contiguous
+    // [0..numAlive-1] instance buffer.
+    uint instanceSlot;
+#ifdef UZ_BINDLESS
+    const bool isSorted = (sortMode != kSortMode_None &&
+                           sortedIndicesSrvIndex != 0xFFFFFFFFu);
+#else
+    const bool isSorted = false;
+#endif
+
+    if (isSorted) {
+        // Sorted path: each surviving thread writes to its sorted slot
+        // index AND atomically tracks the highest occupied slot via
+        // InterlockedMax on instanceCount + indirectArgs.InstanceCount.
+        // The CPU dispatches `cpuAliveCount` threads (currently set to
+        // capacity per the Godot LIFO-spawn pattern), and the dead-check
+        // above filters out unspawned slots. The atomic-max approach
+        // matches the unsorted path's compaction semantics WITHOUT
+        // depending on thread 0 surviving the dead-check (the prior
+        // "thread 0 pins aliveCount" optimisation broke when slot 0 was
+        // unspawned — the common case for LIFO free-list spawning where
+        // most low-indexed slots stay empty until late in steady-state).
+        // @ref phase0_vfx-mesh-bindless-attr-read-bug
+        instanceSlot = sortedSlot;
+        uint prevSorted;
+        InterlockedMax(instanceCount[0], sortedSlot + 1u, prevSorted);
+    } else {
+        InterlockedAdd(instanceCount[0], 1, instanceSlot);
+    }
 
     instanceXforms[instanceSlot] = transform;
+    instanceColors[instanceSlot] = color;
 
-    // ── Update indirect args instance count ──────────────────────────────────
-    // Write instance count into the indirect args buffer. Because multiple
-    // threads write this concurrently, we use an interlocked max (equivalent
-    // to a store of the final count). After all threads complete, the value
-    // at offset 4 equals the total number of instances written.
-
-    // Atomic max ensures the last alive slot wins.
-    // (instanceSlot + 1) is the running upper bound on the instance count.
-    uint prev;
-    indirectArgs.InterlockedMax(INDIRECT_INSTANCE_COUNT_OFFSET, instanceSlot + 1u, prev);
+    // ── Update indirect args instance count ─────────────────────────────
+    // Atomic max ensures the last alive slot wins. (instanceSlot + 1) is
+    // the running upper bound on the instance count. Both paths use this
+    // — for sorted, it matches the sortedSlot ordering; for unsorted, it
+    // matches the InterlockedAdd-claimed slot.
+    {
+        uint prev;
+        indirectArgs.InterlockedMax(INDIRECT_INSTANCE_COUNT_OFFSET,
+                                    instanceSlot + 1u, prev);
+    }
 
 #ifndef UZ_BINDLESS
     #undef instanceCount
     #undef indirectArgs
     #undef instanceXforms
+    #undef instanceColors
     #undef positionsBuf
     #undef velocitiesBuf
     #undef agesBuf
     #undef lifespansBuf
+    #undef colorsBuf
 #endif
 }

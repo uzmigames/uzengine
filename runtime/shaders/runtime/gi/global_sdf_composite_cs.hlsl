@@ -1,108 +1,129 @@
-/// UzEngine Global SDF Composite — merge per-mesh SDFs into a clipmap cascade.
-///
-/// One thread per voxel of one 64³ R16F clipmap. Each voxel stores the
-/// minimum world-space distance (cm) to any registered mesh surface:
-///   - Transform the voxel's world position into each mesh's local space
-///     (world→local 3x4 from the mesh entry).
-///   - Inside the mesh's SDF volume: trilinear-sample the baked distance.
-///   - Outside: the distance to the volume's AABB is a safe LOWER bound of
-///     the distance to any surface inside it (sphere-trace conservative).
-///   - Take the minimum across meshes, scaled back to world units.
-///
-/// Replaces the empty stub that left every clipmap zeroed — distance 0
-/// everywhere reads as "surface at every point", which made every GDF
-/// sphere-trace hit at the first step and silently killed SDF GI.
-///
-/// Bindings (matches GlobalDistanceField::CompositeFromMeshSDFs):
-///   b0 root constants (8 DWORDs): outputUav, meshCount, clipmapIndex,
-///                                 resolution, clipmapCenter.xyz, clipmapExtent
-///   b2 cbuffer: GdfMeshSdfGPU meshes[256] (96 B each, CPU-packed)
-///
-/// @ref Wright/Crassin 2018 "Distance Field Ray Tracing" — global clipmap
-///      composited from per-mesh SDF volumes
-/// @ref Ericson 2005 "Real-Time Collision Detection" — point-AABB distance
-
-cbuffer CompositeRootCB : register(b0) {
-    uint  g_outputUav;       // UAV index of the target clipmap 3D texture.
-    uint  g_meshCount;       // Number of mesh SDF entries.
-    uint  g_clipmapIndex;    // Cascade index (0 = finest) — informational.
-    uint  g_resolution;      // Voxels per axis (64).
-    float g_clipCenterX;     // Clipmap center, world cm.
-    float g_clipCenterY;
-    float g_clipCenterZ;
-    float g_clipExtent;      // Clipmap half-extent, world cm.
+/// @ref Wright 2015 "Dynamic Occlusion with Signed Distance Fields", slides 19, 50.
+/// @constants 512 meshes * 128 bytes = 65536 bytes, the 64 KiB cbuffer limit.
+/// @constants 65504 is the largest finite fp16 distance; 4^3 threads match CPU dispatch.
+/// @constants 0.5 locates texel centers; 2 converts half-extents to volume dimensions.
+/// @ref Kramer 2023 "Real-Time Sparse Distance Fields for Games", slide 6: two-sided unsigned fields.
+/// @constants Half a mesh voxel plus half a global voxel provides finite surface
+/// coverage after filtering unsigned distances; thin-wall accuracy is resolution-limited.
+cbuffer RootConstants : register(b0) {
+    uint outputUav;
+    uint meshCount;
+    uint accumulate;
+    uint resolution;
+    float3 clipmapCenter;
+    float clipmapExtent;
+    uint rawOutputUav;
+    uint regionOrigin;   // first window-relative voxel of the region, 9 bits per axis (x | y << 9 | z << 18)
+    uint regionSize;     // region size in voxels, 9 bits per axis
+    uint windowOrigin;   // window origin mod resolution, 9 bits per axis: toroidal storage (block B.2)
+    float band;          // stored distances are clamped to this (world units); 0 = untruncated
 };
 
-/// Mirrors GdfMeshSdfGPU (96 bytes = 6 × float4).
-struct GdfMeshSdf {
-    float4 originPad;   // xyz = local-space volume CENTER, w = pad
-    float4 extentPad;   // xyz = local-space volume HALF-extent, w = pad
-    float4 invRow0;     // world→local 3x4, row 0
-    float4 invRow1;     // row 1
-    float4 invRow2;     // row 2
-    uint4  srvResPad;   // x = SDF SRV index, y = resolution, zw = pad
+struct MeshSdf {
+    float3 origin;
+    float distanceScale;
+    float3 extent;
+    float surfaceBias;
+    float4 worldToLocalX;
+    float4 worldToLocalY;
+    float4 worldToLocalZ;
+    uint srvIndex;
+    uint resolution;
+    uint albedoSrv;
+    uint metallicSrv;
+    float3 baseColorTint;
+    float metallicMultiplier;
+    uint materialFlags;
+    uint3 padding2;
 };
 
-cbuffer MeshDataCB : register(b2) {
-    GdfMeshSdf g_meshes[256];
+cbuffer MeshConstants : register(b2) {
+    MeshSdf meshes[512];
 };
+SamplerState linearClamp : register(s2);
 
-static const float kFarDistance = 60000.0; // R16F-safe "no surface" value.
+float4 MaterialAverage(uint srv, float4 fallback) {
+    if (srv == 0 || srv == 0xffffffffu) return fallback;
+    Texture2D<float4> texture = ResourceDescriptorHeap[NonUniformResourceIndex(srv)];
+    uint width, height, mipCount;
+    texture.GetDimensions(0, width, height, mipCount);
+    return texture.SampleLevel(linearClamp, float2(0.5, 0.5), mipCount - 1);
+}
+
+/// @ref Majercik 2019 "Dynamic Diffuse Global Illumination with Ray-Traced Irradiance Fields", section 5.2.
+/// @constants Linear reflectance lies in [0,1]; metallic has no diffuse lobe.
+/// Material flag bit 2 selects packed ORM with metallic in B, otherwise R.
+float3 DiffuseReflectance(MeshSdf mesh) {
+    float3 albedo = MaterialAverage(mesh.albedoSrv, 1.0).rgb;
+    float4 metalSample = MaterialAverage(mesh.metallicSrv, 0.0);
+    float metallic = (mesh.materialFlags & 4u) != 0 ? metalSample.b : metalSample.r;
+    return saturate(albedo * mesh.baseColorTint)
+         * (1.0 - saturate(metallic * mesh.metallicMultiplier));
+}
+
+float MeshDistance(MeshSdf mesh, float3 localPosition, out float rawDistance) {
+    float3 relative = localPosition - mesh.origin;
+    float3 sampleExtent = mesh.extent * (1.0 - 1.0 / mesh.resolution);
+    float3 clampedPosition = clamp(relative, -sampleExtent, sampleExtent);
+    float3 uvw = clampedPosition / (2.0 * mesh.extent) + 0.5;
+    Texture3D<float> volume = ResourceDescriptorHeap[NonUniformResourceIndex(mesh.srvIndex)];
+    float distance = volume.SampleLevel(linearClamp, uvw, 0);
+
+    // A clamped sample alone stays constant outside the volume. The SDF is
+    // 1-Lipschitz, so subtracting the displacement gives a lower bound there.
+    float displacement = length(relative - clampedPosition);
+    distance -= displacement;
+    if (any(abs(relative) > mesh.extent)) {
+        float boundsDistance = length(max(abs(relative) - mesh.extent, 0.0));
+        distance = max(distance, boundsDistance);
+    }
+    rawDistance = distance * mesh.distanceScale;
+    return (distance - mesh.surfaceBias) * mesh.distanceScale;
+}
 
 [numthreads(4, 4, 4)]
-void main(uint3 DTid : SV_DispatchThreadID) {
-    if (any(DTid >= g_resolution)) return;
+void main(uint3 thread : SV_DispatchThreadID) {
+    uint3 regionO = uint3(regionOrigin & 0x1ffu, (regionOrigin >> 9) & 0x1ffu, (regionOrigin >> 18) & 0x1ffu);
+    uint3 regionS = uint3(regionSize & 0x1ffu, (regionSize >> 9) & 0x1ffu, (regionSize >> 18) & 0x1ffu);
+    uint3 windowO = uint3(windowOrigin & 0x1ffu, (windowOrigin >> 9) & 0x1ffu, (windowOrigin >> 18) & 0x1ffu);
+    if (any(thread >= regionS)) return;
+    uint3 voxel = regionO + thread;                 // window-relative voxel
+    if (any(voxel >= resolution)) return;
+    // Toroidal storage: world voxel k lives in texel k mod resolution, so a recentre only writes
+    // the voxels that entered the window and the readers address by frac(p / window length).
+    uint3 texel = (voxel + windowO) % resolution;
+    RWTexture3D<float4> output = ResourceDescriptorHeap[outputUav];
+    RWTexture3D<float> rawOutput = ResourceDescriptorHeap[rawOutputUav];
+    float4 result = accumulate != 0 ? output[texel] : float4(65504.0, 0.0, 0.0, 0.0);
+    float rawResult = accumulate != 0 ? rawOutput[texel] : 65504.0;
+    float3 worldPosition = clipmapCenter
+        + ((float3(voxel) + 0.5) / resolution * 2.0 - 1.0) * clipmapExtent;
 
-    RWTexture3D<float> outClipmap = ResourceDescriptorHeap[g_outputUav];
-    SamplerState linearClamp = SamplerDescriptorHeap[1];
-
-    // Voxel center in world space. Clipmap spans [center-extent, center+extent]
-    // — the same mapping SampleGdfClipmap uses on the read side.
-    float3 clipCenter = float3(g_clipCenterX, g_clipCenterY, g_clipCenterZ);
-    float3 uvw01      = (float3(DTid) + 0.5) / float(g_resolution);
-    float3 worldPos   = clipCenter + (uvw01 * 2.0 - 1.0) * g_clipExtent;
-
-    float minDist = kFarDistance;
-
-    uint meshCount = min(g_meshCount, 256u);
-    [loop]
-    for (uint m = 0; m < meshCount; ++m) {
-        GdfMeshSdf mesh = g_meshes[m];
-        if (mesh.srvResPad.x == 0xFFFFFFFFu) continue;
-
-        // World → mesh-local (3x4 rows, position transform).
-        float4 wp = float4(worldPos, 1.0);
-        float3 localPos = float3(dot(mesh.invRow0, wp),
-                                 dot(mesh.invRow1, wp),
-                                 dot(mesh.invRow2, wp));
-
-        // Local distances scale back to world by the inverse of the
-        // world→local row scale (assumes uniform scale — standard for
-        // static level geometry).
-        float invScale   = length(mesh.invRow0.xyz);
-        float localToWorld = (invScale > 1e-6) ? (1.0 / invScale) : 1.0;
-
-        float3 rel        = localPos - mesh.originPad.xyz;
-        float3 halfExtent = mesh.extentPad.xyz;
-
-        // Distance from the point to the volume AABB (0 when inside).
-        float3 outside  = max(abs(rel) - halfExtent, 0.0);
-        float  aabbDist = length(outside);
-
-        float dWorld;
-        if (aabbDist <= 0.0) {
-            // Inside the SDF volume — trilinear sample the baked distance.
-            Texture3D<float> sdfTex = ResourceDescriptorHeap[mesh.srvResPad.x];
-            float3 uvw = saturate(rel / (2.0 * halfExtent) + 0.5);
-            dWorld = sdfTex.SampleLevel(linearClamp, uvw, 0).r * localToWorld;
-        } else {
-            // Outside — AABB distance is a conservative lower bound of the
-            // distance to any surface contained in the volume.
-            dWorld = aabbDist * localToWorld;
+    for (uint i = 0; i < meshCount; ++i) {
+        MeshSdf mesh = meshes[i];
+        float4 position = float4(worldPosition, 1.0);
+        float3 localPosition = float3(dot(mesh.worldToLocalX, position),
+                                      dot(mesh.worldToLocalY, position),
+                                      dot(mesh.worldToLocalZ, position));
+        float3 outside = max(abs(localPosition - mesh.origin) - mesh.extent, 0.0);
+        float globalBias = mesh.surfaceBias > 0.0 ? clipmapExtent / resolution : 0.0;
+        float lowerBound = (length(outside) - mesh.surfaceBias) * mesh.distanceScale - globalBias;
+        float rawLowerBound = length(outside) * mesh.distanceScale;
+        if (any(outside > 0.0) && lowerBound >= result.r && rawLowerBound >= rawResult) continue;
+        float rawDistance;
+        float distance = MeshDistance(mesh, localPosition, rawDistance) - globalBias;
+        rawResult = min(rawResult, rawDistance);
+        if (distance < result.r) {
+            result = float4(distance, DiffuseReflectance(mesh));
         }
-
-        minDist = min(minDist, dWorld);
     }
-
-    outClipmap[DTid] = minDist;
+    // Truncation band (block B.2 phase 3): the readers only step by the distance, so clamping far
+    // values bounds the reach of an instance change to `band` and keeps regional recomposes exact.
+    if (band > 0.0) {
+        result.r  = min(result.r, band);
+        rawResult = min(rawResult, band);
+    }
+    result.r = clamp(result.r, -65504.0, 65504.0);
+    output[texel] = result;
+    rawOutput[texel] = clamp(rawResult, -65504.0, 65504.0);
 }

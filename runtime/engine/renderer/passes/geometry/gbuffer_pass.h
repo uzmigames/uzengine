@@ -113,6 +113,16 @@ struct GBufferPassDesc {
     /// bindings; only the indirect args buffer differs.
     bool              usePhase2IndirectDraw = false;
     RHIBufferHandle   indirectArgsBuffer2;    ///< Phase 2 buffer containing DrawIndexedIndirectArgs (20 bytes).
+
+    // ── Depth prepass (block B.4c) ───────────────────────────────────────
+    /// True = the pass is the depth prepass: it declares and clears the depth only, binds no colour
+    /// target, uses `pipeline` (the depth-only GBuffer pipeline) and skips masked, material-graph
+    /// and translucent draws. Registered under the graph name "DepthPrepass".
+    bool              depthOnly = false;
+    /// True = the prepass ran this frame: the depth is kept (no clear) and `pipeline` is the
+    /// `Equal` / no-write GBuffer pipeline; masked and material-graph draws keep their own
+    /// pipelines (`Greater`, depth writes), which the prepass skipped.
+    bool              keepDepth = false;
 };
 
 /// Registers a deferred G-Buffer pass in the render graph.

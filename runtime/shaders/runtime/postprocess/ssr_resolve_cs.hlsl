@@ -103,7 +103,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
     float4 traceResult = ssrTraceTex.Load(int3(DTid.xy, 0));
 
     // Perfect mirrors: pass through — no spatial blur
-    if (roughness < 0.04) {
+    if (roughness <= 0.04) {
         outputSSR[DTid.xy] = traceResult;
         return;
     }
@@ -144,7 +144,9 @@ void main(uint3 DTid : SV_DispatchThreadID)
     float centerLum = dot(traceResult.rgb, float3(0.2126, 0.7152, 0.0722));
     float centerKarisW = rcp(1.0 + centerLum);
     float3 colorSum  = traceResult.rgb * centerKarisW;
-    float  alphaSum  = traceResult.a;
+    // Alpha (hit confidence) is normalised by the same weight sum as the colour,
+    // so it must carry the same Karis weight or the two diverge.
+    float  alphaSum  = traceResult.a * centerKarisW;
     float  weightSum = centerKarisW;
 
     // 15-sample Halton(2,3) pattern in [-1,1] — matches AMD SSSR DNSR_Prefilter
@@ -192,16 +194,16 @@ void main(uint3 DTid : SV_DispatchThreadID)
         float sampleLum = dot(sampleSSR.rgb, float3(0.2126, 0.7152, 0.0722));
         float karisW = rcp(1.0 + sampleLum);
         colorSum  += sampleSSR.rgb * karisW * w;
-        alphaSum  += sampleSSR.a * w;
+        alphaSum  += sampleSSR.a * karisW * w;
         weightSum += karisW * w;
     }
 
     float3 color = colorSum / max(weightSum, 0.001);
     float  alpha = alphaSum / max(weightSum, 0.001);
 
-    // Inverse Karis: decompress HDR
-    float finalLum = dot(color, float3(0.2126, 0.7152, 0.0722));
-    color *= rcp(max(1.0 - finalLum, 0.001));
-
+    // No inverse Karis here: dividing by the accumulated Karis weights already
+    // undoes the per-sample compression, so the normalised average is linear HDR
+    // radiance. Decompressing a second time amplified constant input — a uniform
+    // RGB = 1 reflection resolved to ~1000.
     outputSSR[DTid.xy] = float4(color, alpha);
 }

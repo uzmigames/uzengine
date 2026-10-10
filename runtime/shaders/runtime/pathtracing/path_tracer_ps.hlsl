@@ -48,9 +48,11 @@ cbuffer PathTracerRC : register(b0) {
     uint g_sampleCount;   // Step 6: number of samples already accumulated
     uint g_frameIndex;
     uint g_tlasSrv;       // Step 8: scene TLAS for real multi-bounce transport.
+    uint g_materialTableSrv; // StructuredBuffer<GIMeshMaterial> by InstanceID (sentinel = GDF albedo).
+    uint g_skyCubemapSrv;    // Atmosphere sky cubemap for bounce misses (sentinel = flat skylight).
 };
-// b2: TraceConstants (GDF clipmaps + material table + sun/sky) shared with
-// the DDGI atlas writer — provides hit normals + hit albedo for bounces.
+// b2: TraceConstants (GDF clipmaps + sun/sky, the RadianceCacheTraceConstants
+// layout the DDGI writer binds) — provides hit normals + hit albedo for bounces.
 #include "../gi/gi_trace_common.hlsli"
 #else
 cbuffer PathTracerRC : register(b0) {
@@ -187,6 +189,16 @@ PSOutput main(float4 pos : SV_Position)
     uint rngState = uint(px.x) * 1973u + uint(px.y) * 9277u + g_frameIndex * 26699u;
     rngState |= 1u;
 
+    // Skylight colour × intensity applied to every cubemap read, as the raster
+    // split-sum and the probe writers do: the capture holds the unit-intensity
+    // sky and the SkyLight component carries the scene's intensity. The SM5
+    // path binds no trace constants, so it reads the capture unscaled.
+#ifdef UZ_BINDLESS
+    const float3 skyTint = GITrace_SkyTint();
+#else
+    const float3 skyTint = float3(1.0, 1.0, 1.0);
+#endif
+
     // ── Direct sun + CSM shadow (Step 7) ────────────────────────────────────
     // Shadow sampled from the same CSM atlas used by the deferred pipeline —
     // view-independent, stable, matches rasterized shadows exactly.
@@ -263,14 +275,14 @@ PSOutput main(float4 pos : SV_Position)
                 q.Proceed();
 
                 if (q.CommittedStatus() != COMMITTED_TRIANGLE_HIT) {
-                    indirect += throughput * GITrace_SkyRadiance(rayDir);
+                    indirect += throughput * GITrace_SkyRadiance(rayDir, g_skyCubemapSrv);
                     break;
                 }
 
                 float3 hitPos = rayO + rayDir * q.CommittedRayT();
                 uint   meshId = q.CommittedInstanceID();
                 float3 nHit   = GITrace_GdfNormal(hitPos, rayDir);
-                float3 aHit   = GITrace_HitAlbedo(meshId);
+                float3 aHit   = GITrace_HitAlbedo(meshId, hitPos, g_materialTableSrv);
 
                 // Sun next-event estimation at the hit (shadow ray).
                 float ndl = max(dot(nHit, sunL), 0.0);
@@ -299,7 +311,7 @@ PSOutput main(float4 pos : SV_Position)
 #endif
         // Fallback (no TLAS): occlusion-free sky irradiance estimate.
         float3 dir = normalize(N + RandUnitVector(rngState));
-        float3 env = skyCube.SampleLevel(g_linearClamp, dir, 0.0).rgb;
+        float3 env = skyCube.SampleLevel(g_linearClamp, dir, 0.0).rgb * skyTint;
         indirect += (1.0 - F0) * (1.0 - metallic) * albedo * env;
     }
 
@@ -331,7 +343,7 @@ PSOutput main(float4 pos : SV_Position)
                 if (q.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
                     float3 hitPos = ray.Origin + Lr * q.CommittedRayT();
                     float3 nHit   = GITrace_GdfNormal(hitPos, Lr);
-                    float3 aHit   = GITrace_HitAlbedo(q.CommittedInstanceID());
+                    float3 aHit   = GITrace_HitAlbedo(q.CommittedInstanceID(), hitPos, g_materialTableSrv);
                     float3 sunL   = normalize(lightDir.xyz);
                     float3 sunCI  = float3(lightColorR, lightColorG, lightColorB)
                                   * lightIntensity;
@@ -355,7 +367,7 @@ PSOutput main(float4 pos : SV_Position)
                 }
             }
 #endif
-            float3 env = skyCube.SampleLevel(g_linearClamp, Lr, skyLOD).rgb;
+            float3 env = skyCube.SampleLevel(g_linearClamp, Lr, skyLOD).rgb * skyTint;
             indirect += F * env;
         }
     }

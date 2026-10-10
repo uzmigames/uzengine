@@ -1,0 +1,6 @@
+{
+  "status": "completed",
+  "createdAt": "2026-10-08T18:19:41.611Z",
+  "updatedAt": "2026-10-08T18:24:20.000Z",
+  "resolution": "done 2026-10-08: build.zig installs runtime/content/atmosphere next to the exe and CloudPass reads the noise from the project VFS, the engine content or the working directory, once; test_cloud_noise_assets.py 4/4 (both volumes loaded, 2 log lines instead of one warning per frame, no TDR, installed bytes identical); the MIT notice added."
+}

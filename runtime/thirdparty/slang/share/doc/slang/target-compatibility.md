@@ -204,7 +204,7 @@ In practice to write shader code that works across D3D12 and VK you should have 
 
 ## tex.Load
 
-tex.Load is only supported on CUDA for Texture1D. Additionally CUDA only allows such access for linear memory, meaning the bound texture can also not have mip maps. Load _is_ allowed on RWTexture types of other dimensions including 1D on CUDA.
+tex.Load on a read-only texture is supported on CUDA for `Texture1D`, `Texture2D`, `Texture3D`, and the 1D/2D array forms; the mip map selection argument is ignored (the fetch reads the base level). Load is also allowed on RWTexture types on CUDA. Note: half-typed textures are not supported for Load or SampleLevel on CUDA (use a float texture).
 
 <a id="full-bool"></a>
 
@@ -292,7 +292,13 @@ There is preliminary [Mesh Shader support](https://github.com/shader-slang/slang
 
 More information about [Shader Execution Reordering](shader-execution-reordering.md).
 
-Currently support is available in D3D12 via NVAPI, and for Vulkan via the [GL_NV_shader_invocation_reorder](https://github.com/KhronosGroup/GLSL/blob/master/extensions/nv/GLSL_NV_shader_invocation_reorder.txt) extension.
+Currently support is available in D3D12 via NVAPI. For Vulkan, Slang uses the
+[GL_EXT_shader_invocation_reorder](https://github.com/KhronosGroup/GLSL/blob/master/extensions/ext/GLSL_EXT_shader_invocation_reorder.txt)
+extension by default for implicit SPIR-V SER capability upgrades. The
+[GL_NV_shader_invocation_reorder](https://github.com/KhronosGroup/GLSL/blob/master/extensions/nv/GLSL_NV_shader_invocation_reorder.txt)
+path remains available when the NV capability or extension is requested explicitly;
+NV-named GLSL entry points such as `hitObjectIsHitNV` continue to require that NV
+path.
 
 <a id="debug-break"></a>
 

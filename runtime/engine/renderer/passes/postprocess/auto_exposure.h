@@ -48,9 +48,10 @@ class ShaderManager;
 
 /// Auto-exposure parameters (Eye Adaptation defaults).
 ///
-/// Dynamic per-frame parameters are passed via root constants (8 DWORDs).
-/// Adaptation speeds and percentile bounds are hardcoded in the average
-/// shader to stay within the root constant budget.
+/// Dynamic per-frame parameters are passed via root constants (14 DWORDs of the 16 the
+/// signature provides). Adaptation speeds, percentile bounds and the mid-grey target were
+/// hardcoded in the average shader until 2026-10-05 while CVars for them were registered and
+/// never read (block A.8); they are root constants now.
 struct AutoExposureSettings {
     float exposureBias   = 0.0f;     ///< EV offset. 0=neutral, +1=2x brighter.
     float minBrightness  = 0.03f;   ///< Min avg luminance (histogram method default).
@@ -58,6 +59,12 @@ struct AutoExposureSettings {
     float histLogMin     = -10.0f;  ///< Log2 luminance range min (-10).
     float histLogMax     = 20.0f;   ///< Log2 luminance range max (+20).
     float manualExposure = 0.0f;   ///< When > 0, skip auto and use this fixed EV.
+    float midGray        = 0.18f;  ///< Target average luminance (Reinhard key).
+    float speedUp        = 3.0f;   ///< Bright adaptation speed (EV/s).
+    float speedDown      = 1.0f;   ///< Dark adaptation speed (EV/s).
+    float lowPercent     = 10.0f;  ///< Histogram percentile that starts the average.
+    float highPercent    = 90.0f;  ///< Histogram percentile that ends the average.
+    float adaptationLinearRange = 1.5f; ///< EV gap above which adaptation runs linearly instead of exponentially.
     bool  enabled        = true;   ///< Master toggle.
 };
 
@@ -95,10 +102,16 @@ struct AverageRootConstants {
     float    minBrightness;    ///< Lower luminance clamp (cd/m2).
     float    maxBrightness;    ///< Upper luminance clamp (cd/m2).
     float    deltaTime;        ///< Frame delta time in seconds.
+    float    midGray;          ///< Reinhard key (r.AutoExposure.MidGrayTarget).
+    float    speedUp;          ///< EV/s towards brighter (r.AutoExposure.SpeedUp).
+    float    speedDown;        ///< EV/s towards darker (r.AutoExposure.SpeedDown).
+    float    lowPercent;       ///< Average window start, percent of pixels.
+    float    highPercent;      ///< Average window end, percent of pixels.
+    float    adaptationLinearRange; ///< EV gap above which adaptation is linear (r.AutoExposure.AdaptationLinearRange).
 };
 
-static_assert(sizeof(AverageRootConstants) == 32,
-    "AverageRootConstants must be exactly 8 DWORDs (32 bytes)");
+static_assert(sizeof(AverageRootConstants) == 56,
+    "AverageRootConstants must be 14 DWORDs (root constant budget 16)");
 
 /// GPU auto-exposure system.
 ///
@@ -161,6 +174,11 @@ public:
     /// Destroys buffers and pipelines. Safe to call multiple times or
     /// without prior `Init()`. Called automatically by the destructor.
     void Shutdown();
+
+    /// Clears the adaptation history (EV + exposure) on the GPU so the next
+    /// pass seeds itself from the current frame. Call once after a scene has
+    /// fully streamed in and one full-HDR frame has been rendered.
+    void ResetHistory(IRHICommandList* cmdList);
 
     /// Returns true if `Init()` has been called and `Shutdown()` has not.
     [[nodiscard]] bool IsInitialized() const noexcept { return m_initialized; }

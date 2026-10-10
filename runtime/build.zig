@@ -1,5 +1,16 @@
 const std = @import("std");
 
+/// Zig 0.16's bundled libc++ fails against the macOS 27 SDK — link the
+/// system libc++ on Apple targets, bundled libc++ elsewhere.
+fn linkLibCpp(b: *std.Build, mod: *std.Build.Module, is_apple: bool) void {
+    _ = b;
+    if (is_apple) {
+        mod.linkSystemLibrary("c++", .{});
+    } else {
+        mod.link_libcpp = true;
+    }
+}
+
 pub fn build(b: *std.Build) void {
     // Default output to build/ — user can override with -p <path>
     if (std.mem.endsWith(u8, b.install_prefix, "zig-out")) {
@@ -67,6 +78,7 @@ pub fn build(b: *std.Build) void {
         "engine/renderer/fog",
         "engine/renderer/scene",
         "engine/renderer/frame",
+        "engine/renderer/headless",
         "engine/renderer/passes",
         "engine/renderer/passes/geometry",
         "engine/renderer/passes/lighting",
@@ -102,22 +114,31 @@ pub fn build(b: *std.Build) void {
         "engine/vfx",
         "engine/vfx/core",
         "engine/vfx/components",
+        "engine/vfx/system",
         "engine/vfx/curves",
         "engine/vfx/modules",
         "engine/vfx/asset",
         "engine/vfx/parameters",
+        "engine/vfx/data_interfaces",
         "engine/vfx/events",
         "engine/renderer/passes/vfx",
         "engine/vfx/decals",
         "engine/vfx/trails",
         "engine/vfx/lod",
         "engine/vfx/budget",
+        "engine/vfx/baker",
+        "engine/vfx/stack",
         "engine/vfx/editor",
+        "engine/vfx/editor/undo",
         "engine/vfx/material",
+        "engine/vfx/mesh",
+        "engine/vfx/lighting",
+        "engine/physics",
         "engine/animation",
         "engine/event",
         "engine/property",
         "engine/debug",
+        "engine/ui",
         "editor/grid",
         "editor/outline",
         "editor/gizmo",
@@ -167,6 +188,8 @@ pub fn build(b: *std.Build) void {
         tp ++ "freetype/include",
         tp ++ "smaa",
         tp ++ "ffmpeg/include",
+        // Slang headers — slang_compiler.cpp dlopens libslang on every platform.
+        tp ++ "slang/include",
     };
 
     const linux_engine_include_dirs = [_][]const u8{
@@ -177,6 +200,11 @@ pub fn build(b: *std.Build) void {
         "platform/windows",
     };
 
+    // zlib and zstd are compiled from the vcpkg-extracted sources; the exact
+    // directory name depends on the vcpkg baseline, so resolve it at configure time.
+    const zlib_src = vcpkgSrcDir(b, "zlib");
+    const zstd_src = vcpkgSrcDir(b, "zstd");
+
     const windows_thirdparty_include_dirs = [_][]const u8{
         tp ++ "d3d12ma/include",
         tp ++ "directx_headers/include",
@@ -185,14 +213,14 @@ pub fn build(b: *std.Build) void {
         tp ++ "dxc/inc",
         // vcpkg-installed headers (zlib required by libpng, freetype, etc.)
         // zlib headers from source (not vcpkg DLL headers)
-        tp ++ "vcpkg/buildtrees/zlib/src/v1.3.1-2e5db616bf.clean",
+        zlib_src,
     };
 
     // ── uzembed build tool (generates .hlsl.gen.h headers) ─────────
 
     const embed_mod = b.createModule(.{ .target = target, .optimize = optimize });
     embed_mod.link_libc = true;
-    embed_mod.link_libcpp = true;
+    linkLibCpp(b, embed_mod, is_apple);
     embed_mod.addCSourceFiles(.{
         .root = b.path("tools"),
         .files = &.{"uzembed.cpp"},
@@ -204,7 +232,14 @@ pub fn build(b: *std.Build) void {
 
     // Clean old generated headers to prevent stale files from conflicting
     // with renamed/moved shaders (e.g., post/ → postprocess/ migration).
-    const clean_generated = b.addRemoveDirTree(b.path("build/generated/shaders"));
+    // Note: b.addRemoveDirTree was removed in zig 0.16 — use addSystemCommand instead.
+    const clean_generated = if (target.result.os.tag == .windows)
+        b.addSystemCommand(&.{
+            "cmd", "/c",
+            "if exist build\\generated\\shaders rmdir /s /q build\\generated\\shaders",
+        })
+    else
+        b.addSystemCommand(&.{ "sh", "-c", "rm -rf build/generated/shaders" });
 
     // Run uzembed: shaders/ → build/generated/shaders/ (all subdirs)
     const run_embed = b.addRunArtifact(embed_exe);
@@ -215,6 +250,7 @@ pub fn build(b: *std.Build) void {
     });
     run_embed.step.dependOn(&clean_generated.step);
 
+
     // ── Runtime static library ───────────────────────────────────────────
 
     const runtime_mod = b.createModule(.{
@@ -222,7 +258,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     runtime_mod.link_libc = true;
-    runtime_mod.link_libcpp = true;
+    linkLibCpp(b, runtime_mod, is_apple);
 
     // Cross-platform engine sources — auto-discovered via glob
     addCppDir(runtime_mod, b, "engine/app", cpp_flags);
@@ -275,6 +311,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/renderer/raytracing", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/scene", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/frame", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/renderer/headless", cpp_flags);
     addCppDir(runtime_mod, b, "engine/job", cpp_flags);
     addCppDir(runtime_mod, b, "engine/ecs/core", cpp_flags);
     addCppDir(runtime_mod, b, "engine/ecs/scene", cpp_flags);
@@ -295,20 +332,29 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/vfx", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/core", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/components", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx/system", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/curves", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/modules", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/asset", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/parameters", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx/data_interfaces", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/events", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/decals",  cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/trails",  cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/lod",     cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/budget",  cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx/baker",   cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx/stack",   cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/editor",  cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx/editor/undo", cpp_flags);
     addCppDir(runtime_mod, b, "engine/vfx/material", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx/mesh",     cpp_flags);
+    addCppDir(runtime_mod, b, "engine/vfx/lighting", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/physics",      cpp_flags);
     addCppDir(runtime_mod, b, "engine/animation", cpp_flags);
     addCppDir(runtime_mod, b, "engine/property", cpp_flags);
     addCppDir(runtime_mod, b, "engine/debug",    cpp_flags);
+    addCppDir(runtime_mod, b, "engine/ui",       cpp_flags);
 
     // Thirdparty — SPIRV-Reflect (C source, not C++)
     runtime_mod.addCSourceFiles(.{
@@ -379,15 +425,27 @@ pub fn build(b: *std.Build) void {
     });
 
     // Thirdparty — fastgltf (C++17 glTF 2.0 parser + bundled simdjson)
+    //
+    // SIMDJSON_IMPLEMENTATION_ICELAKE=0 disables simdjson's AVX-512 kernel.
+    // That kernel wraps its functions in `target("avx512f,avx512dq,...")`
+    // without naming `evex512`; clang 18 split 512-bit EVEX encoding into its
+    // own feature, so every 512-bit intrinsic there fails to inline. Upstream
+    // has not added it (checked through simdjson 4.6.11) and clang 21 removed
+    // the `-mevex512` escape hatch, so the kernel cannot be built at all.
+    // simdjson dispatches by CPUID at runtime and keeps the Haswell (AVX2),
+    // Westmere (SSE4.2) and portable kernels, so only the AVX-512 fast path
+    // for glTF parsing is lost. Defined for every TU that includes simdjson.h
+    // so the header's implementation list stays consistent.
+    const simdjson_flags = [_][]const u8{ "-std=c++17", "-DSIMDJSON_IMPLEMENTATION_ICELAKE=0" };
     runtime_mod.addCSourceFiles(.{
         .root = b.path(tp ++ "fastgltf/deps/simdjson"),
         .files = &.{"simdjson.cpp"},
-        .flags = &.{"-std=c++17"},
+        .flags = &simdjson_flags,
     });
     runtime_mod.addCSourceFiles(.{
         .root = b.path(tp ++ "fastgltf/src"),
         .files = &.{ "fastgltf.cpp", "base64.cpp", "io.cpp" },
-        .flags = &.{"-std=c++17"},
+        .flags = &simdjson_flags,
     });
 
     // Thirdparty — mikktspace (industry-standard tangent space generation)
@@ -583,7 +641,7 @@ pub fn build(b: *std.Build) void {
     });
     // Zstd decompression for KTX2 supercompression (compiled from vcpkg source)
     {
-        const zstd_root = tp ++ "vcpkg/buildtrees/zstd/src/v1.5.7-bb6cae2b2e.clean/lib/";
+        const zstd_root = b.fmt("{s}/lib/", .{zstd_src});
         runtime_mod.addCSourceFiles(.{
             .root = b.path(zstd_root),
             .files = &.{
@@ -601,7 +659,7 @@ pub fn build(b: *std.Build) void {
             .flags = &.{ "-std=c99", "-DZSTD_DISABLE_ASM" },
         });
         runtime_mod.addIncludePath(b.path(zstd_root));
-        runtime_mod.addIncludePath(b.path(zstd_root ++ "common"));
+        runtime_mod.addIncludePath(b.path(b.fmt("{s}common", .{zstd_root})));
     }
 
     // Thirdparty — miniz (zlib-compatible compression for tinyexr)
@@ -683,16 +741,16 @@ pub fn build(b: *std.Build) void {
 
     // Thirdparty — zlib (compiled from vcpkg source — static build avoids DLL import issues)
     // Use source dir headers instead of vcpkg-installed DLL headers
-    runtime_mod.addIncludePath(b.path(tp ++ "vcpkg/buildtrees/zlib/src/v1.3.1-2e5db616bf.clean"));
+    runtime_mod.addIncludePath(b.path(zlib_src));
     runtime_mod.addCSourceFiles(.{
-        .root = b.path(tp ++ "vcpkg/buildtrees/zlib/src/v1.3.1-2e5db616bf.clean"),
+        .root = b.path(zlib_src),
         .files = &.{
             "adler32.c", "compress.c", "crc32.c", "deflate.c",
             "gzclose.c", "gzlib.c", "gzread.c", "gzwrite.c",
             "infback.c", "inffast.c", "inflate.c", "inftrees.c",
             "trees.c", "uncompr.c", "zutil.c",
         },
-        .flags = &.{},
+        .flags = &.{"-DZLIB_STATIC"},
     });
 
     // Thirdparty — libpng (PNG read/write, required by msdfgen ext/save-png.cpp)
@@ -717,7 +775,7 @@ pub fn build(b: *std.Build) void {
             "pngwtran.c",
             "pngwutil.c",
         },
-        .flags = &.{ "-DPNG_ARM_NEON_OPT=0", "-DPNG_STATIC" },
+        .flags = &.{ "-DPNG_ARM_NEON_OPT=0", "-DPNG_STATIC", "-DZLIB_STATIC" },
     });
 
     // Thirdparty — FreeType (font rasterization, required by msdfgen ext/import-font.cpp)
@@ -822,7 +880,7 @@ pub fn build(b: *std.Build) void {
         if (!is_windows) break :blk false;
         const brix_inc = tp ++ "amd-fidelityfx-1.1/sdk/include/FidelityFX/host/ffx_brixelizer.h";
         const brix_resolved = b.path(brix_inc).getPath(b);
-        if (std.fs.cwd().access(brix_resolved, .{})) {
+        if (accessAbsolute(b, brix_resolved)) {
             break :blk true;
         } else |_| {
             break :blk false;
@@ -846,7 +904,7 @@ pub fn build(b: *std.Build) void {
         if (!has_brixelizer_headers) break :blk false;
         const brix_dll = tp ++ "amd-fidelityfx-1.1/wrapper/build/bin/uz_brixelizer.dll";
         const brix_dll_resolved = b.path(brix_dll).getPath(b);
-        if (std.fs.cwd().access(brix_dll_resolved, .{})) {
+        if (accessAbsolute(b, brix_dll_resolved)) {
             break :blk true;
         } else |_| {
             break :blk false;
@@ -880,8 +938,9 @@ pub fn build(b: *std.Build) void {
         if (!is_windows) break :blk false;
         const dlss_inc = tp ++ "dlss/include/";
         const dlss_resolved = b.path(dlss_inc).getPath(b);
-        if (std.fs.openDirAbsolute(dlss_resolved, .{})) |*dir| {
-            @constCast(dir).close();
+        if (openDirAbsolute(b, dlss_resolved, false)) |dir| {
+            var d = dir;
+            closeDir(b, &d);
             break :blk true;
         } else |_| {
             break :blk false;
@@ -968,34 +1027,34 @@ pub fn build(b: *std.Build) void {
 
     // DX12/DX11 system libraries (Windows only)
     if (is_windows) {
-        lib.linkSystemLibrary("d3d12");
-        lib.linkSystemLibrary("d3d11");
-        lib.linkSystemLibrary("dxgi");
-        lib.linkSystemLibrary("dxguid");
-        lib.linkSystemLibrary("ws2_32");  // Tracy socket profiling
-        lib.linkSystemLibrary("dbghelp"); // Tracy callstack capture
-        lib.linkSystemLibrary("winmm");   // timeBeginPeriod/timeEndPeriod for frame limiter
-        lib.linkSystemLibrary("xinput1_4");  // XInput gamepad support
-        lib.linkSystemLibrary("shcore");      // GetDpiForMonitor (multi-monitor DPI)
-        lib.linkSystemLibrary("ole32");       // OLE drag-drop (OleInitialize, RegisterDragDrop)
-        lib.linkSystemLibrary("shell32");     // Shell_NotifyIconW, SHCreateItemFromParsingName
-        lib.linkSystemLibrary("comdlg32");    // Common dialog support (IFileDialog COM)
+        lib.root_module.linkSystemLibrary("d3d12", .{});
+        lib.root_module.linkSystemLibrary("d3d11", .{});
+        lib.root_module.linkSystemLibrary("dxgi", .{});
+        lib.root_module.linkSystemLibrary("dxguid", .{});
+        lib.root_module.linkSystemLibrary("ws2_32", .{});  // Tracy socket profiling
+        lib.root_module.linkSystemLibrary("dbghelp", .{}); // Tracy callstack capture
+        lib.root_module.linkSystemLibrary("winmm", .{});   // timeBeginPeriod/timeEndPeriod for frame limiter
+        lib.root_module.linkSystemLibrary("xinput1_4", .{});  // XInput gamepad support
+        lib.root_module.linkSystemLibrary("shcore", .{});      // GetDpiForMonitor (multi-monitor DPI)
+        lib.root_module.linkSystemLibrary("ole32", .{});       // OLE drag-drop (OleInitialize, RegisterDragDrop)
+        lib.root_module.linkSystemLibrary("shell32", .{});     // Shell_NotifyIconW, SHCreateItemFromParsingName
+        lib.root_module.linkSystemLibrary("comdlg32", .{});    // Common dialog support (IFileDialog COM)
         // AMD FidelityFX SDK 1.1.4 — Brixelizer GI static libraries.
         // Linked at the exe level via tool_mod.addObjectFile (see tool exe loop below).
         // Static lib targets don't resolve external symbols — only the final exe does.
     } else if (target.result.os.tag == .linux) {
-        lib.linkSystemLibrary("X11");
+        lib.root_module.linkSystemLibrary("X11", .{});
     }
 
     // Apple frameworks (macOS/iOS — Metal backend)
     if (is_apple) {
-        lib.linkFramework("Metal");
-        lib.linkFramework("QuartzCore");
-        lib.linkFramework("Foundation");
+        lib.root_module.linkFramework("Metal", .{});
+        lib.root_module.linkFramework("QuartzCore", .{});
+        lib.root_module.linkFramework("Foundation", .{});
         if (is_macos) {
-            lib.linkFramework("AppKit");
+            lib.root_module.linkFramework("AppKit", .{});
         } else {
-            lib.linkFramework("UIKit");
+            lib.root_module.linkFramework("UIKit", .{});
         }
     }
 
@@ -1010,7 +1069,7 @@ pub fn build(b: *std.Build) void {
     const editor_lib = blk: {
         const editor_mod = b.createModule(.{ .target = target, .optimize = optimize });
         editor_mod.link_libc = true;
-        editor_mod.link_libcpp = true;
+        linkLibCpp(b, editor_mod, is_apple);
 
         addCppDir(editor_mod, b, "editor/grid",       cpp_flags);
         addCppDir(editor_mod, b, "editor/outline",    cpp_flags);
@@ -1077,7 +1136,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         });
         dll_mod.link_libc = true;
-        dll_mod.link_libcpp = true;
+        linkLibCpp(b, dll_mod, is_apple);
 
         // Recompile runtime.cpp with -DUZ_BUILDING_DLL=1.
         // UZ_API in runtime.h expands to __declspec(dllexport), making every
@@ -1136,19 +1195,19 @@ pub fn build(b: *std.Build) void {
         dll.step.dependOn(&run_embed.step);
 
         // System libraries — same as the static lib Windows block above.
-        dll.linkSystemLibrary("d3d12");
-        dll.linkSystemLibrary("d3d11");
-        dll.linkSystemLibrary("dxgi");
-        dll.linkSystemLibrary("dxguid");
-        dll.linkSystemLibrary("ws2_32");
-        dll.linkSystemLibrary("dbghelp");
-        dll.linkSystemLibrary("winmm");
-        dll.linkSystemLibrary("xinput1_4");
-        dll.linkSystemLibrary("shcore");
-        dll.linkSystemLibrary("ole32");
-        dll.linkSystemLibrary("shell32");
-        dll.linkSystemLibrary("comdlg32");
-        dll.linkSystemLibrary("gdi32");      // GetStockObject — used by font/overlay subsystem
+        dll.root_module.linkSystemLibrary("d3d12", .{});
+        dll.root_module.linkSystemLibrary("d3d11", .{});
+        dll.root_module.linkSystemLibrary("dxgi", .{});
+        dll.root_module.linkSystemLibrary("dxguid", .{});
+        dll.root_module.linkSystemLibrary("ws2_32", .{});
+        dll.root_module.linkSystemLibrary("dbghelp", .{});
+        dll.root_module.linkSystemLibrary("winmm", .{});
+        dll.root_module.linkSystemLibrary("xinput1_4", .{});
+        dll.root_module.linkSystemLibrary("shcore", .{});
+        dll.root_module.linkSystemLibrary("ole32", .{});
+        dll.root_module.linkSystemLibrary("shell32", .{});
+        dll.root_module.linkSystemLibrary("comdlg32", .{});
+        dll.root_module.linkSystemLibrary("gdi32", .{});      // GetStockObject — used by font/overlay subsystem
 
         b.installArtifact(dll);
     }
@@ -1160,7 +1219,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     test_mod.link_libc = true;
-    test_mod.link_libcpp = true;
+    linkLibCpp(b, test_mod, is_apple);
 
     // GoogleTest — compiled from source (gtest-all.cc only, we provide main)
     const gtest_flags = &.{ "-std=c++17", "-DGTEST_HAS_PTHREAD=0" };
@@ -1189,6 +1248,12 @@ pub fn build(b: *std.Build) void {
     addCppDir(test_mod, b, "tests/engine/ecs", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/event", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/property", cpp_flags);
+    addCppDir(test_mod, b, "tests/engine/ui", cpp_flags);
+    // These two directories were never registered, so every test in them —
+    // including the material graph serialization suite — was compiled by
+    // nothing and run by nobody.
+    addCppDir(test_mod, b, "tests/material", cpp_flags);
+    addCppDir(test_mod, b, "tests/engine/material", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/scripting", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/vfx", cpp_flags);
     addCppDir(test_mod, b, "tests/editor", cpp_flags);
@@ -1255,8 +1320,8 @@ pub fn build(b: *std.Build) void {
         .name = "test_runtime",
         .root_module = test_mod,
     });
-    test_exe.linkLibrary(lib);
-    test_exe.linkLibrary(editor_lib);
+    test_exe.root_module.linkLibrary(lib);
+    test_exe.root_module.linkLibrary(editor_lib);
 
     // LuaJIT — needed by scripting tests that call lua C API directly
     if (is_windows) {
@@ -1269,21 +1334,21 @@ pub fn build(b: *std.Build) void {
     }
 
     if (is_windows) {
-        test_exe.linkSystemLibrary("d3d12");
-        test_exe.linkSystemLibrary("d3d11");
-        test_exe.linkSystemLibrary("dxgi");
-        test_exe.linkSystemLibrary("dxguid");
-        test_exe.linkSystemLibrary("ws2_32");
-        test_exe.linkSystemLibrary("dbghelp");
-        test_exe.linkSystemLibrary("winmm");
-        test_exe.linkSystemLibrary("xinput1_4");
-        test_exe.linkSystemLibrary("gdi32");
-        test_exe.linkSystemLibrary("ole32");
-        test_exe.linkSystemLibrary("shcore");
-        test_exe.linkSystemLibrary("shell32");
-        test_exe.linkSystemLibrary("comdlg32");
+        test_exe.root_module.linkSystemLibrary("d3d12", .{});
+        test_exe.root_module.linkSystemLibrary("d3d11", .{});
+        test_exe.root_module.linkSystemLibrary("dxgi", .{});
+        test_exe.root_module.linkSystemLibrary("dxguid", .{});
+        test_exe.root_module.linkSystemLibrary("ws2_32", .{});
+        test_exe.root_module.linkSystemLibrary("dbghelp", .{});
+        test_exe.root_module.linkSystemLibrary("winmm", .{});
+        test_exe.root_module.linkSystemLibrary("xinput1_4", .{});
+        test_exe.root_module.linkSystemLibrary("gdi32", .{});
+        test_exe.root_module.linkSystemLibrary("ole32", .{});
+        test_exe.root_module.linkSystemLibrary("shcore", .{});
+        test_exe.root_module.linkSystemLibrary("shell32", .{});
+        test_exe.root_module.linkSystemLibrary("comdlg32", .{});
     } else if (target.result.os.tag == .linux) {
-        test_exe.linkSystemLibrary("X11");
+        test_exe.root_module.linkSystemLibrary("X11", .{});
     }
 
     b.installArtifact(test_exe);
@@ -1299,14 +1364,14 @@ pub fn build(b: *std.Build) void {
     // ── Demos & Tools (Windows/DX12 only) ────────────────────────────────
 
     if (is_windows) {
-        const win_sys_libs = [_][]const u8{ "d3d12", "d3d11", "dxgi", "dxguid", "gdi32", "user32", "xinput1_4", "ole32", "shcore", "shell32", "comdlg32" };
+        const win_sys_libs = [_][]const u8{ "d3d12", "d3d11", "dxgi", "dxguid", "gdi32", "user32", "ws2_32", "dbghelp", "winmm", "xinput1_4", "ole32", "shcore", "shell32", "comdlg32" };
 
         // Helper to create a tool exe from a single .cpp
-        const tool_names = [_][]const u8{ "uzengine", "uzcook", "uzpack", "uzmesh" };
+        const tool_names = [_][]const u8{ "uzengine", "uzcook", "uzpack", "uzmesh", "uzvfxinspect", "uzvalidate" };
         for (tool_names) |tool_name| {
             const tool_mod = b.createModule(.{ .target = target, .optimize = optimize });
             tool_mod.link_libc = true;
-            tool_mod.link_libcpp = true;
+            linkLibCpp(b, tool_mod, is_apple);
             tool_mod.addIncludePath(b.path("."));
             for (engine_include_dirs) |dir| tool_mod.addIncludePath(b.path(dir));
             for (thirdparty_include_dirs) |dir| tool_mod.addIncludePath(b.path(dir));
@@ -1340,10 +1405,10 @@ pub fn build(b: *std.Build) void {
             // Enable via MSVC CMake preset or DLL wrapper (future).
 
             const tool_exe = b.addExecutable(.{ .name = tool_name, .root_module = tool_mod });
-            tool_exe.linkLibrary(lib);
-            tool_exe.linkLibrary(editor_lib);
+            tool_exe.root_module.linkLibrary(lib);
+            tool_exe.root_module.linkLibrary(editor_lib);
 
-            for (win_sys_libs) |l| tool_exe.linkSystemLibrary(l);
+            for (win_sys_libs) |l| tool_exe.root_module.linkSystemLibrary(l, .{});
             b.installArtifact(tool_exe);
         }
 
@@ -1353,7 +1418,7 @@ pub fn build(b: *std.Build) void {
         {
             const dbg_mod = b.createModule(.{ .target = target, .optimize = optimize });
             dbg_mod.link_libc = true;
-            dbg_mod.link_libcpp = true;
+            linkLibCpp(b, dbg_mod, is_apple);
             dbg_mod.addIncludePath(b.path("."));
             for (engine_include_dirs) |dir| dbg_mod.addIncludePath(b.path(dir));
             for (thirdparty_include_dirs) |dir| dbg_mod.addIncludePath(b.path(dir));
@@ -1367,8 +1432,8 @@ pub fn build(b: *std.Build) void {
             });
 
             const dbg_exe = b.addExecutable(.{ .name = "debug_skin_reference", .root_module = dbg_mod });
-            dbg_exe.linkLibrary(lib);
-            for (win_sys_libs) |l| dbg_exe.linkSystemLibrary(l);
+            dbg_exe.root_module.linkLibrary(lib);
+            for (win_sys_libs) |l| dbg_exe.root_module.linkSystemLibrary(l, .{});
             b.installArtifact(dbg_exe);
         }
 
@@ -1420,6 +1485,17 @@ pub fn build(b: *std.Build) void {
             b.path(tp ++ "luajit/src/lua51.dll"), "lua51.dll",
         ).step);
 
+        // Engine content the renderer loads at run time for every project: the cloud noise volumes
+        // (runtime/content/atmosphere, MIT data from takram/three-geospatial, notice beside them).
+        // Installed as bin/content/atmosphere so uz::ResolveEngineResource("content/atmosphere/...")
+        // finds them; nothing deployed them after the pbr_test demo's copy step went away
+        // (phase0_clouds-noise-assets).
+        b.getInstallStep().dependOn(&b.addInstallDirectory(.{
+            .source_dir = b.path("content/atmosphere"),
+            .install_dir = .bin,
+            .install_subdir = "content/atmosphere",
+        }).step);
+
         // NVIDIA DLSS SDK — nvngx_dlss.dll must be next to the exe for NGX to find it.
         // The DLSS upscaler uses LoadLibrary("_nvngx.dll") which is driver-provided,
         // but the actual DLSS model DLL must be deployed alongside the application.
@@ -1428,12 +1504,128 @@ pub fn build(b: *std.Build) void {
                 b.path(tp ++ "dlss/lib/Windows_x86_64/dev/nvngx_dlss.dll"), "nvngx_dlss.dll",
             ).step);
         }
+
+        // FFmpeg shared DLLs (phase0_fix-vfx-demo-launch-pipeline).
+        // The LGPL shared build from BtbN ships DLLs under thirdparty/ffmpeg/bin/.
+        // We deploy every one we find there so `uzengine.exe` /
+        // `test_runtime.exe` / demos can link at startup. Deployment is
+        // tolerant of missing files — when `setup.ps1` hasn't been re-run
+        // yet, the step silently skips the missing DLLs and the build
+        // still succeeds.
+        const ffmpeg_dlls = [_][]const u8{
+            "avcodec-62.dll",
+            "avdevice-62.dll",
+            "avfilter-11.dll",
+            "avformat-62.dll",
+            "avutil-60.dll",
+            "swresample-6.dll",
+            "swscale-9.dll",
+        };
+        for (ffmpeg_dlls) |dll| {
+            const src_path = b.fmt("{s}ffmpeg/bin/{s}", .{ tp, dll });
+            // Check whether the source file exists before adding the
+            // install step — zig's addInstallBinFile otherwise fails
+            // the build when the file is missing.
+            const abs_src = b.path(src_path).getPath(b);
+            accessAbsolute(b, abs_src) catch {
+                // Source not present — skip. setup.ps1 re-run needed.
+                continue;
+            };
+            b.getInstallStep().dependOn(&b.addInstallBinFile(
+                b.path(src_path), dll,
+            ).step);
+        }
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Build helpers
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ── Zig 0.15 / 0.16 filesystem compatibility ────────────────────────────────
+// Zig 0.16 moved directory access to `std.Io.Dir`, whose calls take the build
+// graph's `Io` instance; 0.15 (the version scripts/setup.ps1 installs) only has
+// `std.fs`. The team builds with both, so every directory access in this file
+// goes through the helpers below, which pick the API at compile time. Only the
+// taken branch is analysed, so the other version's names never resolve.
+
+const has_std_io_dir = @hasDecl(std, "Io") and @hasDecl(std.Io, "Dir");
+
+/// The directory handle type of the running Zig version.
+const CompatDir = if (has_std_io_dir) std.Io.Dir else std.fs.Dir;
+
+/// Succeeds when `path` (absolute) exists.
+fn accessAbsolute(b: *std.Build, path: []const u8) !void {
+    if (comptime has_std_io_dir) {
+        return std.Io.Dir.accessAbsolute(b.graph.io, path, .{});
+    } else {
+        return std.fs.accessAbsolute(path, .{});
+    }
+}
+
+/// Opens the absolute directory `path`; `iterate` enables `iterate()`.
+fn openDirAbsolute(b: *std.Build, path: []const u8, iterate: bool) !CompatDir {
+    if (comptime has_std_io_dir) {
+        return std.Io.Dir.openDirAbsolute(b.graph.io, path, .{ .iterate = iterate });
+    } else {
+        return std.fs.openDirAbsolute(path, .{ .iterate = iterate });
+    }
+}
+
+/// Closes a directory opened by `openDirAbsolute`.
+fn closeDir(b: *std.Build, dir: *CompatDir) void {
+    if (comptime has_std_io_dir) {
+        dir.close(b.graph.io);
+    } else {
+        dir.close();
+    }
+}
+
+/// `?Entry` returned by a directory iterator's `next`, whatever the version names it.
+fn IterEntry(comptime Iterator: type) type {
+    const next_fn = @typeInfo(@TypeOf(Iterator.next)).@"fn";
+    return @typeInfo(next_fn.return_type.?).error_union.payload;
+}
+
+/// Next entry of a directory iterator; null at the end or on a read error.
+fn nextEntry(b: *std.Build, iter: anytype) IterEntry(@TypeOf(iter.*)) {
+    if (comptime has_std_io_dir) {
+        return iter.next(b.graph.io) catch null;
+    } else {
+        return iter.next() catch null;
+    }
+}
+
+/// Resolves the extracted vcpkg source tree for a port, relative to `runtime/`.
+///
+/// vcpkg names these directories after the upstream version plus a registry
+/// hash (`v1.3.2-c19a0bfd23.clean`), and that name changes every time the
+/// vcpkg baseline moves. Hardcoding one pins the build to a single vcpkg
+/// checkout and breaks with a `file_hash FileNotFound` cache error after any
+/// `vcpkg install`, so discover the directory instead.
+fn vcpkgSrcDir(b: *std.Build, port: []const u8) []const u8 {
+    const parent = b.fmt("thirdparty/vcpkg/buildtrees/{s}/src", .{port});
+    const parent_abs = b.path(parent).getPath(b);
+
+    var dir = openDirAbsolute(b, parent_abs, true) catch
+        std.debug.panic(
+            "vcpkg port '{s}' has no extracted source at {s} — run scripts/setup.ps1",
+            .{ port, parent },
+        );
+    defer closeDir(b, &dir);
+
+    var iter = dir.iterate();
+    while (nextEntry(b, &iter)) |entry| {
+        if (entry.kind != .directory) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".clean")) continue;
+        return b.fmt("{s}/{s}", .{ parent, entry.name });
+    }
+
+    std.debug.panic(
+        "vcpkg port '{s}': no '*.clean' source directory under {s} — run scripts/setup.ps1",
+        .{ port, parent },
+    );
+}
 
 /// Scans a directory for all .cpp files (non-recursive) and adds them as
 /// C++ source files to the given module. This replaces manual file lists —
@@ -1457,16 +1649,16 @@ fn addCppDir(
         "-Wno-unused-private-field",
     };
 
-    var cpp_files = std.ArrayListUnmanaged([]const u8){};
+    var cpp_files = std.ArrayListUnmanaged([]const u8).empty;
 
     var d3d12ma_found = false;
 
     const resolved = b.path(dir);
-    var iter_dir = std.fs.openDirAbsolute(resolved.getPath(b), .{ .iterate = true }) catch return;
-    defer iter_dir.close();
+    var iter_dir = openDirAbsolute(b, resolved.getPath(b), true) catch return;
+    defer closeDir(b, &iter_dir);
 
     var iter = iter_dir.iterate();
-    while (iter.next() catch null) |entry| {
+    while (nextEntry(b, &iter)) |entry| {
         if (entry.kind != .file) continue;
         const name = entry.name;
         if (!std.mem.endsWith(u8, name, ".cpp")) continue;

@@ -73,7 +73,10 @@ public:
 
     // -- Remaining pure-virtual stubs (all no-ops / safe defaults) -----------
 
-    void*    MapBuffer(RHIBufferHandle) override                          { return nullptr; }
+    /// Returns a pointer to a scratch buffer for Map/Unmap pairs.
+    /// The procedural mesh generator writes vertex/index data here; tests
+    /// only care that the buffers are created, not that the data survives.
+    void*    MapBuffer(RHIBufferHandle) override                          { return mapScratch_; }
     void     UnmapBuffer(RHIBufferHandle) override                        {}
     uint32_t GetBufferSRVIndex(RHIBufferHandle) const override            { return UINT32_MAX; }
     uint32_t GetBufferUAVIndex(RHIBufferHandle) const override            { return UINT32_MAX; }
@@ -112,6 +115,11 @@ public:
 private:
     std::atomic<uint32_t> bufferIndex_{0};
     std::atomic<uint32_t> textureIndex_{0};
+
+    /// Scratch buffer for MapBuffer — absorbs writes from upload code.
+    /// 64 KB is enough for any procedural mesh or staging buffer in tests.
+    static constexpr size_t kMapScratchSize = 65536;
+    uint8_t mapScratch_[kMapScratchSize] = {};
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

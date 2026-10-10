@@ -18,6 +18,7 @@
 #include "log.h"
 #include "profiler.h"
 
+#include <algorithm>
 #include <cstring>
 
 UZ_DECLARE_LOG_CATEGORY(Renderer);
@@ -36,6 +37,8 @@ struct ShadowCB {
     /// Transforms world-space vertex positions into light clip space for
     /// depth comparison during shadow map sampling.
     Mat4 viewProj;
+    float lightPosX = 0.f, lightPosY = 0.f, lightPosZ = 0.f; ///< Unused by the CSM; keeps the 80-byte layout of shadow_depth_vs.hlsl (local tiles, block A.1).
+    float lightRadius = 0.f;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -87,6 +90,15 @@ void AddShadowPass(rg::RgBuilder& builder, const ShadowPassDesc& desc)
             const uint32_t resolution = desc.atlasResolution;
             uint32_t totalDrawCalls = 0;
 
+            // Translucent and additive materials (materialFlags bits[0:1] >= 2)
+            // must not cast shadows — glass rendered as a solid occluder blacks
+            // out everything behind it. The instanced path draws the whole batch
+            // without consulting per-draw flags, so it is disabled whenever the
+            // list contains any such material and the per-draw path (which does
+            // filter) takes over.
+            const bool hasTranslucent = std::any_of(commands.begin(), commands.end(),
+                [](const DrawCommand& draw) { return (draw.materialFlags & 0x3u) >= 2u; });
+
             // ── Render each cascade into its atlas tile ───────────────────
             for (uint32_t cascade = 0; cascade < desc.cascadeCount; ++cascade) {
                 uint32_t tileX = 0;
@@ -123,7 +135,7 @@ void AddShadowPass(rg::RgBuilder& builder, const ShadowPassDesc& desc)
                 // For the instanced path, use mesh[0] as the shared geometry
                 // (instanced batches are always homogeneous in mesh — future work
                 // will store per-batch meshId and bind accordingly).
-                const bool useInstanced = desc.instanced && desc.bindless
+                const bool useInstanced = desc.instanced && desc.bindless && !hasTranslucent
                                           && desc.batchData != nullptr
                                           && desc.batchCount > 0
                                           && desc.meshCount > 0
@@ -213,6 +225,9 @@ void AddShadowPass(rg::RgBuilder& builder, const ShadowPassDesc& desc)
                     // - Uncached: render all (default, backward compatible)
                     uint32_t lastBoundMeshId = UINT32_MAX; // Track to avoid redundant rebinds.
                     for (const auto& drawCmd : commands) {
+                        // Translucent/additive materials and mesh decals (bit 4) are not occluders.
+                        if ((drawCmd.materialFlags & 0x3u) >= 2u || (drawCmd.materialFlags & 0x10u) != 0u) continue;
+
                         // ── Mobility filter for shadow caching ───────────────
                         if (desc.cacheMode == ShadowCacheMode::StaticPrimitivesOnly) {
                             // Only render static/stationary primitives into cached atlas

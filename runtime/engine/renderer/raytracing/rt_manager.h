@@ -54,6 +54,9 @@ public:
 
     /// Returns the TLAS SRV index in the global descriptor heap.
     [[nodiscard]] uint32_t GetTLASSRVIndex() const;
+    /// Instances in the TLAS after the last BeginFrame() rebuild (0 when `r.RayTracing` is off:
+    /// BeginFrame returns before Rebuild, so the TLAS stays empty and every RayQuery misses).
+    [[nodiscard]] uint32_t GetTLASInstanceCount() const;
 
     /// Returns true if RT is initialized and ready for use.
     [[nodiscard]] bool IsReady() const { return m_initialized; }

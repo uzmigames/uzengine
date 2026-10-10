@@ -7,6 +7,7 @@
 #include "mesh_render_module.h"
 
 #include "engine/logging/log.h"
+#include "engine/rhi/rhi_device.h"
 
 #include <json.hpp>
 
@@ -42,6 +43,32 @@ MeshRotationMode MeshRotationModeFromString(std::string_view str)
            "MeshRenderModule: unrecognised rotation_mode '{}' -- defaulting to None",
            str);
     return MeshRotationMode::None;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MeshSortMode string conversion
+// ─────────────────────────────────────────────────────────────────────────────
+
+const char* MeshSortModeToString(MeshSortMode mode) noexcept
+{
+    switch (mode) {
+    case MeshSortMode::None:            return "None";
+    case MeshSortMode::ViewDepth:       return "ViewDepth";
+    case MeshSortMode::CustomAttribute: return "CustomAttribute";
+    default:                            return "Unknown";
+    }
+}
+
+MeshSortMode MeshSortModeFromString(std::string_view str)
+{
+    if (str == "None")            return MeshSortMode::None;
+    if (str == "ViewDepth")       return MeshSortMode::ViewDepth;
+    if (str == "CustomAttribute") return MeshSortMode::CustomAttribute;
+
+    UZ_LOG(VFX, Warning,
+           "MeshRenderModule: unrecognised sort_mode '{}' -- defaulting to None",
+           str);
+    return MeshSortMode::None;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -247,7 +274,7 @@ std::string_view MeshRenderModule::GetShaderCode() const
 std::vector<ParameterDef> MeshRenderModule::GetParameters() const
 {
     std::vector<ParameterDef> params;
-    params.reserve(5);
+    params.reserve(6);
 
     {
         ParameterDef p;
@@ -284,6 +311,16 @@ std::vector<ParameterDef> MeshRenderModule::GetParameters() const
         p.defaultInt = static_cast<int32_t>(config_.rotationMode);
         params.push_back(p);
     }
+    {
+        // sort_mode is exposed as Int (enum ordinal) so it lives in the
+        // constant buffer beside the float scales and rotation mode without
+        // a separate string-typed parameter slot.
+        ParameterDef p;
+        p.name       = "sort_mode";
+        p.type       = ParameterType::Int;
+        p.defaultInt = static_cast<int32_t>(config_.sortMode);
+        params.push_back(p);
+    }
 
     return params;
 }
@@ -295,6 +332,34 @@ void MeshRenderModule::Execute(const ExecuteContext& /*ctx*/)
     // buffer descriptor index) is handled by the owning emitter before dispatch.
 }
 
+/// Applies the deserialized JSON config to this module instance.
+///
+/// Delegates to `ParseConfig` so the schema is single-sourced; the resulting
+/// `MeshRenderModuleConfig` becomes the new value of `config_`. Pre-existing
+/// fields that are missing from the JSON revert to struct defaults — this
+/// matches `ParseConfig`'s contract and is the right behaviour for the
+/// `.uzfx` round-trip path (config is fully described in the asset).
+void MeshRenderModule::ApplyJsonConfig(const nlohmann::json& config)
+{
+    if (!config.is_object()) {
+        UZ_LOG(VFX, Warning,
+               "MeshRenderModule::ApplyJsonConfig: config is not an object -- ignored");
+        return;
+    }
+    config_ = ParseConfig(config);
+}
+
+/// Implements the `IVFXModule::ReleaseGPUResources` contract by forwarding
+/// to `DestroyGPUBuffers`. Until this override existed (phase0
+/// particle-mesh-bindless-rewrite-and-d3d12ma-leak), every
+/// `ParticleEmitter::Shutdown` of a mesh emitter leaked the
+/// `instanceTransformBuffer_` + `instanceColorBuffer_` pair, which D3D12MA
+/// surfaced as `m_pMetadata->IsEmpty()` at process exit.
+void MeshRenderModule::ReleaseGPUResources(IRHIDevice* device)
+{
+    DestroyGPUBuffers(device);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Configuration accessors
 // ─────────────────────────────────────────────────────────────────────────────
@@ -302,6 +367,110 @@ void MeshRenderModule::Execute(const ExecuteContext& /*ctx*/)
 const MeshRenderModuleConfig& MeshRenderModule::GetConfig() const noexcept
 {
     return config_;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GPU buffer management
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool MeshRenderModule::CreateGPUBuffers(IRHIDevice* device)
+{
+    if (!device) {
+        UZ_LOG(VFX, Error, "MeshRenderModule::CreateGPUBuffers: device is null");
+        return false;
+    }
+
+    if (hasGPUBuffers_) {
+        UZ_LOG(VFX, Warning, "MeshRenderModule::CreateGPUBuffers: already allocated");
+        return true;
+    }
+
+    const uint32_t count = config_.maxInstances;
+    if (count == 0) {
+        UZ_LOG(VFX, Error, "MeshRenderModule::CreateGPUBuffers: maxInstances is 0");
+        return false;
+    }
+
+    // Instance transform buffer: one float4x4 (64 bytes) per instance.
+    // UAV for the compute shader, SRV for the vertex shader.
+    {
+        RHIBufferDesc desc{};
+        desc.sizeBytes = static_cast<uint64_t>(count) * 64;
+        desc.stride = 64;
+        desc.usage = RHIBufferUsage::StructuredBuffer | RHIBufferUsage::UnorderedAccess;
+        desc.memory = RHIMemoryType::Default;
+        desc.debugName = "VFX_MeshInstanceTransforms";
+        instanceTransformBuffer_ = device->CreateBuffer(desc);
+    }
+
+    // Instance color buffer: one float4 (16 bytes) per instance.
+    // UAV for the compute shader, SRV for the pixel shader.
+    {
+        RHIBufferDesc desc{};
+        desc.sizeBytes = static_cast<uint64_t>(count) * 16;
+        desc.stride = 16;
+        desc.usage = RHIBufferUsage::StructuredBuffer | RHIBufferUsage::UnorderedAccess;
+        desc.memory = RHIMemoryType::Default;
+        desc.debugName = "VFX_MeshInstanceColors";
+        instanceColorBuffer_ = device->CreateBuffer(desc);
+    }
+
+    if (!instanceTransformBuffer_.IsValid() || !instanceColorBuffer_.IsValid()) {
+        UZ_LOG(VFX, Error,
+               "MeshRenderModule::CreateGPUBuffers: allocation failed (maxInstances={})",
+               count);
+        DestroyGPUBuffers(device);
+        return false;
+    }
+
+    hasGPUBuffers_ = true;
+
+    const uint64_t totalKB = (static_cast<uint64_t>(count) * (64 + 16)) / 1024;
+    UZ_LOG(VFX, Info,
+           "MeshRenderModule: GPU instance buffers created (maxInstances={}, memory~{}KB)",
+           count, totalKB);
+    return true;
+}
+
+void MeshRenderModule::DestroyGPUBuffers(IRHIDevice* device)
+{
+    if (!device) return;
+
+    if (instanceTransformBuffer_.IsValid()) {
+        device->DestroyBuffer(instanceTransformBuffer_);
+        instanceTransformBuffer_ = RHIBufferHandle::Invalid();
+    }
+
+    if (instanceColorBuffer_.IsValid()) {
+        device->DestroyBuffer(instanceColorBuffer_);
+        instanceColorBuffer_ = RHIBufferHandle::Invalid();
+    }
+
+    hasGPUBuffers_ = false;
+}
+
+void MeshRenderModule::Load(std::string_view meshPath, IRHIDevice* /*device*/)
+{
+    config_.meshPath = std::string(meshPath);
+    meshLoaded_ = true;
+
+    UZ_LOG(VFX, Info, "MeshRenderModule::Load: path='{}' (deferred — actual mesh loading in future task)",
+           config_.meshPath);
+}
+
+bool MeshRenderModule::HasGPUBuffers() const noexcept
+{
+    return hasGPUBuffers_;
+}
+
+RHIBufferHandle MeshRenderModule::GetInstanceTransformBuffer() const noexcept
+{
+    return instanceTransformBuffer_;
+}
+
+RHIBufferHandle MeshRenderModule::GetInstanceColorBuffer() const noexcept
+{
+    return instanceColorBuffer_;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -323,6 +492,20 @@ MeshRenderModuleConfig MeshRenderModule::ParseConfig(const nlohmann::json& j)
     }
 
     if (j.contains("material_path") && j.at("material_path").is_string()) {
+        // `materialPath` is stored as a string and resolved per-frame at
+        // batch-build time by `SceneRenderer::RegisterParticlePasses` (see
+        // `frame_particles.cpp` mesh-emitter loop). We deliberately do
+        // NOT eagerly load the `MaterialAsset` here:
+        //   1. Hot-reload — re-saving a `.uzmat` while the emitter is
+        //      live should pick up the new shading model / blend mode
+        //      without re-instantiating the module.
+        //   2. PSO cache — `MaterialPipeline::GetParticleMeshPSO` is
+        //      keyed by (shadingModel, blendMode, twoSided, layout) so
+        //      200 emitters using the same material share a single PSO
+        //      regardless of when each one resolves the path.
+        //   3. Asset-system ordering — modules are constructed before
+        //      the VFS / MaterialPipeline are guaranteed to be ready,
+        //      so a `LoadMaterial` call here would have to defer anyway.
         cfg.materialPath = j.at("material_path").get<std::string>();
     }
 
@@ -342,6 +525,35 @@ MeshRenderModuleConfig MeshRenderModule::ParseConfig(const nlohmann::json& j)
     if (j.contains("rotation_mode") && j.at("rotation_mode").is_string()) {
         cfg.rotationMode = MeshRotationModeFromString(
             j.at("rotation_mode").get<std::string>());
+    }
+
+    if (j.contains("sort_mode") && j.at("sort_mode").is_string()) {
+        cfg.sortMode = MeshSortModeFromString(
+            j.at("sort_mode").get<std::string>());
+    }
+
+    if (j.contains("custom_sort_attribute") && j.at("custom_sort_attribute").is_string()) {
+        cfg.customSortAttribute = j.at("custom_sort_attribute").get<std::string>();
+    }
+
+    // CustomAttribute sort requires a non-empty attribute name. If the asset
+    // selected the mode but forgot to name the attribute, downgrade to None
+    // and warn — silently sorting by an unset key would mask the authoring bug.
+    if (cfg.sortMode == MeshSortMode::CustomAttribute && cfg.customSortAttribute.empty()) {
+        UZ_LOG(VFX, Warning,
+               "MeshRenderModule: sort_mode='CustomAttribute' but custom_sort_attribute is empty -- falling back to None");
+        cfg.sortMode = MeshSortMode::None;
+    }
+
+    if (j.contains("max_instances") && j.at("max_instances").is_number_integer()) {
+        const auto val = j.at("max_instances").get<int64_t>();
+        if (val > 0 && val <= 1048576) {
+            cfg.maxInstances = static_cast<uint32_t>(val);
+        } else {
+            UZ_LOG(VFX, Warning,
+                   "MeshRenderModule: max_instances {} out of range [1, 1048576] -- using default",
+                   val);
+        }
     }
 
     return cfg;

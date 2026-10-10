@@ -18,8 +18,11 @@
 #include "profiler.h"
 #include "cvar.h"
 
+#include "paths.h"
+
 #include <cstring>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 
 UZ_DECLARE_LOG_CATEGORY(Renderer);
@@ -166,6 +169,7 @@ void CloudPass::Shutdown() {
     m_shaderMgr   = nullptr;
     m_initialized = false;
     m_hasNoiseTextures = false;
+    m_noiseLoadAttempted = false;
 
     UZ_LOG(Renderer, Info, "CloudPass shut down");
 }
@@ -226,34 +230,52 @@ bool CloudPass::EnsureRaymarchPipeline() {
 // Noise Texture Loading
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Reads an engine-owned cloud asset ("atmosphere/shape.bin"): the project's VFS first (a project may ship its
+/// own), then the engine's content next to the exe (bin/content/atmosphere, installed by build.zig from
+/// runtime/content/atmosphere), then the working directory. Each source is checked for existence before it is
+/// read, so a missing file costs no warning. Returns an empty vector when no source has it.
+static std::vector<uint8_t> ReadCloudAsset(IVFS* vfs, const std::string& relativePath, std::string& sourceOut) {
+    if (vfs && vfs->Exists(relativePath)) {
+        sourceOut = "project VFS";
+        return vfs->Read(relativePath);
+    }
+    const std::filesystem::path candidates[] = {
+        ResolveEngineResource("content/" + relativePath),
+        std::filesystem::current_path() / relativePath,
+    };
+    for (const auto& candidate : candidates) {
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(candidate, ec)) continue;
+        std::ifstream file(candidate, std::ios::binary | std::ios::ate);
+        if (!file.is_open()) continue;
+        const auto size = file.tellg();
+        std::vector<uint8_t> bytes(static_cast<size_t>(size));
+        file.seekg(0);
+        file.read(reinterpret_cast<char*>(bytes.data()), size);
+        sourceOut = candidate.string();
+        return bytes;
+    }
+    return {};
+}
+
 void CloudPass::LoadNoiseTextures(IRHICommandList* cmdList, IVFS* vfs) {
-    if (m_hasNoiseTextures) return;
+    if (m_hasNoiseTextures || m_noiseLoadAttempted) return;
     if (!m_initialized || !cmdList) return;
+    // One attempt per pass lifetime: before phase0_clouds-noise-assets a missing file was retried, with a
+    // FileSystem warning, on every frame.
+    m_noiseLoadAttempted = true;
 
     // Load shape noise — 128^3 R8 (2,097,152 bytes)
     const std::string shapePath = "atmosphere/shape.bin";
     constexpr uint32_t kNoiseRes = 128;
     constexpr uint64_t kExpectedSize = kNoiseRes * kNoiseRes * kNoiseRes; // 2,097,152
 
-    std::vector<uint8_t> r8Data;
-    if (vfs) {
-        r8Data = vfs->Read(shapePath);
-    }
+    std::string shapeSource;
+    std::vector<uint8_t> r8Data = ReadCloudAsset(vfs, shapePath, shapeSource);
     if (r8Data.empty()) {
-        // Fallback: try direct file I/O (dev mode with loose files)
-        std::ifstream file(shapePath, std::ios::binary | std::ios::ate);
-        if (!file.is_open()) {
-            static bool loggedOnce = false;
-            if (!loggedOnce) {
-                UZ_LOG(Renderer, Warning, "CloudPass: could not load {} — clouds will use procedural noise", shapePath);
-                loggedOnce = true;
-            }
-            return;
-        }
-        auto fileSize = file.tellg();
-        r8Data.resize(static_cast<size_t>(fileSize));
-        file.seekg(0);
-        file.read(reinterpret_cast<char*>(r8Data.data()), fileSize);
+        UZ_LOG(Renderer, Warning, "CloudPass: could not find {} (project VFS, {}, working directory) — clouds will use procedural noise",
+               shapePath, ResolveEngineResource("content/" + shapePath).string());
+        return;
     }
     if (r8Data.size() != kExpectedSize) {
         UZ_LOG(Renderer, Error, "CloudPass: shape.bin size mismatch — expected {}, got {}",
@@ -352,24 +374,18 @@ void CloudPass::LoadNoiseTextures(IRHICommandList* cmdList, IVFS* vfs) {
     // Keep staging buffer alive — will be destroyed in Shutdown()
     m_stagingBuffers.push_back(stagingBuf);
 
-    UZ_LOG(Renderer, Info, "CloudPass: shape noise loaded (128^3 RGBA8, SRV={})", m_shapeNoiseSrvIndex);
+    UZ_LOG(Renderer, Info, "CloudPass: shape noise loaded (128^3 RGBA8, SRV={}) from {}", m_shapeNoiseSrvIndex, shapeSource);
 
     // ── Load detail noise — 32^3 R8 (32,768 bytes) ──
-    // VFS asset from runtime/content/atmosphere/shape_detail.bin
+    // Engine content (runtime/content/atmosphere/shape_detail.bin, installed next to the exe), same lookup.
     const std::string detailPath = "atmosphere/shape_detail.bin";
     constexpr uint32_t kDetailRes = 32;
     constexpr uint64_t kDetailExpSize = kDetailRes * kDetailRes * kDetailRes; // 32768
 
-    std::vector<uint8_t> detailR8;
-    if (vfs) {
-        detailR8 = vfs->Read(detailPath);
-    }
+    std::string detailSource;
+    std::vector<uint8_t> detailR8 = ReadCloudAsset(vfs, detailPath, detailSource);
     if (detailR8.empty()) {
-        static bool loggedOnce = false;
-        if (!loggedOnce) {
-            UZ_LOG(Renderer, Warning, "CloudPass: could not load {} via VFS — detail noise erosion disabled", detailPath);
-            loggedOnce = true;
-        }
+        UZ_LOG(Renderer, Warning, "CloudPass: could not find {} — detail noise erosion disabled", detailPath);
     }
 
     if (detailR8.size() == kDetailExpSize) {
@@ -437,8 +453,8 @@ void CloudPass::LoadNoiseTextures(IRHICommandList* cmdList, IVFS* vfs) {
                     cmdList->ResourceBarrier(&detBarrier, 1);
 
                     m_stagingBuffers.push_back(detStaging);
-                    UZ_LOG(Renderer, Info, "CloudPass: detail noise loaded (32^3 RGBA8, SRV={})",
-                           m_detailNoiseSrvIndex);
+                    UZ_LOG(Renderer, Info, "CloudPass: detail noise loaded (32^3 RGBA8, SRV={}) from {}",
+                           m_detailNoiseSrvIndex, detailSource);
                 }
             }
         }
@@ -498,6 +514,10 @@ struct alignas(16) CloudCB {
 };
 
 static_assert(sizeof(CloudCB) == 256, "CloudCB must be 256 bytes for CBV alignment");
+// The HLSL copy declares g_windVelocity as three scalars: a float3 at 152 would move to 160 and
+// shift the tail by 8 bytes (block B.4).
+static_assert(offsetof(CloudCB, windVelocity) == 152);
+static_assert(offsetof(CloudCB, detailNoiseSrv) == 252);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Execute

@@ -349,7 +349,14 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
         // Release staging buffers from the previous upload batch — the copy
         // fence guarantees the GPU is done reading from them.
         if (m_textureBatchUpload) {
-            m_textureBatchUpload->ReleaseStaging();
+            // Hand the previous batch's staging buffers to the deferred-destroy
+            // queue rather than freeing them here. GraphicsWaitForCopy() above is
+            // a GPU-side queue wait; the copy queue may still be reading these
+            // buffers when this CPU code runs, and ReleaseStaging() surfaced as an
+            // intermittent GPU page fault on 'TextureStagingBuffer'.
+            for (RHIBufferHandle staging : m_textureBatchUpload->TakeStagingBuffers()) {
+                QueueBufferDestroy(staging);
+            }
             m_textureBatchUpload.reset();
         }
 
@@ -396,21 +403,12 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
         m_meshBoundsMax[slotIndex] = cpuMesh.header.boundsMax;
         m_deferredMeshUploads.push_back(std::move(deferred));  // move staging ownership
 
-        // Queue SDF bake for the Lua-path loaded mesh (same logic as LoadMesh).
-        // Gated on m_sdfGiEnabled — FlushSdfBakes does WaitIdle and freezes
-        // the main thread when many meshes are queued.
+        // Queue the SDF bake for the Lua-path loaded mesh (same logic as LoadMesh; block B.3).
         if (m_sdfGiEnabled
             && cpuMesh.header.vertexFormat == MeshVertexFormat::Standard
             && cpuMesh.GetVertexCount() > 0 && cpuMesh.GetIndexCount() >= 3)
         {
-            PendingSdfBake sdfBake;
-            sdfBake.meshIndex    = slotIndex;
-            sdfBake.vertexCount  = cpuMesh.GetVertexCount();
-            sdfBake.vertexStride = cpuMesh.header.vertexStride;
-            sdfBake.indexCount   = cpuMesh.GetIndexCount();
-            sdfBake.vertexData   = std::move(cpuMesh.vertexData);
-            sdfBake.indexData    = std::move(cpuMesh.indexData);
-            m_pendingSdfBakes.push_back(std::move(sdfBake));
+            QueueSdfBake(slotIndex, cpuMesh);
         }
 
         UZ_LOG(Renderer, Info,
@@ -444,9 +442,7 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
     }
 
     // ── Batch SDF bake for queued meshes ─────────────────────────────────
-    if (!m_pendingSdfBakes.empty()) {
-        FlushSdfBakes(cmdList);
-    }
+    // (the queued bakes are serviced once per frame at the end of the sync: ServiceSdfBakes)
 
     // ── Flush pending synchronous texture uploads (fallback path) ───────
     // Only used if m_asyncDecoder was not available when QueueTextureLoad

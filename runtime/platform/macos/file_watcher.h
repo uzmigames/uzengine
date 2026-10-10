@@ -33,6 +33,7 @@
 
 #ifdef __APPLE__
 
+#include <cstddef>
 #include <cstdint>
 
 namespace uz {

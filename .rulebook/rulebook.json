@@ -1,8 +1,8 @@
 {
-  "version": "5.3.3",
-  "installedAt": "2026-04-08T16:14:51.936Z",
-  "updatedAt": "2026-04-10T12:34:33.207Z",
-  "projectId": "UzEngine",
+  "version": "5.4.0",
+  "installedAt": "2026-04-20T20:32:55.168Z",
+  "updatedAt": "2026-04-20T20:32:55.168Z",
+  "projectId": "uzengine",
   "mode": "full",
   "features": {
     "watcher": false,
@@ -11,7 +11,7 @@
     "telemetry": false,
     "notifications": false,
     "dryRun": false,
-    "gitHooks": false,
+    "gitHooks": true,
     "repl": false,
     "templates": true,
     "context": true,

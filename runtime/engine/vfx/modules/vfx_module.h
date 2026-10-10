@@ -27,6 +27,8 @@
 
 namespace uz {
 
+class IRHIDevice;
+
 // ---------------------------------------------------------------------------
 // ExecuteContext -- per-dispatch data passed to CPU-side module execution
 // ---------------------------------------------------------------------------
@@ -187,6 +189,24 @@ public:
     /// - `ctx`: Dispatch context with particle count, dt, and GPU handles.
     ///   Valid only for the duration of this call.
     virtual void Execute(const ExecuteContext& ctx) = 0;
+
+    /// Releases any RHI resources the module owns.
+    ///
+    /// Called by `ParticleEmitter::Shutdown` for every module in the
+    /// emitter's stack so subsystem-private GPU buffers (e.g.,
+    /// `MeshRenderModule::instanceTransformBuffer_`) do not leak past the
+    /// emitter that owned them. The default implementation is a no-op for
+    /// modules that hold no GPU resources (gravity, drag, decay, etc.).
+    ///
+    /// Implementations MUST be safe to call multiple times and on a module
+    /// that never allocated resources. After this returns, accessor methods
+    /// that previously exposed GPU handles MUST report invalid.
+    ///
+    /// # Parameters
+    /// - `device`: RHI device used for the destroy calls. May be `nullptr`
+    ///   if the caller is shutting down without a live device — modules
+    ///   should treat that as "drop the handles, do not call into the device".
+    virtual void ReleaseGPUResources(IRHIDevice* device) { (void)device; }
 
     // Non-copyable, movable.
     IVFXModule() = default;

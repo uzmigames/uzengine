@@ -19,6 +19,7 @@
 #include "scene_component.h"
 #include "color_utils.h"
 #include "constant_buffers.h"
+#include "light_renderer.h"
 
 #include <gtest/gtest.h>
 
@@ -109,6 +110,29 @@ TEST(RenderingParity, SkyAtmosphereDefaults_GroundAndMultiScatter) {
     EXPECT_FLOAT_EQ(sky.groundAlbedo.z,        0.4f);
     EXPECT_FLOAT_EQ(sky.multiScatteringFactor, 1.0f);
     EXPECT_FLOAT_EQ(sky.heightFogContribution, 1.0f);
+}
+
+// The sky owns the sun direction a scene without a DirectionalLight renders with (scene key
+// `sun_direction`); until 2026-10-05 it was a hidden LightFrameData default.
+TEST(RenderingParity, SkyAtmosphereDefaults_SunDirection) {
+    SkyAtmosphereComponent sky;
+    EXPECT_FLOAT_EQ(sky.sunDirection.x, 0.5f);
+    EXPECT_FLOAT_EQ(sky.sunDirection.y, 0.3f);
+    EXPECT_FLOAT_EQ(sky.sunDirection.z, 0.8f);
+    EXPECT_GT(sky.sunDirection.z, 0.0f) << "default sun above the horizon";
+}
+
+// A world without a DirectionalLightComponent gets no sun: LightFrameData must not light anything
+// by default (the phantom sun (3, 2.85, 2.7) of before 2026-10-05).
+TEST(RenderingParity, LightFrameDataDefaults_NoPhantomSun) {
+    LightFrameData light;
+    EXPECT_FALSE(light.hasDirectionalLight);
+    EXPECT_FLOAT_EQ(light.sunColor.x, 0.0f);
+    EXPECT_FLOAT_EQ(light.sunColor.y, 0.0f);
+    EXPECT_FLOAT_EQ(light.sunColor.z, 0.0f);
+    EXPECT_FLOAT_EQ(light.sunDir.x, SkyAtmosphereComponent{}.sunDirection.x);
+    EXPECT_FLOAT_EQ(light.sunDir.y, SkyAtmosphereComponent{}.sunDirection.y);
+    EXPECT_FLOAT_EQ(light.sunDir.z, SkyAtmosphereComponent{}.sunDirection.z);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

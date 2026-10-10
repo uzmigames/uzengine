@@ -11,8 +11,10 @@
 #include "root_slots.h"
 #include "engine/rhi/rhi.h"
 #include "gi/radiance_cache.h"
+#include "gi/global_distance_field.h"
 #include "cb_ring_allocator.h"
 
+#include <algorithm>
 #include <cstring>
 
 #include "log.h"
@@ -21,6 +23,58 @@
 UZ_DECLARE_LOG_CATEGORY(Renderer);
 
 namespace uz {
+
+namespace {
+
+/// Fills the GDF clipmap and sun/skylight rows of the shared b2 trace
+/// constants (`RadianceCacheTraceConstants`, rows 1-11) for the path
+/// tracer's bounce hits. Same sources as the DDGI probe writer
+/// (DDGISystem::DispatchUpdate), so the reference and the probe writers
+/// shade identical surfaces. `perFrameCpuPtr` must point at a populated
+/// PerFrameCB; null leaves the sun and sky at zero.
+void FillPathTracerTraceConstants(RadianceCacheTraceConstants& constants,
+                                  const GlobalDistanceField* gdf,
+                                  const void* perFrameCpuPtr) {
+    constants.maxTraceDistance = 1e7f;     // unread: the shader sets its own ray TMax
+    constants.groundAlbedo     = 0.18f;    // hit outside every GDF cascade, no material entry
+
+    constants.numGdfClipmaps = 0;
+    if (gdf != nullptr && gdf->IsInitialized()) {
+        const uint32_t numClipmaps =
+            std::min<uint32_t>(GlobalDistanceField::kNumClipmaps, 4u);
+        constants.numGdfClipmaps = numClipmaps;
+        float*    centers[4] = {&constants.gdfCenter0X, &constants.gdfCenter1X,
+                                &constants.gdfCenter2X, &constants.gdfCenter3X};
+        float*    extents[4] = {&constants.gdfExtent0, &constants.gdfExtent1,
+                                &constants.gdfExtent2, &constants.gdfExtent3};
+        uint32_t* srvs[4]    = {&constants.gdfClipmapSrv0, &constants.gdfClipmapSrv1,
+                                &constants.gdfClipmapSrv2, &constants.gdfClipmapSrv3};
+        for (uint32_t i = 0; i < numClipmaps; ++i) {
+            const auto& clip = gdf->GetClipmap(i);
+            centers[i][0] = clip.center.x;
+            centers[i][1] = clip.center.y;
+            centers[i][2] = clip.center.z;
+            *extents[i]   = clip.extent;
+            *srvs[i]      = clip.srvIndex;
+        }
+    }
+
+    const auto* pf = static_cast<const PerFrameCB*>(perFrameCpuPtr);
+    if (pf != nullptr) {
+        constants.skyColorR      = pf->skyLightColorR * pf->skyLightIntensity;
+        constants.skyColorG      = pf->skyLightColorG * pf->skyLightIntensity;
+        constants.skyColorB      = pf->skyLightColorB * pf->skyLightIntensity;
+        constants.lightDirX      = pf->lightDir.x;
+        constants.lightDirY      = pf->lightDir.y;
+        constants.lightDirZ      = pf->lightDir.z;
+        constants.lightColorR    = pf->lightColor.x;
+        constants.lightColorG    = pf->lightColor.y;
+        constants.lightColorB    = pf->lightColor.z;
+        constants.lightIntensity = 1.0f;
+    }
+}
+
+} // namespace
 
 void AddPathTracerPass(rg::RgBuilder& builder, const PathTracerPassDesc& desc)
 {
@@ -73,7 +127,7 @@ void AddPathTracerPass(rg::RgBuilder& builder, const PathTracerPassDesc& desc)
             // Root constants — must match PathTracerRC layout in
             // path_tracer_ps.hlsl.
             if (desc.bindless) {
-                const uint32_t constants[10] = {
+                const uint32_t constants[12] = {
                     desc.normalSrvIndex,
                     desc.depthSrvIndex,
                     desc.albedoSrvIndex,
@@ -83,22 +137,19 @@ void AddPathTracerPass(rg::RgBuilder& builder, const PathTracerPassDesc& desc)
                     desc.accumPrevSrvIndex,
                     desc.sampleCount,
                     desc.frameIndex,
-                    desc.tlasSrvIndex
+                    desc.tlasSrvIndex,
+                    desc.materialTableSrv,
+                    desc.skyCubemapSrv
                 };
-                cmd->SetRootConstants(kSlotRootConstants, constants, 10);
+                cmd->SetRootConstants(kSlotRootConstants, constants, 12);
 
-                // TraceConstants (b2) — GDF + material table + sun/sky for
-                // the bounce-hit shading. Built HERE (execute time) because
-                // the PerFrameCB cpuPtr is only populated after graph build.
+                // TraceConstants (b2) — GDF + sun/sky for the bounce-hit
+                // shading. Built HERE (execute time) because the PerFrameCB
+                // cpuPtr is only populated after graph build.
                 if (desc.giCbRing != nullptr) {
                     RadianceCacheTraceConstants giConstants{};
-                    giConstants.maxTraceDistance = 1e7f;
-                    FillGITraceHitConstants(giConstants, desc.gdf,
-                                            desc.perFrameAlloc.cpuPtr,
-                                            desc.sceneAlbedo,
-                                            desc.skyCubemapSrv,
-                                            desc.materialTableSrv,
-                                            desc.rcProbeShSrv);
+                    FillPathTracerTraceConstants(giConstants, desc.gdf,
+                                                 desc.perFrameAlloc.cpuPtr);
                     auto giAlloc = desc.giCbRing->Allocate(sizeof(giConstants));
                     if (giAlloc.cpuPtr != nullptr) {
                         std::memcpy(giAlloc.cpuPtr, &giConstants, sizeof(giConstants));

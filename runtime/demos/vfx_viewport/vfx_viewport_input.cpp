@@ -388,10 +388,21 @@ void VFXViewportDemo::HandleInput(float dt) {
         UZ_LOG(App, Info, "[VFX] Spawn radius: {:.1f}", ActiveEmitter().config.spawnRadius);
     }
 
-    // Trail toggle (Y key)
+    // Trail toggle (Y key) / Strand cycle (Shift+Y)
     if (input->IsKeyJustPressed(Key::Y)) {
-        m_trailEnabled = !m_trailEnabled;
-        UZ_LOG(App, Info, "Trails: {}", m_trailEnabled ? "enabled" : "disabled");
+        if (input->IsKeyDown(Key::LeftShift) || input->IsKeyDown(Key::RightShift)) {
+            // Cycle strand count: 1 → 2 → 3 → 4 → 1
+            m_trailStrandCount = (m_trailStrandCount % 4u) + 1u;
+            // Apply to the active trail component if registered.
+            if (auto* comp = m_trailSystem.GetComponent(m_trailHandle)) {
+                comp->ribbonStrands = m_trailStrandCount;
+                comp->strandSpacing = 0.08f; // 8cm between strands
+            }
+            UZ_LOG(App, Info, "Trail strands: {}", m_trailStrandCount);
+        } else {
+            m_trailEnabled = !m_trailEnabled;
+            UZ_LOG(App, Info, "Trails: {}", m_trailEnabled ? "enabled" : "disabled");
+        }
     }
 
     // Decal toggle (D key)
@@ -410,6 +421,29 @@ void VFXViewportDemo::HandleInput(float dt) {
     if (input->IsKeyJustPressed(Key::L)) {
         m_pointLightsEnabled = !m_pointLightsEnabled;
         UZ_LOG(App, Info, "Point lights: {}", m_pointLightsEnabled ? "enabled" : "disabled");
+    }
+
+    // Sprite sRGB toggle (I key) — Task 3.80.0 §7.3
+    // Toggles whether sprite textures are decoded as sRGB or linear.
+    // With sRGB on (default), gamma-encoded textures appear correctly.
+    // With sRGB off, the raw bytes are interpreted as linear — useful for
+    // debugging texture gamma or viewing data textures.
+    if (input->IsKeyJustPressed(Key::I)) {
+        m_spriteSRGB = !m_spriteSRGB;
+        UZ_LOG(App, Info, "[VFX] Sprite sRGB: {}", m_spriteSRGB ? "ON" : "OFF");
+    }
+
+    // Soft particle fade toggle (U key) — Task 3.80.0 §7.4
+    // Toggles the depth-based soft fade on particles. With soft fade off,
+    // particles clip hard against scene geometry — useful for quick A/B
+    // comparison of the soft fade effect.
+    if (input->IsKeyJustPressed(Key::U)) {
+        m_softFadeEnabled = !m_softFadeEnabled;
+        // Apply to all emitters: zero distance disables fade, restore 0.5 as default.
+        for (auto& e : m_emitters) {
+            e.config.softFadeDistance = m_softFadeEnabled ? 0.5f : 0.0f;
+        }
+        UZ_LOG(App, Info, "[VFX] Soft particle fade: {}", m_softFadeEnabled ? "ON" : "OFF");
     }
 
     // ── Gizmo mode keys (W/E/R) — only when an entity is selected ──────
@@ -678,6 +712,7 @@ void VFXViewportDemo::HandleInput(float dt) {
         UZ_LOG(App, Info, "  M                    — Cycle VFX material presets");
         UZ_LOG(App, Info, "  Fireball             — Use toolbar [Fireball] button or File menu");
         UZ_LOG(App, Info, "  Y                    — Toggle trails");
+        UZ_LOG(App, Info, "  Shift+Y              — Cycle ribbon strand count (1-2-3-4)");
         UZ_LOG(App, Info, "  D                    — Toggle decals");
         UZ_LOG(App, Info, "  X                    — Toggle distortion");
         UZ_LOG(App, Info, "  J                    — Toggle lit particles (NdotL + ambient)");

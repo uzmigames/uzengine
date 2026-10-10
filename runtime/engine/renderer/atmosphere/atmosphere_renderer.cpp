@@ -33,7 +33,12 @@
 UZ_DECLARE_LOG_CATEGORY(Renderer);
 
 // ── CVars ────────────────────────────────────────────────────────────────
-static auto* cv_AerialPerspective = UZ_CVAR_BOOL("r.AerialPerspective", true, "Aerial perspective");
+// r.AerialPerspective is registered once, in frame_constants.cpp (default false). A second
+// registration here with default true made the effective default depend on static-init order.
+// Sky IBL re-bake (block A.5): what counts as a change of the sun, and how often a bake may run.
+static auto* cv_SkyRebakeAngleDeg  = UZ_CVAR_FLOAT("r.SkyLight.RebakeAngleDeg", 0.25f, "Re-bake the sky IBL when the sun direction moved by more than this (degrees)", 0.01f, 30.f);
+static auto* cv_SkyRebakeIntensity = UZ_CVAR_FLOAT("r.SkyLight.RebakeIntensityDelta", 0.01f, "Re-bake the sky IBL when the sky sun colour changed by more than this (relative)", 0.001f, 1.f);
+static auto* cv_SkyRebakeInterval  = UZ_CVAR_INT("r.SkyLight.RebakeMinInterval", 30, "Minimum sky passes between two IBL bakes (each bake stalls on WaitIdle)", 1, 3600);
 static auto* cv_ScatteringLut = UZ_CVAR_BOOL("r.ScatteringLut", false, "Use Bruneton 3D scattering LUT for sky (experimental)");
 
 namespace uz {
@@ -160,7 +165,7 @@ void AddAtmospherePasses(
                     }
                     skySunColor = skyComp.sunIlluminance * lightTint;
                     static constexpr float kDegToRad2 = 3.14159265358979323846f / 180.f;
-                    skySunAngularRadius = dl2.lightSourceAngle * kDegToRad2;
+                    skySunAngularRadius = dl2.lightSourceAngle * 0.5f * kDegToRad2;
                     // Sun disk intensity uses the component's artistic control,
                     // NOT the directional light intensity (which would double-multiply
                     // with sunIlluminance, producing HDR values of 200+).
@@ -178,6 +183,40 @@ void AddAtmospherePasses(
         //
         // When HDRI is active, the HDRI cubemap is used directly for IBL —
         // skip the procedural sky cubemap capture entirely.
+        // ── Sky IBL re-bake on change (block A.5) ───────────────────────────
+        // The capture below and PostFrameAtmosphereBake() run only while *skyIBLDirty, which
+        // used to be set once at construction: a moving sun kept the SH and prefiltered maps
+        // of the first frame forever. Compare the sun direction, the sky sun colour and the
+        // angular radius with what the IBL was baked from; a change above r.SkyLight.RebakeAngleDeg
+        // / r.SkyLight.RebakeIntensityDelta marks it dirty, at most once per
+        // r.SkyLight.RebakeMinInterval passes (each bake stalls on WaitIdle plus an SH readback —
+        // an asynchronous bake is the follow-up, not this).
+        if (ctx.skyBakeSignature != nullptr) {
+            float* sig = ctx.skyBakeSignature;
+            const float now[7] = {sunDir.x, sunDir.y, sunDir.z,
+                                  skySunColor.x, skySunColor.y, skySunColor.z, skySunAngularRadius};
+            sig[7] += 1.0f;
+            if (sig[0] <= -1e29f) {
+                for (int i = 0; i < 7; ++i) sig[i] = now[i];   // the initial bake is already pending
+                sig[7] = 0.0f;
+            } else {
+                const float dirDot = sig[0] * now[0] + sig[1] * now[1] + sig[2] * now[2];
+                float colorRel = 0.0f;
+                for (int i = 3; i < 6; ++i) {
+                    colorRel = std::max(colorRel, std::abs(now[i] - sig[i]) / std::max(std::abs(sig[i]), 1e-3f));
+                }
+                const float cosAngle = std::cos(cv_SkyRebakeAngleDeg->value * 3.14159265358979323846f / 180.f);
+                const bool changed = dirDot < cosAngle
+                                  || colorRel > cv_SkyRebakeIntensity->value
+                                  || std::abs(now[6] - sig[6]) > 1e-4f;
+                if (changed && sig[7] >= static_cast<float>(cv_SkyRebakeInterval->value) && !ctx.hdriActive) {
+                    *ctx.skyIBLDirty = true;
+                    for (int i = 0; i < 7; ++i) sig[i] = now[i];
+                    sig[7] = 0.0f;
+                    UZ_LOG(Renderer, Info, "Sky IBL: re-bake queued (sun dir dot={:.6f}, sun colour change={:.3f})", dirDot, colorRel);
+                }
+            }
+        }
         if (!ctx.hdriActive && *ctx.skyIBLDirty && ctx.skyCubemap.IsValid()
                 && ctx.transmittanceLutSrv != UINT32_MAX) {
 
@@ -212,7 +251,11 @@ void AddAtmospherePasses(
                 cubeRC.sunDirX             = sunDir.x;
                 cubeRC.sunDirY             = sunDir.y;
                 cubeRC.sunDirZ             = sunDir.z;
-                cubeRC.sunIntensity        = skySunColor.Length();
+                // Per channel, the sky pass's quantity (block B.5c: the length of the vector was
+                // sqrt 3 x the per-channel value of a white sun, and grey for a tinted one).
+                cubeRC.sunIllumX           = skySunColor.x;
+                cubeRC.sunIllumY           = skySunColor.y;
+                cubeRC.sunIllumZ           = skySunColor.z;
                 cubeRC.transmittanceLutIdx = ctx.transmittanceLutSrv;
                 cubeRC.packedScatterScales = packed;
                 // Bruneton 3D scattering LUT for cubemap capture — avoids 16-step ray march.
@@ -250,7 +293,9 @@ void AddAtmospherePasses(
                 psRC.sunDirX             = sunDir.x;
                 psRC.sunDirY             = sunDir.y;
                 psRC.sunDirZ             = sunDir.z;
-                psRC.sunIntensity        = skySunColor.Length();
+                psRC.sunIllumX           = skySunColor.x;
+                psRC.sunIllumY           = skySunColor.y;
+                psRC.sunIllumZ           = skySunColor.z;
                 psRC.cubeFaceIndex       = 0; // Updated per-face in the pass
                 psRC.packedScatterScales = packed;
 
@@ -513,8 +558,13 @@ void AddAtmospherePasses(
                 std::memcpy(densAlloc.cpuPtr, &densCBV, sizeof(ScatteringDensityCBV));
 
                 if (densPipeline.IsValid()) {
-                    std::string densPassName = std::string("ScatteringDensity_Order") + std::to_string(order);
-                    rgBuilder.AddPass(densPassName.c_str(), [=](rg::RgPassBuilder& pb) {
+                    // AddPass keeps the pointer: the name must outlive the graph (a local string
+                    // did not, and the profiler read freed memory until 2026-10-05).
+                    static constexpr const char* kDensPassNames[] = {
+                        "ScatteringDensity_Order0", "ScatteringDensity_Order1", "ScatteringDensity_Order2",
+                        "ScatteringDensity_Order3", "ScatteringDensity_Order4"};
+                    static_assert(kNumScatterOrders <= 4, "extend the pass-name tables");
+                    rgBuilder.AddPass(kDensPassNames[order], [=](rg::RgPassBuilder& pb) {
                         pb.Read(lutRes, RHIResourceState::ShaderResource);
                         pb.Read(deltaRayRes, RHIResourceState::ShaderResource);
                         if (order == 2) pb.Read(deltaMieRes, RHIResourceState::ShaderResource);
@@ -540,8 +590,10 @@ void AddAtmospherePasses(
                 std::memcpy(indIrrAlloc.cpuPtr, &indIrrCBV, sizeof(IrradianceCBV));
 
                 if (irrPipeline.IsValid()) {
-                    std::string irrPassName = std::string("IndirectIrradiance_Order") + std::to_string(order);
-                    rgBuilder.AddPass(irrPassName.c_str(), [=](rg::RgPassBuilder& pb) {
+                    static constexpr const char* kIrrPassNames[] = {
+                        "IndirectIrradiance_Order0", "IndirectIrradiance_Order1", "IndirectIrradiance_Order2",
+                        "IndirectIrradiance_Order3", "IndirectIrradiance_Order4"};
+                    rgBuilder.AddPass(kIrrPassNames[order], [=](rg::RgPassBuilder& pb) {
                         pb.Read(deltaRayRes, RHIResourceState::ShaderResource);
                         if (order == 2) pb.Read(deltaMieRes, RHIResourceState::ShaderResource);
                         pb.Write(irrRes, RHIResourceState::UnorderedAccess);
@@ -590,8 +642,10 @@ void AddAtmospherePasses(
                 std::memcpy(indAlloc.cpuPtr, &indCBV, sizeof(IndirectScatteringCBV));
 
                 if (indPipeline.IsValid()) {
-                    std::string indPassName = std::string("IndirectScattering_Order") + std::to_string(order);
-                    rgBuilder.AddPass(indPassName.c_str(), [=](rg::RgPassBuilder& pb) {
+                    static constexpr const char* kIndPassNames[] = {
+                        "IndirectScattering_Order0", "IndirectScattering_Order1", "IndirectScattering_Order2",
+                        "IndirectScattering_Order3", "IndirectScattering_Order4"};
+                    rgBuilder.AddPass(kIndPassNames[order], [=](rg::RgPassBuilder& pb) {
                         pb.Read(lutRes, RHIResourceState::ShaderResource);
                         pb.Read(scatDensRes, RHIResourceState::ShaderResource);
                         pb.Write(scatRes, RHIResourceState::UnorderedAccess);
@@ -743,6 +797,13 @@ void PostFrameAtmosphereBake(
                    ctx.envMapSampler->GetAliasSrv(),
                    ctx.envMapSampler->GetLuminanceMip0Srv(),
                    ctx.envMapSampler->GetTotalLuminance());
+        }
+        // Diagnostics (split-sum item): with a region dump active, the prefiltered specular mips the bake just
+        // wrote, as equirects beside the environment dump (`prefiltered_mip<N>.f32`), for a CPU prefilter check.
+        if (ctx.envMapSampler->HasDumpDirectory() && ctx.iblResult->prefilteredSrvIndex != UINT32_MAX) {
+            for (uint32_t mip = 0; mip < IBLBaker::kPrefilteredMipLevels; ++mip) {
+                ctx.envMapSampler->DumpRadiance(ctx.iblResult->prefilteredSrvIndex, mip, "prefiltered_mip" + std::to_string(mip));
+            }
         }
     }
 

@@ -333,10 +333,101 @@ TEST(VFXRenderGraph_Simulation, ParticleIndirectArgsConstants_Default_IndirectAr
 // 7.1.5: ParticleBillboardIndices and VFXBillboardCB sizes
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// ParticleBillboardIndices (b0 root constants) must be 48 bytes.
+/// ParticleBillboardIndices (b0 root constants) must be 48 bytes. Phase 2 of
+/// task 3.91.0 repurposed the trailing pad slot as `subImageIndexBufferIdx`
+/// so the size stays the same (12 uint32 slots) — the HLSL layout is
+/// byte-identical, only the semantic meaning of the last slot changed.
 TEST(VFXRenderGraph_Billboard, ParticleBillboardIndices_Size_Is48Bytes) {
     EXPECT_EQ(sizeof(ParticleBillboardIndices), 48u)
-        << "ParticleBillboardIndices must be 48 bytes to match HLSL VFXBillboardConstants";
+        << "ParticleBillboardIndices must be 48 bytes (12 uint32) to match HLSL VFXBillboardConstants";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 3b-3.91.0 Phase 2: SubImageIndex SoA channel wiring
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The SubImageIndex bindless index field occupies the last uint32 slot
+/// (offset 44, repurposed from the former _vfxPad1 pad slot).
+TEST(VFXRenderGraph_Billboard, ParticleBillboardIndices_SubImageIndex_OffsetIs44) {
+    EXPECT_EQ(offsetof(ParticleBillboardIndices, subImageIndexBufferIdx), 44u)
+        << "subImageIndexBufferIdx must be the 12th uint32 at offset 44 (repurposed _vfxPad1)";
+}
+
+/// Default-initialized SubImageIndex descriptor index is zero so bindless
+/// shaders can guard against it (0 = uninitialized fallback) before reading.
+TEST(VFXRenderGraph_Billboard, ParticleBillboardIndices_SubImageIndex_DefaultIsZero) {
+    ParticleBillboardIndices indices{};
+    EXPECT_EQ(indices.subImageIndexBufferIdx, 0u);
+}
+
+/// The SubImageIndex SoA channel must be part of a valid ParticleAttributeSet —
+/// IsValid() returns false if subImageIndices is invalid.
+TEST(VFX_GPUParticleBuffer, ParticleAttributeSet_SubImageIndices_RequiredForIsValid) {
+    ParticleAttributeSet set;
+    // All fields default-invalid → IsValid() must be false.
+    EXPECT_FALSE(set.IsValid());
+
+    // Assign every field *except* subImageIndices to a fake-valid handle and
+    // confirm IsValid() still reports false (i.e. subImageIndices is required).
+    RHIBufferHandle handle{1};
+    set.positions  = handle;
+    set.velocities = handle;
+    set.ages       = handle;
+    set.lifespans  = handle;
+    set.sizes      = handle;
+    set.colors     = handle;
+    set.rotations  = handle;
+    // subImageIndices intentionally left Invalid.
+    EXPECT_FALSE(set.IsValid())
+        << "ParticleAttributeSet::IsValid() must require a valid subImageIndices buffer";
+
+    set.subImageIndices = handle;
+    EXPECT_TRUE(set.IsValid())
+        << "ParticleAttributeSet::IsValid() must succeed once subImageIndices is valid";
+}
+
+/// ParticleSpawnConstants must expose the SubImageIndex UAV field at the
+/// byte offset matching HLSL VFXSpawnConstants (offset 180, slot 45).
+TEST(VFXRenderGraph_Simulation, ParticleSpawnConstants_SubImageIndex_OffsetIs180) {
+    EXPECT_EQ(offsetof(ParticleSpawnConstants, subImageIndicesUavIndex), 180u)
+        << "subImageIndicesUavIndex must be at offset 180 in ParticleSpawnConstants";
+}
+
+/// ParticleSpawnConstants must expose flipbookTotalFrames at offset 184
+/// so the spawn shader can pre-seed SubImageIndex = 0 and verify bounds.
+TEST(VFXRenderGraph_Simulation, ParticleSpawnConstants_FlipbookTotalFrames_OffsetIs184) {
+    EXPECT_EQ(offsetof(ParticleSpawnConstants, flipbookTotalFrames), 184u)
+        << "flipbookTotalFrames must be at offset 184 in ParticleSpawnConstants";
+}
+
+/// ParticleUpdateConstants SubImageIndex SRV index is at offset 60 (slot 15 in
+/// the SRV block — was _padSrv0, now repurposed for the SoA SubImageIndex read).
+TEST(VFXRenderGraph_Simulation, ParticleUpdateConstants_SubImageIndexSrv_OffsetIs60) {
+    EXPECT_EQ(offsetof(ParticleUpdateConstants, subImageIndicesSrvIndex), 60u)
+        << "subImageIndicesSrvIndex must be at offset 60 in ParticleUpdateConstants";
+}
+
+/// ParticleUpdateConstants SubImageIndex UAV index is at offset 92 (was
+/// _padUav0, now repurposed for the SoA SubImageIndex write).
+TEST(VFXRenderGraph_Simulation, ParticleUpdateConstants_SubImageIndexUav_OffsetIs92) {
+    EXPECT_EQ(offsetof(ParticleUpdateConstants, subImageIndicesUavIndex), 92u)
+        << "subImageIndicesUavIndex must be at offset 92 in ParticleUpdateConstants";
+}
+
+/// ParticleUpdateConstants flipbookTotalFrames is at offset 336 (was _padPF0,
+/// now carries the SubUV frame count for subImageIndex computation).
+TEST(VFXRenderGraph_Simulation, ParticleUpdateConstants_FlipbookTotalFrames_OffsetIs336) {
+    EXPECT_EQ(offsetof(ParticleUpdateConstants, flipbookTotalFrames), 336u)
+        << "flipbookTotalFrames must be at offset 336 in ParticleUpdateConstants";
+}
+
+/// Default-initialized ParticleUpdateConstants::flipbookTotalFrames is 1
+/// (single-frame sprite, no flipbook). The update shader computes
+/// subImageIndex = normAge * (totalFrames - 1), which collapses to 0 when
+/// totalFrames == 1 — the correct behavior for non-flipbook sprites.
+TEST(VFXRenderGraph_Simulation, ParticleUpdateConstants_FlipbookTotalFrames_DefaultIs1) {
+    ParticleUpdateConstants c;
+    EXPECT_EQ(c.flipbookTotalFrames, 1u);
 }
 
 /// VFXBillboardCB must be 304 bytes (19 x float4) to match HLSL layout.

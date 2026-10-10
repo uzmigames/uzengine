@@ -20,6 +20,7 @@
 /// All `*Desc` structs use aggregate initialization with safe defaults.
 /// Only fields that differ from defaults need to be set explicitly.
 
+#include <cstddef>
 #include <cstdint>
 
 namespace uz {
@@ -533,11 +534,44 @@ struct RHIBlendDesc {
     RHIBlendOp alphaOp = RHIBlendOp::Add;
 };
 
+/// Stencil operation — matches D3D12_STENCIL_OP / VkStencilOp.
+enum class RHIStencilOp : uint8_t {
+    Keep    = 0,  ///< Leave the stencil value unchanged.
+    Zero    = 1,  ///< Set stencil to 0.
+    Replace = 2,  ///< Set stencil to the reference value.
+    IncrSat = 3,  ///< Increment and clamp to 255.
+    DecrSat = 4,  ///< Decrement and clamp to 0.
+    Invert  = 5,  ///< Bitwise invert.
+};
+
+/// Per-face stencil operation descriptor.
+struct RHIStencilFaceDesc {
+    RHIStencilOp   failOp      = RHIStencilOp::Keep;
+    RHIStencilOp   depthFailOp = RHIStencilOp::Keep;
+    RHIStencilOp   passOp      = RHIStencilOp::Keep;
+    RHICompareFunc stencilFunc = RHICompareFunc::Always;
+};
+
 /// Depth-stencil state for pipeline creation.
 struct RHIDepthStencilDesc {
     bool depthEnable = true;
     bool depthWrite = true;
     RHICompareFunc depthFunc = RHICompareFunc::Greater; ///< Reversed-Z: closer = greater depth value.
+
+    /// Stencil test enable. When false, all stencil fields are ignored.
+    bool stencilEnable = false;
+
+    /// Read mask applied to the stencil buffer before compare.
+    uint8_t stencilReadMask  = 0xFF;
+
+    /// Write mask applied before stencil writes.
+    uint8_t stencilWriteMask = 0xFF;
+
+    /// Front-face stencil operations.
+    RHIStencilFaceDesc frontFace;
+
+    /// Back-face stencil operations.
+    RHIStencilFaceDesc backFace;
 };
 
 /// Rasterizer state for pipeline creation.

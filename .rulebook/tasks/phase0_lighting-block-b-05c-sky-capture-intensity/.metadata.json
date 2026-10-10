@@ -1,0 +1,6 @@
+{
+  "status": "completed",
+  "createdAt": "2026-10-08T11:50:24.747Z",
+  "updatedAt": "2026-10-08T12:07:36.000Z",
+  "resolution": "done 2026-10-08, commit b8ff5077: the sky cubemap capture scaled the sun by |illuminance| (sqrt 3 x per channel for a white sun, grey for a tinted one); both capture paths now take the per-channel illuminance as the sky pass does; test_sky_capture.py 5/5 (capture vs the sky pass 1.002, chrome floor 0.011, warm sun per channel 0.999/0.997/0.991, Sponza direct identical with diffuse_indirect at 0.894 x, PMREM floor bit-identical); the look of atmosphere scenes changes by design"
+}

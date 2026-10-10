@@ -24,7 +24,6 @@
 #include "constant_buffers.h"
 #include "render_graph_types.h"
 #include "engine/rhi/rhi_types.h"
-#include "vector3.h"
 
 namespace uz::rg {
 class RgBuilder;
@@ -34,6 +33,22 @@ namespace uz {
 
 class CBRingAllocator;
 class GlobalDistanceField;
+
+/// Per-mesh material entry for the path tracer's bounce-hit shading.
+///
+/// Indexed by TLAS `InstanceID()` (the engine packs `cmd.meshId` there —
+/// see tlas_manager.cpp). The albedo TEXTURE average is obtained in-shader
+/// by sampling the material's albedo SRV at its last mip (the mip tail IS
+/// the average), tinted by the material's base color factor. Mirrored by
+/// `GIMeshMaterial` in shaders/runtime/gi/gi_trace_common.hlsli.
+struct GIMeshMaterialGPU {
+    float    tintR;              ///< BaseColor tint factor (linear).
+    float    tintG;
+    float    tintB;
+    uint32_t albedoSrv;          ///< Albedo texture SRV (UINT32_MAX = tint only).
+};
+
+static_assert(sizeof(GIMeshMaterialGPU) == 16, "GIMeshMaterialGPU must be 16 bytes");
 
 /// Configuration for the path tracer pass.
 struct PathTracerPassDesc {
@@ -59,17 +74,20 @@ struct PathTracerPassDesc {
     /// Scene TLAS SRV for real multi-bounce transport (UINT32_MAX = fall
     /// back to the occlusion-free sky estimate — NOT reference quality).
     uint32_t          tlasSrvIndex = UINT32_MAX;
-    /// Inputs for the b2 TraceConstants (GDF clipmaps + material table +
-    /// sun/sky). The CB is built + bound INSIDE the execution callback —
-    /// the PerFrameCB cpuPtr is only populated after graph build, so the
-    /// sun/sky values MUST be read at execute time (reading them at
-    /// registration yields zeros — the black-bounce bug of 2026-07-27).
+    /// Inputs for the b2 TraceConstants (the shared `RadianceCacheTraceConstants`
+    /// layout: GDF clipmaps for hit normals + albedo, sun, skylight). The CB is
+    /// built + bound INSIDE the execution callback — the PerFrameCB cpuPtr is
+    /// only populated after graph build, so the sun/sky values MUST be read at
+    /// execute time (reading them at registration yields zeros — the
+    /// black-bounce bug of 2026-07-27).
     CBRingAllocator*           giCbRing = nullptr;   ///< null = no b2 bound.
     const GlobalDistanceField* gdf = nullptr;
-    Vec3                       sceneAlbedo{0.35f, 0.35f, 0.35f};
+    /// Atmosphere sky cubemap SRV for bounce-miss radiance (UINT32_MAX = the
+    /// flat skylight colour). Passed as a root constant.
     uint32_t                   skyCubemapSrv   = UINT32_MAX;
+    /// StructuredBuffer<GIMeshMaterialGPU> SRV indexed by TLAS InstanceID
+    /// (UINT32_MAX = GDF surface albedo). Passed as a root constant.
     uint32_t                   materialTableSrv = UINT32_MAX;
-    uint32_t                   rcProbeShSrv    = UINT32_MAX;
     bool              bindless;
     float             viewportWidth;
     float             viewportHeight;

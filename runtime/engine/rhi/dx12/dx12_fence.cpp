@@ -7,6 +7,13 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "dx12_fence.h"
+#include "dx12_guids.h"
+
+// IID_PPV_ARGS(&m_fence) needs __uuidof(ID3D12Fence). On Clang/MinGW that
+// resolves through __mingw_uuidof<T>, whose primary template is declared but
+// never defined — without the __CRT_UUID_DECL entries this compiles and then
+// fails at link with "undefined symbol: __mingw_uuidof<ID3D12Fence>()".
+#include "dx12_guids.h"
 
 #include "log.h"
 #include "profiler.h"
@@ -73,7 +80,19 @@ void DX12Fence::WaitCPU(uint64_t value) {
         return;
     }
 
-    WaitForSingleObject(m_event, INFINITE);
+    // Watchdog (see DX12Device::WaitIdle): never gives up, but a wait that outlives
+    // kGpuWaitWatchdogMs is logged with the device-removed reason instead of hanging silently.
+    uint32_t waited = 0;
+    while (WaitForSingleObject(m_event, kGpuWaitWatchdogMs) == WAIT_TIMEOUT) {
+        waited += kGpuWaitWatchdogMs;
+        HRESULT removed = S_OK;
+        ComPtr<ID3D12Device> device;
+        if (SUCCEEDED(m_fence->GetDevice(IID_PPV_ARGS(&device))) && device) {
+            removed = device->GetDeviceRemovedReason();
+        }
+        UZ_LOG(RHI, Error, "DX12Fence::WaitCPU: still waiting after {} ms for value {} (completed {}, device removed reason 0x{:08X})",
+               waited, value, m_fence->GetCompletedValue(), static_cast<uint32_t>(removed));
+    }
 }
 
 bool DX12Fence::IsComplete(uint64_t value) const {

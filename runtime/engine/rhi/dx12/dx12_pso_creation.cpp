@@ -246,13 +246,18 @@ ID3D12RootSignature* CreateBindlessRootSignature(
         numParams = 7;  // 0=b0, 1=b1, 2=b2, 3=b4, 4=UAV, 5=b3(material), 6=SRV(SM5)
     }
 
-    D3D12_ROOT_SIGNATURE_FLAGS flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
+    D3D12_ROOT_SIGNATURE_FLAGS flags =
+        D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
     if (bindless) {
-        flags = D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED |
-                D3D12_ROOT_SIGNATURE_FLAG_SAMPLER_HEAP_DIRECTLY_INDEXED;
-    } else {
-        // SM5: allow Input Assembler vertex/index buffer binding
-        flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+        // Phase 0 (demo launch pipeline fix) — bindless root sigs also
+        // need `ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT`. The engine still
+        // has PSOs with real IA layouts (e.g. `ParticleMeshOpaque` +
+        // `ParticleMeshTransparent`, which sample `VfxMeshVertex` at
+        // `POSITION`/`NORMAL`/`TEXCOORD0`). Without the ALLOW flag
+        // DX12 rejects those PSOs with E_INVALIDARG. Bindless-heap
+        // indexing is independent of this flag and remains active.
+        flags |= D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED |
+                 D3D12_ROOT_SIGNATURE_FLAG_SAMPLER_HEAP_DIRECTLY_INDEXED;
     }
 
     // Static sampler s0: anisotropic wrap (used by mesh_ps and any textured shader)
@@ -352,7 +357,13 @@ ID3D12RootSignature* CreateBindlessRootSignature(
         //   s2: trilinear clamp, s3: trilinear wrap
         static const char kRootSigHLSL[] =
             "#define RS \""
-            "RootFlags(CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED | SAMPLER_HEAP_DIRECTLY_INDEXED),"
+            // ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT must be set so PSOs that
+            // declare a real IA layout (mesh particles, skeletal mesh, anything
+            // with a vertex buffer) survive driver validation. Without it
+            // CreateGraphicsPipelineState rejects the PSO with E_INVALIDARG
+            // even though the layout itself is valid — the root signature is
+            // declaring "no IA in/out" which contradicts the PSO desc.
+            "RootFlags(CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED | SAMPLER_HEAP_DIRECTLY_INDEXED | ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT),"
             "RootConstants(num32BitConstants=16, b0, visibility=SHADER_VISIBILITY_ALL),"
             "CBV(b1, flags=DATA_STATIC_WHILE_SET_AT_EXECUTE, visibility=SHADER_VISIBILITY_ALL),"
             "CBV(b2, flags=DATA_STATIC_WHILE_SET_AT_EXECUTE, visibility=SHADER_VISIBILITY_ALL),"
@@ -741,6 +752,56 @@ bool CreateDX12GraphicsPipeline(ID3D12Device* device,
                psoDesc.NumRenderTargets,
                static_cast<uint32_t>(psoDesc.DSVFormat),
                static_cast<uint32_t>(psoDesc.PrimitiveTopologyType));
+
+        // Phase 0 diagnosis — log every detail of the PSO desc so we can
+        // diagnose E_INVALIDARG without depending on the InfoQueue (which
+        // is silent unless the Graphics Tools optional feature is installed).
+        UZ_LOG(RHI, Error, "PSO failure context: rootSig={} VSptr={} PSptr={} "
+               "InputLayoutCount={} VertexStride={} BlendIndependent={} "
+               "RTV[0]={} sampleMask=0x{:08x}",
+               static_cast<void*>(psoDesc.pRootSignature),
+               static_cast<const void*>(psoDesc.VS.pShaderBytecode),
+               static_cast<const void*>(psoDesc.PS.pShaderBytecode),
+               psoDesc.InputLayout.NumElements,
+               desc.vertexStride,
+               psoDesc.BlendState.IndependentBlendEnable,
+               static_cast<uint32_t>(psoDesc.RTVFormats[0]),
+               psoDesc.SampleMask);
+        for (UINT i = 0; i < psoDesc.InputLayout.NumElements; ++i) {
+            const auto& el = psoDesc.InputLayout.pInputElementDescs[i];
+            UZ_LOG(RHI, Error, "  InputElement[{}]: '{}'{} fmt={} slot={} offset={} "
+                   "class={} stepRate={}",
+                   i, el.SemanticName, el.SemanticIndex,
+                   static_cast<uint32_t>(el.Format),
+                   el.InputSlot, el.AlignedByteOffset,
+                   static_cast<int>(el.InputSlotClass), el.InstanceDataStepRate);
+        }
+
+        // Drain ID3D12InfoQueue if it's available.
+        ComPtr<ID3D12InfoQueue> infoQueue;
+        HRESULT iqHr = device->QueryInterface(IID_PPV_ARGS(&infoQueue));
+        UZ_LOG(RHI, Error, "InfoQueue QI: hr=0x{:08X} iq={} msgCount={}",
+               static_cast<uint32_t>(iqHr),
+               static_cast<void*>(infoQueue.Get()),
+               infoQueue ? infoQueue->GetNumStoredMessages() : 0);
+        if (SUCCEEDED(iqHr) && infoQueue) {
+            UINT64 msgCount = infoQueue->GetNumStoredMessages();
+            for (UINT64 i = 0; i < msgCount; ++i) {
+                SIZE_T msgLen = 0;
+                infoQueue->GetMessage(i, nullptr, &msgLen);
+                if (msgLen == 0) continue;
+                auto* msg = static_cast<D3D12_MESSAGE*>(malloc(msgLen));
+                if (msg && SUCCEEDED(infoQueue->GetMessage(i, msg, &msgLen))) {
+                    UZ_LOG(RHI, Error, "D3D12 DebugLayer[{}]: {}",
+                           static_cast<int>(msg->Severity),
+                           std::string_view(msg->pDescription,
+                                            msg->DescriptionByteLength > 0
+                                                ? msg->DescriptionByteLength - 1 : 0));
+                }
+                if (msg) free(msg);
+            }
+            infoQueue->ClearStoredMessages();
+        }
 
         return false;
     }

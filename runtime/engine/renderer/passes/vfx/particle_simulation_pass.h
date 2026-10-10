@@ -121,13 +121,40 @@ struct ParticleSpawnConstants {
     float    defaultDynParam0    = 0.0f;  ///< Default dynamic param X.
 
     float    defaultDynParam1    = 0.0f;  ///< Default dynamic param Y.
-    float    defaultDynParam2    = 0.0f;  ///< Default dynamic param Z.
-    float    defaultDynParam3    = 0.0f;  ///< Default dynamic param W.
+    uint32_t subImageIndicesUavIndex = 0; ///< UAV for RWStructuredBuffer<float> subImageIndices.
+    uint32_t flipbookTotalFrames = 1;    ///< Total SubUV frames for subImageIndex computation.
     /// @ref Salmon 2011 "Parallel Random Numbers" -- 0=use frameNumber, >0=fixed seed.
     uint32_t emitterSeed         = 0;     ///< Deterministic seed override.
+
+    // ── User-declared per-particle attribute UAV indices + defaults ─── offset 192
+    // Mirrors the HLSL cbuffer extension (see particle_spawn_cs.hlsl). All
+    // UAV slots default to UINT32_MAX meaning "no buffer" — the Spawn CS
+    // short-circuits when the slot is unbound.
+    uint32_t userFloatUav[4]     = {UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX}; // 192-207
+    uint32_t userVec4Uav[2]      = {UINT32_MAX, UINT32_MAX};                         // 208-215
+    float    _padUser[2]         = {};                                               // 216-223
+    float    userFloatDefault[4] = {0.0f, 0.0f, 0.0f, 0.0f};                          // 224-239
+    float    userVec4Default0[4] = {0.0f, 0.0f, 0.0f, 0.0f};                          // 240-255
+    float    userVec4Default1[4] = {0.0f, 0.0f, 0.0f, 0.0f};                          // 256-271
+
+    // ── Spline Data Interface (phase16 hardware-validation) ──────────── offset 272
+    // Populated when a `SpawnAlongSplineModule` is on the emitter's spawn
+    // stack. Zero-default keeps spline-less emitters byte-identical to
+    // the prior layout (the spawn CS gates spline work on
+    // `cbSplinePointCount >= 2`). Mirrored in `particle_spawn_cs.hlsl`.
+    /// @ref engine/vfx/modules/spline_modules.h `SpawnAlongSplineModule`
+    /// @ref engine/vfx/data_interfaces/vfx_spline_buffer.h `VfxSplineBuffer`
+    uint32_t cbSplineSrvIndex          = 0;       ///< Bindless SRV; 0xFFFFFFFFu = unbound. 272
+    uint32_t cbSplinePointCount        = 0;       ///< Valid sample count (>= 2 to use). 276
+    float    cbSplineTotalLength       = 0.0f;    ///< Arc-length total (cm).             280
+    uint32_t cbSplineSpawnStratified   = 0;       ///< 0=random U, 1=stratified per slot. 284
+    float    cbSplineSpawnJitterRadius = 0.0f;    ///< Perpendicular jitter radius (cm). 288
+    float    cbSplineSpawnTangentOffset = 0.0f;   ///< Spawn offset along tangent (cm).  292
+    float    _cbSplineSpawnPad0        = 0.0f;    ///< Pad to 16-byte alignment.          296
+    float    _cbSplineSpawnPad1        = 0.0f;    ///<                                    300
 };
-static_assert(sizeof(ParticleSpawnConstants) == 192,
-              "ParticleSpawnConstants must be 192 bytes to match HLSL VFXSpawnConstants");
+static_assert(sizeof(ParticleSpawnConstants) == 304,
+              "ParticleSpawnConstants must be 304 bytes to match HLSL VFXSpawnConstants");
 
 /// CPU-side mirror of the update shader's cbuffer VFXUpdateConstants (register b1).
 ///
@@ -157,7 +184,7 @@ struct ParticleUpdateConstants {
     uint32_t sizesSrvIndex       = 0;
     uint32_t colorsSrvIndex      = 0;
     uint32_t rotationsSrvIndex   = 0;
-    uint32_t _padSrv0            = 0;
+    uint32_t subImageIndicesSrvIndex = 0; ///< SRV for StructuredBuffer<float> subImageIndices (read).
 
     // ── Bindless Descriptor Indices: WRITE set (UAV) ────────────────── offset 64
     uint32_t positionsUavIndex   = 0;
@@ -168,7 +195,7 @@ struct ParticleUpdateConstants {
     uint32_t sizesUavIndex       = 0;
     uint32_t colorsUavIndex      = 0;
     uint32_t rotationsUavIndex   = 0;
-    uint32_t _padUav0            = 0;
+    uint32_t subImageIndicesUavIndex = 0; ///< UAV for RWStructuredBuffer<float> subImageIndices (write).
 
     // ── Bindless Descriptor Indices: Shared Buffers ─────────────────── offset 96
     uint32_t freeListUavIndex    = 0;
@@ -264,7 +291,7 @@ struct ParticleUpdateConstants {
     float    pointForceZ         = 0.0f;
     float    pointForceStrength  = 0.0f;
     float    pointForceRadius    = 100.0f;
-    uint32_t _padPF0             = 0;
+    uint32_t flipbookTotalFrames = 1;    ///< SubUV total frames for subImageIndex computation.
     uint32_t _padPF1             = 0;
 
     // ── Procedural Terrain Collision (Task 4.21.0) ──────────────────── offset 344
@@ -282,9 +309,35 @@ struct ParticleUpdateConstants {
     uint32_t _padCollEvt1        = 0;
     uint32_t _padCollEvt2        = 0;
     uint32_t _padCollEvt3        = 0;
+
+    // ── Spline Data Interface (phase16 hardware-validation) ──────────── offset 384
+    // Populated when `ForceTowardSplineModule` and/or `FollowSplineModule`
+    // are on the emitter's update stack. Zero-default keeps spline-less
+    // emitters byte-identical to the prior layout (the update CS gates
+    // spline work on `cbSplinePointCount >= 2`). Mirrored in
+    // `particle_update_cs.hlsl`.
+    /// @ref engine/vfx/modules/spline_modules.h `ForceTowardSplineModule`
+    /// @ref engine/vfx/modules/spline_modules.h `FollowSplineModule`
+    /// @ref engine/vfx/data_interfaces/vfx_spline_buffer.h `VfxSplineBuffer`
+    uint32_t cbSplineSrvIndex            = 0;     ///< Bindless SRV; 0xFFFFFFFFu = unbound. 384
+    uint32_t cbSplinePointCount          = 0;     ///< Valid sample count (>= 2 to use).   388
+    float    cbSplineTotalLength         = 0.0f;  ///< Arc-length total (cm).               392
+
+    // ForceTowardSplineModule fields (zero when not present).
+    float    cbSplineForceStiffness       = 0.0f; ///< Spring stiffness (1/s^2).            396
+    float    cbSplineForceMaxAccel        = 0.0f; ///< Hard cap on force magnitude (cm/s^2).400
+    float    cbSplineForceAttractDistance = 0.0f; ///< Cull radius; 0 = no cull.            404
+
+    // FollowSplineModule fields (zero when not present).
+    float    cbSplineFollowSpeed          = 0.0f; ///< Per-lifetime u-advance scale.        408
+    uint32_t cbSplineFollowLoop           = 0;    ///< 0=clamp at endpoint, 1=wrap.         412
+    float    cbSplineFollowStartU         = 0.0f; ///< Initial u offset in [0,1].           416
+    float    _cbSplineUpdatePad0          = 0.0f; ///< Pad to 16-byte alignment.            420
+    float    _cbSplineUpdatePad1          = 0.0f; ///<                                      424
+    float    _cbSplineUpdatePad2          = 0.0f; ///<                                      428
 };
-static_assert(sizeof(ParticleUpdateConstants) == 384,
-              "ParticleUpdateConstants must be 384 bytes to match HLSL VFXUpdateConstants");
+static_assert(sizeof(ParticleUpdateConstants) == 432,
+              "ParticleUpdateConstants must be 432 bytes to match HLSL VFXUpdateConstants");
 
 /// CPU-side mirror of the indirect args shader's cbuffer VFXIndirectArgsConstants (register b0).
 ///

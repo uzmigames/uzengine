@@ -1,26 +1,9 @@
-/// UzEngine SSGI Trace — Screen-Space Ray Tracing for Diffuse Indirect Lighting
-///
-/// @ref McGuire & Mara 2014 "Efficient GPU Screen-Space Ray Tracing"
-/// @ref Uludag 2014 "Hi-Z Screen-Space Cone-Traced Reflections"
-///
-/// Traces cosine-weighted hemisphere rays in screen space against the depth
-/// buffer. Uses Hi-Z hierarchical traversal when available (hizSrvIndex != 0xFFFF)
-/// for efficient skip of empty space, falling back to linear march otherwise.
-///
-/// Output: half-res indirect diffuse (RGBA16F) + AO occlusion (R16F).
-///
-/// Root constants at b0 (8 DWORDs):
-///   [0] depthSrvIndex    — full-res depth buffer SRV
-///   [1] normalSrvIndex   — full-res world-normal SRV (RG16F octahedral)
-///   [2] prevColorSrvIndex — half-res previous frame color SRV
-///   [3] outputUavIndex   — half-res indirect diffuse output UAV
-///   [4] aoOutputUavIndex — half-res AO output UAV
-///   [5] packed: low16=outputWidth, high16=outputHeight
-///   [6] frameIndex
-///   [7] hizSrvIndex (0xFFFF = no Hi-Z, use linear march)
-///
-/// PerFrameCB at b1: viewProj, invViewProj, cameraPos, nearPlane, farPlane, etc.
-
+/// Half-resolution diffuse trace: surface world gather or legacy screen-space tracing.
+/// @ref Wright et al. 2022 "Lumen", final gather backed by a world radiance cache.
+/// @ref McGuire & Mara 2014 "Efficient GPU Screen-Space Ray Tracing".
+/// World mode reads current GBuffer geometry and produces E/pi; it never samples previous HDR.
+/// Legacy mode retains linear screen-space tracing against depth and previous HDR.
+/// Root constants contain 13 DWORDs; shared PerFrameCB supplies current SDF/cache bindings.
 #include "../common/constants.hlsli"
 #include "../common/math.hlsli"
 #include "../common/sampling.hlsli"
@@ -44,16 +27,10 @@ cbuffer RootConstants : register(b0) {
     uint g_maxRayDistBits;    // Max ray distance in UV space as float bits (default 0.5)
 };
 
-cbuffer PerFrameCB : register(b1) {
-    row_major float4x4 viewProj;
-    float4 cameraPos;
-    float4 timeParams;
-    float4 lightDir;
-    float4 lightColor;
-    float4 ambientColor;
-    row_major float4x4 invViewProj;
-    float nearPlane, farPlane;
-};
+#include "ssgi_surface.hlsli"
+#ifdef UZ_BINDLESS
+#include "ssgi_world_gather.hlsli"
+#endif
 
 SamplerState pointSampler : register(s0);
 
@@ -66,19 +43,6 @@ SamplerState pointSampler : register(s0);
 #define kStepSize    asfloat(g_stepSizeBits)
 #define kThickness   asfloat(g_thicknessBits)
 #define kMaxRayDist  asfloat(g_maxRayDistBits)
-
-// ─── Octahedral normal decode ──────────────────────────────────────────────
-
-/// @ref Meyer et al. 2010 "On Floating-Point Normal Vectors"
-/// Decodes a unit normal from RG16F octahedral encoding.
-float3 OctDecode(float2 f) {
-    f = f * 2.0 - 1.0;
-    float3 n = float3(f.x, f.y, 1.0 - abs(f.x) - abs(f.y));
-    float t = saturate(-n.z);
-    n.x += (n.x >= 0.0) ? -t : t;
-    n.y += (n.y >= 0.0) ? -t : t;
-    return normalize(n);
-}
 
 // ─── Screen-space ray march ───────────────────────────────────────────────
 
@@ -175,8 +139,8 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     float2 uv = (float2(pixel) + 0.5) / float2(width, height);
 
     // Map half-res pixel to full-res depth/normal coordinates
-    uint fullWidth  = width * 2;
-    uint fullHeight = height * 2;
+    uint fullWidth;
+    uint fullHeight;
     int2 fullPx = int2(pixel) * 2;
 
 #ifdef UZ_BINDLESS
@@ -187,6 +151,8 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     RWTexture2D<float>  aoOutputTex = ResourceDescriptorHeap[g_aoOutputUavIndex];
 #endif
 
+    depthTex.GetDimensions(fullWidth, fullHeight);
+    fullPx = SurfacePixel(int2(pixel), uint2(fullWidth, fullHeight));
     // Read depth and normal at full resolution
     float depth = depthTex.Load(int3(fullPx, 0));
 
@@ -205,6 +171,53 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     float2 fullUV = (float2(fullPx) + 0.5) / float2(fullWidth, fullHeight);
     float3 worldPos = ReconstructWorldPos(fullUV, depth, invViewProj);
 
+#ifdef UZ_BINDLESS
+    if (sdfDiffuseSamples != 0) {
+        float3 geometricNormal = SurfaceGeometricNormal(depthTex,fullPx,uint2(fullWidth,fullHeight),depth,worldPos);
+        float3 origin, firstDirection;
+        float4 rays[UZ_GATHER_MAX_REPORTED_RAYS];
+        float2 rotationUsed;
+        uint seed, reportedRays;
+        bool resolved;
+        float4 cascadeStats, clipmap0;
+        float3 gathered = GatherSurfaceLightingIdentified(worldPos,N,geometricNormal,uint2(fullPx),
+                                                          g_frameIndex,origin,seed,firstDirection,resolved,
+                                                          rays,reportedRays,rotationUsed,cascadeStats,clipmap0);
+        outputTex[pixel] = float4(gathered,1.0);
+        aoOutputTex[pixel] = 1.0;
+        // Region dump (diagnostics): what was sampled and what was read, see common/region_dump.hlsli.
+        // Guarded so a normal frame neither writes records nor traces the extra probe ray.
+        if (UzGatherDumpActive()) {
+            const uint2 fullSize = uint2(fullWidth, fullHeight);
+            UzGatherDumpHalf(pixel, fullSize, 9u, float4(worldPos, depth));
+            UzGatherDumpHalf(pixel, fullSize, 10u, float4(origin, resolved ? 1.0 : 0.0));
+            UzGatherDumpHalf(pixel, fullSize, 11u, float4(geometricNormal, asfloat(seed)));
+            UzGatherDumpHalf(pixel, fullSize, 12u, float4(firstDirection, float(sdfDiffuseSamples)));
+            UzGatherDumpHalf(pixel, fullSize, 13u, float4(asfloat(g_frameIndex), asfloat(sdfClipmapSrv.x),
+                                                          asfloat(sdfClipmapSrv.y), asfloat(sdfClipmapSrv.z)));
+            UzGatherDumpHalf(pixel, fullSize, 14u, float4(asfloat(sdfClipmapSrv.w), asfloat(rcProbeSrv),
+                                                          asfloat(sdfSkySrv), asfloat(sdfRawClipmapSrv.x)));
+            float3 snapped;
+            bool probeHit;
+            const float cell = max(sdfVoxelSize, 1.0) * 8.0;
+            float3 probe = ProbeSurfaceLightingSnapped(worldPos, cell, snapped, probeHit);
+            UzGatherDumpHalf(pixel, fullSize, 15u, float4(snapped, cell));
+            UzGatherDumpHalf(pixel, fullSize, 16u, float4(probe, 1.0));
+            UzGatherDumpHalf(pixel, fullSize, 18u,
+                             float4(ProbeVolumeAtSnapped(snapped, float3(0,1,0)), probeHit ? 1.0 : 0.0));
+            [unroll] for (uint rr = 0u; rr < UZ_GATHER_MAX_REPORTED_RAYS; ++rr) {
+                UzGatherDumpHalf(pixel, fullSize, 19u + rr, rays[rr]);
+            }
+            UzGatherDumpHalf(pixel, fullSize, 27u, float4(gathered, float(reportedRays)));
+            UzGatherDumpHalf(pixel, fullSize, 28u,
+                             float4(rotationUsed, asfloat(sdfSampleRotation), 0.0));
+            // +29 where the rays ended with respect to clipmap 0; +30 clipmap 0 as this shader saw it.
+            UzGatherDumpHalf(pixel, fullSize, 29u, cascadeStats);
+            UzGatherDumpHalf(pixel, fullSize, 30u, clipmap0);
+        }
+        return;
+    }
+#endif
     // View direction for hemisphere orientation
     float3 viewDir = normalize(cameraPos.xyz - worldPos);
 

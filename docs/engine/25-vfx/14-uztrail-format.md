@@ -46,7 +46,9 @@ A more complete `.uztrail` with all optional fields:
   "max_points": 128,
   "point_lifetime": 1.5,
   "min_point_distance": 0.08,
-  "sort_order": 10
+  "sort_order": 10,
+  "ribbon_strands": 3,
+  "strand_spacing": 0.06
 }
 ```
 
@@ -67,6 +69,8 @@ A more complete `.uztrail` with all optional fields:
 | `point_lifetime` | number | No | 2.0 | > 0 | Maximum lifetime of a single trail point in seconds. Points are removed from the tail once their age exceeds this value. Shorter lifetimes produce shorter, more transient trails. |
 | `min_point_distance` | number | No | 0.1 | > 0 | Minimum world-space distance in metres the emitter must travel before a new point is emitted. Lower values produce smoother, denser ribbons but emit more points per second (performance cost). Values < 0.01 may cause degenerate zero-length segments and should be avoided. |
 | `sort_order` | integer | No | 0 | — | Rendering sort priority. Higher values draw on top of lower values within the VFX render pass. Trails with equal sort order have undefined relative ordering. Typical range: -128 to 127. |
+| `ribbon_strands` | integer | No | 1 | ≥ 1 | Number of parallel ribbon strands generated from the same trail points. Values > 1 produce N parallel quad-strip ribbons offset perpendicular to the camera-facing plane, approximating a tube or wing shape. Vertex count scales as `pointCount * 2 * ribbonStrands`. Keep low (2–4) for real-time use. |
+| `strand_spacing` | number | No | 0.1 | ≥ 0 | World-space distance between adjacent ribbon strands in metres. Only meaningful when `ribbon_strands > 1`. A value of 0 collapses all strands into overlapping ribbons. |
 
 ## Validation Rules
 

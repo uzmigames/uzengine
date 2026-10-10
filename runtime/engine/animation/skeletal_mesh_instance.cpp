@@ -92,25 +92,35 @@ void SkeletalMeshInstance::UpdatePaletteFromPose() {
     // Mirrors UE5's `FillUpComponentSpaceTransforms`
     // (Engine/Source/Runtime/Engine/Private/Animation/AnimationRuntime.cpp:2683-2701)
     // — TRS hierarchy walk, single matrix flatten per bone at the leaves.
-    std::vector<BoneTransform> worldTransforms(boneCount);
+    if (m_worldBoneTransforms.size() != boneCount) {
+        m_worldBoneTransforms.assign(boneCount, BoneTransform{});
+    }
 
     for (uint32_t i = 0; i < boneCount; ++i) {
         const BoneInfo& bone = m_skeleton->GetBone(i);
         const BoneTransform& localTRS = pose.localTransforms[i];
 
         if (bone.parentIndex < 0) {
-            worldTransforms[i] = localTRS;
+            m_worldBoneTransforms[i] = localTRS;
         } else {
-            worldTransforms[i] = localTRS.ComposeWith(
-                worldTransforms[static_cast<size_t>(bone.parentIndex)]);
+            m_worldBoneTransforms[i] = localTRS.ComposeWith(
+                m_worldBoneTransforms[static_cast<size_t>(bone.parentIndex)]);
         }
 
         const Mat4 worldMatrix = Mat4::TRS(
-            worldTransforms[i].position,
-            worldTransforms[i].rotation,
-            worldTransforms[i].scale);
+            m_worldBoneTransforms[i].position,
+            m_worldBoneTransforms[i].rotation,
+            m_worldBoneTransforms[i].scale);
         m_palette[i] = bone.inverseBindWorld * worldMatrix;
     }
+}
+
+Mat4 SkeletalMeshInstance::GetBoneWorldMatrix(int32_t boneIdx) const {
+    if (boneIdx < 0) return Mat4::Identity();
+    const size_t idx = static_cast<size_t>(boneIdx);
+    if (idx >= m_worldBoneTransforms.size()) return Mat4::Identity();
+    const BoneTransform& t = m_worldBoneTransforms[idx];
+    return Mat4::TRS(t.position, t.rotation, t.scale);
 }
 
 void SkeletalMeshInstance::UpdatePaletteGpu() {

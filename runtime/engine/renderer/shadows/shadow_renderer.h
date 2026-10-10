@@ -79,6 +79,7 @@ struct ShadowFrameData {
     uint32_t shadowAtlasSrv,
     uint32_t shadowResolution,
     CBRingAllocator& cbRing,
+    float dynamicShadowDistance = 40000.0f,
     uint32_t farShadowCascadeCount = 0,
     float farShadowDistance = 300000.0f,
     int32_t farShadowLodBias = 0,

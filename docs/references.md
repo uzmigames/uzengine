@@ -648,6 +648,8 @@ See [Ramamoorthi & Hanrahan 2001](#ramamoorthi--hanrahan-2001--sh-irradiance) in
 - **Analysis**: `docs/analysis/rendering/three-geospatial-clouds-adaptation.md`
 - **Used as reference for**: Adaptive stepping, multi-scattering octaves, Beer Shadow Maps, Bayer temporal upscale, aerial perspective on clouds, multi-layer cloud system.
 - **Note**: MIT-licensed. UzEngine reimplements techniques independently in DX12/HLSL compute shaders; no code is copied.
+  Four data files are copied (8332def6): `runtime/content/atmosphere/shape.bin`, `shape_detail.bin`, `local_weather.png`
+  and `turbulence.png`, with the MIT notice beside them (`runtime/content/atmosphere/LICENSE-three-geospatial.txt`).
 
 ### NVIDIA Falcor — Rendering Research Framework
 - **Title**: "Falcor — Real-Time Rendering Framework"

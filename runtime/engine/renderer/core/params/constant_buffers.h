@@ -22,6 +22,7 @@
 #include "vector3.h"
 #include "mat4.h"
 
+#include <cstddef>
 #include <cstdint>
 
 namespace uz {
@@ -50,7 +51,9 @@ namespace uz {
 struct PerFrameCB {
     Mat4  viewProj;             ///< Combined view-projection matrix (column-major).
     Vec4  cameraPos;            ///< xyz = world-space camera position, w = unused.
-    Vec4  timeParams;           ///< x = total elapsed seconds, y = delta time, z = frame count (float), w = unused.
+    Vec4  timeParams;           ///< x = total elapsed seconds, y = delta time, z = frame count (float),
+                                ///< w = diagnostic sampling-seed override (`r.GI.Reflections.FreezeSeed`,
+                                ///< negative = use the frame count).
     Vec4  lightDir;             ///< xyz = normalised direction toward the primary light source, w = 0.
     Vec4  lightColor;           ///< xyz = primary light color multiplied by intensity, w = unused.
     Vec4  ambientColor;         ///< xyz = ambient light color contribution, w = unused.
@@ -119,7 +122,7 @@ struct PerFrameCB {
 
     /// Screen-space contact shadow ray length. 0.0 = disabled.
     /// Positive = screen-space fraction (0.02 = 2% of depth-scaled screen ray length).
-    float    contactShadowLength = 0.02f;
+    float    contactShadowLength = 0.01f;
 
     uint32_t ssrSrvIndex = UINT32_MAX;             ///< SRV index for resolved SSR texture (UINT32_MAX = no SSR).
 
@@ -230,7 +233,7 @@ struct PerFrameCB {
     float    exposureLowPercent      = 10.0f;          ///< CVar r.Exposure.LowPercent — histogram low percentile.
     float    exposureHighPercent     = 90.0f;          ///< CVar r.Exposure.HighPercent — histogram high percentile.
     float    materialDielectricF0    = 0.04f;          ///< CVar r.Material.DielectricF0 — Fresnel reflectance.
-    float    materialMinGGXAlpha     = 0.0064f;        ///< CVar r.Material.MinGGXAlpha — prevents specular aliasing.
+    float    materialMinGGXAlpha     = 0.0016f;        ///< CVar r.Material.MinGGXAlpha — prevents specular aliasing.
 
     // ── Brixelizer GI (AMD FidelityFX) ────────────────────────────────
     /// SRV index for Brixelizer GI diffuse output (RGBA16F). UINT32_MAX = disabled.
@@ -277,18 +280,44 @@ struct PerFrameCB {
     /// @ref Lagarde & de Rousiers 2014 "Moving Frostbite to PBR" — §4.9.3
     float    indirectAOExponent = 2.0f;     ///< CVar r.IndirectAO.Exponent — default 2.0.
 
-    // ── Lighting decomposition debug (CVar r.Lighting.DebugMode) ──────
-    /// 0 = off. 1 = direct only (Lo). 2 = indirect only (ambient).
-    /// 3 = GI irradiance E/pi chosen by the cascade (pre-albedo, pre-AO).
-    /// 4 = raw SSGI irradiance. 5 = GTAO scalar. 6 = GI source map
-    /// (green=DDGI, blue=RC, yellow=LPV, red=sky-SH fallback).
-    /// 7 = skyVisibility (shadow-modulated sky hack activity).
-    uint32_t lightingDebugMode = 0;
+    uint32_t sdfReflectionsEnabled = 0;
+    uint32_t sdfReflectionSkySrv = UINT32_MAX;
+    uint32_t sdfReflectionSamples = 4;
+    Vec4     sdfReflectionClipmaps[4] = {};
+    uint32_t sdfReflectionClipmapSrv[4] = {UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX};
+    float    sdfReflectionTraceDistance = 5000.0f;
+    float    sdfReflectionVoxelSize = 0.0f;
+    uint32_t sdfReflectionTraceSteps = 96;
+    float    sdfReflectionIntensity = 1.0f;
+    uint32_t sdfDiffuseSamples = 0;
+    uint32_t sdfReflectionPlainMean = 0;   ///< 1 = GatherSdfReflections averages rays plainly (r.GI.Reflections.HdrWeight=0); 0 = Karis weight.
+    /// CVar r.GI.FinalGather.SampleRotation — 0 = radical inverse of the frame-strided seed
+           /// (shipping), 1 = Kronecker advance in the frame index (candidate, ledger H-31).
+    uint32_t sdfSampleRotation = 0;
+    uint32_t materialMapMask = 0;  ///< Diagnostic: bit0 = ignore normal maps, bit1 = ignore material AO maps (r.Material.NormalMap / .AOMap = 0).
+    uint32_t sdfRawClipmapSrv[4] = {UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX};
 
     // ── Padding to next 256-byte boundary (1024 bytes) ────────────────
-    float    _padToCBEnd[42]  = {};         ///< Pads PerFrameCB to 1024 bytes (4 x 256).
+    // Region dump (diagnostics: per-pixel lighting/TAA intermediates for a screen rectangle,
+    // see SceneRenderer::SetRegionDump). Carved out of the former tail padding: offsets 992..1011.
+    uint32_t debugRegionUav = UINT32_MAX;  ///< Bindless UAV of the region-dump StructuredBuffer<float4>; UINT32_MAX = off.
+    uint32_t debugRegionSrv = UINT32_MAX;  ///< Bindless SRV of the rect table (StructuredBuffer<uint4>, 2 elements per rect).
+    uint32_t debugRegionCount = 0;         ///< Number of rectangles (0 = off).
+    uint32_t debugRegionStamp = 0;         ///< Frame stamp the GPU writes into each rect footer.
+    uint32_t debugRegionFields = 0;        ///< Field-group bitmask, see shaders/runtime/common/region_dump.hlsli.
+    float    materialRoughnessOverride = -1.0f;  ///< CVar r.Material.RoughnessOverride (-1 = off, diagnostic).
+    float    materialMetallicOverride  = -1.0f;  ///< CVar r.Material.MetallicOverride (-1 = off, diagnostic).
+    uint32_t componentReplaySrv = UINT32_MAX;  ///< CVar r.GI.ComponentReplayFile buffer (diagnostic).
 };
 
+static_assert(offsetof(PerFrameCB, sdfSampleRotation) == 968);
+static_assert(offsetof(PerFrameCB, materialMapMask) == 972);
+static_assert(offsetof(PerFrameCB, sdfRawClipmapSrv) == 976);
+static_assert(offsetof(PerFrameCB, debugRegionUav) == 992);
+static_assert(offsetof(PerFrameCB, debugRegionFields) == 1008);
+static_assert(offsetof(PerFrameCB, materialRoughnessOverride) == 1012);
+static_assert(offsetof(PerFrameCB, materialMetallicOverride) == 1016);
+static_assert(offsetof(PerFrameCB, componentReplaySrv) == 1020);
 static_assert(sizeof(PerFrameCB) == 1024, "PerFrameCB must be 1024 bytes (4 x 256 D3D12 CB alignment)");
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -404,11 +433,23 @@ static_assert(sizeof(PerObjectCB) == 256, "PerObjectCB must be 256 bytes (D3D12 
 // LightingCB — bound at b2 (root CBV slot 2, reused from PerObjectCB slot in fullscreen deferred passes)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Maximum number of point lights supported in the deferred lighting pass.
-static constexpr uint32_t kMaxPointLights = 64;
+/// Maximum number of point lights supported in the deferred lighting pass (block B.7: 512, was 64;
+/// the arrays stay in the 64 KB constant buffer and the clustered lists bound the per-pixel cost).
+static constexpr uint32_t kMaxPointLights = 512;
 
-/// Maximum number of spot lights supported in the deferred lighting pass.
-static constexpr uint32_t kMaxSpotLights = 16;
+/// Maximum number of spot lights supported in the deferred lighting pass (block B.7: 128, was 16).
+static constexpr uint32_t kMaxSpotLights = 128;
+
+/// Clustered light lists (block B.7): the view frustum is cut into screen tiles of
+/// `kClusterTileSize` pixels and `kClusterSlices` logarithmic depth slices; each cluster's record in the
+/// list buffer holds a count and `kClusterSlotsMax` light slots (cluster_assign_cs.hlsl).
+static constexpr uint32_t kClusterTileSize   = 32;
+static constexpr uint32_t kClusterSlices     = 24;
+static constexpr uint32_t kClusterSlotsMax   = 32;
+static constexpr uint32_t kClusterRecordUints = kClusterSlotsMax + 1;
+static constexpr uint32_t kClusterFlag_Enabled  = 1u << 0;
+static constexpr uint32_t kClusterFlag_Debug    = 1u << 1;   // bits 2-3: the debug mode
+static constexpr uint32_t kClusterFlag_SpotCone = 1u << 4;   ///< Spots are assigned by their cone, not their range sphere alone.
 
 /// Point light data for the deferred lighting pass.
 ///
@@ -499,24 +540,47 @@ static_assert(sizeof(SpotLightData) == 80, "SpotLightData must be 80 bytes (five
 ///
 /// Padded to a 256-byte multiple as required by D3D12 constant buffer alignment.
 ///
-/// # Layout (5632 bytes = 22 * 256)
-/// - pointLights[64]:  64 * 64 = 4096 bytes
-/// - pointLightCount:  4 bytes
+/// # Layout (43264 bytes = 169 * 256)
+/// - pointLights[512]: 512 * 64 = 32768 bytes
+/// - pointLightCount:  4 bytes (32768)
 /// - spotLightCount:   4 bytes
 /// - _pad:             8 bytes
-/// - spotLights[16]:   16 * 80 = 1280 bytes
-/// - _pad2:            240 bytes
-/// Total: 5632 bytes
+/// - spotLights[128]:  128 * 80 = 10240 bytes (32784)
+/// - cluster parameters (block B.7): 64 bytes (43024)
+/// - _pad2:            176 bytes
+/// Total: 43264 bytes
 struct LightingCB {
-    PointLightData pointLights[kMaxPointLights]; ///< Point light array (64 * 64 = 4096 bytes).
+    PointLightData pointLights[kMaxPointLights]; ///< Point light array (512 * 64 = 32768 bytes).
     uint32_t       pointLightCount = 0;          ///< Number of active point lights in the array.
     uint32_t       spotLightCount  = 0;          ///< Number of active spot lights in the array.
     uint32_t       _pad[2] = {};                 ///< Align counts to 16 bytes.
-    SpotLightData  spotLights[kMaxSpotLights];   ///< Spot light array (16 * 80 = 1280 bytes).
-    float          _pad2[60] = {};               ///< Pad to 5632 bytes (256-byte multiple).
+    SpotLightData  spotLights[kMaxSpotLights];   ///< Spot light array (128 * 80 = 10240 bytes).
+
+    // ── Clustered light lists (block B.7); mirrors `cbuffer LightingCB` in light_types.hlsli ──
+    float    clusterForwardX = 0.0f;             ///< Camera forward (world): view depth = dot(p - camera, forward).
+    float    clusterForwardY = 0.0f;
+    float    clusterForwardZ = 1.0f;
+    float    clusterNear     = 10.0f;            ///< Depth of the first slice boundary (cm).
+    float    clusterFar      = 100000.0f;        ///< Depth of the last slice boundary (cm).
+    float    clusterLogScale = 0.0f;             ///< slices / log(far / near).
+    uint32_t clusterTileSize = kClusterTileSize; ///< Tile side in pixels.
+    uint32_t clusterTilesX   = 0;
+    uint32_t clusterTilesY   = 0;
+    uint32_t clusterSlices   = kClusterSlices;
+    uint32_t clusterListSrv  = UINT32_MAX;       ///< Bindless SRV of the list buffer (UINT32_MAX = per-pixel loop).
+    uint32_t clusterListUav  = UINT32_MAX;       ///< Bindless UAV of the list buffer (the cull pass).
+    uint32_t clusterSlots    = kClusterSlotsMax; ///< Light slots per cluster this frame (r.Lights.ClusterSlots).
+    uint32_t clusterFlags    = 0;                ///< kClusterFlag_*.
+    float    clusterViewWidth  = 0.0f;           ///< Render resolution the tiles cover.
+    float    clusterViewHeight = 0.0f;
+    float    _pad2[44] = {};                     ///< Pad to 43264 bytes (256-byte multiple).
 };
 
 static_assert(sizeof(LightingCB) % 256 == 0, "LightingCB must be a multiple of 256 bytes (D3D12 CB alignment)");
+static_assert(sizeof(LightingCB) == 43264, "LightingCB layout (block B.7)");
+static_assert(offsetof(LightingCB, spotLights) == 32784, "LightingCB::spotLights offset");
+static_assert(offsetof(LightingCB, clusterForwardX) == 43024, "LightingCB cluster parameters offset");
+static_assert(offsetof(LightingCB, clusterViewHeight) == 43084, "LightingCB::clusterViewHeight offset");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LocalLightShadowData — per-light shadow projection data for local lights
@@ -536,10 +600,15 @@ struct LocalLightShadowData {
     float    atlasOffsetX;   ///< UV offset X in atlas [0,1].
     float    atlasOffsetY;   ///< UV offset Y in atlas [0,1].
     float    atlasScale;     ///< UV scale (tile size / atlas size, e.g., 0.25 for 1024/4096).
-    float    bias;           ///< Shadow depth bias (default 0.5).
+    float    bias;           ///< Shadow bias in cm (JSON `shadowBias`, default 0.5): the receiver's distance
+                             ///< is reduced by this much before the comparison.
+    float    lightPosX;      ///< Light position (world, cm). The tile stores distance / radius
+    float    lightPosY;      ///< (shadow_depth_linear_ps.hlsl), so the consumer needs the same
+    float    lightPosZ;      ///< origin and range to compare in linear units (block A.1).
+    float    radius;         ///< Light range in cm.
 };
 
-static_assert(sizeof(LocalLightShadowData) == 80, "LocalLightShadowData must be 80 bytes (Mat4 + 4 floats)");
+static_assert(sizeof(LocalLightShadowData) == 96, "LocalLightShadowData must be 96 bytes (Mat4 + 8 floats)");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ShadowDataCB — bound at b4 (root CBV, updated once per frame for shadow sampling)
@@ -559,8 +628,7 @@ static_assert(sizeof(LocalLightShadowData) == 80, "LocalLightShadowData must be 
 /// - cascadeSplits/fades/biases:        128 bytes
 /// - scalar params + padding:           128 bytes
 /// ── CSM section subtotal:             768 bytes
-/// - localShadows[16]:                  16 * 80 = 1280 bytes
-/// - _pad3:                             256 bytes
+/// - localShadows[16]:                  16 * 96 = 1536 bytes
 /// Total: 2304 bytes
 struct ShadowDataCB {
     Mat4     cascadeViewProj[8];    ///< Light-space viewProj per cascade (8 * 64 = 512B).
@@ -585,14 +653,14 @@ struct ShadowDataCB {
     uint32_t dfsOutputSrvIndex = UINT32_MAX; ///< SRV index for DFS result texture (R16_FLOAT screen-space). UINT32_MAX = not bound.
     uint32_t localShadowAtlasIndex = UINT32_MAX; ///< SRV heap index for local light shadow atlas. UINT32_MAX = none.
     uint32_t localShadowCount = 0;  ///< Number of active local light shadows (0 to kMaxLocalShadowTiles).
-    float    _pad2[16] = {};        ///< Pad CSM section to 768 bytes.
+    float    localShadowNormalOffset = 0.005f; ///< r.Shadow.Local.NormalOffset (block A.1).
+    float    _pad2[15] = {};        ///< Pad CSM section to 768 bytes.
 
     // ── Local Light Shadow Data (appended after CSM section) ──────────────
     // Up to 16 local light shadows. Each entry stores the light-space viewProj
     // matrix and the atlas UV rect for shadow sampling.
     //
-    LocalLightShadowData localShadows[kMaxLocalLightShadows]; ///< Per-light shadow data (16 * 80 = 1280B).
-    float    _pad3[64] = {};        ///< Pad to 2304 bytes (9 * 256).
+    LocalLightShadowData localShadows[kMaxLocalLightShadows]; ///< Per-light shadow data (16 * 96 = 1536B).
 };
 
 static_assert(sizeof(ShadowDataCB) == 2304, "ShadowDataCB must be 2304 bytes (256-byte multiple)");
@@ -716,7 +784,7 @@ struct HeightFogCB {
     Vec4  directionalInscatteringColor; ///< xyz = sun-facing fog glow color, w = unused.
     float directionalInscatteringExponent; ///< Cone tightness (higher = tighter halo).
     float directionalInscatteringStartDistance; ///< Start distance for inscattering.
-    float _fogPad2[2] = {};     ///< Pad to 16-byte boundary.
+    float _fogPad2[2] = {};     ///< Pad to 16-byte boundary. The HLSL copy declares it as two scalars: an array element takes a whole 16-byte row and shifted everything from skyAtmContribColorScale on by 32 bytes (block B.4; offsets asserted after the struct).
 
     // ── Sky atmosphere injection (float4 + float4 = 32 bytes) ────────
     Vec4  skyAtmContribColorScale = {1.f, 1.f, 1.f, 0.f}; ///< Sky atmosphere ambient contribution color scale (default white).
@@ -767,6 +835,10 @@ struct HeightFogCB {
     // ── Remaining padding ──────────────────────────────────────────────
     float _fogPad3[3] = {};     ///< Pad to 256-byte alignment.
 };
+static_assert(offsetof(HeightFogCB, directionalInscatteringExponent) == 80);
+static_assert(offsetof(HeightFogCB, skyAtmContribColorScale) == 96);
+static_assert(offsetof(HeightFogCB, sunIllumPostTransR) == 128);
+static_assert(offsetof(HeightFogCB, sunDirX) == 144);
 
 static_assert(sizeof(HeightFogCB) == 256, "HeightFogCB must be 256 bytes (D3D12 CB alignment)");
 

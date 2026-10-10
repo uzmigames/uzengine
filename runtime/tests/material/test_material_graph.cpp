@@ -1113,3 +1113,28 @@ TEST(MaterialGraphHashing, DifferentTopology_DifferentHash) {
     EXPECT_NE(gA.ComputeContentHash(), gB.ComputeContentHash())
         << "Different graph topologies must produce different content hashes";
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Blend mode / two-sided round trip
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Both keys were previously dropped by FromJson, so authored translucency
+/// never reached the renderer. They must survive a JSON round trip and must
+/// change the content hash — the PSO's blend state and cull mode depend on them,
+/// as does whether the material is treated as a shadow/GI occluder.
+TEST(MaterialGraphSerialization, BlendModeAndTwoSidedRoundTripAndHash) {
+    MaterialGraph graph;
+    const uint64_t opaqueHash = graph.ComputeContentHash();
+    graph.blendMode = MaterialGraphBlendMode::Translucent;
+    EXPECT_NE(graph.ComputeContentHash(), opaqueHash);
+    const uint64_t translucentHash = graph.ComputeContentHash();
+    graph.twoSided = true;
+    EXPECT_NE(graph.ComputeContentHash(), translucentHash);
+
+    MaterialGraph loaded;
+    std::string error;
+    ASSERT_TRUE(loaded.FromJson(graph.ToJson(), &error)) << error;
+    EXPECT_EQ(loaded.blendMode, MaterialGraphBlendMode::Translucent);
+    EXPECT_TRUE(loaded.twoSided);
+    EXPECT_EQ(loaded.ComputeContentHash(), graph.ComputeContentHash());
+}

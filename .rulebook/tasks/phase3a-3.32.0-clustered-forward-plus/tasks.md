@@ -1,3 +1,9 @@
+> 2026-10-07: lighting block B.7 (`phase0_lighting-block-b-07-clustered-lights`) implemented the cluster
+> grid, the light-to-cluster compute pass and the deferred lookup with the lights still in the constant
+> buffer (512 point / 128 spot); items 1.1-1.3 below were ticked while `cluster_assign_cs.hlsl` was a
+> one-line stub. What remains of this task is the structured-buffer light list (1.4, 1.10), the forward
+> pass (1.6) and the 100+-light demo (1.11); the heat map (1.8) exists as `r.Lights.ClusterDebug`.
+
 ## 1. Implementation
 
 - [x] 1.1 Implement cluster grid definition — 16×16 pixel screen tiles × 32 logarithmic depth slices. Depth slice boundaries via UE5 LightGridZParams (exp2-based, CalculateGridZParams). Compute cluster AABB in view-space via 8-corner unprojection through inverse projection matrix. Implemented in cluster_assign_cs.hlsl.

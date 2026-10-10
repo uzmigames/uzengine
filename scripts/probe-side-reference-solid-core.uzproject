@@ -1,0 +1,16 @@
+{
+  "name": "Probe side reference (SOLID, CORE)",
+  "version": "1.0",
+  "content_root": "../sample/content",
+  "default_scene": "scenes/probe-side-reference-solid-core.uzscene",
+  "window": {
+    "title": "UzEngine - probe side reference",
+    "width": 640,
+    "height": 360
+  },
+  "cvars": {
+    "r.RadianceCache": 1,
+    "r.GI.MeshSdf.TwoSided": 1,
+    "r.GI.RadianceCache.GridExtent": 2000.0
+  }
+}

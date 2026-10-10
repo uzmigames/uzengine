@@ -460,6 +460,132 @@ static int VFXPause(lua_State* L) {
     return 0;
 }
 
+/// uz.vfx:freeze(entity, frozen) -> void
+///
+/// Sets the per-emitter `isPaused` flag. Frozen emitters keep alive
+/// particles in place — the sim sees `dt = 0` while the render path
+/// continues to draw. Distinct from `pause`, which stops emission AND
+/// zeroes `emissionRate`. Use `freeze` for screenshot capture / editor
+/// scrub; use `pause` to suspend new spawns while letting existing
+/// particles age out naturally.
+///
+/// # Parameters
+/// - `entity` (integer handle): Emitter handle returned by `spawn`.
+/// - `frozen` (boolean): `true` to freeze sim, `false` to resume.
+static int VFXFreeze(lua_State* L) {
+    const lua_Integer handle = luaL_checkinteger(L, 2);
+
+    if (!lua_isboolean(L, 3)) {
+        return luaL_error(L,
+            "uz.vfx:freeze — argument 2 (frozen) must be a boolean, got %s",
+            lua_typename(L, lua_type(L, 3)));
+    }
+    const bool frozen = (lua_toboolean(L, 3) != 0);
+
+    VFXSystem* vfxSystem = GetVFXSystem(L);
+    if (!vfxSystem) {
+        UZ_LOG(VFX, Warning, "uz.vfx:freeze — VFXSystem not registered");
+        return 0;
+    }
+
+    ParticleEmitter* emitter = ResolveEmitter(vfxSystem, handle);
+    if (!emitter) {
+        UZ_LOG(VFX, Warning, "uz.vfx:freeze — stale or invalid emitter handle");
+        return 0;
+    }
+
+    emitter->isPaused = frozen;
+    return 0;
+}
+
+/// uz.vfx:set_time_scale(entity, scale) -> void
+///
+/// Sets the per-emitter dt multiplier. 1.0 = real-time (default), 0.5 =
+/// half-speed, 2.0 = double-speed. Applied AFTER the global
+/// `r.VFX.TimeScale` so a sequencer can slow individual emitters
+/// against a global slow-mo backdrop. Negative values clamp to 0.
+///
+/// # Parameters
+/// - `entity` (integer handle): Emitter handle returned by `spawn`.
+/// - `scale` (number): New time-scale value. Clamped to [0, +inf).
+static int VFXSetTimeScale(lua_State* L) {
+    const lua_Integer handle = luaL_checkinteger(L, 2);
+    const lua_Number  scale  = luaL_checknumber(L, 3);
+
+    VFXSystem* vfxSystem = GetVFXSystem(L);
+    if (!vfxSystem) {
+        UZ_LOG(VFX, Warning, "uz.vfx:set_time_scale — VFXSystem not registered");
+        return 0;
+    }
+
+    ParticleEmitter* emitter = ResolveEmitter(vfxSystem, handle);
+    if (!emitter) {
+        UZ_LOG(VFX, Warning, "uz.vfx:set_time_scale — stale or invalid emitter handle");
+        return 0;
+    }
+
+    const float clamped = (scale > 0.0) ? static_cast<float>(scale) : 0.0f;
+    emitter->timeScale = clamped;
+    return 0;
+}
+
+/// uz.vfx:seek(entity, time_seconds) -> void
+///
+/// Requests a deterministic re-warm of the emitter to `time_seconds`. The
+/// next sim tick resets state and replays the emitter from t=0 to the
+/// target via fixed-rate sub-ticks. See `ParticleEmitter::Seek` for the
+/// runtime contract.
+///
+/// # Parameters
+/// - `entity` (integer handle): Emitter handle returned by `spawn`.
+/// - `time_seconds` (number): Replay duration. Negative -> 0 (full reset).
+static int VFXSeek(lua_State* L) {
+    const lua_Integer handle = luaL_checkinteger(L, 2);
+    const lua_Number  time   = luaL_checknumber(L, 3);
+
+    VFXSystem* vfxSystem = GetVFXSystem(L);
+    if (!vfxSystem) {
+        UZ_LOG(VFX, Warning, "uz.vfx:seek — VFXSystem not registered");
+        return 0;
+    }
+
+    ParticleEmitter* emitter = ResolveEmitter(vfxSystem, handle);
+    if (!emitter) {
+        UZ_LOG(VFX, Warning, "uz.vfx:seek — stale or invalid emitter handle");
+        return 0;
+    }
+
+    emitter->Seek(static_cast<float>(time));
+    return 0;
+}
+
+/// uz.vfx:find_by_name(name) -> integer | nil
+///
+/// Looks up a registered emitter by its `name` field. Returns the integer
+/// handle on success, `nil` when no emitter is registered under that name.
+///
+/// Useful for cinematic / sequencer integrations: the timeline references
+/// emitters by stable string id rather than capturing pointers across
+/// scene reloads.
+static int VFXFindByName(lua_State* L) {
+    const char* name = luaL_checkstring(L, 2);
+
+    VFXSystem* vfxSystem = GetVFXSystem(L);
+    if (!vfxSystem) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    ParticleEmitter* emitter = vfxSystem->FindEmitterByName(std::string(name));
+    if (!emitter) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    lua_pushinteger(L, EmitterToHandle(emitter));
+    return 1;
+}
+
 /// uz.vfx:get_alive_count(entity) -> integer
 ///
 /// Returns the CPU-side alive particle count for the emitter. This value is
@@ -1087,6 +1213,117 @@ static int VFXGetEmitterCount(lua_State* L) {
 /// A Lua array table of integer emitter handles for all matched entries.
 /// The table may be empty if no entries matched.
 ///
+// ─────────────────────────────────────────────────────────────────────────────
+// User-declared per-particle attributes (Niagara "Parameters" parity)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Lua signature: `uz.vfx:declare_user_attr(handle, name, type, default)`
+///
+/// Registers a user-defined per-particle attribute channel on the emitter
+/// identified by `handle`. Allocates the matching GPU structured buffer on
+/// success. `type` is the string `"float"` or `"vec4"`; `default` is a
+/// number for float or a `{x, y, z, w}` array for vec4.
+///
+/// Returns the assigned slot index (integer) on success, or `nil` when the
+/// emitter is invalid, the quota is full, or the declared type differs from
+/// a previous declaration with the same name.
+static int VFXDeclareUserAttr(lua_State* L) {
+    const lua_Integer handle = luaL_checkinteger(L, 2);
+    const char*       name   = luaL_checkstring(L, 3);
+    const char*       typeStr = luaL_optstring(L, 4, "float");
+
+    VFXSystem* vfxSystem = GetVFXSystem(L);
+    if (!vfxSystem) {
+        UZ_LOG(VFX, Warning, "uz.vfx:declare_user_attr — VFXSystem not registered");
+        lua_pushnil(L);
+        return 1;
+    }
+    ParticleEmitter* emitter = ResolveEmitter(vfxSystem, handle);
+    if (!emitter) {
+        UZ_LOG(VFX, Warning, "uz.vfx:declare_user_attr — stale or invalid handle");
+        lua_pushnil(L);
+        return 1;
+    }
+
+    UserAttributeDef def;
+    def.name = name;
+    const std::string type(typeStr);
+    if (type == "vec4") {
+        def.type = UserAttributeType::Vec4;
+        if (lua_istable(L, 5)) {
+            auto readIdx = [&](int k) -> float {
+                lua_rawgeti(L, 5, k);
+                float v = lua_isnumber(L, -1)
+                    ? static_cast<float>(lua_tonumber(L, -1)) : 0.0f;
+                lua_pop(L, 1);
+                return v;
+            };
+            def.defaultVec4 = Vec4{readIdx(1), readIdx(2), readIdx(3), readIdx(4)};
+        }
+    } else {
+        def.type = UserAttributeType::Float;
+        if (lua_isnumber(L, 5)) {
+            def.defaultFloat = static_cast<float>(lua_tonumber(L, 5));
+        }
+    }
+
+    const uint32_t slot = emitter->RegisterUserAttribute(def);
+    if (slot == UINT32_MAX) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushinteger(L, static_cast<lua_Integer>(slot));
+    return 1;
+}
+
+/// Lua signature: `uz.vfx:get_user_attr_slot(handle, name)`
+///
+/// Returns the slot index assigned to a named user attribute, or `nil` when
+/// no declaration matches. Useful for modules that need to rebind without
+/// re-declaring.
+static int VFXGetUserAttrSlot(lua_State* L) {
+    const lua_Integer handle = luaL_checkinteger(L, 2);
+    const char*       name   = luaL_checkstring(L, 3);
+
+    VFXSystem* vfxSystem = GetVFXSystem(L);
+    if (!vfxSystem) {
+        lua_pushnil(L);
+        return 1;
+    }
+    ParticleEmitter* emitter = ResolveEmitter(vfxSystem, handle);
+    if (!emitter) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const UserAttributeDef* a = emitter->FindUserAttribute(name);
+    if (!a || a->slotIndex == UINT32_MAX) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushinteger(L, static_cast<lua_Integer>(a->slotIndex));
+    return 1;
+}
+
+/// Lua signature: `uz.vfx:get_user_attr_count(handle)`
+///
+/// Returns the number of declared user attribute channels on the emitter,
+/// or `0` if the handle is invalid.
+static int VFXGetUserAttrCount(lua_State* L) {
+    const lua_Integer handle = luaL_checkinteger(L, 2);
+    VFXSystem* vfxSystem = GetVFXSystem(L);
+    if (!vfxSystem) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+    ParticleEmitter* emitter = ResolveEmitter(vfxSystem, handle);
+    if (!emitter) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+    lua_pushinteger(L, static_cast<lua_Integer>(emitter->userAttributes.size()));
+    return 1;
+}
+
 /// # Side Effects
 /// - Logs `VFX/Warning` for unmatched composite entries.
 /// - Logs `VFX/Error` if the composite file fails to load.
@@ -1248,6 +1485,19 @@ void RegisterVFXLuaBindings(lua_State* L, VFXSystem* vfxSystem) {
     lua_pushcfunction(L, VFXPause);
     lua_setfield(L, -2, "pause");
 
+    // Scalability + sequencer bindings (phase16 cvars-sequencer task).
+    lua_pushcfunction(L, VFXFreeze);
+    lua_setfield(L, -2, "freeze");
+
+    lua_pushcfunction(L, VFXSetTimeScale);
+    lua_setfield(L, -2, "set_time_scale");
+
+    lua_pushcfunction(L, VFXSeek);
+    lua_setfield(L, -2, "seek");
+
+    lua_pushcfunction(L, VFXFindByName);
+    lua_setfield(L, -2, "find_by_name");
+
     lua_pushcfunction(L, VFXGetAliveCount);
     lua_setfield(L, -2, "get_alive_count");
 
@@ -1286,6 +1536,15 @@ void RegisterVFXLuaBindings(lua_State* L, VFXSystem* vfxSystem) {
 
     lua_pushcfunction(L, VFXStopComposite);
     lua_setfield(L, -2, "stop_composite");
+
+    lua_pushcfunction(L, VFXDeclareUserAttr);
+    lua_setfield(L, -2, "declare_user_attr");
+
+    lua_pushcfunction(L, VFXGetUserAttrSlot);
+    lua_setfield(L, -2, "get_user_attr_slot");
+
+    lua_pushcfunction(L, VFXGetUserAttrCount);
+    lua_setfield(L, -2, "get_user_attr_count");
 
     lua_setfield(L, -2, "vfx");  // uz.vfx = { ... }
     lua_pop(L, 1);               // pop uz table

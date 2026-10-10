@@ -58,8 +58,15 @@ struct PointLightShadowInfo {
 /// the uploaded LightingCB allocation for point/spot lights, and
 /// spot/point light shadow info for the scene renderer to build shadow passes.
 struct LightFrameData {
-    Vec3  sunDir   = {0.5f, 0.3f, 0.8f}; ///< Normalized direction toward the sun.
-    Vec3  sunColor = {3.0f, 2.85f, 2.7f}; ///< Sun color * intensity (linear HDR).
+    /// Normalized direction toward the sun. With no DirectionalLightComponent in the world it is
+    /// SkyAtmosphereComponent::sunDirection (the sky still needs one); the value here is only the
+    /// fallback for a world with neither.
+    Vec3  sunDir   = {0.5f, 0.3f, 0.8f};
+    /// Sun color * intensity (linear HDR). Zero unless a DirectionalLightComponent exists: until
+    /// 2026-10-05 the default was (3, 2.85, 2.7) and every scene without a sun entity was lit by
+    /// that phantom light (docs/analysis/hardcoded/01-rendering-defaults.md, re-audit 2026-10-05).
+    Vec3  sunColor = {0.0f, 0.0f, 0.0f};
+    bool  hasDirectionalLight = false;    ///< True when a DirectionalLightComponent was found.
     Vec3  ambientColor = {0.0f, 0.0f, 0.0f}; ///< Ambient light color (zero unless populated by SkyLight SH).
     float perLightShadowBias      = 0.5f; ///< Per-light shadow bias.
     float perLightShadowSlopeBias = 0.5f; ///< Per-light slope bias.
@@ -68,6 +75,7 @@ struct LightFrameData {
     uint32_t farShadowCascadeCount = 0;      ///< Far shadow cascade count (0 = disabled).
     float farShadowDistance = 300000.0f;      ///< Far shadow max distance in cm.
     int32_t farShadowLodBias = 0;             ///< LOD bias for far shadow cascades.
+    float dynamicShadowDistance = 40000.0f;   ///< CSM max distance in cm (DirectionalLightComponent).
 
     CBAllocation lightingCBAlloc;          ///< LightingCB upload in CB ring.
 

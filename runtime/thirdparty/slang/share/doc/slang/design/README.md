@@ -16,6 +16,10 @@ The [Declaration References](decl-refs.md) document is intended to help out deve
 
 The [Intermediate Representation (IR)](ir.md) document describes the design of Slang's internal IR.
 
+The [Shader Coverage](shader-coverage.md) document describes the current architecture for shader coverage instrumentation, including the interaction between IR-time buffer synthesis and post-emit metadata.
+
+The [Shader Coverage Counter Placement](shader-coverage-counter-placement.md) document describes where line, function, and branch coverage counters are inserted.
+
 The [Existential Types](existential-types.md) document goes into some detail about what "existential types" are in the context of the Slang language, and explains how we may go about supporting them.
 
 The [Capabilities](capabilities.md) document explains the proposed model for how Slang will support general notions of profile- or capability-based overloading/dispatch.
@@ -23,3 +27,5 @@ The [Capabilities](capabilities.md) document explains the proposed model for how
 The [Casting](casting.md) document explains how casting works in the slang C++ compiler code base.
 
 The [Experimental API Interfaces](experimental.md) document explains how experimental Slang API changes are to be deployed.
+
+The [Statically Linked Unit Testing](static-linked-unit-testing.md) document explains `slang-static-unit-test`: an executable that links the compiler statically so unit tests can call non-exported `source/slang` entry points directly.

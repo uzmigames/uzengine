@@ -10,6 +10,12 @@
 /// 3. Dispatch ceil(width/8) x ceil(height/8) thread groups.
 /// 4. Transition output from UAV → SRV for tonemap to read.
 ///
+/// Status: not dispatched. No render-graph pass calls Execute() (the chain that
+/// did was dead code behind the early return in frame_postprocess.cpp, removed
+/// by phase0_sponza-followup-08), lensflare_cs.hlsl is a one-line no-op scaffold
+/// since bd4db199, and the tonemap gets no lens-flare input (root constant 3 is
+/// 0). The r.LensFlare* CVars are inert.
+///
 /// @source John Chapman 2013 — ghost-based lens flare technique
 
 #include "lens_flare_pass.h"
@@ -27,11 +33,11 @@
 UZ_DECLARE_LOG_CATEGORY(Renderer);
 
 // ── CVars ────────────────────────────────────────────────────────────────
-static auto* cv_LFEnabled         = UZ_CVAR_BOOL("r.LensFlare", false, "Lens flare");
-static auto* cv_LFIntensity       = UZ_CVAR_FLOAT("r.LensFlare.Intensity", 1.f, "Lens flare intensity", 0.f, 10.f);
-static auto* cv_LFGhostIntensity  = UZ_CVAR_FLOAT("r.LensFlare.GhostIntensity", 0.5f, "Ghost contribution", 0.f, 5.f);
-static auto* cv_LFHaloRadius      = UZ_CVAR_FLOAT("r.LensFlare.HaloRadius", 0.6f, "Halo ring radius", 0.f, 2.f);
-static auto* cv_LFChromaticShift  = UZ_CVAR_FLOAT("r.LensFlare.ChromaticShift", 0.02f, "Chromatic shift", 0.f, 0.1f);
+static auto* cv_LFEnabled         = UZ_CVAR_BOOL("r.LensFlare", false, "Lens flare (inert: pass not wired in the current post chain)");
+static auto* cv_LFIntensity       = UZ_CVAR_FLOAT("r.LensFlare.Intensity", 1.f, "Lens flare intensity (inert: lens flare pass not wired)", 0.f, 10.f);
+static auto* cv_LFGhostIntensity  = UZ_CVAR_FLOAT("r.LensFlare.GhostIntensity", 0.5f, "Ghost contribution (inert: lens flare pass not wired)", 0.f, 5.f);
+static auto* cv_LFHaloRadius      = UZ_CVAR_FLOAT("r.LensFlare.HaloRadius", 0.6f, "Halo ring radius (inert: lens flare pass not wired)", 0.f, 2.f);
+static auto* cv_LFChromaticShift  = UZ_CVAR_FLOAT("r.LensFlare.ChromaticShift", 0.02f, "Chromatic shift (inert: lens flare pass not wired)", 0.f, 0.1f);
 
 namespace uz {
 

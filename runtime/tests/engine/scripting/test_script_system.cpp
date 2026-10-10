@@ -62,11 +62,16 @@ class ScriptSystemTest : public ::testing::Test {
     void SetUp() override {
         ASSERT_TRUE(uz::LuaVM::Init());
         uz::ScriptSystem::Initialize(&world_, &vfs_);
+        // Scripts are dormant by default (editor mode); the lifecycle tests
+        // below exercise a running game, as the hosts do in Play Mode.
+        uz::ScriptSystem::SetPlayMode(true);
     }
 
     void TearDown() override {
         uz::ScriptSystem::Shutdown();
         uz::LuaVM::Shutdown();
+        // Play mode is process-wide state: restore the editor default.
+        uz::ScriptSystem::SetPlayMode(false);
     }
 
     /// Helper: run Lua code in the shared VM state, return true on success.
@@ -138,6 +143,55 @@ TEST_F(ScriptSystemTest, DoubleShutdown_IsSafe) {
     uz::ScriptSystem::Shutdown();
     uz::ScriptSystem::Shutdown(); // second call must not crash
     uz::ScriptSystem::Initialize(&world_, &vfs_);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Play mode gate — scripts are dormant while editing, run in Play Mode
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_F(ScriptSystemTest, IsPlayMode_ReflectsSetPlayMode) {
+    uz::ScriptSystem::SetPlayMode(false);
+    EXPECT_FALSE(uz::ScriptSystem::IsPlayMode());
+    uz::ScriptSystem::SetPlayMode(true);
+    EXPECT_TRUE(uz::ScriptSystem::IsPlayMode());
+}
+
+TEST_F(ScriptSystemTest, EditorMode_Update_DoesNotStartOrUpdateScripts) {
+    vfs_.AddScript("scripts/dormant.lua",
+        "function on_start(e) _G.dormant_started = true end\n"
+        "function on_update(e, dt) _G.dormant_updates = (_G.dormant_updates or 0) + 1 end\n"
+    );
+    auto e = CreateScriptEntity("scripts/dormant.lua");
+
+    uz::ScriptSystem::SetPlayMode(false);
+    uz::ScriptSystem::Update(0.016f);
+    uz::ScriptSystem::Update(0.016f);
+
+    const auto& script = world_.GetComponent<uz::CScript>(e);
+    EXPECT_FALSE(script.started) << "on_start must not fire in editor mode";
+    EXPECT_EQ(script.luaRef, LUA_REFNIL) << "the script must not even be loaded in editor mode";
+    EXPECT_FALSE(EvalBool("dormant_started == true"));
+    EXPECT_FALSE(EvalBool("dormant_updates ~= nil"));
+}
+
+TEST_F(ScriptSystemTest, EnteringPlayMode_StartsScriptsThatWereDormant) {
+    vfs_.AddScript("scripts/wake.lua",
+        "function on_start(e) _G.wake_started = true end\n"
+        "function on_update(e, dt) _G.wake_updates = (_G.wake_updates or 0) + 1 end\n"
+    );
+    auto e = CreateScriptEntity("scripts/wake.lua");
+
+    uz::ScriptSystem::SetPlayMode(false);
+    uz::ScriptSystem::Update(0.016f);            // dormant: nothing runs
+    EXPECT_FALSE(world_.GetComponent<uz::CScript>(e).started);
+
+    uz::ScriptSystem::SetPlayMode(true);
+    uz::ScriptSystem::Update(0.016f);            // first play frame: load + on_start
+    uz::ScriptSystem::Update(0.016f);            // second play frame: on_update
+
+    EXPECT_TRUE(world_.GetComponent<uz::CScript>(e).started);
+    EXPECT_TRUE(EvalBool("wake_started == true"));
+    EXPECT_NEAR(EvalNumber("wake_updates"), 1.0, 1e-9);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

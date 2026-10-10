@@ -32,7 +32,9 @@
 #include "gpu_particle_sort.h"
 
 #include "engine/rhi/rhi_types.h"
+#include "engine/vfx/asset/vfx_graph.h"
 
+#include <array>
 #include <cstdint>
 #include <vector>
 
@@ -40,6 +42,32 @@ namespace uz {
 
 class IRHICommandList;
 class IRHIDevice;
+
+// ---------------------------------------------------------------------------
+// ParticleDeathEvent -- GPU death event written by the update CS
+// ---------------------------------------------------------------------------
+
+/// Represents a particle death event for decal spawning.
+///
+/// Written by the particle update compute shader when a particle's age exceeds
+/// its lifespan and death decals are enabled. The CPU reads these events back
+/// (with 1-frame latency) and injects them into the DecalManager.
+///
+/// Layout matches the HLSL `ParticleDeathEvent` struct exactly (48 bytes,
+/// 16-byte aligned). Must be kept in sync with `particle_update_cs.hlsl`.
+///
+/// @ref Lagarde & de Rousiers 2014 "Moving Frostbite to PBR" -- deferred decal
+///      projection for particle death marks
+struct ParticleDeathEvent {
+    float position[3] = {};  ///< World-space death position (12 bytes).
+    float size         = 0.0f; ///< Particle size at death (4 bytes).
+    float color[4]     = {};  ///< Particle RGBA color at death (16 bytes).
+    float normal[3]    = {};  ///< Estimated surface normal at death (12 bytes).
+    float _pad         = 0.0f; ///< Padding to 48 bytes (16-byte alignment).
+};
+
+static_assert(sizeof(ParticleDeathEvent) == 48,
+              "ParticleDeathEvent must be exactly 48 bytes for GPU struct parity");
 
 // ---------------------------------------------------------------------------
 // ParticleAttributeSet -- one half of the ping-pong pair
@@ -76,7 +104,48 @@ struct ParticleAttributeSet {
     /// Per-particle 2D rotation angle in radians (float, 4 bytes stride).
     RHIBufferHandle rotations = RHIBufferHandle::Invalid();
 
-    /// Returns true if all attribute buffers have been allocated.
+    /// Per-particle sub-image (flipbook) index for SubUV animation (float, 4 bytes stride).
+    /// Computed by the update CS as `(age / lifespan) * (totalFrames - 1)`.
+    /// The integer part selects the current frame; the fractional part is the blend
+    /// factor to the next frame. Initialized to 0.0 by the spawn CS.
+    /// @ref UE5 Niagara SubImageIndex module
+    RHIBufferHandle subImageIndices = RHIBufferHandle::Invalid();
+
+    /// Per-particle persistent identifier (uint64, 8 bytes stride).
+    ///
+    /// Monotonically increasing 64-bit ID assigned at spawn from a per-emitter
+    /// atomic counter. Survives SoA slot recycle — when a slot is reused by
+    /// a new particle, the new particle gets a FRESH id, while the old id is
+    /// never re-issued. Dead slots carry id = 0.
+    ///
+    /// Enables:
+    ///   - Event payload correlation (7.3.0): a collision event can reference
+    ///     the exact source particle even after slot recycle.
+    ///   - Cross-emitter particle reads (7.12.0): follower emitters track a
+    ///     specific master particle by id.
+    ///   - Deterministic replay + debugging: stable id for logging/recording.
+    ///
+    /// Allocated only when the owning emitter opts in via
+    /// `ParticleEmitter::emitsPersistentIDs = true`. When opted out the handle
+    /// stays `Invalid()` and the SoA stride check in `IsValid()` excludes it.
+    ///
+    /// @ref UE5 FNiagaraEmitter::bRequiresPersistentIDs
+    /// @ref UE5 FNiagaraGPUInstanceCountManager::AllocatePersistentID
+    RHIBufferHandle persistentIDs = RHIBufferHandle::Invalid();
+
+    /// Optional user-declared per-particle `float` channels.
+    ///
+    /// `userFloat[i]` is the structured buffer for the i-th user Float slot
+    /// and is `Invalid()` when that slot was never declared. The slot index
+    /// matches `UserAttributeDef::slotIndex`.
+    std::array<RHIBufferHandle, kMaxUserFloatAttrs> userFloat = {};
+
+    /// Optional user-declared per-particle `float4` channels.
+    std::array<RHIBufferHandle, kMaxUserVec4Attrs> userVec4 = {};
+
+    /// Returns true when every mandatory attribute buffer is allocated. The
+    /// optional `persistentIDs` channel is not required for validity; callers
+    /// that need it must check `persistentIDs.IsValid()` separately.
     [[nodiscard]] bool IsValid() const noexcept;
 };
 
@@ -128,8 +197,25 @@ struct GPUParticleBuffer {
 
     /// GPU atomic counter: number of alive particles (single uint32).
     /// The compute shader increments this atomically; the CPU reads it back
-    /// once per frame for budget tracking.
+    /// once per frame via the `aliveCountReadback` ring for budget tracking.
     RHIBufferHandle aliveCount = RHIBufferHandle::Invalid();
+
+    // ── Alive-count CPU readback (phase 15.6) ─────────────────────────
+    //
+    // A 3-slot readback ring mirrors the `aliveCount` atomic back to the
+    // CPU so the editor / stats overlay can show the real live particle
+    // count. Each frame the simulation pass copies `aliveCount` into
+    // slot `readbackWriteIndex`; the CPU maps the oldest slot (same
+    // index, since we advance AFTER kicking) to read an N-frames-stale
+    // but correct value. 3 slots give the GPU enough headroom to not
+    // stall at `Map()` time under the default 2–3 frames-in-flight.
+    static constexpr uint32_t kAliveReadbackRingSize = 3;
+    RHIBufferHandle aliveCountReadback[kAliveReadbackRingSize] = {};
+    uint32_t readbackWriteIndex  = 0;
+    bool     readbackHasKickedOnce = false;
+    /// Most recent alive count polled from the readback ring — this is
+    /// the authoritative live count for editor / HUD display.
+    uint32_t gpuAliveCount = 0;
 
     /// GPU free list: recycled particle indices stored as a stack.
     /// Size: capacity * sizeof(uint32_t).
@@ -170,6 +256,44 @@ struct GPUParticleBuffer {
     /// Whether the mesh instance buffers have been allocated.
     /// True only for emitters using MeshRenderModule.
     bool hasMeshBuffers = false;
+
+    // -- Death event buffers (for decal spawning on particle death) -----------
+
+    /// Ring buffer for particle death events written by the update CS.
+    /// CPU reads and clears this each frame (1-frame latency allowed).
+    /// Stride = sizeof(ParticleDeathEvent) = 48 bytes, count = capacity.
+    /// Only allocated when `hasDeathEventBuffers` is true.
+    RHIBufferHandle deathEventBuffer = RHIBufferHandle::Invalid();
+
+    /// Atomic counter for the number of death events written this frame.
+    /// Single uint32 element, incremented by InterlockedAdd in the update CS.
+    /// Reset to 0 via ClearUAV each frame before the update dispatch.
+    /// Only allocated when `hasDeathEventBuffers` is true.
+    RHIBufferHandle deathEventCount = RHIBufferHandle::Invalid();
+
+    /// Whether the death event buffers have been allocated.
+    /// True only for emitters with `emitDeathDecals` enabled.
+    bool hasDeathEventBuffers = false;
+
+    // -- Persistent particle IDs (phase 7.4.0) --------------------------------
+
+    /// Whether the persistentIDs SoA channels have been allocated for both
+    /// attribute sets. True only for emitters with
+    /// `ParticleEmitter::emitsPersistentIDs = true`.
+    ///
+    /// When false the per-set `persistentIDs` handles stay `Invalid()` and
+    /// callers must not attempt to read/write them.
+    ///
+    /// @ref UE5 FNiagaraEmitter::bRequiresPersistentIDs
+    bool hasPersistentIDs = false;
+
+    /// Bit masks tracking which user-attribute slots are live on BOTH
+    /// attribute sets. Bit `i` set means `sets[r].userFloat[i]` and
+    /// `sets[w].userFloat[i]` have been created. Masks make it cheap for
+    /// the spawn/update passes to decide whether a slot needs clearing or
+    /// binding without walking the whole array.
+    uint32_t userFloatMask = 0;
+    uint32_t userVec4Mask  = 0;
 
     // -- Sort buffers (for depth-ordered transparent rendering) ---------------
 
@@ -290,6 +414,46 @@ struct GPUParticleBuffer {
     /// - `hasMeshBuffers` must be false (not already allocated).
     [[nodiscard]] bool CreateMeshBuffers(IRHIDevice* device);
 
+    /// Allocates the persistent-ID SoA channel (`uint64` per slot) on BOTH
+    /// attribute sets. Opt-in alternative to baking the cost into every
+    /// emitter; only effects that rely on event correlation or cross-emitter
+    /// particle reads need to call this.
+    ///
+    /// # Preconditions
+    /// - `device` must not be null.
+    /// - `IsValid()` must be true (base attribute sets already allocated).
+    /// - `hasPersistentIDs` must be false.
+    ///
+    /// # Returns
+    /// `true` on success. On failure any partially allocated channels are
+    /// destroyed and `hasPersistentIDs` stays false.
+    ///
+    /// @ref phase7_7.4.0-vfx-persistent-particle-ids
+    [[nodiscard]] bool CreatePersistentIDBuffers(IRHIDevice* device);
+
+    /// Allocates an optional per-particle `float` user-attribute channel on
+    /// BOTH attribute sets and flips the matching bit in `userFloatMask`.
+    ///
+    /// Idempotent: a no-op when the slot is already live.
+    ///
+    /// # Preconditions
+    /// - `device` must not be null.
+    /// - `IsValid()` must be true.
+    /// - `slotIndex < kMaxUserFloatAttrs`.
+    ///
+    /// # Returns
+    /// `true` on success. On allocation failure any partial allocations are
+    /// destroyed and the slot bit stays 0.
+    [[nodiscard]] bool CreateUserFloatSlot(IRHIDevice* device, uint32_t slotIndex);
+
+    /// `float4` analogue of `CreateUserFloatSlot`.
+    [[nodiscard]] bool CreateUserVec4Slot(IRHIDevice* device, uint32_t slotIndex);
+
+    /// Releases all user-attribute channels on both attribute sets and
+    /// clears `userFloatMask` / `userVec4Mask`. Safe to call on a buffer
+    /// without any declared attributes (no-op).
+    void DestroyUserAttributeBuffers(IRHIDevice* device);
+
     /// Releases the optional mesh instance buffers and resets handles to invalid.
     ///
     /// No-op if `hasMeshBuffers` is false or `device` is null.
@@ -297,6 +461,31 @@ struct GPUParticleBuffer {
     /// # Parameters
     /// - `device`: RHI device for deallocation. May be null (no-op).
     void DestroyMeshBuffers(IRHIDevice* device);
+
+    /// Allocates the optional death event buffers for decal spawning.
+    ///
+    /// Creates two additional GPU buffers: death event structured buffer
+    /// (ParticleDeathEvent per particle) and death event count (single uint32
+    /// atomic counter).
+    ///
+    /// Must be called AFTER a successful `Create()` -- the base buffer must
+    /// already be allocated so `capacity` is known.
+    ///
+    /// # Parameters
+    /// - `device`: RHI device for buffer creation. Must not be null.
+    ///
+    /// # Returns
+    /// `true` on success, `false` if any allocation fails.
+    ///
+    /// # Preconditions
+    /// - `IsValid()` must be true (base buffers allocated).
+    /// - `hasDeathEventBuffers` must be false (not already allocated).
+    [[nodiscard]] bool CreateDeathEventBuffers(IRHIDevice* device);
+
+    /// Releases the optional death event buffers and resets handles to invalid.
+    ///
+    /// No-op if `hasDeathEventBuffers` is false or `device` is null.
+    void DestroyDeathEventBuffers(IRHIDevice* device);
 
     /// Releases all GPU buffers and resets state.
     ///
@@ -306,6 +495,21 @@ struct GPUParticleBuffer {
     /// # Parameters
     /// - `device`: RHI device for deallocation. May be null (no-op).
     void Destroy(IRHIDevice* device);
+
+    /// Copies the current `aliveCount` GPU atomic into the next slot of
+    /// the readback ring and advances `readbackWriteIndex`. Caller is
+    /// responsible for barriering `aliveCount` into `CopySrc` before the
+    /// copy and back to `UnorderedAccess` after. No-op if either handle
+    /// is invalid.
+    void KickAliveReadback(IRHICommandList* cmd);
+
+    /// Maps the oldest readback slot and stores its value in
+    /// `gpuAliveCount`. Safe to call every frame; no-op until at least
+    /// one `KickAliveReadback` has committed. The value is
+    /// `kAliveReadbackRingSize - 1` frames stale by design (long enough
+    /// for the GPU-side copy to complete, short enough to track rapid
+    /// changes).
+    void PollAliveReadback(IRHIDevice* device);
 
     /// Uploads initial data to the GPU bookkeeping buffers via staging copies.
     ///

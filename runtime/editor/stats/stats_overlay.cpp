@@ -11,8 +11,9 @@
 #include "rhi.h"
 #include "rhi_config.h"
 
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
 #include "shader_pipeline.h"
+#define UZ_STATS_OVERLAY_HAS_SHADER_PIPELINE 1
 #endif
 
 #include <algorithm>
@@ -29,7 +30,7 @@ UZ_DEFINE_LOG_CATEGORY(EditorStats, Info);
 // Init / Shutdown
 // ─────────────────────────────────────────────────────────────────────────────
 
-#ifdef _WIN32
+#ifdef UZ_STATS_OVERLAY_HAS_SHADER_PIPELINE
 bool StatsOverlay::Init(IRHIDevice* device, IRHICommandList* cmdList, UploadContext& upload,
                         ShaderPipeline& shaderPipeline, RHIFormat rtvFormat,
                         uint32_t screenWidth, uint32_t screenHeight,
@@ -58,7 +59,18 @@ bool StatsOverlay::Init(IRHIDevice* device, IRHICommandList* cmdList, UploadCont
     UZ_LOG(EditorStats, Info, "Stats overlay initialized ({}x{})", screenWidth, screenHeight);
     return true;
 }
-#endif // _WIN32
+#else
+bool StatsOverlay::Init(IRHIDevice* device, IRHICommandList* cmdList, UploadContext& upload,
+                        ShaderPipeline& shaderPipeline, RHIFormat rtvFormat,
+                        uint32_t screenWidth, uint32_t screenHeight, bool bindless) {
+    (void)device; (void)cmdList; (void)upload; (void)shaderPipeline;
+    (void)rtvFormat; (void)screenWidth; (void)screenHeight; (void)bindless;
+    UZ_LOG(EditorStats, Error,
+           "StatsOverlay: ShaderPipeline overload is unavailable on this "
+           "platform — use the pre-created shader handle overload");
+    return false;
+}
+#endif // UZ_STATS_OVERLAY_HAS_SHADER_PIPELINE
 
 bool StatsOverlay::Init(IRHIDevice* device, IRHICommandList* cmdList, UploadContext& upload,
                         const std::string& fontPath,

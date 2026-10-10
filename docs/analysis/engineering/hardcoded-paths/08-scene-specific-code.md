@@ -94,3 +94,10 @@ After this cleanup, a second sweep should check for:
 - Hardcoded event names (`"game.started"`, `"level.loaded"`)
 
 These patterns weren't found in this pass but are common leakage points in ECS / scripting systems.
+
+## Re-audit 2026-09-08 (after the SponzaTest port)
+
+- 8.3 — `cv_Exposure` default is 1.0 now; only the comment (`frame_constants.cpp:79-81`) still cites the Sponza calibration. Comment cleanup pending.
+- 8.4 / 8.5 — unchanged (`frame_constants.cpp:40`, `ssgi_renderer.cpp:35`).
+- 8.6 — the cumulative Sponza bias moved out of the engine: Sponza's look is now carried by its `.uzscene`/`.uzproject` CVars (`r.Exposure 0.5`, `r.ColorContrast 0.65`, `r.ColorSaturation 1.0`, `r.AutoExposure.MinBrightness 0.001`, SDF GI CVars) and neutral materials; the previous hand calibration is archived under `sample/reference/sponza-manual-calibration/`.
+- New engine-side references introduced by the port are comments only (`scene_mesh_assets.cpp` readiness rationale, `uzengine.cpp` preload rationale cite Sponza timings as evidence).

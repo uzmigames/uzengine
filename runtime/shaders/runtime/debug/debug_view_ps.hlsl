@@ -13,6 +13,10 @@ cbuffer RootConstants : register(b0) {
     uint g_positionSrv;
     uint g_hdrSrv;      // HDR scene color (LightingOnly / Reflections); UINT_MAX = unused
     uint g_ssrSrv;      // SSR resolve result (Reflections); UINT_MAX = unused
+    uint g_directSrv;   // Deferred lighting SV_Target1 (Lighting / LightingOnly); UINT_MAX = unused
+    uint g_indirectSrv; // Deferred lighting SV_Target2 (LightingOnly); UINT_MAX = unused
+    uint g_shadowSrv;   // Deferred lighting SV_Target3, R = shadow, G = AO (Shadows); UINT_MAX = unused
+    uint g_gtaoSrv;     // GTAO filtered AO (AO view); UINT_MAX = fall back to the G-buffer alpha
 };
 #else
 cbuffer RootConstants : register(b0) {
@@ -83,8 +87,17 @@ float4 main(float4 pos : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
     case 4: // Roughness
         return float4(normalData.aaa, 1);
 
-    case 5: // AO
+    case 5: // AO — the GTAO result when there is one, the G-buffer alpha otherwise.
+    {
+#ifdef UZ_BINDLESS
+        if (g_gtaoSrv != 0xFFFFFFFFu) {
+            Texture2D<float4> gtaoTex = ResourceDescriptorHeap[g_gtaoSrv];
+            return float4(gtaoTex.Load(int3(px, 0)).rrr, 1);
+        }
+#endif
+        // Material AO from the G-buffer: flat wherever the material does not author it.
         return float4(albedoData.aaa, 1);
+    }
 
     case 6: // Depth
     {
@@ -131,18 +144,44 @@ float4 main(float4 pos : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
         return float4(detail, 1);
     }
 
-    case 16: // LightingOnly — HDR scene color divided by albedo (isolates lighting contribution)
+    // Cases 8, 9 and 16 read the deferred pass's lighting split targets (SV_Target1..3). They are
+    // bindless-only: the SM5 path binds t0..t5, so there they fall through to the default branch
+    // rather than display another texture as if it were lighting.
+#ifdef UZ_BINDLESS
+    case 8: // Lighting — direct light (Lo), no albedo
     {
-        // @ref Lagarde 2014 "Moving Frostbite to PBR" — lighting buffer extraction.
-        // LightingOnly = HDR / albedo (where albedo > epsilon), showing pure light intensity.
-        float4 hdr = hdrTex.Load(int3(px, 0));
-        float3 alb = max(albedoData.rgb, 0.001);
-        float3 lighting = hdr.rgb / alb;
+        if (g_directSrv == 0xFFFFFFFFu) break;
+        Texture2D<float4> directTex = ResourceDescriptorHeap[g_directSrv];
+        return float4(directTex.Load(int3(px, 0)).rgb, 1);
+    }
+
+    case 9: // Shadows — the shadow mask (R), 0 = shadowed, 1 = lit
+    {
+        if (g_shadowSrv == 0xFFFFFFFFu) break;
+        Texture2D<float4> shadowTex = ResourceDescriptorHeap[g_shadowSrv];
+        return float4(shadowTex.Load(int3(px, 0)).rrr, 1);
+    }
+
+    case 16: // LightingOnly — direct + indirect, without the albedo multiply
+    {
+        // @ref Lagarde 2014 "Moving Frostbite to PBR" — lighting buffer extraction. Read from the
+        // lighting split targets, not from the HDR scene colour: this pass writes (and clears) the
+        // HDR resource, so reading it back rendered black.
+        if (g_directSrv == 0xFFFFFFFFu || g_indirectSrv == 0xFFFFFFFFu) break;
+        Texture2D<float4> directTex   = ResourceDescriptorHeap[g_directSrv];
+        Texture2D<float4> indirectTex = ResourceDescriptorHeap[g_indirectSrv];
+        const float3 lighting = directTex.Load(int3(px, 0)).rgb + indirectTex.Load(int3(px, 0)).rgb;
         return float4(lighting, 1);
     }
+#endif
 
     case 18: // Reflections — SSR contribution only
     {
+#ifdef UZ_BINDLESS
+        // SSR inactive this frame: frame_lighting_pass.cpp passes the sentinel, so there is no
+        // texture to load. Show "no data" (magenta) like cases 8, 9 and 16.
+        if (g_ssrSrv == 0xFFFFFFFFu) break;
+#endif
         // @ref McGuire 2014 "Efficient GPU Screen-Space Ray Tracing".
         // Displays the raw SSR resolve result (rgb=hit color, a=confidence).
         // Falls back to zero when SSR result is unavailable.
@@ -153,4 +192,9 @@ float4 main(float4 pos : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
     default: // Lit or unknown — should not reach here
         return float4(1, 0, 1, 1); // Magenta = error
     }
+
+    // Reached when a case breaks out: a mode whose source texture is not bound this frame (its SRV
+    // index is the sentinel). Magenta says "no data for this mode" rather than showing another
+    // channel as if it were the one asked for.
+    return float4(1, 0, 1, 1);
 }

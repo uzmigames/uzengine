@@ -520,3 +520,169 @@ TEST(UZ_TrailMeshBuilder, Build_Indices_AreWithinVertexRange) {
             << "Index " << idx << " is out of range (vertexCount=" << vertexCount << ")";
     }
 }
+
+// =============================================================================
+// Multi-strand — vertex and index count formulas
+// =============================================================================
+
+TEST(UZ_TrailMeshBuilder, Build_MultiStrand_VertexAndIndexFormula) {
+    TrailMeshBuilder builder;
+    const uint32_t n = 4u;
+    const auto pts = MakeStraightPoints(n, 1.0f);
+    const float totalDist = 3.0f;
+    const Vec4 cs{1,1,1,1};
+    const Vec4 ce{1,1,1,0};
+
+    for (uint32_t strands = 1u; strands <= 4u; ++strands) {
+        const TrailMeshData mesh = builder.Build(
+            pts.data(), n, kCamera,
+            1.0f, 0.1f, cs, ce, totalDist, 2.0f,
+            strands, 0.2f
+        );
+        EXPECT_EQ(mesh.GetVertexCount(), n * 2u * strands)
+            << "Expected " << n * 2u * strands << " vertices for "
+            << n << " points and " << strands << " strands";
+        EXPECT_EQ(mesh.GetIndexCount(), (n - 1u) * 6u * strands)
+            << "Expected " << (n - 1u) * 6u * strands << " indices for "
+            << n << " points and " << strands << " strands";
+    }
+}
+
+// =============================================================================
+// Multi-strand — strand index values
+// =============================================================================
+
+TEST(UZ_TrailMeshBuilder, Build_MultiStrand_StrandIndicesCorrect) {
+    TrailMeshBuilder builder;
+    const uint32_t n = 3u;
+    const uint32_t strands = 3u;
+    const auto pts = MakeStraightPoints(n, 1.0f);
+    const Vec4 cs{1,1,1,1};
+    const Vec4 ce{1,1,1,0};
+
+    const TrailMeshData mesh = builder.Build(
+        pts.data(), n, kCamera,
+        1.0f, 0.1f, cs, ce, 2.0f, 2.0f,
+        strands, 0.2f
+    );
+
+    ASSERT_EQ(mesh.GetVertexCount(), n * 2u * strands);
+
+    // Each strand s has n*2 vertices starting at offset s*n*2.
+    for (uint32_t s = 0; s < strands; ++s) {
+        for (uint32_t i = 0; i < n * 2u; ++i) {
+            const uint32_t idx = s * n * 2u + i;
+            EXPECT_EQ(mesh.vertices[idx].strandIndex, s)
+                << "Vertex " << idx << " should belong to strand " << s;
+        }
+    }
+}
+
+// =============================================================================
+// Multi-strand — strands are offset from each other
+// =============================================================================
+
+TEST(UZ_TrailMeshBuilder, Build_MultiStrand_StrandsAreOffset) {
+    TrailMeshBuilder builder;
+    const uint32_t n = 2u;
+    const uint32_t strands = 3u;
+    const float spacing = 0.5f;
+    const auto pts = MakeStraightPoints(n, 1.0f);
+    const Vec4 cs{1,1,1,1};
+    const Vec4 ce{1,1,1,1}; // Uniform color so no alpha differences
+
+    const TrailMeshData mesh = builder.Build(
+        pts.data(), n, kCamera,
+        1.0f, 1.0f, cs, ce, 1.0f, 2.0f,
+        strands, spacing
+    );
+
+    ASSERT_EQ(mesh.GetVertexCount(), n * 2u * strands);
+
+    // Head left vertex of each strand (indices 0, 4, 8 for n=2).
+    // These should differ in position (offset along the up vector).
+    const Vec3 s0 = mesh.vertices[0].position;            // Strand 0, head, left
+    const Vec3 s1 = mesh.vertices[n * 2u].position;       // Strand 1, head, left
+    const Vec3 s2 = mesh.vertices[n * 2u * 2u].position;  // Strand 2, head, left
+
+    // The offset between strand 0 and strand 1 should equal the offset
+    // between strand 1 and strand 2 (uniform spacing).
+    const float dx01 = s1.x - s0.x;
+    const float dy01 = s1.y - s0.y;
+    const float dz01 = s1.z - s0.z;
+    const float dist01 = std::sqrt(dx01*dx01 + dy01*dy01 + dz01*dz01);
+
+    const float dx12 = s2.x - s1.x;
+    const float dy12 = s2.y - s1.y;
+    const float dz12 = s2.z - s1.z;
+    const float dist12 = std::sqrt(dx12*dx12 + dy12*dy12 + dz12*dz12);
+
+    EXPECT_NEAR(dist01, spacing, 0.05f)
+        << "Distance between strand 0 and 1 should be approximately strandSpacing";
+    EXPECT_NEAR(dist01, dist12, 0.01f)
+        << "Spacing between strands should be uniform";
+}
+
+// =============================================================================
+// Multi-strand — single strand produces same result as default
+// =============================================================================
+
+TEST(UZ_TrailMeshBuilder, Build_SingleStrand_MatchesDefault) {
+    TrailMeshBuilder builder;
+    const uint32_t n = 3u;
+    const auto pts = MakeStraightPoints(n, 1.0f);
+    const Vec4 cs{1,0.5f,0,1};
+    const Vec4 ce{0,0,1,0};
+
+    // Default call (no strand params)
+    const TrailMeshData meshDefault = builder.Build(
+        pts.data(), n, kCamera,
+        1.0f, 0.1f, cs, ce, 2.0f, 2.0f
+    );
+
+    // Explicit single strand
+    const TrailMeshData meshSingle = builder.Build(
+        pts.data(), n, kCamera,
+        1.0f, 0.1f, cs, ce, 2.0f, 2.0f,
+        1, 0.0f
+    );
+
+    ASSERT_EQ(meshDefault.GetVertexCount(), meshSingle.GetVertexCount());
+    ASSERT_EQ(meshDefault.GetIndexCount(), meshSingle.GetIndexCount());
+
+    for (uint32_t i = 0; i < meshDefault.GetVertexCount(); ++i) {
+        EXPECT_NEAR(meshDefault.vertices[i].position.x,
+                    meshSingle.vertices[i].position.x, 1e-5f);
+        EXPECT_NEAR(meshDefault.vertices[i].position.y,
+                    meshSingle.vertices[i].position.y, 1e-5f);
+        EXPECT_NEAR(meshDefault.vertices[i].position.z,
+                    meshSingle.vertices[i].position.z, 1e-5f);
+        EXPECT_EQ(meshSingle.vertices[i].strandIndex, 0u);
+    }
+}
+
+// =============================================================================
+// Multi-strand — all indices are within vertex range
+// =============================================================================
+
+TEST(UZ_TrailMeshBuilder, Build_MultiStrand_IndicesInRange) {
+    TrailMeshBuilder builder;
+    const uint32_t n = 5u;
+    const uint32_t strands = 4u;
+    const auto pts = MakeStraightPoints(n, 1.0f);
+
+    const TrailMeshData mesh = builder.Build(
+        pts.data(), n, kCamera,
+        1.0f, 0.1f,
+        Vec4{1,1,1,1}, Vec4{1,1,1,0},
+        4.0f, 2.0f,
+        strands, 0.15f
+    );
+
+    const uint32_t vertexCount = mesh.GetVertexCount();
+    for (uint32_t idx : mesh.indices) {
+        EXPECT_LT(idx, vertexCount)
+            << "Multi-strand index " << idx
+            << " is out of range (vertexCount=" << vertexCount << ")";
+    }
+}

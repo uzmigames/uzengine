@@ -83,14 +83,16 @@ void AddSkyCubemapCapturePSPass(rg::RgBuilder& builder, const SkyCubemapCaptureP
                 UZ_LOG(Renderer, Info,
                        "SkyCubemapCapturePSPass: rootConstants — "
                        "bottomRadiusKm={:.3f}, topRadiusKm={:.3f}, "
-                       "sunDir=({:.4f}, {:.4f}, {:.4f}), sunIntensity={:.3f}, "
+                       "sunDir=({:.4f}, {:.4f}, {:.4f}), sunIllum=({:.3f}, {:.3f}, {:.3f}), "
                        "packedScatterScales=0x{:08X}",
                        desc.rootConstants.bottomRadiusKm,
                        desc.rootConstants.topRadiusKm,
                        desc.rootConstants.sunDirX,
                        desc.rootConstants.sunDirY,
                        desc.rootConstants.sunDirZ,
-                       desc.rootConstants.sunIntensity,
+                       desc.rootConstants.sunIllumX,
+                       desc.rootConstants.sunIllumY,
+                       desc.rootConstants.sunIllumZ,
                        desc.rootConstants.packedScatterScales);
 
                 if (!desc.transmittanceLutTex.IsValid()) {
@@ -127,7 +129,7 @@ void AddSkyCubemapCapturePSPass(rg::RgBuilder& builder, const SkyCubemapCaptureP
                 cmd->SetScissor(sc);
 
                 // Set root constants with current face index
-                cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
+                cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 10);
 
                 // Draw fullscreen triangle
                 cmd->Draw(3);

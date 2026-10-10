@@ -31,6 +31,7 @@
 
 #include "engine/vfx/events/vfx_event.h"
 #include "engine/vfx/modules/vfx_module.h"
+#include "engine/vfx/asset/vfx_emitter_inheritance.h"
 
 #include <cstdint>
 #include <memory>
@@ -59,6 +60,40 @@ struct VFXParameterDef {
     Vec4 defaultVec4 = {};                     ///< Default value (Vec4 type).
     float minValue = 0.0f;                     ///< Minimum value (Float type).
     float maxValue = 1.0f;                     ///< Maximum value (Float type).
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UserAttributeDef -- user-declared per-particle SoA channel
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Type of a user-declared per-particle attribute channel.
+///
+/// Float channels use `StructuredBuffer<float>`; Vec4 channels use
+/// `StructuredBuffer<float4>`. A single emitter can declare up to 4 float
+/// channels and 2 Vec4 channels (`kMaxUserFloatAttrs` / `kMaxUserVec4Attrs`).
+enum class UserAttributeType : uint8_t {
+    Float = 0,
+    Vec4  = 1,
+};
+
+/// Maximum number of user-declared `Float` channels per emitter.
+static constexpr uint32_t kMaxUserFloatAttrs = 4;
+
+/// Maximum number of user-declared `Vec4` channels per emitter.
+static constexpr uint32_t kMaxUserVec4Attrs  = 2;
+
+/// One user-declared per-particle attribute channel.
+///
+/// When included in `VFXGraph`, the emitter runtime allocates a matching
+/// structured buffer, initialises every particle to `defaultFloat` /
+/// `defaultVec4` at spawn, and exposes the buffer's bindless SRV/UAV index
+/// so modules can read and write the channel by slot.
+struct UserAttributeDef {
+    std::string name;                            ///< Lookup name (e.g. "Mass", "CustomColor").
+    UserAttributeType type = UserAttributeType::Float;
+    float defaultFloat = 0.0f;                   ///< Default value (Float type).
+    Vec4  defaultVec4  = {0.0f, 0.0f, 0.0f, 1.0f};///< Default value (Vec4 type).
+    uint32_t slotIndex = UINT32_MAX;             ///< Assigned slot (0..kMaxUserFloatAttrs-1 for Float, same for Vec4). Set by the runtime after allocation.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -119,6 +154,26 @@ public:
         const std::string& path, const ModuleRegistry& registry,
         IVFS* vfs = nullptr);
 
+    /// Loads a graph resolving an inheritance chain at JSON level.
+    ///
+    /// When the asset (or any of its ancestors) carries a `"parent"` field,
+    /// `VfxResolveInheritance` merges the chain before module instantiation.
+    /// Cycles and chains deeper than `VFX_MAX_INHERITANCE_DEPTH` fail with
+    /// `nullptr` and a `VFX/Error` log.
+    ///
+    /// @ref UE5 NiagaraEmitterHandleInheritance.h
+    /// @ref docs/engine/25-vfx/20-emitter-inheritance.md
+    [[nodiscard]] static std::unique_ptr<VFXGraph> LoadWithInheritance(
+        const std::string& path, const ModuleRegistry& registry,
+        const VfxInheritanceLoader& loader, IVFS* vfs = nullptr);
+
+    /// String-input variant of `LoadWithInheritance` (used by tests and the
+    /// editor preview pipeline). `loader` resolves each parent path referenced
+    /// by the chain.
+    [[nodiscard]] static std::unique_ptr<VFXGraph> LoadFromStringWithInheritance(
+        const std::string& jsonStr, const ModuleRegistry& registry,
+        const VfxInheritanceLoader& loader);
+
     /// Loads a VFXGraph from a JSON string (primarily for testing).
     ///
     /// # Parameters
@@ -162,19 +217,42 @@ public:
         return events_;
     }
 
+    /// Returns the user-attribute declarations for this graph.
+    /// Each entry drives an optional per-particle SoA channel that modules
+    /// can read / write by slot index.
+    [[nodiscard]] const std::vector<UserAttributeDef>& GetUserAttributes() const noexcept {
+        return userAttributes_;
+    }
+
+    /// Mutates the user-attribute list. The loader / editor uses this to
+    /// register declarations parsed from `.uzvfx` JSON.
+    std::vector<UserAttributeDef>& MutableUserAttributes() noexcept {
+        return userAttributes_;
+    }
+
     /// Returns the filesystem path this graph was loaded from (empty if from string).
     [[nodiscard]] const std::string& GetSourcePath() const noexcept {
         return sourcePath_;
     }
 
+    /// Returns the authored parent path from the original JSON `"parent"` key.
+    /// Empty when the graph is a root (has no parent). Populated for every
+    /// load path — inheritance-resolved or not — so the hot-reload watcher
+    /// can reload descendants when a parent file changes.
+    [[nodiscard]] const std::string& GetParentPath() const noexcept {
+        return parentPath_;
+    }
+
 private:
     std::string name_;                               ///< Graph name.
     std::string sourcePath_;                          ///< Source .uzvfx file path.
+    std::string parentPath_;                          ///< Authored parent path (empty for roots).
     uint32_t version_ = 0;                           ///< Format version.
     VFXEmitterConfig emitterConfig_;                  ///< Emitter pool config.
     std::vector<std::unique_ptr<IVFXModule>> modules_;///< Ordered module list.
     std::vector<VFXParameterDef> parameters_;         ///< Exposed parameters.
     std::vector<VFXEventDef> events_;                 ///< Named event triggers.
+    std::vector<UserAttributeDef> userAttributes_;    ///< User-declared per-particle SoA channels.
 };
 
 } // namespace uz

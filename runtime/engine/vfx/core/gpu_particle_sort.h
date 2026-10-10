@@ -40,21 +40,48 @@ class CBRingAllocator;
 /// Must stay in sync with SORT_GROUP_SIZE in particle_sort_cs.hlsl.
 static constexpr uint32_t kSortGroupSize = 256;
 
+// ── Sort mode enum (matches kSortMode_* in particle_sort_cs.hlsl) ───────────
+
+/// GPU sort mode selector — maps to the `sortMode` field of `VFXSortConstants`.
+///
+/// The value selects which key-generation branch the sort CS runs. Both modes
+/// integrate alive detection: dead particles (`age >= lifespan`) always sort
+/// to the end of the array via `SORT_KEY_DEAD`.
+///
+/// | Value | Mode             | Key source                                  |
+/// |-------|------------------|---------------------------------------------|
+/// | 0     | ViewDepth        | `dot(pos - cameraPos, cameraForward)`       |
+/// | 1     | CustomAttribute  | `customSortKeyBuf[idx]` (float)             |
+///
+/// `MeshSortMode::None` is *not* represented here — when the high-level mode
+/// is None, the caller skips the sort dispatch entirely.
+enum class GpuSortMode : uint32_t {
+    ViewDepth       = 0,
+    CustomAttribute = 1,
+};
+
 // ── VFXSortConstants — CPU-side mirror of the shader cbuffer ────────────────
 
 /// CPU-side mirror of the VFXSortConstants cbuffer in particle_sort_cs.hlsl.
 ///
-/// Layout matches the shader's HLSL packing (16-byte aligned rows, 80 bytes
+/// Layout matches the shader's HLSL packing (16-byte aligned rows, 96 bytes
 /// total). Fields are ordered identically to the cbuffer declaration so that
 /// a straight memcpy produces the correct GPU layout.
+///
+/// `keyGenCount` is the number of slots `[0..keyGenCount-1]` that the CS
+/// generates real sort keys for. Slots `>= keyGenCount` (up to `paddedCount`)
+/// receive `SORT_KEY_DEAD` and sort to the tail. With alive detection, the
+/// caller passes `capacity` (or `paddedCount`) here so every potentially-alive
+/// slot is considered; particles whose `age >= lifespan` also receive
+/// `SORT_KEY_DEAD` regardless of their key-source value.
 ///
 /// @ref particle_sort_cs.hlsl cbuffer VFXSortConstants : register(b0)
 struct VFXSortConstants {
     // ── Row 0 (bytes 0-15): particle control ────────────────────────────
-    uint32_t particleCount;       ///< Total alive particles to sort.
+    uint32_t keyGenCount;         ///< Slot range with real keys [0..keyGenCount-1].
     uint32_t sortPhase;           ///< 0 = local sort + keygen, 1 = global merge.
-    uint32_t paddedCount;         ///< particleCount rounded up to next power of two.
-    uint32_t _pad0;
+    uint32_t paddedCount;         ///< keyGenCount rounded up to next power of two.
+    uint32_t sortMode;            ///< GpuSortMode ordinal (0=ViewDepth, 1=CustomAttr).
 
     // ── Row 1 (bytes 16-31): camera position ────────────────────────────
     float    cameraPosX;          ///< World-space camera position X.
@@ -79,10 +106,17 @@ struct VFXSortConstants {
     uint32_t bitonicSubBlockSize; ///< Current sub-block size within merge block.
     uint32_t _pad4;
     uint32_t _pad5;
+
+    // ── Row 5 (bytes 80-95): alive-detection + custom-attribute keys ────
+    uint32_t agesSrvIndex;        ///< SRV: StructuredBuffer<float> ages (alive check).
+    uint32_t lifespansSrvIndex;   ///< SRV: StructuredBuffer<float> lifespans (alive check).
+    uint32_t customSortKeySrvIndex; ///< SRV: StructuredBuffer<float> per-particle key
+                                    ///< (used when sortMode == CustomAttribute).
+    uint32_t _pad6;
 };
 
-static_assert(sizeof(VFXSortConstants) == 80,
-              "VFXSortConstants must be exactly 80 bytes to match shader cbuffer layout");
+static_assert(sizeof(VFXSortConstants) == 96,
+              "VFXSortConstants must be exactly 96 bytes to match shader cbuffer layout");
 
 // ── GPUParticleSort ─────────────────────────────────────────────────────────
 
@@ -152,6 +186,44 @@ struct GPUParticleSort {
 
     // ── Dispatch ────────────────────────────────────────────────────────
 
+    /// Parameters for `DispatchSort` — packed into `VFXSortConstants` and
+    /// uploaded once per sort phase.
+    struct DispatchParams {
+        /// Mode controlling key generation. See `GpuSortMode`.
+        GpuSortMode sortMode = GpuSortMode::ViewDepth;
+
+        /// Number of slots that should receive real keys. Pass `capacity`
+        /// (or `paddedCount`) when alive detection is desired so every
+        /// potentially-alive slot is evaluated; pass `aliveCount` only if
+        /// the caller guarantees alive particles occupy `[0..aliveCount-1]`
+        /// contiguously (the engine's free-list spawn pattern does NOT
+        /// satisfy that, so this is rare).
+        uint32_t keyGenCount = 0;
+
+        /// Camera world-space position as float[3]. Required for ViewDepth.
+        const float* cameraPos = nullptr;
+
+        /// Camera world-space forward direction as float[3], normalized.
+        /// Required for ViewDepth.
+        const float* cameraForward = nullptr;
+
+        /// Bindless SRV index for `StructuredBuffer<float4>` positions.
+        /// Required for ViewDepth; ignored for CustomAttribute.
+        uint32_t positionsSrvIndex = 0xFFFFFFFFu;
+
+        /// Bindless SRV index for `StructuredBuffer<float>` ages. Required
+        /// — both modes always perform alive detection so dead particles
+        /// sort to the tail.
+        uint32_t agesSrvIndex = 0xFFFFFFFFu;
+
+        /// Bindless SRV index for `StructuredBuffer<float>` lifespans.
+        uint32_t lifespansSrvIndex = 0xFFFFFFFFu;
+
+        /// Bindless SRV index for `StructuredBuffer<float>` user-attribute
+        /// channel. Required for CustomAttribute; ignored for ViewDepth.
+        uint32_t customSortKeySrvIndex = 0xFFFFFFFFu;
+    };
+
     /// Fills VFXSortConstants and dispatches both sort phases.
     ///
     /// Phase 0: local sort + key generation — one dispatch of
@@ -163,25 +235,20 @@ struct GPUParticleSort {
     ///   ceil(paddedCount / SORT_GROUP_SIZE) groups with a UAV barrier between
     ///   each dispatch.
     ///
-    /// The root parameter slot for the sort constant buffer is b0.
+    /// Root parameter slot for the sort constant buffer is b0.
     ///
     /// # Parameters
     /// - `device`: RHI device for querying UAV descriptor indices.
     /// - `cmd`: Command list to record compute dispatches into.
     /// - `pipeline`: Compiled ParticleSortCS pipeline handle.
     /// - `cbRing`: CB ring allocator for per-dispatch constant uploads.
-    /// - `aliveCount`: Number of alive particles to sort. If 0, returns immediately.
-    /// - `cameraPos`: Camera world-space position as float[3].
-    /// - `cameraForward`: Camera world-space forward direction as float[3] (normalized).
-    /// - `positionsSrvIndex`: Bindless SRV descriptor index for the positions buffer.
+    /// - `params`: Mode + key sources + alive-detection SRVs. `params.keyGenCount == 0`
+    ///   returns immediately (no work).
     void DispatchSort(IRHIDevice* device,
                       IRHICommandList* cmd,
                       RHIPipelineHandle pipeline,
                       CBRingAllocator& cbRing,
-                      uint32_t aliveCount,
-                      const float* cameraPos,
-                      const float* cameraForward,
-                      uint32_t positionsSrvIndex);
+                      const DispatchParams& params);
 };
 
 // ── Utility ─────────────────────────────────────────────────────────────────

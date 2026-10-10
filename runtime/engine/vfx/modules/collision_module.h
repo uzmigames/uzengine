@@ -39,20 +39,21 @@ namespace uz {
 ///            along the surface (e.g., snow accumulating, water running).
 enum class CollisionResponse : uint8_t {
     Kill   = 0, ///< Particle dies on contact -- age is set to lifespan.
-    Bounce = 1, ///< Velocity reflected off the surface normal × bounceFactor.
+    Bounce = 1, ///< Velocity reflected off the surface normal x restitution.
     Slide  = 2, ///< Velocity projected onto the surface plane.
+    Stick  = 3, ///< Velocity zeroed, position snapped to collision point.
 };
 
 /// Converts a CollisionResponse enum value to its canonical string name.
 ///
 /// # Returns
-/// - `"kill"`, `"bounce"`, or `"slide"` for valid values.
+/// - `"kill"`, `"bounce"`, `"slide"`, or `"stick"` for valid values.
 /// - `"unknown"` for any value not defined in the enum.
 [[nodiscard]] const char* CollisionResponseToString(CollisionResponse response) noexcept;
 
 /// Parses a CollisionResponse from its string name.
 ///
-/// Case-insensitive comparison against `"kill"`, `"bounce"`, and `"slide"`.
+/// Case-insensitive comparison against `"kill"`, `"bounce"`, `"slide"`, and `"stick"`.
 /// Falls back to `CollisionResponse::Bounce` with a VFX warning log for
 /// unrecognized strings.
 ///
@@ -75,17 +76,21 @@ enum class CollisionResponse : uint8_t {
 /// | Field                  | Default | Description                                   |
 /// |------------------------|---------|-----------------------------------------------|
 /// | response               | Bounce  | How particles react on surface contact         |
-/// | bounceFactor           | 0.6     | Velocity retention after bounce [0, 1]         |
+/// | restitution            | 0.6     | Coefficient of restitution [0, 1]              |
 /// | depthBufferCollision   | true    | Enable depth-buffer sampling (disable to debug)|
 /// | collisionOffset        | 1.0     | Surface standoff to prevent z-fighting (cm)    |
 /// | minBounceSpeed         | 10.0    | Below this speed (cm/s), Kill instead of Bounce|
+/// | emitCollisionEvent     | false   | Write SubEmitterFlags on collision             |
+///
+/// @ref Muller et al. 2006 "Position Based Dynamics" — restitution coefficients
 struct CollisionModuleConfig {
     /// How particles react on surface contact.
     CollisionResponse response = CollisionResponse::Bounce;
 
-    /// Fraction of pre-collision speed retained after a bounce [0, 1].
-    /// 0 = completely inelastic (particle stops), 1 = perfectly elastic.
-    float bounceFactor = 0.6f;
+    /// Coefficient of restitution — fraction of pre-collision speed retained
+    /// after a bounce [0, 1]. 0 = completely inelastic (particle stops),
+    /// 1 = perfectly elastic. Formerly named `bounceFactor`.
+    float restitution = 0.6f;
 
     /// When true the HLSL snippet samples the depth buffer each frame.
     /// Set to false only for debugging (particles pass through all geometry).
@@ -99,6 +104,10 @@ struct CollisionModuleConfig {
     /// Speed threshold (cm/s) below which Bounce falls back to Kill.
     /// Prevents particles from jittering endlessly at low energy.
     float minBounceSpeed = 10.0f;
+
+    /// When true, the collision shader writes `SubEmitterFlags[particleIdx] = 1u`
+    /// on collision so that SubEmitterModule can spawn child particles at impact.
+    bool emitCollisionEvent = false;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -139,6 +148,7 @@ struct CollisionModuleConfig {
 /// - `cbMinBounceSpeed`         : `float`
 /// - `cbCollisionOffset`        : `float`
 /// - `cbCollisionEnabled`       : `uint`      0=disabled, 1=enabled
+/// - `cbCollisionEmitEvent`     : `uint`      0=disabled, 1=write SubEmitterFlags on collision
 /// - `DepthBuffer`              : `Texture2D<float>` scene depth
 /// - `LinearClampSampler`       : `SamplerState`
 ///
@@ -149,7 +159,7 @@ struct CollisionModuleConfig {
 /// ```cpp
 /// CollisionModuleConfig cfg;
 /// cfg.response      = CollisionResponse::Bounce;
-/// cfg.bounceFactor  = 0.4f;
+/// cfg.restitution   = 0.4f;
 /// cfg.minBounceSpeed = 0.05f;
 /// auto module = std::make_unique<CollisionModule>(cfg);
 /// stack.Push(std::move(module));
@@ -191,11 +201,12 @@ public:
 
     /// Returns parameter definitions for collision configuration.
     ///
-    /// Exposes: response (Int), bounce_factor (Float), depth_buffer_collision
-    /// (Bool), collision_offset (Float), min_bounce_speed (Float).
+    /// Exposes: response (Int), restitution (Float), depth_buffer_collision
+    /// (Bool), collision_offset (Float), min_bounce_speed (Float),
+    /// emit_collision_event (Bool).
     ///
     /// # Returns
-    /// Vector of five `ParameterDef` entries. Never empty.
+    /// Vector of six `ParameterDef` entries. Never empty.
     [[nodiscard]] std::vector<ParameterDef> GetParameters() const override;
 
     /// No-op. All collision logic runs entirely on the GPU.
@@ -216,13 +227,14 @@ public:
     /// Parses a `CollisionModuleConfig` from a JSON object.
     ///
     /// Accepted keys (all optional -- missing keys use config defaults):
-    /// | Key                       | Type   | Description                      |
-    /// |---------------------------|--------|----------------------------------|
-    /// | `"response"`              | string | `"kill"`, `"bounce"`, `"slide"`  |
-    /// | `"bounce_factor"`         | float  | [0, 1]                           |
-    /// | `"depth_buffer_collision"`| bool   |                                  |
-    /// | `"collision_offset"`      | float  | metres, > 0 recommended          |
-    /// | `"min_bounce_speed"`      | float  | m/s, >= 0                        |
+    /// | Key                       | Type   | Description                           |
+    /// |---------------------------|--------|---------------------------------------|
+    /// | `"response"`              | string | `"kill"`, `"bounce"`, `"slide"`, `"stick"` |
+    /// | `"restitution"`           | float  | [0, 1] (alias: `"bounce_factor"`)     |
+    /// | `"depth_buffer_collision"`| bool   |                                       |
+    /// | `"collision_offset"`      | float  | cm, > 0 recommended                   |
+    /// | `"min_bounce_speed"`      | float  | cm/s, >= 0                            |
+    /// | `"emit_collision_event"`  | bool   | write SubEmitterFlags on collision     |
     ///
     /// # Parameters
     /// - `j`: A `nlohmann::json` object (not array, not null). Passing a

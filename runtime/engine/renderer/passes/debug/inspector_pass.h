@@ -63,6 +63,7 @@ enum class DumpChannel : uint8_t {
     G   = 2,  ///< Green only, replicated to RGB.
     B   = 3,  ///< Blue only, replicated to RGB.
     A   = 4,  ///< Alpha only, replicated to RGB.
+    RGB = 5,  ///< Red, green and blue; alpha excluded (an RGB quantity packed with an unrelated alpha).
 };
 
 /// Describes a single registered intermediate render target.
@@ -113,14 +114,19 @@ struct ValidationResult {
     bool        isZero;    ///< True if all sampled texels are zero.
     bool        hasNaN;    ///< True if any sampled texel contains NaN.
     bool        hasInf;    ///< True if any sampled texel contains Inf.
-    /// True when the target was not actually sampled — the owning pass is
-    /// disabled (placeholder registration) or readback is impossible for the
-    /// resource (depth format, 3D volume, oversized, unsupported format).
-    /// Reported as status "SKIPPED"; never counts toward warnings/failures.
-    bool        skipped = false;
     float       minVal;    ///< Minimum value across all sampled channels.
     float       maxVal;    ///< Maximum value across all sampled channels.
     float       avgVal;    ///< Average value across all sampled channels.
+    /// True when the target was not measured: the owning pass is disabled (placeholder
+    /// registration) or the target could not be read back (depth format, unsupported format,
+    /// over the readback size cap, or a failed mapping). The values above are then NOT a
+    /// measurement, and reporting them as 0/0/0 with status OK once made three targets look
+    /// like black images. Reported as status "SKIPPED"; never counts toward warnings/failures.
+    bool        skipped = false;
+    std::string skipReason;  ///< Why it was skipped; empty when it was measured.
+    /// Which channel was measured: "RGBA" for a whole texel, or "R"/"G"/"B"/"A" for a target
+    /// registered as one channel of a packed target (gbuffer.ao is the albedo target's alpha).
+    std::string channel = "RGBA";
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -129,11 +135,14 @@ struct ValidationResult {
 
 /// GPU timing and readback stats for a single pass.
 struct PassTimingEntry {
-    std::string name;      ///< Pass name.
-    float       gpuTimeMs; ///< GPU time in milliseconds (0 if timing unavailable).
-    float       minVal;    ///< Min channel value from readback sampling.
-    float       maxVal;    ///< Max channel value from readback sampling.
-    float       avgVal;    ///< Average channel value from readback sampling.
+    std::string name;            ///< Pass name; `_frame` = GPU span from the first pass begin to the last pass end.
+    float       gpuTimeMs = 0.f; ///< Mean GPU time in milliseconds over the measured frames (0 if unavailable).
+    float       minVal = 0.f;    ///< Min channel value from readback sampling (not set by the GPU path).
+    float       maxVal = 0.f;    ///< Max channel value from readback sampling (not set by the GPU path).
+    float       avgVal = 0.f;    ///< Average channel value from readback sampling (not set by the GPU path).
+    float       minMs = 0.f;     ///< Fastest measured frame, ms.
+    float       maxMs = 0.f;     ///< Slowest measured frame, ms.
+    uint32_t    samples = 0;     ///< Frames the statistics cover (0 = timing unavailable).
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -164,7 +173,8 @@ struct PassGridConfig {
 ///   "hasFailure": <bool>,    // true if any target has NaN or Inf
 ///   "hasWarning": <bool>,    // true if any target is all-zeros
 ///   "targets": [{ "name": <str>, "status": <str>, "min": <float>, "max": <float>, "avg": <float> }],
-///   "timing": [{ "name": <str>, "gpuMs": <float> }]
+///   "timing": [{ "name": <str>, "gpuMs": <float>, "minMs": <float>, "maxMs": <float>, "samples": <uint> }]
+///   // gpuMs = mean over the measured frames; the entry "_frame" is the GPU frame span
 /// }
 /// ```
 struct DiagnosticReport {
@@ -407,8 +417,8 @@ public:
 
     /// Stores per-pass timing data collected from the GPU profiler.
     ///
-    /// Called by the renderer at the end of each frame with the resolved
-    /// timing results from the backend's GPU profiler.
+    /// Called by the tool (`uzengine.cpp`, `--diag`) before GenerateReport with the statistics
+    /// of the measured window (no caller existed until 2026-10-05, so `timing` was always empty).
     void SetTimingData(const std::vector<PassTimingEntry>& entries);
 
     /// Returns the most recent per-pass timing data.

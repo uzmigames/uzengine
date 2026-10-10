@@ -52,9 +52,28 @@ float VFXLodLevelToSpawnFactor(VFXLodLevel level) noexcept {
 bool VFXLodSettings::IsValid() const noexcept {
     // All three thresholds must be positive and strictly increasing so that
     // the four distance bands are non-degenerate and unambiguous.
-    return distances[0] > 0.0f
-        && distances[0] < distances[1]
-        && distances[1] < distances[2];
+    if (distances[0] <= 0.0f
+        || distances[0] >= distances[1]
+        || distances[1] >= distances[2]) {
+        return false;
+    }
+
+    // All spawn rate and max particles scale values must be in [0, 1].
+    for (int i = 0; i < 4; ++i) {
+        if (spawnRateScale[i] < 0.0f || spawnRateScale[i] > 1.0f) {
+            return false;
+        }
+        if (maxParticlesScale[i] < 0.0f || maxParticlesScale[i] > 1.0f) {
+            return false;
+        }
+    }
+
+    // Transition time must be positive.
+    if (lodTransitionTime <= 0.0f) {
+        return false;
+    }
+
+    return true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

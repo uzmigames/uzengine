@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include "engine/ecs/core/entity.h"
 #include "vector3.h"
 #include "vector4.h"
 
@@ -51,6 +52,23 @@ struct VfxEmitterComponent {
     Vec3 spawnVelocity      = {0.0f, 0.0f, 200.0f}; ///< Initial velocity (cm/s, Z-up).
     float velocityVariation = 1.0f;   ///< Random per-component velocity spread (cm/s).
     float spreadAngle       = 30.0f;  ///< Cone half-angle (degrees). 0=laser, 90=hemisphere.
+
+    // ── Sprite Texture ──────────────────────────────────────────────────
+
+    /// Path to sprite sheet (PNG/TGA/JPEG). Empty = procedural circle.
+    std::string spriteTexturePath;
+
+    /// Flipbook grid dimensions (auto-detected from filename if using VFXMaterial).
+    uint32_t flipbookRows        = 1;  ///< Rows in sprite sheet. 1 = no flipbook.
+    uint32_t flipbookCols        = 1;  ///< Columns in sprite sheet. 1 = no flipbook.
+    uint32_t flipbookTotalFrames = 1;  ///< Total valid frames in the sheet.
+
+    /// Flipbook playback rate. 0 = lifetime-driven (one full cycle per lifetime, Niagara default).
+    /// >0 = fixed FPS (may cycle multiple times or clip within lifetime).
+    float flipbookFPS = 0.0f;
+
+    /// Sprite texture channel mask: 0=RGBA, 1=R, 2=G, 3=B, 4=A.
+    uint32_t spriteChannelMask = 0;
 
     // ── Spawn Shape ──────────────────────────────────────────────────────
 
@@ -149,6 +167,46 @@ struct VfxEmitterComponent {
     uint32_t loopCount      = 0;      ///< Restart count before stopping. 0=infinite.
     float startDelay        = 0.0f;   ///< Delay before first spawn (seconds).
 
+    // ── Render Sort ──────────────────────────────────────────────────────
+
+    /// Render sort priority (Niagara parity: `EmitterSortPriority`).
+    /// Higher values render ON TOP of lower values. Emitters with the same
+    /// priority fall back to back-to-front camera-distance ordering.
+    /// Negative values are allowed and push the emitter further back.
+    int32_t renderPriority = 0;
+
+    // ── Bone Attachment (Niagara parity: `AttachToComponent` + socket) ───
+
+    /// When valid, the emitter's world transform is driven each frame from
+    /// this entity. If `attachBoneName` is also set AND the entity owns a
+    /// `SkeletalMeshComponent` with that bone, the emitter follows the
+    /// bone's world matrix (socket-style attach). Otherwise it follows the
+    /// entity's `SceneComponent` transform (parent attach).
+    /// Invalid entity disables attachment entirely.
+    Entity attachEntity = Entity::Invalid();
+
+    /// Bone/socket name to track on `attachEntity`'s skeletal mesh. Empty
+    /// means "use the entity's root transform". Case-sensitive match against
+    /// the skeleton's bone list.
+    std::string attachBoneName;
+
+    // ── Spline Target (Niagara parity: SplineComponent reference) ────────
+
+    /// When set to a valid entity that owns a `SplineComponent`, the VFX
+    /// scene sync copies that component's `controlPoints` (transformed by
+    /// the entity's `SceneComponent` world matrix when present) into this
+    /// emitter's `splineSource` each frame. The VFX inline frame then
+    /// rebuilds and uploads the GPU `VfxSplineBuffer` so the spline modules
+    /// on this emitter (`SpawnAlongSplineModule`, `ForceTowardSplineModule`,
+    /// `FollowSplineModule`) consume the latest geometry.
+    ///
+    /// Invalid (default) entity disables the link — emitters without a
+    /// spline target keep using whatever is already in `splineSource`
+    /// (typically empty, in which case the simulation shaders short-circuit
+    /// on `cbSplinePointCount < 2`).
+    /// @ref engine/ecs/environment/spline_component.h `SplineComponent`
+    Entity splineTargetEntity = Entity::Invalid();
+
     // ── Runtime State ────────────────────────────────────────────────────
 
     bool emitting = true;
@@ -157,6 +215,31 @@ struct VfxEmitterComponent {
     /// Set to true to request a full GPU reset (kill all particles, re-upload
     /// free list). Cleared automatically by SyncVfxEmitters after processing.
     bool restartRequested = false;
+
+    // ── Culling state (phase 10.5.0) ─────────────────────────────────────
+
+    /// Mirrors `uz::EmitterCullState` — kept as POD fields here to avoid
+    /// pulling the full cull header into the component interface. The
+    /// scene renderer copies these to a real `EmitterCullState`, updates,
+    /// and copies back. 2-frame hysteresis across `culledPrevFrame`.
+    ///
+    /// @ref engine/vfx/lod/vfx_frustum_cull.h
+    /// @ref docs/engine/25-vfx/42-frustum-cull-integration.md
+    bool     cullCulledThisFrame   = false;
+    bool     cullCulledPrevFrame   = false;
+    uint32_t cullFramesSinceCulled = 0;
+
+    // ── HZB occlusion state (phase 9.14.0) ──────────────────────────────
+
+    /// Per-emitter HZB occlusion hysteresis. Mirrors
+    /// `VfxOcclusionHysteresis` as POD fields — the scene renderer
+    /// constructs a transient `VfxOcclusionHysteresis` from these,
+    /// calls `Update(rawVote)`, and writes back.
+    ///
+    /// @ref engine/vfx/lod/vfx_hzb_occlusion.h
+    /// @ref docs/engine/25-vfx/37-hzb-occlusion.md
+    bool     hzbOccluded     = false;  ///< Committed occlusion state.
+    uint32_t hzbDissentCount = 0;      ///< Frames since last state flip vote.
 
     // ── Internal (set by engine, do not modify) ──────────────────────────
 

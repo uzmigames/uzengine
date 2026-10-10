@@ -97,8 +97,15 @@ RHIPipelineHandle PipelineLibrary::GetParticleBillboard() {
     desc.renderTargetBlend[0].dstAlpha    = RHIBlendFactor::InvSrcAlpha;
     desc.renderTargetBlend[0].alphaOp     = RHIBlendOp::Add;
 
+    // RT1: velocity (RG16F) — motion vectors for TAA/DLSS/FSR reprojection.
+    // Blend disabled: last-drawn particle (foreground) wins the pixel's motion,
+    // which matches the back-to-front alpha sort order.
+    // @ref Karis 2014 "High Quality Temporal Supersampling"
+    desc.renderTargetBlend[1].blendEnable = false;
+
     desc.renderTargetFormats[0] = RHIFormat::RGBA16Float; // HDR scene color
-    desc.renderTargetCount      = 1;
+    desc.renderTargetFormats[1] = RHIFormat::RG16Float;   // velocity (motion vectors)
+    desc.renderTargetCount      = 2;
     desc.depthStencilFormat     = RHIFormat::D32Float;
     desc.debugName              = "ParticleBillboard";
 
@@ -161,8 +168,12 @@ RHIPipelineHandle PipelineLibrary::GetParticleBillboardAdditive() {
     desc.renderTargetBlend[0].dstAlpha    = RHIBlendFactor::One;
     desc.renderTargetBlend[0].alphaOp     = RHIBlendOp::Add;
 
+    // RT1: velocity (motion vectors) — blend disabled.
+    desc.renderTargetBlend[1].blendEnable = false;
+
     desc.renderTargetFormats[0] = RHIFormat::RGBA16Float; // HDR scene color
-    desc.renderTargetCount      = 1;
+    desc.renderTargetFormats[1] = RHIFormat::RG16Float;   // velocity
+    desc.renderTargetCount      = 2;
     desc.depthStencilFormat     = RHIFormat::D32Float;
     desc.debugName              = "ParticleBillboardAdditive";
 
@@ -204,8 +215,12 @@ RHIPipelineHandle PipelineLibrary::GetParticleBillboardPremulAlpha() {
     desc.renderTargetBlend[0].dstAlpha    = RHIBlendFactor::InvSrcAlpha;
     desc.renderTargetBlend[0].alphaOp     = RHIBlendOp::Add;
 
+    // RT1: velocity (motion vectors) — blend disabled.
+    desc.renderTargetBlend[1].blendEnable = false;
+
     desc.renderTargetFormats[0] = RHIFormat::RGBA16Float;
-    desc.renderTargetCount      = 1;
+    desc.renderTargetFormats[1] = RHIFormat::RG16Float;   // velocity
+    desc.renderTargetCount      = 2;
     desc.depthStencilFormat     = RHIFormat::D32Float;
     desc.debugName              = "ParticleBillboardPremulAlpha";
 
@@ -692,8 +707,13 @@ RHIPipelineHandle PipelineLibrary::GetParticleMeshOpaque() {
     if (m_particleMeshOpaque.IsValid()) {
         return m_particleMeshOpaque;
     }
+    // Avoid spamming the log every frame when PSO creation has already failed.
+    if (m_particleMeshOpaqueFailed) {
+        return RHIPipelineHandle::Invalid();
+    }
 
     if (!EnsureParticleMeshShaders()) {
+        m_particleMeshOpaqueFailed = true;
         return RHIPipelineHandle::Invalid();
     }
 
@@ -702,9 +722,22 @@ RHIPipelineHandle PipelineLibrary::GetParticleMeshOpaque() {
     desc.pixelShader   = m_particleMeshPS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
 
-    // No vertex input layout — mesh VS uses SV_VertexID + SV_InstanceID
-    // with bindless structured buffers for vertex data.
-    desc.inputElementCount = 0;
+    // Phase 0 (demo launch pipeline fix) — the mesh VS DOES sample an
+    // actual vertex buffer (`VfxMeshVertex` = Position float3 + Normal
+    // float3 + UV float2, stride 32) indexed by `SV_VertexID`. A
+    // previous comment here claimed the VS was bindless like the
+    // billboard path — that was wrong and DX12 rejected the PSO with
+    // E_INVALIDARG because the VS signature did not match the (empty)
+    // input layout. Declare the real layout so `CreateGraphicsPipelineState`
+    // succeeds.
+    static const RHIInputElementDesc kParticleMeshInputLayout[] = {
+        { RHIInputSemantic::Position, 0, RHIFormat::RGB32Float, 0, 0  },
+        { RHIInputSemantic::Normal,   0, RHIFormat::RGB32Float, 0, 12 },
+        { RHIInputSemantic::Texcoord, 0, RHIFormat::RG32Float,  0, 24 },
+    };
+    desc.inputElements     = kParticleMeshInputLayout;
+    desc.inputElementCount = 3;
+    desc.vertexStride      = 32;
 
     // Opaque particle meshes — cull back faces
     desc.rasterizer.cullMode              = RHICullMode::Back;
@@ -723,7 +756,10 @@ RHIPipelineHandle PipelineLibrary::GetParticleMeshOpaque() {
 
     m_particleMeshOpaque = CreateCachedPipeline(desc);
     if (!m_particleMeshOpaque.IsValid()) {
-        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create ParticleMeshOpaque pipeline");
+        m_particleMeshOpaqueFailed = true;
+        UZ_LOG(Renderer, Error,
+               "PipelineLibrary: failed to create ParticleMeshOpaque pipeline "
+               "(subsequent attempts silenced)");
     } else {
         UZ_LOG(Renderer, Info, "PipelineLibrary: created ParticleMeshOpaque pipeline");
     }
@@ -748,8 +784,12 @@ RHIPipelineHandle PipelineLibrary::GetParticleMeshTransparent() {
     if (m_particleMeshTransparent.IsValid()) {
         return m_particleMeshTransparent;
     }
+    if (m_particleMeshTransparentFailed) {
+        return RHIPipelineHandle::Invalid();
+    }
 
     if (!EnsureParticleMeshShaders()) {
+        m_particleMeshTransparentFailed = true;
         return RHIPipelineHandle::Invalid();
     }
 
@@ -758,9 +798,16 @@ RHIPipelineHandle PipelineLibrary::GetParticleMeshTransparent() {
     desc.pixelShader   = m_particleMeshPS;
     desc.topology      = RHIPrimitiveTopology::TriangleList;
 
-    // No vertex input layout — mesh VS uses SV_VertexID + SV_InstanceID
-    // with bindless structured buffers for vertex data.
-    desc.inputElementCount = 0;
+    // Phase 0 — same Position/Normal/UV layout as the opaque variant.
+    // See the opaque-PSO comment above for the full rationale.
+    static const RHIInputElementDesc kParticleMeshInputLayout[] = {
+        { RHIInputSemantic::Position, 0, RHIFormat::RGB32Float, 0, 0  },
+        { RHIInputSemantic::Normal,   0, RHIFormat::RGB32Float, 0, 12 },
+        { RHIInputSemantic::Texcoord, 0, RHIFormat::RG32Float,  0, 24 },
+    };
+    desc.inputElements     = kParticleMeshInputLayout;
+    desc.inputElementCount = 3;
+    desc.vertexStride      = 32;
 
     // Two-sided: transparent meshes visible from both sides
     desc.rasterizer.cullMode              = RHICullMode::None;
@@ -786,12 +833,97 @@ RHIPipelineHandle PipelineLibrary::GetParticleMeshTransparent() {
 
     m_particleMeshTransparent = CreateCachedPipeline(desc);
     if (!m_particleMeshTransparent.IsValid()) {
-        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create ParticleMeshTransparent pipeline");
+        m_particleMeshTransparentFailed = true;
+        UZ_LOG(Renderer, Error,
+               "PipelineLibrary: failed to create ParticleMeshTransparent pipeline "
+               "(subsequent attempts silenced)");
     } else {
         UZ_LOG(Renderer, Info, "PipelineLibrary: created ParticleMeshTransparent pipeline");
     }
 
     return m_particleMeshTransparent;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Flipbook Debug Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Compiles the flipbook debug vertex and pixel shaders if not already cached.
+bool PipelineLibrary::EnsureFlipbookDebugShaders() {
+    if (!m_flipbookDebugVS.IsValid()) {
+        m_flipbookDebugVS = m_shaderMgr->CreateShader(
+            EngineShader::FlipbookDebugVS, RHIShaderStage::Vertex);
+        if (!m_flipbookDebugVS.IsValid()) {
+            UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile FlipbookDebugVS");
+            return false;
+        }
+    }
+    if (!m_flipbookDebugPS.IsValid()) {
+        m_flipbookDebugPS = m_shaderMgr->CreateShader(
+            EngineShader::FlipbookDebugPS, RHIShaderStage::Pixel);
+        if (!m_flipbookDebugPS.IsValid()) {
+            UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile FlipbookDebugPS");
+            return false;
+        }
+    }
+    return true;
+}
+
+/// Returns the flipbook debug pipeline.
+///
+/// PSO configuration:
+/// - No vertex input layout (SV_VertexID only — 6 verts = 2 tris)
+/// - Depth test and depth write both disabled (pure overlay)
+/// - Blending disabled (opaque overwrite on backbuffer)
+/// - Render target: RGBA8Unorm (backbuffer post-tonemap)
+/// - No depth attachment
+///
+/// Draw call: `Draw(6, 1, 0, 0)`.
+RHIPipelineHandle PipelineLibrary::GetFlipbookDebugPSO() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetFlipbookDebugPSO called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_flipbookDebug.IsValid()) {
+        return m_flipbookDebug;
+    }
+
+    if (!EnsureFlipbookDebugShaders()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIGraphicsPipelineDesc desc{};
+    desc.vertexShader  = m_flipbookDebugVS;
+    desc.pixelShader   = m_flipbookDebugPS;
+    desc.topology      = RHIPrimitiveTopology::TriangleList;
+
+    // No vertex input layout — VS uses SV_VertexID to derive positions.
+    desc.inputElementCount = 0;
+
+    // Two-sided (quad in NDC — cull direction doesn't matter).
+    desc.rasterizer.cullMode = RHICullMode::None;
+
+    // No depth test, no depth write — this is a pure screen-space overlay.
+    desc.depthStencil.depthEnable = false;
+    desc.depthStencil.depthWrite  = false;
+
+    // Blending disabled — opaque overwrite.
+    desc.renderTargetBlend[0].blendEnable = false;
+
+    desc.renderTargetFormats[0] = RHIFormat::RGBA8Unorm; // backbuffer (post-tonemap)
+    desc.renderTargetCount      = 1;
+    desc.depthStencilFormat     = RHIFormat::Unknown;    // no depth attachment
+    desc.debugName              = "FlipbookDebug";
+
+    m_flipbookDebug = CreateCachedPipeline(desc);
+    if (!m_flipbookDebug.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create FlipbookDebug pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created FlipbookDebug pipeline");
+    }
+
+    return m_flipbookDebug;
 }
 
 } // namespace uz

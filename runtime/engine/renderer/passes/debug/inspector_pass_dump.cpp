@@ -137,6 +137,7 @@ namespace {
                 case DumpChannel::G:   r = g; b = g; a = 1.0f; break;
                 case DumpChannel::B:   r = b; g = b; a = 1.0f; break;
                 case DumpChannel::A:   r = a; g = a; b = a; a = 1.0f; break;
+                case DumpChannel::RGB: a = 1.0f; break;
             }
 
             // ── Depth-format special path ──
@@ -151,7 +152,7 @@ namespace {
                 r = std::sqrt(std::sqrt(std::max(0.0f, r)));
                 g = b = r;
                 a = 1.0f;
-            } else if (target.dumpChannel == DumpChannel::All) {
+            } else if (target.dumpChannel == DumpChannel::All || target.dumpChannel == DumpChannel::RGB) {
                 // HDR tonemap for display: simple Reinhard per channel.
                 // Skip tonemap for single-channel views (AO/metallic/roughness
                 // are already in [0,1] and Reinhard would crush them visually).

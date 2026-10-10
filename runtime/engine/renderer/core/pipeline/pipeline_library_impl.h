@@ -14,6 +14,7 @@
     [[nodiscard]] bool EnsureFullscreenShaders();
     [[nodiscard]] bool EnsureGBufferPixelShader();
     [[nodiscard]] bool EnsureLightingPixelShader();
+    [[nodiscard]] bool EnsureLightCullShader();
     [[nodiscard]] bool EnsurePixelDebugComputeShader();
     [[nodiscard]] bool EnsureGpuSkinningShader();
     [[nodiscard]] bool EnsureGBufferDebugPixelShader();
@@ -72,6 +73,11 @@
     [[nodiscard]] bool EnsureMeshSdfBakeShader();
     [[nodiscard]] bool EnsureRadianceCacheTraceShader();
     [[nodiscard]] bool EnsureDdgiProbeUpdateShader();
+    [[nodiscard]] bool EnsureDdgiProbeTraceShader();
+    [[nodiscard]] bool EnsureDdgiBorderFillShader();
+    [[nodiscard]] bool EnsureProbeSideShader();
+    [[nodiscard]] bool EnsureProbeReachShader();
+    [[nodiscard]] bool EnsureLinearShadowShaders();
     [[nodiscard]] bool EnsureCloudCompositePixelShader();
     [[nodiscard]] bool EnsureVolumetricFogInjectShader();
     [[nodiscard]] bool EnsureVolumetricFogScatterShader();
@@ -100,6 +106,7 @@
     RHIShaderHandle m_fullscreenVS     = RHIShaderHandle::Invalid();
     RHIShaderHandle m_gbufferPS        = RHIShaderHandle::Invalid();
     RHIShaderHandle m_lightingPS       = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_lightCullCS      = RHIShaderHandle::Invalid();
     RHIShaderHandle m_pixelDebugCS     = RHIShaderHandle::Invalid(); ///< PixelDebug compute post-pass shader.
     RHIShaderHandle m_gpuSkinningCS    = RHIShaderHandle::Invalid(); ///< GPU skinning compute shader.
     RHIShaderHandle m_gbufferDebugPS   = RHIShaderHandle::Invalid();
@@ -108,6 +115,8 @@
     RHIShaderHandle m_instancedMeshVS  = RHIShaderHandle::Invalid();
     RHIShaderHandle m_instancedShadowVS = RHIShaderHandle::Invalid();
     RHIShaderHandle m_shadowVS         = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_shadowLinearVS   = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_shadowLinearPS   = RHIShaderHandle::Invalid();
     RHIShaderHandle m_skyAtmospherePS      = RHIShaderHandle::Invalid();
     RHIShaderHandle m_hdriSkyboxPS         = RHIShaderHandle::Invalid();
     RHIShaderHandle m_tonemapPS            = RHIShaderHandle::Invalid();
@@ -155,6 +164,10 @@
     RHIShaderHandle m_meshSdfBakeCS             = RHIShaderHandle::Invalid();
     RHIShaderHandle m_radianceCacheTraceCS      = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ddgiProbeUpdateCS         = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_ddgiProbeTraceCS          = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_ddgiBorderFillCS          = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_probeSideCS               = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_probeReachCS              = RHIShaderHandle::Invalid();
     RHIShaderHandle m_volFogInjectCS            = RHIShaderHandle::Invalid();
     RHIShaderHandle m_volFogScatterCS           = RHIShaderHandle::Invalid();
     RHIShaderHandle m_volFogCompositePS         = RHIShaderHandle::Invalid();
@@ -170,6 +183,7 @@
 
     // ── Cached pipeline handles (non-material pipelines) ────────────────
     RHIPipelineHandle m_lighting              = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_lightCull             = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_pixelDebugCompute     = RHIPipelineHandle::Invalid(); ///< PixelDebug compute post-pass PSO.
     RHIPipelineHandle m_gpuSkinningPipeline   = RHIPipelineHandle::Invalid(); ///< GPU skinning compute PSO.
     RHIPipelineHandle m_gbufferDebug          = RHIPipelineHandle::Invalid();
@@ -177,7 +191,11 @@
     RHIPipelineHandle m_pathTracer            = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_shadowDepth           = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_shadowDepthBindless   = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_shadowDepthLinear         = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_shadowDepthLinearBindless = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_gbufferInstanced      = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_gbufferDepthOnly[2]   = {RHIPipelineHandle::Invalid(), RHIPipelineHandle::Invalid()}; ///< [bindless] block B.4c
+    RHIPipelineHandle m_gbufferEqual[2]       = {RHIPipelineHandle::Invalid(), RHIPipelineHandle::Invalid()}; ///< [bindless] block B.4c
     RHIPipelineHandle m_shadowDepthInstanced  = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_skyAtmosphere         = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_hdriSkybox            = RHIPipelineHandle::Invalid();
@@ -189,9 +207,6 @@
     RHIPipelineHandle m_apVolume             = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_skyCubemapCapture    = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_skyCubemapCapturePSPipeline = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_depthPrepass          = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_depthPrepassBindless  = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_depthPrepassInstanced = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_hizPyramid            = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_gpuCull              = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_dfsCullObjects        = RHIPipelineHandle::Invalid();
@@ -229,6 +244,10 @@
     RHIPipelineHandle m_meshSdfBake           = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_radianceCacheTrace    = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ddgiProbeUpdate       = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_ddgiProbeTrace        = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_ddgiBorderFill        = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_probeSide             = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_probeReach            = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_decalRender           = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_decalApply            = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_volFogInject          = RHIPipelineHandle::Invalid();

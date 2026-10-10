@@ -42,6 +42,14 @@ enum class MaterialShadingModel : uint8_t {
     Subsurface,   ///< SSS approximation
 };
 
+/// How the material composites against what is already in the target.
+///
+/// Consumers beyond blending care about this too: `Translucent` and `Additive`
+/// materials are excluded from shadow casting and from the distance-field
+/// occluder set, because treating glass as a solid occluder blocks both the
+/// shadow map and the GI trace.
+enum class MaterialGraphBlendMode : uint8_t { Opaque, Masked, Translucent, Additive };
+
 /// Returns the string representation of a MaterialDomain.
 [[nodiscard]] const char* MaterialDomainToString(MaterialDomain domain);
 
@@ -173,6 +181,8 @@ public:
     /// Graph metadata.
     MaterialDomain domain = MaterialDomain::Surface;
     MaterialShadingModel shadingModel = MaterialShadingModel::DefaultLit;
+    MaterialGraphBlendMode blendMode = MaterialGraphBlendMode::Opaque;
+    bool twoSided = false;
     std::string name;  ///< Material name for display/debug
 
     /// Standard PBR knobs (UE5-style). Applied as post-multiplications by

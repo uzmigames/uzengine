@@ -31,9 +31,14 @@ public:
     std::atomic<uint32_t> buffersCreated{0};
     std::atomic<uint32_t> buffersDestroyed{0};
 
-    uz::RHITextureHandle CreateTexture(const uz::RHITextureDesc&) override {
+    /// Records every texture descriptor passed to CreateTexture, in order.
+    /// Tests inspect these to assert fields like `is3D` reach the RHI layer.
+    std::vector<uz::RHITextureDesc> createdTextureDescs;
+
+    uz::RHITextureHandle CreateTexture(const uz::RHITextureDesc& d) override {
         uint32_t idx = ++textureIndex_;
         ++texturesCreated;
+        createdTextureDescs.push_back(d);
         return {idx, 1};
     }
 
@@ -984,6 +989,110 @@ TEST_F(RenderGraphTest, QueryMethods_ReturnCorrectCounts) {
     //                Out Present→RenderTarget (1 barrier).
     // Total: 2 barriers.
     EXPECT_EQ(rg.GetBarrierCount(), 2u);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 27. Phase 10.6.0 — 3D volume textures and CreateTransient3D helper
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// CreateTransient3D must produce a resource whose underlying RHI descriptor
+/// carries `is3D == true` once a pass writes it and the graph executes.
+TEST_F(RenderGraphTest, CreateTransient3D_PropagatesIs3DFlagToRHI) {
+    uz::rg::RgBuilder rg(device.get(), pool.get());
+
+    auto volume = rg.CreateTransient3D(
+        "FogVolume", 64, 64, 32, uz::RHIFormat::R16Float);
+    ASSERT_TRUE(volume.IsValid());
+
+    // Force allocation by writing it from a live pass whose output is imported.
+    auto out = rg.ImportTexture("Out", uz::RHITextureHandle{1, 1},
+                                uz::RHIResourceState::Present);
+    rg.AddPass("FillVolume", [&](uz::rg::RgPassBuilder& pb) {
+        pb.Write(volume, uz::RHIResourceState::UnorderedAccess);
+        pb.Write(out,    uz::RHIResourceState::RenderTarget);
+        pb.SetExecutionCallback([](uz::IRHICommandList*, const uz::rg::RgPassResources&) {});
+    });
+
+    rg.Compile();
+    rg.Execute(cmd.get());
+
+    ASSERT_EQ(device->createdTextureDescs.size(), 1u)
+        << "Exactly one physical texture should be created for the 3D volume";
+    const auto& d = device->createdTextureDescs[0];
+    EXPECT_TRUE(d.is3D) << "CreateTransient3D must set is3D on the RHI descriptor";
+    EXPECT_EQ(d.width,  64u);
+    EXPECT_EQ(d.height, 64u);
+    EXPECT_EQ(d.depthOrArraySize, 32u);
+    EXPECT_EQ(d.format, uz::RHIFormat::R16Float);
+    // Default usage is ShaderResource | UnorderedAccess for splat+sample pattern.
+    EXPECT_TRUE(uz::HasFlag(d.usage, uz::RHITextureUsage::ShaderResource));
+    EXPECT_TRUE(uz::HasFlag(d.usage, uz::RHITextureUsage::UnorderedAccess));
+}
+
+/// A 3D texture and a 2D array texture with identical (w, h, depth, format,
+/// usage) MUST NOT share a pool slot — aliasing a volume as an array is
+/// illegal in every backend. The pool achieves this by keying on `is3D`.
+TEST_F(RenderGraphTest, ResourcePool_DoesNotAlias3DWith2DArray) {
+    // Frame 1: allocate and release a 2D array texture.
+    uz::rg::RgTextureDesc array2D{};
+    array2D.width  = 32;
+    array2D.height = 32;
+    array2D.depthOrArraySize = 8;
+    array2D.mipLevels = 1;
+    array2D.format = uz::RHIFormat::R16Float;
+    array2D.usage  = uz::RHITextureUsage::ShaderResource |
+                     uz::RHITextureUsage::UnorderedAccess;
+    array2D.is3D   = false;
+
+    auto h2D = pool->AcquireTexture(array2D, "Array2D");
+    pool->ReleaseTexture(h2D, array2D);
+    EXPECT_EQ(device->texturesCreated.load(), 1u);
+
+    // Frame 2: request a 3D volume with otherwise-identical descriptor.
+    uz::rg::RgTextureDesc volume3D = array2D;
+    volume3D.is3D = true;
+
+    auto h3D = pool->AcquireTexture(volume3D, "Volume3D");
+
+    // The pool must allocate a NEW texture — the 2D array slot is
+    // incompatible regardless of matching dimensions/format.
+    EXPECT_EQ(device->texturesCreated.load(), 2u)
+        << "Pool must not alias 3D volumes with 2D array slices";
+    EXPECT_NE(h2D, h3D);
+
+    pool->ReleaseTexture(h3D, volume3D);
+}
+
+/// Two sequential 3D allocations with the SAME descriptor must reuse the
+/// pooled slot (single physical allocation), confirming the key still
+/// hashes consistently with `is3D == true`.
+TEST_F(RenderGraphTest, ResourcePool_Reuses3DVolumeSlot) {
+    uz::rg::RgTextureDesc volume{};
+    volume.width  = 48;
+    volume.height = 48;
+    volume.depthOrArraySize = 16;
+    volume.mipLevels = 1;
+    volume.format = uz::RHIFormat::RGBA16Float;
+    volume.usage  = uz::RHITextureUsage::ShaderResource |
+                    uz::RHITextureUsage::UnorderedAccess;
+    volume.is3D   = true;
+
+    auto h1 = pool->AcquireTexture(volume, "Vol1");
+    pool->ReleaseTexture(h1, volume);
+    auto h2 = pool->AcquireTexture(volume, "Vol2");
+
+    EXPECT_EQ(device->texturesCreated.load(), 1u)
+        << "Second acquire must reuse the pooled 3D slot";
+    EXPECT_EQ(h1, h2);
+
+    pool->ReleaseTexture(h2, volume);
+}
+
+/// RgTextureDesc defaults `is3D` to false — protect that invariant so
+/// existing passes that ignore the field keep allocating 2D resources.
+TEST(RgTextureDesc, Is3DDefaultsToFalse) {
+    uz::rg::RgTextureDesc d{};
+    EXPECT_FALSE(d.is3D);
 }
 
 } // anonymous namespace

@@ -1,6 +1,9 @@
 # Sandbox — test outputs, Falcor references, temp captures (never committed)
 .sandbox/
 
+# Local toolchains pinned to project (e.g. zig 0.15.2 download)
+.tools/
+
 # Rulebook - ignore runtime data, keep specs and tasks
 /.rulebook/*
 !/.rulebook/specs/
@@ -26,7 +29,7 @@
 .env.*.local
 .env.local
 .idea/
-
+.omo/
 # Claude Code
 .claude/settings.local.json
 .claude/worktrees/
@@ -110,8 +113,31 @@ poc-napi/node_modules/
 # NVIDIA DLSS SDK (proprietary, downloaded via setup.ps1, ~200MB)
 runtime/thirdparty/dlss/
 
+# Local macOS/Linux thirdparty binaries (Slang SDK dylibs, LuaJIT build output —
+# platform-specific, never committed; Windows/Linux fetch or build their own)
+runtime/thirdparty/slang/bin/*.dylib
+runtime/thirdparty/slang/lib/
+runtime/thirdparty/luajit/src/libluajit.*
+
 CLAUDE.local.md
 .rulebook/backup/
 .rulebook/handoff/_pending.md
 .rulebook/handoff/.urgent
 .rulebook/telemetry/
+
+# Sponza diagnostics and generated regression output; keep runners and fixtures.
+/scripts/*.generated.h
+/scripts/*_artifacts/
+/scripts/sponza-*.args
+/scripts/sponza-*.asm
+/scripts/sponza-*.exit
+/scripts/sponza-*.json
+/scripts/sponza-*.png
+/scripts/sponza-*-files.txt
+/scripts/sponza-*-path-scan.txt
+/scripts/sponza-*-sha256.txt
+/scripts/sponza-lighting-debug-journal.md
+/scripts/lumen-siggraph2022-reference.pdf
+/scripts/lumen-siggraph2022-reference.txt
+# Downloaded by scripts/setup.ps1; do not vendor a second DirectX header tree.
+/runtime/thirdparty/agility/

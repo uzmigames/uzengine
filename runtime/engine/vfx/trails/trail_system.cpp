@@ -144,7 +144,9 @@ void TrailSystem::Update(float dt,
                 instance.component.colorStart,
                 instance.component.colorEnd,
                 instance.component.totalDistance,
-                instance.component.pointLifetime
+                instance.component.pointLifetime,
+                instance.component.ribbonStrands,
+                instance.component.strandSpacing
             );
         } else {
             instance.meshData.Clear();

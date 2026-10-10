@@ -118,8 +118,12 @@ TextureLoadResult TextureLoader::Load(
     stbi_image_free(pixels);
 
     if (result.handle.IsValid()) {
-        UZ_LOG(Renderer, Info, "Loaded texture: path='{}', {}x{}, {} mips, SRV={}, sRGB={}",
-               path, result.width, result.height, result.mipLevels, result.srvIndex, isSRGB);
+        // Preserve the original channel count from stb_image so callers can
+        // determine whether the source had an alpha channel (channels == 4).
+        result.originalChannels = static_cast<uint8_t>(channels);
+
+        UZ_LOG(Renderer, Info, "Loaded texture: path='{}', {}x{}, {} mips, SRV={}, sRGB={}, channels={}",
+               path, result.width, result.height, result.mipLevels, result.srvIndex, isSRGB, channels);
     }
 
     return result;
@@ -181,8 +185,10 @@ TextureLoadResult TextureLoader::LoadFromMemory(
     stbi_image_free(pixels);
 
     if (result.handle.IsValid()) {
-        UZ_LOG(Renderer, Info, "Loaded texture: path='{}', {}x{}, {} mips, SRV={}, sRGB={}",
-               name, result.width, result.height, result.mipLevels, result.srvIndex, isSRGB);
+        result.originalChannels = static_cast<uint8_t>(channels);
+
+        UZ_LOG(Renderer, Info, "Loaded texture: path='{}', {}x{}, {} mips, SRV={}, sRGB={}, channels={}",
+               name, result.width, result.height, result.mipLevels, result.srvIndex, isSRGB, channels);
     }
 
     return result;

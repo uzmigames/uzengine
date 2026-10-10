@@ -78,7 +78,8 @@ void FlyCameraController::Update(Camera& camera, const InputSystem& input, float
         if (input.IsKeyDown(Key::A)) moveDir = moveDir - right;
         // Space/Ctrl: vertical (world Z)
         if (input.IsKeyDown(Key::Space))     moveDir = moveDir + Vec3::Up();
-        if (input.IsKeyDown(Key::LeftCtrl))  moveDir = moveDir - Vec3::Up();
+        if (input.IsKeyDown(Key::LeftCtrl) || input.IsKeyDown(Key::RightCtrl))
+            moveDir = moveDir - Vec3::Up();
     }
 
     if (moveDir.length() > 0.001f) {
@@ -86,7 +87,7 @@ void FlyCameraController::Update(Camera& camera, const InputSystem& input, float
     }
 
     float speed = m_moveSpeed;
-    if (input.IsKeyDown(Key::LeftShift)) {
+    if (input.IsKeyDown(Key::LeftShift) || input.IsKeyDown(Key::RightShift)) {
         speed *= m_sprintMultiplier;
     }
 

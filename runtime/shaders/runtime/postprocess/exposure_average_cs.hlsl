@@ -5,7 +5,7 @@
 /// Reads 64-bin histogram, computes percentile-filtered average luminance,
 /// applies temporal adaptation (dual exponential/linear model), outputs exposure.
 ///
-/// Root constants b0: 8 DWORDs
+/// Root constants b0: 14 DWORDs
 /// UAV u0: RWStructuredBuffer<float> exposure[2]
 
 cbuffer ExposureParams : register(b0) {
@@ -17,6 +17,12 @@ cbuffer ExposureParams : register(b0) {
     float g_MinBrightness;
     float g_MaxBrightness;
     float g_DeltaTime;
+    float g_MidGray;        ///< Reinhard key (r.AutoExposure.MidGrayTarget)
+    float g_SpeedUp;        ///< EV/s towards brighter (r.AutoExposure.SpeedUp)
+    float g_SpeedDown;      ///< EV/s towards darker (r.AutoExposure.SpeedDown)
+    float g_LowPercent;     ///< average window start, percent of pixels
+    float g_HighPercent;    ///< average window end, percent of pixels
+    float g_AdaptationLinearRange; ///< EV gap above which adaptation is linear (r.AutoExposure.AdaptationLinearRange)
 };
 
 RWStructuredBuffer<float> g_ExposureUAV : register(u0);
@@ -28,11 +34,7 @@ StructuredBuffer<uint> g_HistogramSrvTex : register(t0);
 #define NUM_BINS 64
 
 /// @ref Reinhard 2002 — adaptation speeds (f-stops/sec)
-static const float g_SpeedUp     = 3.0;
-static const float g_SpeedDown   = 1.0;
-static const float g_LowPercent  = 10.0;
-static const float g_HighPercent = 90.0;
-static const float g_StartDistance = 1.5;
+// Adaptation speeds, percentiles and the mid-grey key are root constants (block A.8, 2026-10-05).
 
 [numthreads(1, 1, 1)]
 void main() {
@@ -74,7 +76,7 @@ void main() {
 
     // Exposure = key / avgLuminance (Reinhard key=0.18)
     float exposureBiasLinear = pow(2.0, g_ExposureBias);
-    float targetExposure = exposureBiasLinear * 0.18 / avgLum;
+    float targetExposure = exposureBiasLinear * g_MidGray / avgLum;
 
     // Temporal adaptation
     float prevExposure = g_ExposureUAV[0];
@@ -86,7 +88,7 @@ void main() {
     float adaptSpeed = (logDiff > 0) ? g_SpeedUp : g_SpeedDown;
 
     // Exponential + linear blend
-    float startTime = g_StartDistance / max(adaptSpeed, 0.001);
+    float startTime = g_AdaptationLinearRange / max(adaptSpeed, 0.001);
     float kEps = 1.0 / 60.0;
     float expM = kEps / ((1.0 - exp2(-kEps * adaptSpeed)) * startTime);
 
@@ -98,11 +100,11 @@ void main() {
         ? min(logTarget, logPrev + linOff)
         : max(logTarget, logPrev - linOff);
 
-    float logAdapted = (abs(logDiff) > g_StartDistance) ? logLin : logExp;
+    float logAdapted = (abs(logDiff) > g_AdaptationLinearRange) ? logLin : logExp;
     float currentExposure = exp2(logAdapted);
 
-    float minExp = exposureBiasLinear * 0.18 / max(g_MaxBrightness, 0.001);
-    float maxExp = exposureBiasLinear * 0.18 / max(g_MinBrightness, 0.00001);
+    float minExp = exposureBiasLinear * g_MidGray / max(g_MaxBrightness, 0.001);
+    float maxExp = exposureBiasLinear * g_MidGray / max(g_MinBrightness, 0.00001);
     currentExposure = clamp(currentExposure, minExp, maxExp);
 
     g_ExposureUAV[0] = currentExposure;

@@ -74,6 +74,14 @@ struct SHCoefficients {
 /// - Solid angle weighting accounts for cubemap texel distortion.
 SHCoefficients ProjectCubemapToSH(const float* faceData[6], uint32_t faceSize);
 
+/// Re-expresses packed SH projected in the engine's cubemap frame (DX, +Y up: `ProjectCubemapToSH`'s
+/// face directions) in the world frame (Z-up): the result evaluated with a world normal equals the input
+/// evaluated with `WorldToCubemap(normal)` (y and z swapped). Its own inverse.
+///
+/// The deferred lighting converts the normal instead for the per-frame sky SH; this is for SH stored
+/// where the shader evaluates with the world normal (the light probe volume seeded from the sky).
+SHCoefficients SHCubemapToWorld(const SHCoefficients& cube);
+
 class IRHIDevice;
 class IRHICommandList;
 
