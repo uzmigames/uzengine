@@ -54,13 +54,13 @@ double-count gate. The SSR's own temporal and spatial passes stay before the lig
 composed specular, as in UE.
 
 ## Reference and harness
-- `scripts/reflection_reference.py`: a 30 × 30 m chrome floor (metallic 1, roughness 0.02, base
+- `scripts/rendering/reflection_reference.py`: a 30 × 30 m chrome floor (metallic 1, roughness 0.02, base
   colour 0.95), three rough boxes and a pillar, sun at 40°, camera at (0, −900, 180) looking at
   (0, 250, 0); a second scene without the floor with the camera mirrored through z = 0. Planar
   reflection identity: the floor's reflection at pixel p is what the mirrored camera sees through the
   same pixel beyond the plane; with the engine's up-fixed camera that image is rotated by 180°
   (`mirror_pixel`), verified per pixel through the dumps' world positions (R0).
-- `scripts/test_layered_reflections.py`: captures mirror / SSR off / SSR on / legacy composite /
+- `scripts/rendering/test_layered_reflections.py`: captures mirror / SSR off / SSR on / legacy composite /
   SSR on + SDF layer (frames 90-99, frame-wide `components` dump), classifies floor pixels by whether
   the reflected hit is on screen and unoccluded (visible), off screen or occluded, or sky; compares
   the final floor colour with F × reference (Schlick F0 0.95); temporal stability from the 10-frame

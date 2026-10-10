@@ -14,4 +14,4 @@ Add `VfxStackEntry` (one per stage) + `VfxModuleInstance` (one per module within
 - Estimated effort: S
 
 ## Source
-UE5 `UNiagaraStack::StackEntry` + `FNiagaraStackModuleData` + analysis at `docs/analysis/niagara-minimal-viable-editor.md` (Section 1.1).
+UE5 `UNiagaraStack::StackEntry` + `FNiagaraStackModuleData` + analysis at `docs/analysis/vfx-particles/niagara/niagara-minimal-viable-editor.md` (Section 1.1).

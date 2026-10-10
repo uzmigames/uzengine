@@ -20,10 +20,10 @@ here follows a published reference, and every one has a regression harness under
 
 | Area | File | Harness |
 |---|---|---|
-| Euler composition order | `runtime/engine/math/quaternion.cpp` | `scripts/test_quaternion.ps1` |
-| Environment BRDF (DFG) | `runtime/shaders/runtime/lighting/ibl.hlsli` | `scripts/test_environment_brdf.ps1` |
-| SSR resolve filter | `runtime/shaders/runtime/postprocess/ssr_resolve_cs.hlsl` | `scripts/test_ssr_resolve_filter.ps1` |
-| Shadow bias and cascade fade | `runtime/shaders/runtime/lighting/shadow.hlsli` | `scripts/test_shadow_bias.ps1` |
+| Euler composition order | `runtime/engine/math/quaternion.cpp` | `scripts/rendering/test_quaternion.ps1` |
+| Environment BRDF (DFG) | `runtime/shaders/runtime/lighting/ibl.hlsli` | `scripts/rendering/test_environment_brdf.ps1` |
+| SSR resolve filter | `runtime/shaders/runtime/postprocess/ssr_resolve_cs.hlsl` | `scripts/rendering/test_ssr_resolve_filter.ps1` |
+| Shadow bias and cascade fade | `runtime/shaders/runtime/lighting/shadow.hlsli` | `scripts/rendering/test_shadow_bias.ps1` |
 | Sky cubemap energy | `runtime/shaders/runtime/atmosphere/sky_cubemap_cs.hlsl` | (see "Sky energy" below) |
 | DDGI constant packing | `runtime/shaders/runtime/gi/ddgi_probe_update_cs.hlsl` | (offset check, see below) |
 
@@ -120,10 +120,10 @@ uploaded struct, i.e. garbage, for every probe ray. They are scalars now, mirror
 ## Re-verification
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_quaternion.ps1          # 38/38
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_environment_brdf.ps1    # 200/200
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_ssr_resolve_filter.ps1  # 21/21
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_shadow_bias.ps1         # 10/10
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/rendering/test_quaternion.ps1          # 38/38
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/rendering/test_environment_brdf.ps1    # 200/200
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/rendering/test_ssr_resolve_filter.ps1  # 21/21
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/rendering/test_shadow_bias.ps1         # 10/10
 ```
 
 Shader syntax without an engine run:
@@ -151,4 +151,4 @@ on the pre-fix binary gave 68.7 / 71-68-65 / 2.0 % — seven times more crushed 
 
 - `docs/engine/12-rendering/17-lighting.md`, `18-shadow-system.md`, `23-ibl-lighting.md`,
   `27-sky-atmosphere.md`
-- `.rulebook/tasks/phase0_sponza-parity-01-core-fixes/` — task, evidence and the rotation audit
+- `.rulebook/archive/2026-10-10-phase0_sponza-parity-01-core-fixes/` — task, evidence and the rotation audit

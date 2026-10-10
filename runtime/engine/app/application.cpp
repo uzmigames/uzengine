@@ -568,7 +568,7 @@ int Application::TryDiffImages(int argc, char* argv[]) {
     // this point in the boot sequence). Format is stable + machine
     // parseable: `DIFF_STATS: PSNR=NN.NN dB diff=NN.NN%% maxCh=NNN`.
     // @ref phase17_vfx-viewport-22-preset-validation — used by
-    //      `scripts/vfx_validate_presets.ps1` to PSNR-diff each preset.
+    //      `scripts/vfx/vfx_validate_presets.ps1` to PSNR-diff each preset.
     {
         int wA = 0, hA = 0, cA = 0;
         int wB = 0, hB = 0, cB = 0;

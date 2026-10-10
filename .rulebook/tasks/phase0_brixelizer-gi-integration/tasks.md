@@ -5,7 +5,7 @@
 > `r.GI.Reflections`, set by `sample/projects/sponza.uzproject:12-14`), with DDGI as the DXR option
 > (`r.RayTracing.GI`). Read "superseded" as "inactive and abandoned in favour of that stack", not as
 > "covered by it": the interior bounce light that motivated this task (`proposal.md:5`) is still an
-> open question there (`docs/analysis/lighting-block-b-2026-10.md:126-128`: the SDF cache and gather
+> open question there (`docs/analysis/lighting/uzengine/sponza-lighting-2026-10/lighting-block-b-2026-10.md:126-128`: the SDF cache and gather
 > leave the Sponza Camera C interior nearly black, and the DDGI path lights it). The dormant source
 > stays in the tree; removing it is a separate decision.
 >
@@ -159,7 +159,7 @@
 > `docs/specs/rendering/gi-system.md` (overview and Tier 4), `docs/specs/rendering/ibl-pipeline.md`
 > (status row and composite), `docs/guides/brixelizer-gi-guide.md` (status banner and dated markers),
 > `runtime/CHANGELOG.md` (correction row and the v0.9.0 link), and dated notes in
-> `docs/analysis/overnight-2026-04-07.md` and `docs/analysis/lumen-gap-analysis-2026-09-17.md`. The
+> `docs/analysis/overnight-2026-04-07.md` and `docs/analysis/lighting/uzengine/lumen-gap-analysis-2026-09-17.md`. The
 > edits that pass left to others are done: in `docs/analysis/known-issues-and-partial-implementations.md`
 > the `r.BrixelizerGI` entry (rewritten as dormant) and the six other places that called Brixelizer
 > working or an alternative, and the GI row of `README.md`, on 2026-10-09;
@@ -173,7 +173,7 @@
 > with the D3D12 debug layer, fix the defects above, restore a specular composite with its own SRV,
 > size the cascades for the scene, decide which current term it replaces, and gate it with region
 > dumps (`diffuse_indirect`, path bit 8) and per-pass `gpu_ms` against the 8.59 ms SDF final gather
-> (`docs/analysis/lighting-block-b-01-pass-timings.md:73`).
+> (`docs/analysis/lighting/uzengine/sponza-lighting-2026-10/lighting-block-b-01-pass-timings.md:73`).
 
 > **Note (2026-09-08, from `phase0_sponza-parity-03-sdf-gi-radiance-cache`):** any item here that
 > assumed a working SDF GI was written against empty shaders — `mesh_sdf_bake_cs.hlsl` and

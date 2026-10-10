@@ -37,7 +37,7 @@ bool InChangedRegion(float3 p) {
 
 /// Why the history was not used. Recorded explicitly in the region dump because `count == 1` alone
 /// cannot distinguish a rejected history from a freshly initialised one — both leave the pixel at
-/// its current sample. Mirrors `GATHER_REJECT` in `scripts/flicker/regiondump.py`.
+/// its current sample. Mirrors `GATHER_REJECT` in `scripts/rendering/flicker/regiondump.py`.
 #define UZ_GATHER_ACCEPTED         0u
 #define UZ_GATHER_SKY_DEPTH        1u
 #define UZ_GATHER_HISTORY_INVALID  2u

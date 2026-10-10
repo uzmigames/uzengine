@@ -1,6 +1,6 @@
 -- Rotates the entity this script is attached to (the Sun) once, at frame 100, to a yaw of 90
 -- degrees about Z. uz.scene.set_rotation_yaw replaces the whole rotation, so the sun also drops to
--- the horizon: a large, unambiguous change of the sky. Used by scripts/test_sky_ibl_rebake.py to
+-- the horizon: a large, unambiguous change of the sky. Used by scripts/rendering/test_sky_ibl_rebake.py to
 -- check that the sky IBL (cubemap capture, SH, prefiltered maps) is re-baked when the sun moves
 -- (block A.5, 2026-10-05).
 

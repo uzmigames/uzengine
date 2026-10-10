@@ -206,7 +206,7 @@ record. Both atlases cover the radiance cache's 16³ probe positions
 
 `ddgi_probe_update_cs.hlsl` writes both from the per-probe rays that `ddgi_probe_trace_cs.hlsl`
 traces once per frame (block B.6, `r.GI.DDGI.RayBuffers 1` by default;
-`docs/analysis/lighting-block-b-06-ddgi-dedup.md`). They are read
+`docs/analysis/lighting/uzengine/sponza-lighting-2026-10/lighting-block-b-06-ddgi-dedup.md`). They are read
 with the Chebyshev visibility test at `deferred_lighting_ps.hlsl:759-880`.
 
 ### Equirectangular to Cubemap

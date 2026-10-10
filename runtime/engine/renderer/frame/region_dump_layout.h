@@ -7,7 +7,7 @@
 /// ledger row that had to be retracted. Format 4 writes the layout into every file so a reader
 /// never has to keep its own copy.
 ///
-/// @see docs/analysis/flicker-hypothesis-ledger.md — "A reader bug, and what it cost"
+/// @see docs/analysis/rendering-arch/flicker/flicker-hypothesis-ledger.md — "A reader bug, and what it cost"
 
 #pragma once
 

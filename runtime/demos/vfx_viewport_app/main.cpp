@@ -25,7 +25,7 @@
 /// - `--start-preset <N|name>`: Override the starting preset (default `Fire`).
 ///   Accepts an integer index `0..21` OR a preset name (case-insensitive,
 ///   e.g. `Smoke`, `Tornado`, `MagicOrb`). Used by
-///   `scripts/vfx_validate_presets.ps1` to baseline + diff each preset.
+///   `scripts/vfx/vfx_validate_presets.ps1` to baseline + diff each preset.
 ///   See `phase17_vfx-viewport-22-preset-validation` for the contract.
 /// - `--vfs-root <path>`: Override the VFS root directory (defaults to
 ///   `<exe_dir>/content` if it exists, otherwise the engine fallback).

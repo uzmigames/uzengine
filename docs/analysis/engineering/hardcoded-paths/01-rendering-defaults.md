@@ -85,11 +85,11 @@ Generalize these comments to describe the bug behavior without naming the sample
 
 Branch `feat/sponza-gi-parity`. Every value below either moved to data (a component field, a scene
 key) or to a CVar whose default reproduces the previous behaviour; the measurements are in
-`docs/analysis/lighting-block-a-2026-10-05.md` (A.10).
+`docs/analysis/lighting/uzengine/sponza-lighting-2026-10/lighting-block-a-2026-10-05.md` (A.10).
 
 | Item | Before | Now |
 |---|---|---|
-| Phantom sun | `LightFrameData` defaulted to sun direction (0.5, 0.3, 0.8) and colour (3, 2.85, 2.7): every scene without a `DirectionalLightComponent` was lit and CSM-shadowed by a light that exists in no scene file (`light_renderer.h`). | `sunColor` defaults to 0 and `hasDirectionalLight` says whether a sun exists; without one the cascade pass is skipped and `cascadeCount` is 0 (full visibility). The sky keeps a direction from its own data: `SkyAtmosphereComponent::sunDirection`, scene key `sun_direction` (Lua `uz.scene.set_atmosphere_sun_direction`). Guard: `scripts/test_no_sun_lighting.py`. |
+| Phantom sun | `LightFrameData` defaulted to sun direction (0.5, 0.3, 0.8) and colour (3, 2.85, 2.7): every scene without a `DirectionalLightComponent` was lit and CSM-shadowed by a light that exists in no scene file (`light_renderer.h`). | `sunColor` defaults to 0 and `hasDirectionalLight` says whether a sun exists; without one the cascade pass is skipped and `cascadeCount` is 0 (full visibility). The sky keeps a direction from its own data: `SkyAtmosphereComponent::sunDirection`, scene key `sun_direction` (Lua `uz.scene.set_atmosphere_sun_direction`). Guard: `scripts/rendering/test_no_sun_lighting.py`. |
 | 1.2 Contact shadow length | `r.ContactShadow.Length = 0.10` meant "fraction of the far plane x 0.1"; the shader also carried the 1 % literal. | `r.ContactShadow.Length` is the fraction of the far plane itself, default **0.01** (the old fixed length), range [0, 0.05]; the dead `r.ContactShadow.Steps` / `r.ContactShadow.Thickness` registrations (never read; the live ones are `r.Shadow.ContactShadowSteps` / `r.Shadow.ContactShadowThickness`) were removed. |
 | 1.5 Skylight | `r.SkyLight.MinAmbient = 0.25` floored every scene. | Default **0** since block A.2 (the component value). |
 | Local shadow bias | Normal offset 0.5 % and the spot near plane 0.1 cm / point near plane 1.0 cm were literals in `deferred_lighting_ps.hlsl` and `frame_constants.cpp`. | `r.Shadow.Local.NormalOffset` (0.005, in `ShadowDataCB`) and `r.Shadow.Local.NearPlane` (1.0 cm for both spot and point tiles; the reference scene measures identically). |

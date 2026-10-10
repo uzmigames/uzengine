@@ -971,7 +971,7 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     }
 
     // --component-replay <file>: replay recorded AO and specular per frame and per pixel
-    // (followup-12 H-28 isolation). Built by scripts/make_component_replay.py.
+    // (followup-12 H-28 isolation). Built by scripts/rendering/make_component_replay.py.
     if (sceneRendererReady && configPtr) {
         const std::string replay = configPtr->GetString("component-replay", "");
         if (!replay.empty()) sceneRenderer.SetComponentReplay(replay);

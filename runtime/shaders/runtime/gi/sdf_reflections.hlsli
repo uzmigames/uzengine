@@ -45,7 +45,7 @@ struct SdfReflectionScene {
     float3 skyMultiplier;
     /// 0 = Karis HDR weight (production default), 1 = plain mean. The plain mean is
     /// the unbiased Monte-Carlo estimator; the Karis weight trades energy for
-    /// firefly suppression. `scripts/test_sdf_reflection_energy.ps1` measures the
+    /// firefly suppression. `scripts/rendering/test_sdf_reflection_energy.ps1` measures the
     /// ratio between the two on the GPU (`r.GI.Reflections.HdrWeight` in production).
     uint plainMean;
 };
@@ -280,7 +280,7 @@ float3 GatherSdfReflections(SdfReflectionScene scene, float3 position, float3 no
         // 1/(1+luma) is in scene-radiance units). It is a firefly mitigation,
         // not an energy-conserving mean: in the enclosed fixture room it keeps
         // 88 % of the plain mean's energy under a layered environment and agrees
-        // within 1 % under a uniform one (scripts/test_sdf_reflection_energy.ps1,
+        // within 1 % under a uniform one (scripts/rendering/test_sdf_reflection_energy.ps1,
         // followup-08 4.1). No exposure-relative or clamped weight was adopted:
         // the isolated pixels that reach the output are not reflection pixels
         // (flicker ledger H-68, also the re-test). r.GI.Reflections.HdrWeight=0

@@ -15,7 +15,7 @@ cbuffer RootConstants : register(b0) {
 };
 
 /// What the upsample did with the pixel, recorded because an all-zero weight vector is otherwise
-/// ambiguous. Mirrors `GATHER_UPSAMPLE` in `scripts/flicker/regiondump.py`.
+/// ambiguous. Mirrors `GATHER_UPSAMPLE` in `scripts/rendering/flicker/regiondump.py`.
 #define UZ_UPSAMPLE_BILATERAL 0u
 #define UZ_UPSAMPLE_SKY       1u
 #define UZ_UPSAMPLE_FALLBACK  2u

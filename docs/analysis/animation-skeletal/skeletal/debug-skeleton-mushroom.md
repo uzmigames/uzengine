@@ -3,7 +3,7 @@
 **Date:** 2026-04-16
 **File:** `e:\UzEngine\sample\content\meshes\mushroommonster\MushroomMonster_Low.uzskel`
 **Size:** 1108 bytes
-**Inspector:** `e:\UzEngine\scripts\debug_inspect_skel.py` (standalone Python parser; no engine link)
+**Inspector:** `e:\UzEngine\scripts\dev\animation\debug_inspect_skel.py` (standalone Python parser; no engine link)
 
 ## TL;DR
 
@@ -176,7 +176,7 @@ Suggested next diagnostic step: dump `AnimationSequence` for `Mushroom_Idle` wit
 
 ```bash
 cd e:/UzEngine
-python scripts/debug_inspect_skel.py sample/content/meshes/mushroommonster/MushroomMonster_Low.uzskel
+python scripts/dev/animation/debug_inspect_skel.py sample/content/meshes/mushroommonster/MushroomMonster_Low.uzskel
 ```
 
 The script is dependency-free (Python 3.10+ standard library only). It does not modify production code and does not run the engine.

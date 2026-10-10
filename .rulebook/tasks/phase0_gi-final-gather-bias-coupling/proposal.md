@@ -12,9 +12,9 @@ Origin: followup-12 close-out (2026-10-08): ledger H-34, H-35, H-28d, recorded o
 
 ## What Changes
 
-- Establish the reference's convergence and uncertainty; re-measure the deficit on the current build (scripts/run_gather_bias_study.py into a new directory); decide defect or not without losing the parity-locked rotation's stability (H-36).
+- Establish the reference's convergence and uncertainty; re-measure the deficit on the current build (scripts/rendering/run_gather_bias_study.py into a new directory); decide defect or not without losing the parity-locked rotation's stability (H-36).
 - Find the gather-to-reflection coupling route with a confinement test (the radiance-cache probes ShadeSdfReflectionHit samples are the candidate).
-- Re-run scripts/run_h28_revalidation.py; if the breach reproduces, test resource aliasing and barriers (the render-graph state registry work).
+- Re-run scripts/rendering/run_h28_revalidation.py; if the breach reproduces, test resource aliasing and barriers (the render-graph state registry work).
 
 ## Impact
 - Affected specs: gi-final-gather-bias-coupling (new)

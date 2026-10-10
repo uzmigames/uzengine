@@ -47,7 +47,7 @@ every preset index `NN` in `00..21`. Each baseline MUST be:
 
 #### Scenario: Capture script produces 22 valid baselines
 
-Given `scripts/vfx_validate_presets.ps1 -Mode capture` is executed from a clean state
+Given `scripts/vfx/vfx_validate_presets.ps1 -Mode capture` is executed from a clean state
 When the script completes
 Then 22 PNG files exist under `.sandbox/preset-baseline/`
 And `manifest.json` lists all 22 with their sha256 hashes and byte sizes
@@ -55,7 +55,7 @@ And no file in the manifest is smaller than 50 KB
 
 ### Requirement: Validation Script Detects Regression
 
-`scripts/vfx_validate_presets.ps1 -Mode validate` MUST recapture all
+`scripts/vfx/vfx_validate_presets.ps1 -Mode validate` MUST recapture all
 22 presets, PSNR-diff each against its baseline, and report fail for
 any preset whose PSNR drops below 35 dB. Exit code 0 = all pass,
 non-zero = at least one fail.
@@ -63,7 +63,7 @@ non-zero = at least one fail.
 #### Scenario: Unchanged build produces 22/22 pass
 
 Given the baseline manifest matches the current build's output exactly
-When `scripts/vfx_validate_presets.ps1 -Mode validate` runs
+When `scripts/vfx/vfx_validate_presets.ps1 -Mode validate` runs
 Then the script reports 22/22 pass
 And the exit code is 0
 

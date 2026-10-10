@@ -2,7 +2,7 @@
 
 Niagara-parity stack data model: explicit 7 fixed stages × ordered module instances.
 
-Reference: UE5 `UNiagaraStack` + analysis at `docs/analysis/niagara-minimal-viable-editor.md`.
+Reference: UE5 `UNiagaraStack` + analysis at `docs/analysis/vfx-particles/niagara/niagara-minimal-viable-editor.md`.
 
 ## 1. Data model
 

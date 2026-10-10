@@ -59,7 +59,7 @@ per-pixel irradiance replaces whatever the priority chain chose, in every pixel
 distance field with data (`frame_constants.cpp:826-838`), and the shared gather slot prepared
 (`:848-861`). Its rays read the radiance-cache probes where they hit (`ssgi_world_gather.hlsli:13`;
 `docs/engine/12-rendering/33-sdf-gi-final-gather.md:110-124`). With the gather on, therefore, no
-pixel reads the DDGI result (`docs/analysis/lighting-block-b-06-ddgi-dedup.md:104-105`).
+pixel reads the DDGI result (`docs/analysis/lighting/uzengine/sponza-lighting-2026-10/lighting-block-b-06-ddgi-dedup.md:104-105`).
 
 The diffuse term is `(1 - metallic) x E x baseColor x (1 - dielectric scatter)`
 (`deferred_lighting_ps.hlsl:1246-1247`). It is then multiplied by `ao ^ r.IndirectAO.Exponent` and
@@ -71,7 +71,7 @@ Sponza's project turns on the radiance cache, the final gather and the SDF refle
 (`sample/projects/sponza.uzproject:12-14`), so once the cache has produced its first result every
 Sponza pixel takes its diffuse irradiance from the gather. The recalibration's region dumps show
 this at Camera A, where every pixel carries path bits 0x3, gather and reflections
-(`docs/analysis/lighting-sponza-recalibration.md:50`).
+(`docs/analysis/lighting/uzengine/sponza-lighting-2026-10/lighting-sponza-recalibration.md:50`).
 
 ### 1.2 Specular
 
@@ -114,8 +114,8 @@ What this means in practice:
   `indirectLightingIntensity` and the colour scale it. Open decision **N1** is whether the fallback
   should take the intensity, as it did before `6543d8cf` and as the sky-lit paths outside the
   fallback do. Evidence: the lights reference authors a sky light of 0.05 "so the frame is lit by
-  the local lights alone" (`scripts/lights_reference.py:5-6`, `:107`; GI off, `:53`), yet block B.7
-  measured a floor ambient of 0.632 there (`docs/analysis/lighting-block-b-07-clustered-lights.md:69`).
+  the local lights alone" (`scripts/rendering/lights_reference.py:5-6`, `:107`; GI off, `:53`), yet block B.7
+  measured a floor ambient of 0.632 there (`docs/analysis/lighting/uzengine/sponza-lighting-2026-10/lighting-block-b-07-clustered-lights.md:69`).
 - **`indirectLightingIntensity` 0 does not turn the GI-off ambient off.** It zeroes every packed SH
   coefficient, `IsSHZero` then reads the SH as empty, and the fallback samples the irradiance
   cubemap instead (when one is bound), scaled by neither intensity
@@ -143,7 +143,7 @@ What this means in practice:
 lower hemisphere of (0.12, 0.11, 0.10) with `lower_hemisphere_is_black: false`
 (`sample/content/scenes/sponza.uzscene:176-191`); the QA scene `sponza-gi-runtime-enable` keeps both
 intensities at 1.0. Both intensities have been √3 since `8e3470f8`; the reasons are in
-`docs/analysis/lighting-sponza-recalibration.md`. With the project's GI on, only `intensity`, the
+`docs/analysis/lighting/uzengine/sponza-lighting-2026-10/lighting-sponza-recalibration.md`. With the project's GI on, only `intensity`, the
 colour and `min_occlusion` act there.
 
 ## 3. Switches
@@ -161,7 +161,7 @@ colour and `min_occlusion` act there.
 | `r.GTAO`, `.Radius`, `.Intensity`, `.Power` | 0, 200, 1, 1 | 1 (scene) | Screen-space AO, merged as `min(meshAO, gtao)` | `runtime/engine/renderer/passes/postprocess/gtao_pass.cpp:25-28`, `:675-678`; `frame_constants.cpp:769-773`; `deferred_lighting_ps.hlsl:499-507` |
 | `r.IndirectAO.Exponent` | 1 | default | Exponent on `ao` for the diffuse indirect | `frame_constants.cpp:137`; `deferred_lighting_ps.hlsl:1337` |
 | `r.ContactShadow.Length` | 0.01 | default | Sun contact-shadow length as a fraction of the far plane. **0 disables: this is the switch** | `frame_constants.cpp:60`, `:649`; `deferred_lighting_ps.hlsl:595-614` |
-| `r.ContactShadows` | 1 | default | Registered, but has no effect on the image: it only seeds a pass-inspector entry that nothing reads | `runtime/engine/renderer/frame/frame_lighting.cpp:39`; `scene_renderer_init.cpp:1103`; `docs/analysis/lighting-block-b-04b-contact-shadows.md:76` |
+| `r.ContactShadows` | 1 | default | Registered, but has no effect on the image: it only seeds a pass-inspector entry that nothing reads | `runtime/engine/renderer/frame/frame_lighting.cpp:39`; `scene_renderer_init.cpp:1103`; `docs/analysis/lighting/uzengine/sponza-lighting-2026-10/lighting-block-b-04b-contact-shadows.md:76` |
 | `r.SkyLight.Intensity`, `.IndirectIntensity`, `.MinAmbient` | 1, 1, 0 | default | See section 2 | `frame_constants.cpp:36`, `:54`, `:50-53` |
 | `r.SkyLight.RebakeAngleDeg`, `.RebakeIntensityDelta`, `.RebakeMinInterval` | 0.25, 0.01, 30 | default | When the sky IBL (cubemap and SH) is re-baked: sun direction change in degrees, relative sun colour change, minimum sky passes between bakes | `runtime/engine/renderer/atmosphere/atmosphere_renderer.cpp:39-41` |
 | `r.EnvMIS` | 1 | default | Environment-MIS specular on smooth metals | `frame_constants.cpp:82-83` |
@@ -239,7 +239,7 @@ the sky part, and `r.GI.Intensity` scales the whole GI irradiance. AO comes from
 
 Expect convergence to take time. Each probe is retraced every 4 frames and blended at 0.12, about
 33 frames per e-fold, and a freshly loaded scene keeps converging for about 200 frames
-(`docs/analysis/lighting-block-b-02-gdf-incremental.md:112-117`, `:152-154`). A capture at frame 60
+(`docs/analysis/lighting/uzengine/sponza-lighting-2026-10/lighting-block-b-02-gdf-incremental.md:112-117`, `:152-154`). A capture at frame 60
 is not converged.
 
 **Without GI.** The SH fallback is one set of coefficients for the whole frame, with no occlusion
@@ -251,7 +251,7 @@ both the AO floor and an irradiance floor. A light probe volume does not help (s
 DDGI probes. They sit on the radiance cache's grid, with the same origin and spacing
 (`frame_constants.cpp:893-895`), and take priority 1 for the diffuse. With `r.GI.FinalGather 1` the
 gather replaces them in every pixel, so turn the gather off to see DDGI. The DDGI level has not been
-compared with a ground truth (`docs/analysis/lighting-block-b-06-ddgi-dedup.md:94-96`). If
+compared with a ground truth (`docs/analysis/lighting/uzengine/sponza-lighting-2026-10/lighting-block-b-06-ddgi-dedup.md:94-96`). If
 `r.RayTracing.GI 1` is set without `r.RayTracing 1` (with `r.RadianceCache 1`), the log warns once
 and the lighting stays on the radiance cache (`frame_gi_passes.cpp:340-345`). Without
 `r.RadianceCache 1` the writer's pass is not registered and nothing is logged (`:149-161`).
@@ -265,10 +265,10 @@ and the lighting stays on the radiance cache (`frame_gi_passes.cpp:340-345`). Wi
   ```
 
   The format is described in `docs/guides/build-and-deployment.md:247-259`; read the files with
-  `scripts/flicker/regiondump.py`. The `components` preset (`runtime/tools/uzengine.cpp:543`)
+  `scripts/rendering/flicker/regiondump.py`. The `components` preset (`runtime/tools/uzengine.cpp:543`)
   records `direct_light`, `diffuse_indirect` and `specular_indirect`. The alpha of
   `emissive_and_mis` holds the path bits: 1 SDF reflections, 2 final gather, 4 legacy SSGI,
-  16 env-MIS, 128 SSR (`scripts/flicker/regiondump.py:148-152`). `rc_support` and `ddgi_support`
+  16 env-MIS, 128 SSR (`scripts/rendering/flicker/regiondump.py:148-152`). `rc_support` and `ddgi_support`
   are zero when that probe query did not run (`:97-98`). A pixel with the gather bit (2) clear and
   both supports zero was lit by the SH fallback.
 - **Run manifest.** `--run-manifest <path>` records every CVar that differs from its default
@@ -301,8 +301,8 @@ Common symptoms:
 - `docs/engine/12-rendering/33-sdf-gi-final-gather.md`: distance fields, radiance cache, final
   gather and reflections.
 - `docs/specs/rendering/gi-system.md` and `docs/specs/rendering/ibl-pipeline.md`.
-- `docs/analysis/lighting-block-b-2026-10.md`: the October lighting blocks, including timings
+- `docs/analysis/lighting/uzengine/sponza-lighting-2026-10/lighting-block-b-2026-10.md`: the October lighting blocks, including timings
   (B-01), contact shadows (B-04b), DDGI (B-06) and clustered lights (B-07).
-- `docs/analysis/lighting-sponza-recalibration.md`: Sponza's SkyLight values.
+- `docs/analysis/lighting/uzengine/sponza-lighting-2026-10/lighting-sponza-recalibration.md`: Sponza's SkyLight values.
 - `.rulebook/tasks/phase0_indoor-lighting-system/tasks.md`: the task, its corrections and the open
   decisions N1-N4.

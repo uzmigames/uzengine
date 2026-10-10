@@ -49,8 +49,8 @@ Euler construction now applies Roll, then Pitch, then Yaw as documented. This af
 
 ## Evidence
 
-- `scripts/test_radiance_cache_sh.ps1`: extracts the actual production HLSL projection/packing functions into a native arithmetic test. Before: 0/90. After: 90/90. Tests constant, axis-linear and quadratic radiance against analytic diffuse convolution.
-- `scripts/test_sdf_gpu.ps1`: runs the production mesh bake on a GTX 1660 SUPER. Empty original entry point fails with 32768 untouched sentinel voxels and 4096 wrong signs. Corrected shader passes: 32768 finite voxels, zero wrong signs, zero sentinels, range [-0.937500, 1.623047], maximum box-distance error 0.000960.
+- `scripts/rendering/test_radiance_cache_sh.ps1`: extracts the actual production HLSL projection/packing functions into a native arithmetic test. Before: 0/90. After: 90/90. Tests constant, axis-linear and quadratic radiance against analytic diffuse convolution.
+- `scripts/rendering/test_sdf_gpu.ps1`: runs the production mesh bake on a GTX 1660 SUPER. Empty original entry point fails with 32768 untouched sentinel voxels and 4096 wrong signs. Corrected shader passes: 32768 finite voxels, zero wrong signs, zero sentinels, range [-0.937500, 1.623047], maximum box-distance error 0.000960.
 - Mesh bake, GDF composition and probe tracing compile with DXC shader model 6.6.
 - Reversed-winding GPU regression uses the actual production C++ normal code and production HLSL: 32768 wrong signs without the normal offset, zero wrong signs with explicit outward vertex normals. Maximum distance error remains 0.000960.
 - GDF GPU regression verifies translated, rotated and nonuniformly scaled geometry, plus an empty scene initialized to 65504. Probe GPU regression starts from NaNs and verifies finite SH and constant-sky irradiance with maximum relative error 2.4672% at 32 rays.
@@ -59,7 +59,7 @@ Euler construction now applies Roll, then Pitch, then Yaw as documented. This af
 - `scripts/sponza-lighting-baseline.log`: pass-dump failure at the atmosphere volume.
 - `scripts/sponza-lighting-rc-before.log`: DRED report identifying freed staging storage.
 - `docs/analysis/rendering/sponza-sdf-orientation-evidence.md`: actual mesh counts, exact distance queries and open-boundary topology evidence, including the failure remaining after orientation alone.
-- `scripts/test_quaternion.ps1`: compiles actual quaternion/vector/matrix sources and two existing GoogleTest suites independently. Before: 35/38; after: 38/38. New regressions cover the Sponza sun direction, zenith with yaw, and combined-axis Euler round trips. See `docs/analysis/rendering/sponza-sun-rotation-evidence.md`.
+- `scripts/rendering/test_quaternion.ps1`: compiles actual quaternion/vector/matrix sources and two existing GoogleTest suites independently. Before: 35/38; after: 38/38. New regressions cover the Sponza sun direction, zenith with yaw, and combined-axis Euler round trips. See `docs/analysis/rendering/sponza-sun-rotation-evidence.md`.
 - `sponza-lighting-exposure50.png` and `sponza-lighting-metering.png`: diagnostic controls establish that finite interior light reaches the display when exposure can adapt. These intermediate captures precede the solar-direction correction.
 
 Integrated Sponza runs complete screenshots and pass dumps after the readback/lifetime fixes. The first integrated images remained nearly identical with GI off, on and intensity 10; these were rejected as success evidence. Disassembly of the loaded DXIL ruled out a stale consumer shader. Actual SH readback in `scripts/sponza-lighting-sign-before.log` confirmed all eight central probes were zero despite valid buffer data elsewhere. That early check verified CPU/GPU agreement, but the agreed solar direction was itself wrong because of Euler construction.
@@ -74,7 +74,7 @@ Waiting for those control processes exposed a shutdown assertion that detached l
 
 - `scripts/sponza-lighting-verified.png/.log/.exit`: main Sponza project, Camera A, 1920x1080, 642 rendered frames, screenshot requested at frame 640. Process exit 0, empty stderr, no allocator leak or assertion. The sun patch enters the courtyard; covered stone surfaces retain indirect illumination and the darker floor remains distinct.
 - `scripts/sponza-lighting-camera-c.png/.log/.exit`: Camera C, 960x540, same lighting settings, 642 rendered frames. Process exit 0, empty stderr, no diagnostic target failures. The view into the covered end of the atrium remains visible without direct sun on the inspected center pixel.
-- The second view uses an isolated QA scene/project (`sample/content/scenes/sponza-gi-camera-c.qa.uzscene`, `scripts/sponza-lighting-camera-c.uzproject`) because this executable's CLI does not route the Application class's camera override flags. Only the active camera differs from the main scene.
+- The second view uses an isolated QA scene/project (`sample/content/scenes/sponza-gi-camera-c.qa.uzscene`, `scripts/rendering/sponza-lighting-camera-c.uzproject`) because this executable's CLI does not route the Application class's camera override flags. Only the active camera differs from the main scene.
 - Both runs use the software GI path (`r.RayTracing=0`) on GTX 1660 SUPER. Existing HiZ/TAA zero-target warnings remain; the pass report is a sampled diagnostic and does not establish full image accuracy.
 - `scripts/sponza-lighting-verified-sha256.txt` records the final executable and principal shader/math source hashes. Targeted diff whitespace checks and the added-runtime-line path scan pass.
 

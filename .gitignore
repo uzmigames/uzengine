@@ -20,6 +20,8 @@
 # Added at: 2026-03-10T17:05:03.334Z
 
 *.log
+*.stackdump
+__pycache__/
 *.swo
 *.swp
 *~
@@ -126,16 +128,16 @@ CLAUDE.local.md
 .rulebook/telemetry/
 
 # Sponza diagnostics and generated regression output; keep runners and fixtures.
-/scripts/*.generated.h
-/scripts/*_artifacts/
-/scripts/sponza-*.args
-/scripts/sponza-*.asm
-/scripts/sponza-*.exit
-/scripts/sponza-*.json
-/scripts/sponza-*.png
-/scripts/sponza-*-files.txt
-/scripts/sponza-*-path-scan.txt
-/scripts/sponza-*-sha256.txt
+/scripts/rendering/*.generated.h
+/scripts/rendering/*_artifacts/
+/scripts/rendering/sponza-*.args
+/scripts/rendering/sponza-*.asm
+/scripts/rendering/sponza-*.exit
+/scripts/rendering/sponza-*.json
+/scripts/rendering/sponza-*.png
+/scripts/rendering/sponza-*-files.txt
+/scripts/rendering/sponza-*-path-scan.txt
+/scripts/rendering/sponza-*-sha256.txt
 /scripts/sponza-lighting-debug-journal.md
 /scripts/lumen-siggraph2022-reference.pdf
 /scripts/lumen-siggraph2022-reference.txt

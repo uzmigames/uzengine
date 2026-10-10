@@ -662,7 +662,7 @@ public:
     /// Loads or releases the component-replay buffer (diagnostic, off by default).
     void EnsureComponentReplay(const std::string& path);
 
-    /// Enables the component replay from a file built by scripts/make_component_replay.py.
+    /// Enables the component replay from a file built by scripts/rendering/make_component_replay.py.
     void SetComponentReplay(const std::string& path) { EnsureComponentReplay(path); }
 
     /// Creates or releases the r.TAA.ClampFreezeAfterFrame storage (diagnostic, off by default).

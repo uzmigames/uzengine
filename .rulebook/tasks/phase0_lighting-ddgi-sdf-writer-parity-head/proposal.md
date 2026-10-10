@@ -13,8 +13,8 @@ Origin: followup-01 close-out (2026-10-08).
 ## What Changes
 
 - TLASManager::Rebuild: skip translucent draws and mesh decals through one predicate shared with the distance-field occluder set, with a gtest.
-- Re-measure the writers before and after (scripts/test_gi_energy_gpu.ps1 -Frames 200, scripts/gi_energy_populations.py) on a pre-registered population.
-- Measure H-61's term with r.GI.MeshSdf.TwoSided 0 and 1 (give scripts/run_probe_indirect_residual.py a CVar override).
+- Re-measure the writers before and after (scripts/rendering/test_gi_energy_gpu.ps1 -Frames 200, scripts/rendering/gi_energy_populations.py) on a pre-registered population.
+- Measure H-61's term with r.GI.MeshSdf.TwoSided 0 and 1 (give scripts/rendering/run_probe_indirect_residual.py a CVar override).
 
 ## Impact
 - Affected specs: lighting-ddgi-sdf-writer-parity-head (new)

@@ -13,5 +13,5 @@
 ## 2. Tail (mandatory - enforced by rulebook v5.3.0)
 
 - [x] 2.1 Update or create documentation covering the implementation — `docs/engine/45-slate-ui/00-decisions.md` é o entregável principal. README index criado.
-- [x] 2.2 Write tests covering the new behavior — N/A pra fase de decisão. Em vez disso, `scripts/check-slate-decisions.sh` valida que as 6 seções obrigatórias estão presentes no doc + que cada decisão tem subseção "alternativa rejeitada".
-- [x] 2.3 Run tests and confirm they pass — `./scripts/check-slate-decisions.sh` exit 0.
+- [x] 2.2 Write tests covering the new behavior — N/A pra fase de decisão. Em vez disso, `scripts/tools/check-slate-decisions.sh` valida que as 6 seções obrigatórias estão presentes no doc + que cada decisão tem subseção "alternativa rejeitada".
+- [x] 2.3 Run tests and confirm they pass — `./scripts/tools/check-slate-decisions.sh` exit 0.

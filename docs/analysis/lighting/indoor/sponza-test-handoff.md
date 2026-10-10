@@ -26,8 +26,8 @@ The latest local build produced the engine executable and library, but the aggre
 Run one preset at a time:
 
 ```powershell
-.\scripts\run_sponza_max_quality.bat
-.\scripts\run_sponza_dxr.bat
+.\scripts\rendering\run_sponza_max_quality.bat
+.\scripts\rendering\run_sponza_dxr.bat
 ```
 
 - **Maximum SDF quality:** 1920x1080, diffuse gather 32 samples, reflections 16 samples/256 steps, GDF256, mesh SDF128. Hardware ray tracing is disabled. The sample project's default gather has 8 samples.
@@ -38,7 +38,7 @@ The GTX 1660 SUPER used locally reports DXR Tier 1.0 only. Its DXR run created B
 An optional read-only capability probe reports adapter 0 (which may differ from the engine-selected adapter on multi-GPU systems):
 
 ```powershell
-zig c++ -std=c++23 scripts/sponza_dxr_capabilities.cpp -ld3d12 -ldxgi -ldxguid -o scripts/sponza_dxr_capabilities.exe
+zig c++ -std=c++23 scripts/rendering/sponza_dxr_capabilities.cpp -ld3d12 -ldxgi -ldxguid -o scripts/sponza_dxr_capabilities.exe
 .\scripts\sponza_dxr_capabilities.exe
 ```
 
@@ -48,7 +48,7 @@ Wait for geometry, textures and distance fields to finish loading. F5 toggles th
 
 1. Leave Camera A stationary after loading. Compare the first visible frame and the converged image: shaded columns and arches should stay readable, without the previous large white dirt patch or broad bright lines at wall/floor contacts.
 2. Move close to the left column, doorway and shaded arcade. Check contact shadows, noise, light leaking and changes with viewing angle. Stop moving and observe convergence.
-3. Test Camera C using `scripts/sponza-lighting-camera-c.uzproject` with the same quality arguments. For a repeatable moving camera, use `scripts/sponza-temporal-camera.uzproject` and capture at frame 250. Keep `r.Exposure=0.5`, `r.ColorContrast=0.65`, `r.ColorSaturation=1` for comparison with the recorded Camera C/motion runs.
+3. Test Camera C using `scripts/rendering/sponza-lighting-camera-c.uzproject` with the same quality arguments. For a repeatable moving camera, use `scripts/rendering/sponza-temporal-camera.uzproject` and capture at frame 250. Keep `r.Exposure=0.5`, `r.ColorContrast=0.65`, `r.ColorSaturation=1` for comparison with the recorded Camera C/motion runs.
 4. On a Tier 1.1 GPU, compare the two presets at the same camera and exposure. Capture logs with `--log-level info --pass-dump --diag`; reject DXR GI evidence if `DDGI_ProbeUpdate` fails even when the process exits 0.
 
 `verify_sponza_loading.ps1` reproduces the older loading comparison (project defaults, not the FG32 maximum preset). After it completes, `compare_sponza_stationary.ps1 -Prefix sponza-loading-fixed` compares matching Camera A captures. Neither script supplies a Falcor parity score.
@@ -60,19 +60,19 @@ Latest local native SDF runs: Camera A and C at 1920x1080, plus a scripted 160 c
 Run PowerShell from the repository root, with Zig on PATH and DXC installed. Each script builds its own harness unless a prerequisite is shown. Run GPU checks sequentially.
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_material_specular.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_filtered_gather.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_gather_activation.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_gdf_raw_composite.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_gdf_raw_lifecycle.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_surface_geometric_normal.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_rc_trace_exhaustion.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/repair_sponza_decal_normals.ps1 -Mode Audit
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/rendering/test_material_specular.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/rendering/test_filtered_gather.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/rendering/test_gather_activation.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/rendering/test_gdf_raw_composite.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/rendering/test_gdf_raw_lifecycle.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/rendering/test_surface_geometric_normal.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/rendering/test_rc_trace_exhaustion.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/rendering/repair_sponza_decal_normals.ps1 -Mode Audit
 
 # Build shared GPU fixtures, then run the maximum-resolution controls.
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_sdf_window.ps1 -CompileOnly
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_sdf_refined_controls.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_sdf_diffuse_gpu.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/rendering/test_sdf_window.ps1 -CompileOnly
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/rendering/test_sdf_refined_controls.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/rendering/test_sdf_diffuse_gpu.ps1
 ```
 
 Recorded focused results include material energy 686/686, filter/reprojection 8714/8714, activation 192/192, raw compositor 210/210 (including 200 bitwise comparisons with the preserved expanded-field reference), resource lifecycle 34/34, geometric normals 11/11 and RC exhaustion 12/12. The five final reflection and diffuse GPU controls had maximum channel error 0.000195. These harnesses complement native scene testing; they do not certify the entire renderer.
@@ -84,8 +84,8 @@ Additional runners cover quaternion order, input, mesh BVH, exposure reset, load
 These assertions remain enabled. Reproduce after building shared GPU fixtures:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_sdf_surface_origin.ps1 -Label axis
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_sdf_dynamic_trace.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/rendering/test_sdf_surface_origin.ps1 -Label axis
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/rendering/test_sdf_dynamic_trace.ps1
 ```
 
 - The surface receiver fixture leaks one of 32 rays for some seed/orientation combinations (maximum channel error 0.009328). The ideal grazing-plane fixture passes 14/15; the ray with normal cosine 0.01 exhausts 256 steps.
@@ -96,7 +96,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_sdf_dynamic_tra
 
 ## Git contents and local evidence
 
-Commit source code, shaders, reusable runners/fixtures, sample scenes, the repaired tracked mesh, launchers and reports. `scripts/fixtures/gdf_expanded_before_raw.h` intentionally freezes the old compositor for the 200 preservation checks; it must not be regenerated from the current implementation.
+Commit source code, shaders, reusable runners/fixtures, sample scenes, the repaired tracked mesh, launchers and reports. `scripts/rendering/fixtures/gdf_expanded_before_raw.h` intentionally freezes the old compositor for the 200 preservation checks; it must not be regenerated from the current implementation.
 
 Do not commit generated executables/libraries, compiled shaders, caches, capture PNGs, logs, exit/argument files, metrics/hashes, test artifact folders, the original mesh backup or the downloaded Lumen paper. `.gitignore` covers these Sponza artifacts without hiding the test sources. No local evidence files were deleted.
 

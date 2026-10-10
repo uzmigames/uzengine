@@ -3,7 +3,7 @@
 ## Stage 0 gate, registered 2026-10-09 before the first build of the registry
 
 Build before: Debug of 2cc2e85c (uzengine.exe fnv1a64:c4cf401970c78226), captured with
-`python scripts/test_rg_states_identity.py --capture .screenshots/rg-states/before-2cc2e85c`
+`python scripts/rendering/test_rg_states_identity.py --capture .screenshots/rg-states/before-2cc2e85c`
 (7 cases x 2 processes; the five small scenes bit-identical between their processes, pre-load 3-5 frames;
 Sponza pose W at frame 237 with both processes at a 44-frame pre-load, max 1 code value apart).
 
@@ -11,7 +11,7 @@ S0 passes when all of these hold on the Debug build with the registry:
 1. `test_runtime --gtest_filter=RenderGraphStates*` all pass, including the negative control (today's
    claims fail on every audited pattern and the observe mode names them);
 2. `test_runtime --gtest_filter=RenderGraphTest*` unchanged (all pass);
-3. `python scripts/test_rg_states_identity.py --compare .screenshots/rg-states/before-2cc2e85c <after>`:
+3. `python scripts/rendering/test_rg_states_identity.py --compare .screenshots/rg-states/before-2cc2e85c <after>`:
    7 of 7 cases unchanged by the harness rule (a process paired with a before process of the same
    pre-load length; bit-identical where the before processes are, else within their spread);
 4. `--observe <after>` lists the audit's graph-visible items in the cases built for them: the froxel
@@ -55,7 +55,7 @@ Debug build of the registry commit (uzengine.exe 10:11, the binary of the final 
    spread at equal pre-load length).
 3. Observe inventory: every item the gate named, in its case, except the DBuffer, which the decal
    reference never imports (it uses mesh decals); `sample/projects/decal_test.uzproject` lists DBuffer_A/B/C
-   (claimed RenderTarget, tracked ShaderResource 132 times). Table in docs/analysis/render-graph-states.md.
+   (claimed RenderTarget, tracked ShaderResource 132 times). Table in docs/analysis/rendering-arch/render-graph/render-graph-states.md.
    Not exercised: SkyCubemap re-captures, the VFX mesh buffers, the manual barriers (stage 3).
 
 Gate S0 passes. Two runs on the way failed and are recorded, not hidden:

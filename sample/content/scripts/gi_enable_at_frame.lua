@@ -1,8 +1,8 @@
 -- Switches SDF GI on at a fixed frame: the scene loads with `r.RadianceCache` 0, so no mesh
 -- distance field exists, and the renderer must bake (or fetch from its cache) every field in the
--- background once the CVar flips (lighting block B, item 3: scripts/test_sdf_bake_cache.py,
+-- background once the CVar flips (lighting block B, item 3: scripts/rendering/test_sdf_bake_cache.py,
 -- gates C3 and C5). Attached to an entity of scenes/sponza-gi-runtime-enable.uzscene
--- (scripts/sponza_gi_runtime_enable.py writes that scene variant and its project).
+-- (scripts/rendering/sponza_gi_runtime_enable.py writes that scene variant and its project).
 
 local frame = 0
 local ENABLE_AT = 60

@@ -2,7 +2,7 @@
 
 ## Why
 
-On 2026-10-09 the render-graph state harness (`scripts/test_rg_states_identity.py`) compared a build whose RT UV
+On 2026-10-09 the render-graph state harness (`scripts/rendering/test_rg_states_identity.py`) compared a build whose RT UV
 test pass failed to initialise (a wrong payload qualifier, so its 1920x1080 UAV texture and two descriptors were
 never allocated) with the build before it. The reflection, fog-shaft and path-tracer references moved by one
 code value at 50, 997 and 1 pixels; the local-shadow, decal and HDRI references stayed bit-identical; with the

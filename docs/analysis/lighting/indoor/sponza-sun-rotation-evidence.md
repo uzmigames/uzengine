@@ -16,7 +16,7 @@ Inspected 2026-09-06. Native CPU tests use production math sources; no GPU was u
 - Correct documented composition: `(0.106699, 0.548919, 0.829038)`, solar elevation 56 degrees.
 - Minimal fix: `XMQuaternionMultiply(XMQuaternionMultiply(qRoll, qPitch), qYaw)`. General quaternion operator multiplication is unchanged.
 
-`powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_quaternion.ps1` builds the actual quaternion.cpp, mat4.cpp and vector3.cpp with the two existing quaternion GoogleTest suites. Added regressions exercise the authored Sponza direction, zenith with 90-degree yaw, and three combined-axis Euler round trips.
+`powershell -NoProfile -ExecutionPolicy Bypass -File scripts/rendering/test_quaternion.ps1` builds the actual quaternion.cpp, mat4.cpp and vector3.cpp with the two existing quaternion GoogleTest suites. Added regressions exercise the authored Sponza direction, zenith with 90-degree yaw, and three combined-axis Euler round trips.
 
 Baseline: 35/38 passed; all three new regressions failed. After correction: 38/38 passed. Logs: `scripts/test_quaternion_before.log` and `scripts/test_quaternion_after.log`.
 

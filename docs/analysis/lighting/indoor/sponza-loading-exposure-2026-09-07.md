@@ -47,11 +47,11 @@ Da abertura até a captura prolongada, o piso ao sol varia +0.8619% em luminânc
 ## Reprodução
 
 ```powershell
-scripts\run_sponza_max_quality.bat
-powershell -File scripts/test_scene_readiness.ps1
-powershell -File scripts/test_exposure_reset.ps1
-powershell -File scripts/verify_sponza_loading.ps1
-powershell -File scripts/compare_sponza_stationary.ps1 -Prefix sponza-loading-fixed
+scripts\rendering\run_sponza_max_quality.bat
+powershell -File scripts/rendering/test_scene_readiness.ps1
+powershell -File scripts/rendering/test_exposure_reset.ps1
+powershell -File scripts/rendering/verify_sponza_loading.ps1
+powershell -File scripts/rendering/compare_sponza_stationary.ps1 -Prefix sponza-loading-fixed
 ```
 
 F5 ativa/restaura a câmera livre; WASD move; botão direito com mouse olha; Espaço/Ctrl sobe/desce; Shift acelera. A preparação dos campos pode levar minutos. A validação automatizada usa janelas iniciadas com `WindowStyle Hidden` e capturas nativas do renderer. Os controles de entrada não foram modificados nesta etapa; sua evidência anterior permanece no relatório de reflexos locais.

@@ -39,7 +39,7 @@
 > - **N4.** The DDGI atlases and ray buffers (about 15 MiB) are allocated even with DXR GI off
 >   (`scene_renderer_init.cpp:748-761`, whose comment says "~256 KB"). Allocate them on demand, or
 >   document the cost.
-> - **N5** (optional): a DDGI leak harness on the `scripts/probe_side_reference.py` SOLID rooms.
+> - **N5** (optional): a DDGI leak harness on the `scripts/rendering/probe_side_reference.py` SOLID rooms.
 >
 > **Paths used in the notes.**
 > - `frame_constants.cpp` = `runtime/engine/renderer/frame/frame_constants.cpp`
@@ -151,8 +151,8 @@
   >
   > The radiance-cache half became true with the September port. The original gate of 3.5 (move an
   > object, and the probes darken within 4 frames) was dropped when the item was ticked. Block B.2's
-  > `scripts/test_gdf_regional.py` covers that case now; its gate G3e, for the arrival transient, still
-  > fails (8.83 % against 5 %, `docs/analysis/lighting-block-b-02-gdf-incremental.md:79`).
+  > `scripts/rendering/test_gdf_regional.py` covers that case now; its gate G3e, for the arrival transient, still
+  > fails (8.83 % against 5 %, `docs/analysis/lighting/uzengine/sponza-lighting-2026-10/lighting-block-b-02-gdf-incremental.md:79`).
 
 ## 4. DDGI (DXR Ray Traced Probe Update)
 
@@ -163,14 +163,14 @@
   >   (`ddgi_probe_update_cs.hlsl:72`), not Sloan L2 SH.
   > - `g_probeOffset` is declared "Reserved for temporal probe spreading" and never read
   >   (`ddgi_probe_update_cs.hlsl:39`, `ddgi_probe_trace_cs.hlsl:35`), so every probe traces every frame
-  >   (`docs/analysis/lighting-block-b-06-ddgi-dedup.md:101`).
+  >   (`docs/analysis/lighting/uzengine/sponza-lighting-2026-10/lighting-block-b-06-ddgi-dedup.md:101`).
   >
   > At the tick, hits were shaded with a hard-coded white +Z sun, a constant albedo of 0.18 and a fixed
   > sky (0.6, 0.7, 0.9), without sun visibility (`29c83ba5`: `ddgi_system.cpp:125-135`,
   > `ddgi_probe_update_cs.hlsl:184-193`). The scene's sun and sky, the distance-field albedo and normal,
   > and a shadow ray came later (`ddgi_probe_common.hlsli:241-286`). Material emissive is still missing;
   > the only emissive source is the VFX injection (`ddgi_probe_update_cs.hlsl:238-297`). The writer is
-  > gated today by `scripts/test_ddgi_dedup.py` 6/6 (block B.6).
+  > gated today by `scripts/rendering/test_ddgi_dedup.py` 6/6 (block B.6).
 - [x] 4.2 `DDGISystem` class added (`engine/renderer/gi/ddgi_system.{h,cpp}`). Owns the irradiance + depth atlas textures, registers their bindless SRV/UAV slots, exposes `SetGridOrigin/SetProbeSpacing`, and provides `DispatchUpdate(cmdList, pipeline, tlasSrv, cbRing, frameIndex)` that records the two-pass atlas write with the right barriers. Member `m_ddgiSystem` lives in `scene_renderer_impl.h`; `CreateResources(device)` is called from `scene_renderer_init.cpp` after the radiance cache.
 - [x] 4.3 Irradiance atlas implemented — `RGBA16Float` 2D texture sized `(probesPerAxis² × (kIrradianceProbeSize+2)) × (probesPerAxis × (kIrradianceProbeSize+2))` = 2048×128 with `kProbesPerAxis=16` and `kIrradianceProbeSize=6`. Per-probe tiles include a 1-texel border for bilinear edge wrap. Written by the DDGI compute shader's irradiance pass (`g_atlasMode=0`) using cosine-weighted radiance integration (Majercik 2019 §5).
 - [x] 4.4 Depth atlas implemented — `RG16Float` 2D texture (4608×288) storing the per-texel mean distance and mean distance² used by the Chebyshev visibility test. Written by the DDGI compute shader's depth pass (`g_atlasMode=1`) with a sharper cosine weighting (squared) to preserve depth discontinuities.
@@ -194,10 +194,10 @@
   >   tick, because the April writer shaded every hit grey (see 4.1). The untracked handoff
   >   `.rulebook/handoff/LIGHTING_SYSTEM.md:119` (2026-04-10) says the DDGI atlas had no runtime probe
   >   update in Sponza.
-  > - Today's gates (`scripts/test_ddgi_dedup.py` D1-D5, and the energy ratio 0.9662 of
-  >   `scripts/test_gi_energy_gpu.ps1`) check writer equivalence, cost, TLAS reuse and grid energy, not
+  > - Today's gates (`scripts/rendering/test_ddgi_dedup.py` D1-D5, and the energy ratio 0.9662 of
+  >   `scripts/rendering/test_gi_energy_gpu.ps1`) check writer equivalence, cost, TLAS reuse and grid energy, not
   >   bounce colour. The DDGI level has not been compared with a ground truth
-  >   (`docs/analysis/lighting-block-b-06-ddgi-dedup.md:94-96`).
+  >   (`docs/analysis/lighting/uzengine/sponza-lighting-2026-10/lighting-block-b-06-ddgi-dedup.md:94-96`).
   > - With `r.GI.FinalGather 1`, no pixel reads DDGI (`:104-105`).
 
 ## 5. Interior Shadow Enhancement
@@ -205,7 +205,7 @@
 - [x] 5.1 Wire contact shadows into deferred_lighting_ps.hlsl. ComputeContactShadow() now called when r.ContactShadow.Length > 0, multiplied with CSM shadow. Bindless path passes depth SRV from GBufferIndices.
   > **Note (2026-10-08): effective only since `8aeb8917` (block B.4b, 2026-10-06).** Before that commit
   > the march never found an occluder: `r.ContactShadow.Length` 0 and 0.01 were bit-identical
-  > (`docs/analysis/lighting-block-b-04b-contact-shadows.md:17-22`). The march now runs at
+  > (`docs/analysis/lighting/uzengine/sponza-lighting-2026-10/lighting-block-b-04b-contact-shadows.md:17-22`). The march now runs at
   > `deferred_lighting_ps.hlsl:595-614` with `shadow = min(shadow, cs)`. `r.ContactShadow.Length` is the
   > switch (0 disables). `r.ContactShadows`, which the comment at `:596` names, only seeds a
   > pass-inspector entry that nothing reads (`runtime/engine/renderer/frame/frame_lighting.cpp:39`,
@@ -216,10 +216,10 @@
   > **Correction (2026-10-08): the verification could not have shown contact shadows.** The item was
   > ticked in `2e8754c7`, when `r.ContactShadow.Length` defaulted to 0 ("0=off") and Sponza set no
   > contact-shadow CVar, so the march was not even dispatched. It was also dead until `8aeb8917` (block
-  > B.4b, CS2: on and off bit-identical). The B.4b harness (`scripts/test_contact_shadows.py`, 9/9)
+  > B.4b, CS2: on and off bit-identical). The B.4b harness (`scripts/rendering/test_contact_shadows.py`, 9/9)
   > checks the march, not this claim. In Sponza the march darkens 2.9 % of the sun-lit pixels, almost
   > all on the far upper wall (7 cm plaster bands), not on columns and arches, and its strips are
-  > quantised to about 10 cm (`docs/analysis/lighting-block-b-04b-contact-shadows.md:42-47`, `:73-74`).
+  > quantised to about 10 cm (`docs/analysis/lighting/uzengine/sponza-lighting-2026-10/lighting-block-b-04b-contact-shadows.md:42-47`, `:73-74`).
   > GTAO on columns and arches has no harness. Re-verify, or reword the item.
 
 ## 6. Testing
@@ -250,12 +250,12 @@
   > handoff `.rulebook/handoff/LIGHTING_SYSTEM.md:122-123` (2026-04-10) gives Sponza's state then as sky
   > SH plus IBL plus env-MIS, with no world-space diffuse GI solver.
   >
-  > Current Sponza project at 1080p (`docs/analysis/lighting-block-b-01-pass-timings.md:71-76`):
+  > Current Sponza project at 1080p (`docs/analysis/lighting/uzengine/sponza-lighting-2026-10/lighting-block-b-01-pass-timings.md:71-76`):
   > - GPU frame: 21.6 ms.
   > - SDF final gather: 8.6 ms.
   > - DeferredLighting, including the SDF reflections: 8.7 ms.
   > - `RadianceCache_Trace`: 0.72 ms.
-  > - The DDGI writer adds 0.262 ms (`docs/analysis/lighting-block-b-06-ddgi-dedup.md:70`).
+  > - The DDGI writer adds 0.262 ms (`docs/analysis/lighting/uzengine/sponza-lighting-2026-10/lighting-block-b-06-ddgi-dedup.md:70`).
   >
   > Against the original budgets, which were written for 256 probes: DDGI under 2 ms holds. The SDF
   > probe update under 0.5 ms does not (0.72 ms, for 1024 of 4096 probes per frame), and neither does

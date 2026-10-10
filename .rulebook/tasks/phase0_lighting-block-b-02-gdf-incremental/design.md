@@ -51,7 +51,7 @@ If the window moves again before the full recompose the event is skipped and log
 
 Implementation notes (2026-10-05): the region constants are packed 9 bits per axis into three
 DWORDs (12 root constants in all) so the harness-visible layout keeps `clipmapCenter` and the
-world-position formula of the original shader (`scripts/test_gdf_raw_composite.ps1` still compares
+world-position formula of the original shader (`scripts/rendering/test_gdf_raw_composite.ps1` still compares
 the extracted `main` with the frozen original, 210/210). The window origin modulo the resolution is
 computed on the CPU from `centre - extent` (`lround`), so the shader never divides a world position
 by the voxel size. The diagnostic phase offset (`r.GI.GDF.CenterPhaseOffset`) used to shift the
@@ -115,7 +115,7 @@ scene produces no regions and the hash disappears, so the per-frame cost is the 
    invalidations) — task 1.1.
 2. D1 + D2 + FieldCompare rewrite — gates G1 (bit-identity) and G5 (recentre cost <= 25 % of the
    full recompose on clipmap 0); the reference scene `gdf-incremental-reference`
-   (`scripts/gdf_incremental_reference.py`, box moved by `gdf_box_move.lua`) and Sponza both behind
+   (`scripts/rendering/gdf_incremental_reference.py`, box moved by `gdf_box_move.lua`) and Sponza both behind
    `r.GI.GDF.Incremental` (default off until the gates pass).
 3. D3 band gate (Sponza ROIs, reference lighting, cost).
 4. D4 + D5 — gates G2 (no global invalidation while the box moves), G3 (indirect light under the box

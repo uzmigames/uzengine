@@ -332,7 +332,7 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
             // master switch off RTManager::BeginFrame never rebuilds the TLAS, so
             // the writer ran against an EMPTY TLAS — every RayQuery missed and the
             // probes were filled with pure sky (the "brighter DXR path" of
-            // followup-01; caught by scripts/test_gi_energy_gpu.ps1, skyFraction 1.0).
+            // followup-01; caught by scripts/rendering/test_gi_energy_gpu.ps1, skyFraction 1.0).
             const bool rtGiOn = m_rtManager && m_rtManager->IsGIEnabled();
             const uint32_t tlasInstances = m_rtManager ? m_rtManager->GetTLASInstanceCount() : 0u;
             const bool wantDdgi = rtGiOn && tlasInstances > 0u && m_ddgiSystem.IsInitialized();

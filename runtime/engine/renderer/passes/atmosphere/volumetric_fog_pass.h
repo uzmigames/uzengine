@@ -86,7 +86,7 @@ struct VolumetricFogCB {
 
 static_assert(sizeof(VolumetricFogCB) == 256,
     "VolumetricFogCB must be 256 bytes (D3D12 CB alignment)");
-// The HLSL copies declare scalars where a float3 would be padded (scripts/test_cbuffer_layouts.py, block B.4).
+// The HLSL copies declare scalars where a float3 would be padded (scripts/rendering/test_cbuffer_layouts.py, block B.4).
 static_assert(offsetof(VolumetricFogCB, extinctionScale) == 180);
 static_assert(offsetof(VolumetricFogCB, emissiveR) == 184);
 static_assert(offsetof(VolumetricFogCB, fogStartDistance) == 196);

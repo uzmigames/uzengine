@@ -10,7 +10,7 @@
 - [x] 0.9 Dedicated `m_cloudCmdList` member added to SceneRenderer.
 - [x] 0.10 `.claude/rules/shader-entry-point.md` — engine shaders must use `main`, not PSMain/VSMain.
 - [x] 0.11 Lens flare disabled by default (`m_lensFlareEnabled=false`), Lua toggle added.
-- [x] 0.12 (verified 2026-10-08 by `scripts/test_cloud_noise_assets.py` N3 on cloud_test: 180 frames, no device removal, CloudCompute 1.30 ms, with both noise volumes loaded) **BLOCKED** (historical): Cloud compute dispatch causes GPU TDR. Noise bake with trivial shaders works; real Worley noise (29KB shader, 3x3x3 nested loops) crashes GPU. Weather/raymarch/temporal also crash. Root cause: likely shader instruction count or descriptor table validation under bindless root signature. Needs: rewrite noise as precomputed texture load OR optimize Worley to 2x2x2 search OR move to dedicated compute queue with async fence.
+- [x] 0.12 (verified 2026-10-08 by `scripts/rendering/test_cloud_noise_assets.py` N3 on cloud_test: 180 frames, no device removal, CloudCompute 1.30 ms, with both noise volumes loaded) **BLOCKED** (historical): Cloud compute dispatch causes GPU TDR. Noise bake with trivial shaders works; real Worley noise (29KB shader, 3x3x3 nested loops) crashes GPU. Weather/raymarch/temporal also crash. Root cause: likely shader instruction count or descriptor table validation under bindless root signature. Needs: rewrite noise as precomputed texture load OR optimize Worley to 2x2x2 search OR move to dedicated compute queue with async fence.
 
 ## Phase 0c: Cloud Render Graph Migration (moved from phase2a-2.50.0)
 - [ ] 0c.1 Register cloud compute as a proper `rgBuilder.AddPass("Cloud_Raymarch", ...)` with declared resource dependencies (depth SRV read, cloud output UAV write).

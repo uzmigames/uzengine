@@ -2,7 +2,7 @@
 
 ## Why
 
-scripts/test_sdf_gpu.cpp and scripts/test_sdf_window.cpp still bind the pre-block-B layouts: the GDF composite
+scripts/rendering/test_sdf_gpu.cpp and scripts/rendering/test_sdf_window.cpp still bind the pre-block-B layouts: the GDF composite
 takes 13 root DWORDs since ce2caa5e / 0a9cc732, the mesh SDF bake 9 since 8c4d14b6, and sdf_reflections.hlsli samples
 through a WRAP sampler at s3 since ce2caa5e. Their runners (test_sdf_gpu.ps1, test_sdf_window.ps1,
 test_sdf_refined_controls.ps1, test_sdf_surface_origin.ps1, test_sdf_diffuse_gpu.ps1, test_sdf_reflection_energy.ps1)

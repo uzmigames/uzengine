@@ -46,7 +46,7 @@ presets and the team only discovers it visually months later.
 
 ### Add validation script
 
-4. Create `scripts/vfx_validate_presets.ps1` (PowerShell) that:
+4. Create `scripts/vfx/vfx_validate_presets.ps1` (PowerShell) that:
    - Iterates the 22 preset indices.
    - Launches `vfx_viewport_app.exe` with `--start-preset N
      --headless --screenshot <out>.png --screenshot-frame 120
@@ -68,7 +68,7 @@ presets and the team only discovers it visually months later.
 
 - Affected specs: `vfx-viewport-22-preset-cycling` (NEW spec).
 - Affected code: `runtime/demos/vfx_viewport_app/vfx_viewport_app.cpp`
-  (CLI parse + start-preset wire), `scripts/vfx_validate_presets.ps1`
+  (CLI parse + start-preset wire), `scripts/vfx/vfx_validate_presets.ps1`
   (NEW), `docs/engine/25-vfx/85-preset-validation.md` (NEW).
   Baseline screenshot artifacts in
   `e:/UzmiEngine/uzengine/.sandbox/preset-baseline/`.

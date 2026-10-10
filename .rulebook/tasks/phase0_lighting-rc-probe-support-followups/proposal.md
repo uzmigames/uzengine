@@ -3,7 +3,7 @@
 ## Why
 
 sample/projects/sponza.uzproject ships ProbeClassification 3 + ReachRelocate + ReachVisibleSeeds since 6ee6163f,
-but scripts/test_probe_classification.py covers rules 0 and 1 in the QA configuration only; far probes across walls
+but scripts/rendering/test_probe_classification.py covers rules 0 and 1 in the QA configuration only; far probes across walls
 (the cache query has no visibility test) were never measured on a reference with an opening; P2 was never measured
 against an irradiance solution; the H-71 hang's second suspect (the G-buffer position read the cache pass declares
 for the visible seeds) was never examined, and the DDGI diagnostic readback still waits idle; the wall-flicker

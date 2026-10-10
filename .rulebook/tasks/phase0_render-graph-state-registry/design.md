@@ -363,7 +363,7 @@ runtime/build/bin/test_runtime.exe --gtest_filter=RenderGraphStates*:RenderGraph
 
 ### 8.2 Engine runs with `--gpu-validation`
 
-**Command.** Run from the repository root, as `scripts/test_gi_energy_gpu.ps1:17-26` does:
+**Command.** Run from the repository root, as `scripts/rendering/test_gi_energy_gpu.ps1:17-26` does:
 
 ```
 runtime/build/bin/uzengine.exe --project <p> --frames 240 --verbose --gpu-validation [--cvar ...] [--view-mode ...] > gv_<case>.log 2>&1
@@ -385,9 +385,9 @@ runtime/build/bin/uzengine.exe --project <p> --frames 240 --verbose --gpu-valida
 4. `--cvar r.PathTracer.Enable=1`
 5. `--view-mode albedo` (GBuffer-only), and separately `--view-mode lighting` (post-lighting)
 6. `sample/projects/local_shadows_test.uzproject`
-7. `scripts/fog-shaft-reference.uzproject`
+7. `scripts/rendering/fog-shaft-reference.uzproject`
 8. `sample/projects/decal_test.uzproject`
-9. `scripts/sky-rebake-reference.uzproject`
+9. `scripts/rendering/sky-rebake-reference.uzproject`
 10. `sample/projects/hdri_test.uzproject`
 11. Resize: `--cvar r.DynamicResolution.Enabled=1`, or a Lua script calling `uz.cvar.set("r.ScreenPercentage", 75)` and back (`lua_cvar_api.cpp:39`)
 12. A scene using a `mesh_render` emitter (`sample/content/vfx/tests/mesh_sort_shards.uzfx`)

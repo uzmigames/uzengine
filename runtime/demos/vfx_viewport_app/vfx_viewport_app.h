@@ -102,7 +102,7 @@ public:
     /// of the hardcoded `Fire` default. Invalid values fall back to the
     /// hardcoded default (`Fire`) and a `[App] [warning]` is logged.
     /// Used by the preset-validation harness
-    /// (`scripts/vfx_validate_presets.ps1`) to baseline + diff each
+    /// (`scripts/vfx/vfx_validate_presets.ps1`) to baseline + diff each
     /// preset programmatically.
     /// @ref phase17_vfx-viewport-22-preset-validation
     void SetStartPreset(int idx) { m_startPresetIdx = idx; }

@@ -5,7 +5,7 @@
 /// A D3D12 transition names the state the resource is in before it, and the DX12 RHI copies that
 /// `stateBefore` into the barrier verbatim: it keeps no state per resource. Until this registry the render
 /// graph took an import's state on the caller's word, and the callers predicted it. The audit of
-/// 2026-10-08 confirmed 80 cross-frame mismatches (docs/analysis/render-graph-states.md).
+/// 2026-10-08 confirmed 80 cross-frame mismatches (docs/analysis/rendering-arch/render-graph/render-graph-states.md).
 ///
 /// `RgStateRegistry` is the one record of the state each persistent resource is in between graphs:
 ///   * keyed by the generational handle, so a destroyed and recreated texture is a new key and starts in its

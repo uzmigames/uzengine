@@ -59,7 +59,7 @@ that is ~37 s of startup).
 Expansion widens surfaces to make sphere tracing stable, but a widened field closes real openings — a
 100x200 cm window is closed at mesh32/GDF128 and mesh128/GDF128, and stays open only at
 mesh128/GDF256 with the raw field. Expansion is therefore applied during the trace, not stored, and
-`scripts/fixtures/gdf_expanded_before_raw.h` freezes the old compositor so 200 bitwise checks can
+`scripts/rendering/fixtures/gdf_expanded_before_raw.h` freezes the old compositor so 200 bitwise checks can
 prove the expanded output did not change when the raw one was added. Do not regenerate that fixture.
 
 The field's origin is preserved rather than recentred on the camera. A scene revision counter is
@@ -124,7 +124,7 @@ pass. The gathered result **replaces** `cosineIrradiance`; it never adds a secon
 Two activation rules matter: the renderer prepares its resources from the initialised pipeline
 library (not before `ctx.pipelines` exists), and the shared pass slot opens for
 `r.SSGI || r.GI.FinalGather` — gating it on `r.SSGI` alone left the gather silently inactive
-(`samples=0`, sentinel SRV), which `scripts/test_gather_activation.ps1` catches (192/192).
+(`samples=0`, sentinel SRV), which `scripts/rendering/test_gather_activation.ps1` catches (192/192).
 
 ## Reflections (`r.GI.Reflections`)
 
@@ -201,10 +201,10 @@ foreach ($t in 'test_mesh_sdf_bvh','test_gdf_raw_composite','test_gdf_raw_lifecy
                'test_sdf_reflection_firefly','test_rc_recentre_scroll') {
   powershell -NoProfile -ExecutionPolicy Bypass -File "scripts/$t.ps1"
 }
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_radiance_cache_sh.ps1 -Zig (Get-Command zig).Source
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_sdf_window.ps1 -CompileOnly   # shared GPU fixtures
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_sdf_refined_controls.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_sdf_diffuse_gpu.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/rendering/test_radiance_cache_sh.ps1 -Zig (Get-Command zig).Source
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/rendering/test_sdf_window.ps1 -CompileOnly   # shared GPU fixtures
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/rendering/test_sdf_refined_controls.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/rendering/test_sdf_diffuse_gpu.ps1
 ```
 
 Expected: 3082 exact BVH comparisons; 210/210 (200 bitwise); 34/34; 4/4; 12/12; filter PASS; 192/192;
@@ -213,7 +213,7 @@ Expected: 3082 exact BVH comparisons; 210/210 (200 bitwise); 34/34; 4/4; 12/12; 
 ## Related
 
 - `31-energy-and-bias-corrections.md`, `32-graph-material-draw-metadata.md` — the two steps this builds on
-- `.rulebook/tasks/phase0_sponza-parity-03-sdf-gi-radiance-cache/notes.md` — port decisions and the
+- `.rulebook/archive/2026-10-10-phase0_sponza-parity-03-sdf-gi-radiance-cache/notes.md` — port decisions and the
   2026-09-08 regression hunt
 - `docs/analysis/rendering/` — the SponzaTest reports, once task 06 ports them
 
@@ -230,7 +230,7 @@ Expected: 3082 exact BVH comparisons; 210/210 (200 bitwise); 34/34; 4/4; 12/12; 
   as white specks on dark walls beside windows. `r.TAA` (off by default) suppresses ~75–85 % of
   it and is now set in `sample/projects/sponza.uzproject`. No filter was built: in linear radiance, the isolated pixels that reach the TAA output are not
   reflection pixels (ledger H-41, H-68, 2026-09-23; H-68's rule is the re-test), so a project that
-  enables `r.GI.Reflections` sets `r.TAA 1`. Guard: `scripts/test_sdf_reflection_firefly.ps1`.
+  enables `r.GI.Reflections` sets `r.TAA 1`. Guard: `scripts/rendering/test_sdf_reflection_firefly.ps1`.
 
 ## Addendum 2026-09-08 — grid recentre without a blink
 
@@ -256,8 +256,8 @@ Three defects made every probe-cell crossing (≈ 267 cm of camera travel on any
 After the three fixes the vertical sweep reads 83.4 → 83.9 → 84.1 across the crossing with
 adjacent-frame differences at the motion-only level (2.0 % of pixels > 40/255, versus 12.4 % at
 the flash). Repro scenes: `scripts/sponza-longsweep-camera.*` (+X), `scripts/sponza-vertical-camera.*`
-(+Z, the user's pose). Guards: `scripts/test_sdf_reflection_firefly.ps1` (gate),
-`scripts/test_rc_recentre_scroll.ps1` (origin + history scroll, CB layout; re-anchored 2026-10-08 to
+(+Z, the user's pose). Guards: `scripts/rendering/test_sdf_reflection_firefly.ps1` (gate),
+`scripts/rendering/test_rc_recentre_scroll.ps1` (origin + history scroll, CB layout; re-anchored 2026-10-08 to
 the 464-byte layout, 42 checks).
 
 Related, same day (`phase0_sponza-followup-07`): the TAA jitter was applied to the combined

@@ -103,7 +103,7 @@ The GPU frequency is queried once at init via `ID3D12CommandQueue::GetTimestampF
 | Integration | Automatic via RDG pass system | Manual | Automatic: `RgBuilder::Execute` brackets every render-graph pass; scopes outside the graph (RT build, cloud compute, atmosphere bake, VFX) call the device profiler directly |
 | Output | Unreal Insights timeline + CSV | N/A | `--diag` report `timing` (mean / min / max ms and samples per pass, `_frame` span), `--run-manifest` `gpu_ms`, per-frame log with `r.GpuProfiler.Log` |
 
-**Done** (2026-10-05, lighting block B item 1): the render graph inserts the timestamps around every pass, `uzengine.exe --diag` enables the profiler and reports the statistics of its measured window (`--timing-first`, default = after the first quarter of the diagnostic run), and `--run-manifest` / `--gpu-profile` enable it too. Guard: `scripts/test_diag_timing.py`.
+**Done** (2026-10-05, lighting block B item 1): the render graph inserts the timestamps around every pass, `uzengine.exe --diag` enables the profiler and reports the statistics of its measured window (`--timing-first`, default = after the first quarter of the diagnostic run), and `--run-manifest` / `--gpu-profile` enable it too. Guard: `scripts/rendering/test_diag_timing.py`.
 
 ## Rules
 

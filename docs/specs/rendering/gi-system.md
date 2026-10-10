@@ -19,15 +19,15 @@ UzEngine implements a **three-tier SDF global illumination system** (Wright 2015
 2. **Tier 2: Global Distance Field** — 4-level cascaded clipmaps (64×64×64 each) compositing all mesh SDFs
 3. **Tier 3: Radiance Cache** — World-space probe grid (16×16×16 = 4096 probes) with L2 spherical harmonics
 
-> **Brixelizer GI, listed here as Tier 4 until 2026-10-08, is dormant and contributes nothing.** The AMD FidelityFX Brixelizer integration (SDK 1.1.4) exists as source only: the build compiles it as a no-op stub because the MSVC-built wrapper DLL it needs is never built, the pass has not been constructed since 2026-04-10 or dispatched since 2026-04-07, and its task (`phase0_brixelizer-gi-integration`) was closed as superseded on 2026-10-08. The facts are in the Tier 4 section at the end of this page. The GI that runs on Sponza is Tiers 1-3 with the SDF final gather (`r.GI.FinalGather`) and SDF reflections (`r.GI.Reflections`), all enabled by `sample/projects/sponza.uzproject:12-14` and described in `docs/engine/12-rendering/33-sdf-gi-final-gather.md`; DDGI (`r.RayTracing.GI`) is the DXR option (`docs/analysis/lighting-block-b-06-ddgi-dedup.md`).
+> **Brixelizer GI, listed here as Tier 4 until 2026-10-08, is dormant and contributes nothing.** The AMD FidelityFX Brixelizer integration (SDK 1.1.4) exists as source only: the build compiles it as a no-op stub because the MSVC-built wrapper DLL it needs is never built, the pass has not been constructed since 2026-04-10 or dispatched since 2026-04-07, and its task (`phase0_brixelizer-gi-integration`) was closed as superseded on 2026-10-08. The facts are in the Tier 4 section at the end of this page. The GI that runs on Sponza is Tiers 1-3 with the SDF final gather (`r.GI.FinalGather`) and SDF reflections (`r.GI.Reflections`), all enabled by `sample/projects/sponza.uzproject:12-14` and described in `docs/engine/12-rendering/33-sdf-gi-final-gather.md`; DDGI (`r.RayTracing.GI`) is the DXR option (`docs/analysis/lighting/uzengine/sponza-lighting-2026-10/lighting-block-b-06-ddgi-dedup.md`).
 
 The radiance cache is updated incrementally. Each frame, `r.GI.RadianceCache.ProbesPerFrame` (1024) of its 4096 probes each trace `r.GI.RadianceCache.RaysPerProbe` (32, at most 64) rays through the global distance field. The rays follow a Hammersley sequence over the full sphere. Their radiance is projected into L2 SH and blended with the probe's history at α = 0.12 (`RadianceCache::kTemporalBlendAlpha`; `runtime/engine/renderer/gi/radiance_cache.h:91-103`, `runtime/shaders/runtime/gi/radiance_cache_trace_cs.hlsl:358-374`, `:622-630`).
 
 Deferred lighting takes the indirect diffuse of each pixel from one source, by priority: DDGI, then the radiance cache, then the light probe volume (inert), then the sky SH (`runtime/shaders/runtime/lighting/deferred_lighting_ps.hlsl:739-1060`). When the SDF final gather is on, it replaces that result in every pixel (`:1148-1155`). See [Irradiance sources and priority](#irradiance-sources-and-priority-as-built-2026-10-08) below. (Corrected 2026-10-08 under `phase0_indoor-lighting-system`: this paragraph used to describe 32 Fibonacci rays per probe per frame and the cached irradiance applied to all pixels, and the feature list below gave α = 0.05.)
 
 **Key features:**
-- Camera movement updates the GI in real time (toroidal clipmaps, only the entering slabs are recomposed since 2026-10-05); a mesh that moves, appears or changes material recomposes only its neighbourhood (per-entity diff, truncation band `r.GI.GDF.BandVoxels`) and only the radiance-cache probes and SSGI pixels inside the change boxes drop their history — a moving object no longer resets the GI (block B.2 phases 3-4, `docs/analysis/lighting-block-b-02-gdf-incremental.md`)
-- Temporal coherence — EMA blending (α = 0.12 as built; the March design said 0.05) reduces noise. A freshly loaded scene keeps converging for about 200 frames (`docs/analysis/lighting-block-b-02-gdf-incremental.md:152-154`)
+- Camera movement updates the GI in real time (toroidal clipmaps, only the entering slabs are recomposed since 2026-10-05); a mesh that moves, appears or changes material recomposes only its neighbourhood (per-entity diff, truncation band `r.GI.GDF.BandVoxels`) and only the radiance-cache probes and SSGI pixels inside the change boxes drop their history — a moving object no longer resets the GI (block B.2 phases 3-4, `docs/analysis/lighting/uzengine/sponza-lighting-2026-10/lighting-block-b-02-gdf-incremental.md`)
+- Temporal coherence — EMA blending (α = 0.12 as built; the March design said 0.05) reduces noise. A freshly loaded scene keeps converging for about 200 frames (`docs/analysis/lighting/uzengine/sponza-lighting-2026-10/lighting-block-b-02-gdf-incremental.md:152-154`)
 - Memory efficient — ~6 MB GPU memory for full 3-tier system
 - Cascaded coverage — 2.5 km far-field distance across 4 GDF cascades
 
@@ -392,7 +392,7 @@ The radiance cache is a world-space probe grid with L2 spherical harmonics. Each
 >   can relocate them (`r.GI.RadianceCache.ProbeClassification`, `.ReachRelocate`;
 >   `radiance_cache.cpp:64-75`; the Sponza project sets 3 and 1).
 > - **Cost:** the trace measures 0.72 ms at 1080p on Sponza
->   (`docs/analysis/lighting-block-b-01-pass-timings.md:76`).
+>   (`docs/analysis/lighting/uzengine/sponza-lighting-2026-10/lighting-block-b-01-pass-timings.md:76`).
 
 ### Probe Grid Configuration
 
@@ -531,7 +531,7 @@ EMA blending over history provides temporal stability with low latency:
 SH_new = (1 - α) × SH_old + α × SH_traced
 ```
 
-where α = 0.05 in this design. As built, α = 0.12 (`RadianceCache::kTemporalBlendAlpha`). With each probe retraced every fourth frame, that is about 33 frames per e-fold before the multi-bounce feedback, and a freshly loaded scene keeps converging for about 200 frames (`docs/analysis/lighting-block-b-02-gdf-incremental.md:112-117`, `:152-154`).
+where α = 0.05 in this design. As built, α = 0.12 (`RadianceCache::kTemporalBlendAlpha`). With each probe retraced every fourth frame, that is about 33 frames per e-fold before the multi-bounce feedback, and a freshly loaded scene keeps converging for about 200 frames (`docs/analysis/lighting/uzengine/sponza-lighting-2026-10/lighting-block-b-02-gdf-incremental.md:112-117`, `:152-154`).
 
 ### Root Constants for Trace
 
@@ -884,7 +884,7 @@ Frame N:
 
 ### Phase E: Disk Persistence and Optimization
 - [ ] **SDF disk caching** — Save baked mesh SDFs to `.uzsdf` format; reload on level load
-- [x] **Partial clipmap scrolling** — done 2026-10-05: recentres recompose the entering slabs (toroidal storage, `r.GI.GDF.Incremental`) and instance changes recompose their neighbourhood (per-entity diff, band `r.GI.GDF.BandVoxels`) with region-scoped history resets in the radiance cache and the SSGI accumulation; see `docs/analysis/lighting-block-b-02-gdf-incremental.md`
+- [x] **Partial clipmap scrolling** — done 2026-10-05: recentres recompose the entering slabs (toroidal storage, `r.GI.GDF.Incremental`) and instance changes recompose their neighbourhood (per-entity diff, band `r.GI.GDF.BandVoxels`) with region-scoped history resets in the radiance cache and the SSGI accumulation; see `docs/analysis/lighting/uzengine/sponza-lighting-2026-10/lighting-block-b-02-gdf-incremental.md`
 - [ ] **Probe LOD** — Lower ray count for distant probes; higher rate for near-camera probes
 - [ ] **Cone tracing for soft shadows** — 3D cone march for contact shadow refinement
 
@@ -934,7 +934,7 @@ Frame N:
 - **Total:** ~3.7 MB GPU VRAM (negligible for modern GPUs)
 
 ### Temporal Stability
-EMA blending provides temporal coherence while remaining responsive. The design value was α = 0.05 (a 20-frame window); as built it is 0.12 with each probe retraced every fourth frame, about 33 frames per e-fold, and a freshly loaded scene converges over about 200 frames (`docs/analysis/lighting-block-b-02-gdf-incremental.md:112-117`, `:152-154`).
+EMA blending provides temporal coherence while remaining responsive. The design value was α = 0.05 (a 20-frame window); as built it is 0.12 with each probe retraced every fourth frame, about 33 frames per e-fold, and a freshly loaded scene converges over about 200 frames (`docs/analysis/lighting/uzengine/sponza-lighting-2026-10/lighting-block-b-02-gdf-incremental.md:112-117`, `:152-154`).
 
 ### Cascading Strategy
 Cascades are updated on a round-robin schedule:
@@ -1040,7 +1040,7 @@ is never read) and no specular term: the `diffuseSrv + 1` specular read was remo
 and the "+1" SRV convention does not hold, because SRVs and UAVs come from one allocator
 (`dx12_texture_creation.cpp:195`, `:232`). The figures this section used to give ("~0.5 ms" for the
 radiance cache, "~2-4 ms" for Brixelizer) were estimates. The measured radiance-cache trace is
-0.72 ms at 1080p on Sponza (`docs/analysis/lighting-block-b-01-pass-timings.md:76`), and no
+0.72 ms at 1080p on Sponza (`docs/analysis/lighting/uzengine/sponza-lighting-2026-10/lighting-block-b-01-pass-timings.md:76`), and no
 measured Brixelizer timing exists.
 
 ### Build gate and what a revival would need

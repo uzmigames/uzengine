@@ -20,6 +20,7 @@ Path: [`lighting/`](./lighting/) — See [lighting/INDEX.md](./lighting/INDEX.md
 | [`lighting/global-illumination/`](./lighting/global-illumination/) | Generic GI references (ground radiance, etc.). |
 | [`lighting/indoor/`](./lighting/indoor/) | Sponza, Frostbite/CryEngine/Three.js/Godot indoor GI. |
 | [`lighting/uzengine/`](./lighting/uzengine/) | UzEngine gap analysis + AAA default pipeline redesign. |
+| [`lighting/uzengine/sponza-lighting-2026-10/`](./lighting/uzengine/sponza-lighting-2026-10/INDEX.md) | Sponza lighting blocks A/B (2026-10) and their follow-up corrections. |
 
 ---
 
@@ -107,6 +108,8 @@ Path: [`rendering-arch/`](./rendering-arch/)
 | [`rendering-arch/gap-analysis/`](./rendering-arch/gap-analysis/) | Feature matrices, UE5 implementation checklists. |
 | [`rendering-arch/overview/`](./rendering-arch/overview/) | Strategic plan, renderer audit, postmortem. |
 | [`rendering-arch/debug/`](./rendering-arch/debug/) | Debug visualization. |
+| [`rendering-arch/flicker/`](./rendering-arch/flicker/) | Sponza flicker programme: hypothesis ledger, gather pre-registration, capture determinism. |
+| [`rendering-arch/render-graph/`](./rendering-arch/render-graph/) | Render-graph resource states across frames. |
 
 ---
 

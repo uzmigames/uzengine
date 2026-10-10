@@ -34,6 +34,6 @@ entering slab would produce — so an incremental path can be held to bit-identi
 
 ## Impact
 - Affected specs: gdf-incremental-update (new)
-- Affected code: runtime/engine/renderer/gi/global_distance_field.{h,cpp}; runtime/shaders/runtime/gi/global_sdf_composite_cs.hlsl, gdf_surface.hlsli, sdf_reflections.hlsli, ssgi_surface.hlsli; runtime/engine/renderer/frame/frame_gi_passes.cpp; runtime/engine/renderer/gi/radiance_cache.{h,cpp}; runtime/engine/renderer/passes/gi/ssgi_renderer.cpp; runtime/engine/renderer/scene/scene_sync.cpp; runtime/engine/ecs/scene/scene_component.h; tests test_gi_gpu.cpp, scripts/test_gdf_raw_lifecycle.ps1, new scripts/test_gdf_incremental.py
+- Affected code: runtime/engine/renderer/gi/global_distance_field.{h,cpp}; runtime/shaders/runtime/gi/global_sdf_composite_cs.hlsl, gdf_surface.hlsli, sdf_reflections.hlsli, ssgi_surface.hlsli; runtime/engine/renderer/frame/frame_gi_passes.cpp; runtime/engine/renderer/gi/radiance_cache.{h,cpp}; runtime/engine/renderer/passes/gi/ssgi_renderer.cpp; runtime/engine/renderer/scene/scene_sync.cpp; runtime/engine/ecs/scene/scene_component.h; tests test_gi_gpu.cpp, scripts/rendering/test_gdf_raw_lifecycle.ps1, new scripts/rendering/test_gdf_incremental.py
 - Breaking change: NO (defaults reproduce the full recompose until the gates pass; the incremental path is behind a CVar until then)
 - User benefit: dynamic objects and streaming no longer reset the GI; recentres and scene edits cost a slab, not four volumes.

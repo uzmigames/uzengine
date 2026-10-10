@@ -680,7 +680,7 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
 
 // Note for anyone changing the region-dump layout: this build does not treat headers as
 // dependencies, so editing only `region_dump_layout.h` can leave the binary stale while
-// `zig build` still reports success. `scripts/test_binary_layout.py` catches that by
+// `zig build` still reports success. `scripts/rendering/test_binary_layout.py` catches that by
 // requiring the compiled engine to write the layout the sources declare.
 
 // build-cache: PerFrameCB gained sdfSampleRotation (headers are not tracked as dependencies)

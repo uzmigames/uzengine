@@ -8,7 +8,7 @@
 ///      Section 5 — Light injection into froxel grid
 /// @constants The sun colour carries the intensity (sunIntensity is 1): the sun is applied once.
 /// @constants Shared constant buffer: scalars only (an HLSL float3 at a 4-byte-aligned offset
-///            moves to the next 16-byte row; scripts/test_cbuffer_layouts.py checks the offsets).
+///            moves to the next 16-byte row; scripts/rendering/test_cbuffer_layouts.py checks the offsets).
 
 #include "../common/constants.hlsli"
 

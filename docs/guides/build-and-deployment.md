@@ -256,19 +256,19 @@ runtime/build/bin/uzengine.exe --project sample/projects/pbr_showcase.uzproject 
   rectangle with the frame it rendered and the readback rejects a file whose stamps disagree, so a
   stale or partial readback can never be analysed as data; frames still in flight are flushed at
   shutdown. Bindless (DX12 SM6.6+) only, three-frame delayed readback, no GPU stall. Read them with
-  `scripts/flicker/regiondump.py`; the record layout is documented in
-  `runtime/shaders/runtime/common/region_dump.hlsli`. Guard: `scripts/test_region_capture.py`.
+  `scripts/rendering/flicker/regiondump.py`; the record layout is documented in
+  `runtime/shaders/runtime/common/region_dump.hlsli`. Guard: `scripts/rendering/test_region_capture.py`.
 - TAA diagnostic CVars (all default to the production behaviour, added 2026-09-09 for
   followup-10): `r.TAA.JitterScale` (0 = accumulation with no sub-pixel offset, which is not the same
   as `r.TAA.JitterSequenceLength=1`), `r.TAA.ReconstructionMode` (1 spatial weights only, 2 centre tap
   only, 3 full 3x3), `r.TAA.ClampMode` (1 none, 2 variance box only, 3 AABB only) and
-  `r.TAA.BlendMode` (1 fixed `r.TAA.CurrentFrameWeight`). Guard: `scripts/test_taa_modes.py`.
+  `r.TAA.BlendMode` (1 fixed `r.TAA.CurrentFrameWeight`). Guard: `scripts/rendering/test_taa_modes.py`.
 - GI diagnostic CVars (default to production behaviour, added 2026-09-09 for followup-12):
   `r.GI.Reflections.FreezeSeed` (freezes the per-frame sampling seed of the SDF reflections **and**
   the world gather; -1 = frame count) and `r.GI.RadianceCache.FreezeAfterFrame` (from that absolute
   frame on, the probes stop updating and the converged SH buffer is held; -1 = never). The region
   dump preset `--region-fields components|full` adds the per-pixel lighting components and the
-  active-path bitmask. Guard: `scripts/test_lighting_components.py`.
+  active-path bitmask. Guard: `scripts/rendering/test_lighting_components.py`.
 - Later followup-12 diagnostics (default to production behaviour; added 2026-09-10..16, listed here
   2026-10-08): `r.GI.FinalGather.FreezeAfterFrame` (after that absolute frame, i.e. frame index > N,
   the final gather is no longer dispatched, so its output texture holds its last contents while the
@@ -278,11 +278,11 @@ runtime/build/bin/uzengine.exe --project sample/projects/pbr_showcase.uzproject 
   sample sequence by whole frames; H-31) and `r.Translucency.DepthTest` (0 builds the forward
   translucent pipeline without a depth test, which changes the image and is never a shipping
   setting; read when the pipeline is created; H-47). `--component-replay <file>` replays recorded AO
-  and specular per frame and per pixel (built by `scripts/make_component_replay.py`; H-28c). The
+  and specular per frame and per pixel (built by `scripts/rendering/make_component_replay.py`; H-28c). The
   region dump carries what the translucent pass consumed in LIGHTING_EXTRA +5..+10 and the TAA
   plus-filter taps and weights in TAA_EXTRA +4..+10 (`region_dump.hlsli`); the gather studies
   (H-30..H-32) read the final gather's own stages and its eight rays through
-  `--region-fields gather` (or `gather+extra`). `scripts/test_diagnostic_resources.py` guards the
+  `--region-fields gather` (or `gather+extra`). `scripts/rendering/test_diagnostic_resources.py` guards the
   replay buffer's release; the CVars have no standing guard, and each study script checks its own
   controls.
 - GDF diagnostic CVars (default to production behaviour, added 2026-09-09 for followup-13):
@@ -294,18 +294,18 @@ runtime/build/bin/uzengine.exe --project sample/projects/pbr_showcase.uzproject 
   The region dump format is now version 3: a 144-byte camera block (unjittered view-projection, the
   previous frame's, camera position) follows the header, which is what lets an analysis track a world
   point across frames; `--region-fields motion` is the cheap preset for that (48 bytes per pixel).
-  Guard: `scripts/test_gdf_controls.py`.
+  Guard: `scripts/rendering/test_gdf_controls.py`.
 - Correction and material CVars (default to production behaviour, added 2026-09-09 for
   followup-14): `r.TAA.ReconstructionHdrWeightExponent` (1.0 = the production Karis 2014 HDR
   weighting inside the TAA reconstruction filter, 0 = no weighting and bit-identical to
   `r.TAA.ReconstructionMode=1`, values between the two trade recovered bright-feature energy
   against light bleeding into dark neighbours). It is **opt-in**: it failed four of the seven
   preregistered acceptance gates, so the default was not changed - see
-  `docs/analysis/flicker-hypothesis-ledger.md` rows H-21..H-24.
+  `docs/analysis/rendering-arch/flicker/flicker-hypothesis-ledger.md` rows H-21..H-24.
   `r.Material.RoughnessOverride` and `r.Material.MetallicOverride` (-1 = off) force a material
   class into the G-buffer, which is the only way to measure a change on mirror or glossy surfaces
-  in a scene that contains none. Guards: `scripts/test_correction_gates.py`,
-  `scripts/diagnose_cvar_ulp.py`.
+  in a scene that contains none. Guards: `scripts/rendering/test_correction_gates.py`,
+  `scripts/rendering/diagnose_cvar_ulp.py`.
 - `r.TAA.ClampFreezeAfterFrame` (default -1 = off, added 2026-09-10 for ledger H-25b): from that
   absolute frame on, the TAA resolve reuses the clamp box it captured up to then instead of
   recomputing it, so the bounds stop moving while the reconstruction, exposure and lighting are
@@ -313,14 +313,14 @@ runtime/build/bin/uzengine.exe --project sample/projects/pbr_showcase.uzproject 
   camera diagnostic**, not a candidate correction: screen-space bounds frozen in place are
   meaningless once the camera moves. Measured result: oscillation -3.4 % (below the ROI's decision
   threshold) and error against the correctly resampled image +14.3 %, so it was rejected.
-  Guard: `scripts/run_clamp_freeze_study.py`, whose controls verify the freeze applied and the
+  Guard: `scripts/rendering/run_clamp_freeze_study.py`, whose controls verify the freeze applied and the
   reconstruction stayed identical before any number is interpreted.
 - Capture reproducibility: the renderer is **not** bit-reproducible across processes. Four captures
   of an identical configuration differ in up to 795 of 786 432 recorded values, by up to 1.6e-2 in
   linear radiance. Aggregates over a 256-frame run reproduce to ~1e-13, so run-to-run comparison of
   statistics is sound, but any assertion of bit-identity must instead compare against a measured
-  per-configuration floor (`scripts/diagnose_cvar_ulp.py`). Measure that floor from repeats, not
-  from one pair. Since 2026-10-08, `scripts/test_correction_gates.py` captures 4 interleaved repeats
+  per-configuration floor (`scripts/rendering/diagnose_cvar_ulp.py`). Measure that floor from repeats, not
+  from one pair. Since 2026-10-08, `scripts/rendering/test_correction_gates.py` captures 4 interleaved repeats
   per configuration and judges an equivalence by max(between) <= max(within) on max |delta|, because
   its single-pair floor passed or failed depending on which pair formed it (followup-14 notes,
   Close-out (2026-10-08)). Processes land in a few discrete states: the eight captures of
@@ -330,7 +330,7 @@ runtime/build/bin/uzengine.exe --project sample/projects/pbr_showcase.uzproject 
   configuration: on those RGB records, max(between) <= max(within) on max |delta| fails on 16 of 280
   splits at 3 vs 3 processes and 1 of 35 at 4 vs 4 (on per-pixel luminance, which
   `test_correction_gates.py` compares, all 35 splits at 4 vs 4 pass; followup-14 notes). Read a
-  failure as a change only if it repeats (`scripts/run_display_study.py`, `indistinguishable()`).
+  failure as a change only if it repeats (`scripts/rendering/run_display_study.py`, `indistinguishable()`).
   Closing the render window aborts a capture with exit code 0 after a few frames;
   `runner.run_capture` now raises with that explanation. The engine's `headless` mode only creates a
   device and exits, so captures need a real 1920x1080 window.

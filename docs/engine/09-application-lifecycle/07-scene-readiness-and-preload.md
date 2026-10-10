@@ -61,12 +61,12 @@ Nothing is presented until the loop exits. On Sponza (default project) the log l
 
 | Check | Result |
 |---|---|
-| `scripts/test_scene_readiness.ps1` (reads the production function) | 14/14 |
-| `scripts/test_exposure_reset.ps1` (command order, barriers, copy bounds) | 4/4 |
+| `scripts/rendering/test_scene_readiness.ps1` (reads the production function) | 14/14 |
+| `scripts/rendering/test_exposure_reset.ps1` (command order, barriers, copy bounds) | 4/4 |
 | Order in the runtime log | last mesh 10:49:59.5 → `Pre-load complete` 10:50:01.1 → `Screenshot saved` 10:50:03.0; 138 meshes and 138 SDF bakes before the capture |
 | First presented frame vs frame 120, Camera A, 1080p (luminance mean / share below 16) | 51.6 / 37.8 % → 51.7 / 37.0 %; SponzaTest reference exe 52.7 → 52.8 |
-| `scripts/verify_sponza_loading.ps1` | startup / converged / camera-c: exit 0, empty stderr, exactly one `Pre-load complete` each |
-| `scripts/compare_sponza_stationary.ps1 -Prefix sponza-loading-fixed` (first presented frame vs frame 640, max-quality cvars) | whole image 53.34 → 53.42 /255 (+0.15 %), mean abs RGB diff 3.65/255; sunlit floor −0.46 %, shaded floor +2.3 %, shaded column +20.9 % (GI still converging) |
+| `scripts/rendering/verify_sponza_loading.ps1` | startup / converged / camera-c: exit 0, empty stderr, exactly one `Pre-load complete` each |
+| `scripts/rendering/compare_sponza_stationary.ps1 -Prefix sponza-loading-fixed` (first presented frame vs frame 640, max-quality cvars) | whole image 53.34 → 53.42 /255 (+0.15 %), mean abs RGB diff 3.65/255; sunlit floor −0.46 %, shaded floor +2.3 %, shaded column +20.9 % (GI still converging) |
 | First-frame RHI errors (`CommandAllocator::Reset` / `Close` 0x80004005 seen on 2026-09-07) | absent in all runs |
 
 ### The fly-camera teleport

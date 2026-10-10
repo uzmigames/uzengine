@@ -202,7 +202,7 @@ TEST(LightingCB, MaxPointLightsIs512) {
 }
 
 /// Block B.7: the cluster parameters follow the spot light array and the struct keeps its 256-byte
-/// multiple; the HLSL mirror (light_types.hlsli) is checked by scripts/test_cbuffer_layouts.py.
+/// multiple; the HLSL mirror (light_types.hlsli) is checked by scripts/rendering/test_cbuffer_layouts.py.
 TEST(LightingCB, ClusterParameters_Layout) {
     EXPECT_EQ(sizeof(LightingCB), 43264u);
     EXPECT_EQ(offsetof(LightingCB, spotLights), 32784u);

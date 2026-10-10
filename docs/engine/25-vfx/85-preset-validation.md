@@ -22,7 +22,7 @@ any test failure. Bugs only surface weeks later when a user reports
 
 ## Components
 
-- `scripts/vfx_validate_presets.ps1` — PowerShell driver. Two modes:
+- `scripts/vfx/vfx_validate_presets.ps1` — PowerShell driver. Two modes:
   capture (regenerate baseline) and validate (PSNR-diff vs baseline).
 - `runtime/tests/baselines/vfx-presets/<NN>-<name>.png` — baseline screenshots,
   one per preset, captured at frame 120 with default camera.
@@ -46,7 +46,7 @@ baseline so future runs validate against the new look:
 cd runtime/demos/vfx_viewport_app && zig build -Doptimize=ReleaseFast
 cd ../../..
 powershell -NoProfile -ExecutionPolicy Bypass `
-  -File scripts/vfx_validate_presets.ps1 -Mode capture
+  -File scripts/vfx/vfx_validate_presets.ps1 -Mode capture
 ```
 
 This rewrites all 22 PNGs + the manifest. Commit the new baselines
@@ -56,7 +56,7 @@ along with the change that altered the preset.
 
 ```pwsh
 powershell -NoProfile -ExecutionPolicy Bypass `
-  -File scripts/vfx_validate_presets.ps1 -Mode validate
+  -File scripts/vfx/vfx_validate_presets.ps1 -Mode validate
 ```
 
 Each preset is recaptured and PSNR-diffed against its baseline. The
@@ -95,7 +95,7 @@ fail CI on regression, add a step:
 
 ```yaml
 - name: VFX preset regression
-  run: powershell -NoProfile -File scripts/vfx_validate_presets.ps1 -Mode validate
+  run: powershell -NoProfile -File scripts/vfx/vfx_validate_presets.ps1 -Mode validate
 ```
 
 (The exact GitHub Actions / build-system wiring depends on the project

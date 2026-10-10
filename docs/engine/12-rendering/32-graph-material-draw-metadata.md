@@ -113,7 +113,7 @@ PCSS penumbra more than twice as wide as authored.
 ## Re-verification
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_material_specular.ps1   # 686/686
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/rendering/test_material_specular.ps1   # 686/686
 ```
 
 The harness extracts the graph-metadata block from `scene_sync.cpp` and the F0/F90 assignments from
@@ -124,4 +124,4 @@ engine source, not a copy of it.
 
 - `docs/engine/12-rendering/31-energy-and-bias-corrections.md` — the envBRDF fit this builds on
 - `docs/engine/12-rendering/16-material-system.md`, `06-pbr-material-system.md`
-- `.rulebook/tasks/phase0_sponza-parity-02-material-graph-energy/`
+- `.rulebook/archive/2026-10-10-phase0_sponza-parity-02-material-graph-energy/`

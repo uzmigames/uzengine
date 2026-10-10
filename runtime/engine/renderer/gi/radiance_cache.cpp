@@ -579,7 +579,7 @@ void RadianceCache::ReadDiagnosticResults(uint32_t frameIndex) {
     }
     if (m_diagnosticStats.IsValid()) {
         // Pairs with "DDGI transport: grid ..." — both are the unweighted mean over probes of the
-        // mean ray radiance luminance seen by the writer, in linear radiance (scripts/test_gi_energy_gpu.ps1).
+        // mean ray radiance luminance seen by the writer, in linear radiance (scripts/rendering/test_gi_energy_gpu.ps1).
         UZ_LOG(Renderer, Info, "RC transport: grid snapshotFrame={} readFrame={} probes={} meanRadiance={} skyFraction={}",
                m_diagnosticCopyFrame, frameIndex, gridStats,
                gridStats ? gridRadiance / gridStats : 0.0, gridStats ? gridSky / gridStats : 0.0);

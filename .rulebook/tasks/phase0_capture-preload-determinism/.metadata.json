@@ -1,6 +1,0 @@
-{
-  "status": "completed",
-  "createdAt": "2026-10-09T13:00:08.567Z",
-  "updatedAt": "2026-10-09T14:40:00.000Z",
-  "resolution": "Done 2026-10-09 (36951b4e). The scene pre-load took a number of frames that depended on the mesh-SDF bake workers (43 / 44, or 38 / 39 under CPU load, on one Debug binary), and a process with another length kept a different TAA state for hundreds of frames (ledger H-73). In the pre-load the bake queue now waits for its worker preparations and starts the bakes in mesh order (r.GI.MeshSdf.PreloadWait, default on); the run manifest records frames.preload. Gate (registered, amended once before the build): defaults and a 30 ms worker delay pre-load in 38 frames and agree within 1 code value, the delay without the wait gives 45; six processes beside 32 CPU busy loops all give 38. followup-09 23/23 and followup-14 11/11 on this build (default spread 0.192 -> 1.19e-07). The allocation-layout dependence and the one-code-value residual between processes moved to phase0_frame-allocation-layout-dependence. docs/analysis/capture-preload-determinism.md."
-}

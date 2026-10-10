@@ -1,0 +1,13 @@
+## 1. Baseline and gates
+- [x] 1.1 **Done** Record the before state (doc "Before"): the PMREM curve against the linear bake; block B.5b's 3.26 / 4.85 ratios; `scripts/rendering/test_split_sum.py --before` on build 513e2983 (the PMREM rough floors).
+- [x] 1.2 **Registered; results in the doc gate table (P7, P8 added when the SH frame and the bake check surfaced)** Pre-register P1-P6 (proposal).
+
+## 2. The mip mapping
+- [x] 2.1 (P1 FAIL/FAIL, P2 FAIL; the SH frame: P7 PASS) `deferred_lighting_ps.hlsl`: linear mip for the engine's bake, the PMREM curve behind the flag; the mip count masked in every consumer (`translucent_ps.hlsl` too).
+- [x] 2.2 (P3 control PASS; the SH injection) `frame_constants.cpp`, `scene_upscaler.cpp`, `scene_renderer_impl.h`: the PMREM flag packed in `prefilteredMipLevels`.
+- [x] 2.3 (`reflection-reference-hdri-rough30` / `-hdri-rough50`) `scripts/rendering/reflection_reference.py`: the rough PMREM floors.
+
+## 3. Tail (mandatory — enforced by rulebook v5.3.0)
+- [x] 3.1 (`docs/analysis/lighting/uzengine/sponza-lighting-2026-10/lighting-split-sum-mips.md`, the known-issues entry, the block-B index, the B.5b document) Update or create documentation covering the implementation (`docs/analysis/lighting/uzengine/sponza-lighting-2026-10/lighting-split-sum-mips.md`; the known-issues entries; the block-B index; the B.5b document's finding).
+- [x] 3.2 (the CPU integral on two environments, the chrome floors, the box tops against E / pi, the bake's mips against a CPU prefilter, Sponza's direct light) Write tests covering the new behavior with behavioral assertions and negative controls (`scripts/rendering/test_split_sum.py`: the CPU integral as the reference on two environments, the chrome floors as the mip-0 controls, Sponza's direct light as the invariant).
+- [x] 3.3 Run tests and confirm they pass; validate this task through Rulebook; report pre-existing failures separately. **Done** — `test_split_sum.py` 7/10 on the final binary: P1 1.309 / 2.331 against the integral (before 3.26 / 4.85; P1 FAIL / FAIL: the remainder is the N = V = R assumption at grazing incidence, engine / integral by NoV [0.00,0.20) 3.17, [0.20,0.35) 2.58, [0.35,0.50) 2.04, [0.50,0.70) 1.75), P1b the engine against the CPU model of its own approximations 0.967 / 0.994 (PASS / PASS), P2 the chrome floor 0.896 of before (FAIL: the old curve read a third of the roughness-0.14 mip at roughness 0.02; against the mirror reference before 1.110, after 0.996), P3 PMREM chrome 0.972 (PASS), P7 box tops [1.032, 1.015, 0.985] (PASS), P8 the bake PASS, P5 Sponza direct identical, P6 deferred within 10 %. renderer gtests 7471 passed.
