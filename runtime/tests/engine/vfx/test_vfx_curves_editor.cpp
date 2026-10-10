@@ -104,9 +104,12 @@ TEST(VfxCurvesEditorWidget, AddKey_InsertsSortedAndMarksDirty) {
     EXPECT_FLOAT_EQ(w.Keys()[0].time, 0.0f);
     EXPECT_FLOAT_EQ(w.Keys()[1].time, 0.5f);
     EXPECT_FLOAT_EQ(w.Keys()[2].time, 1.0f);
+    // AddKey returns the slot at insertion time (spec 11.5 2.1); a later
+    // insert does not rewrite an earlier return value.
+    EXPECT_EQ(i0, 0u);  // only key when inserted
     EXPECT_EQ(i1, 0u);  // new earliest
-    EXPECT_EQ(i0, 1u);  // now middle after i1 inserted
     EXPECT_EQ(i2, 2u);
+    EXPECT_FLOAT_EQ(w.Keys()[1].value, 2.0f);  // i0's key shifted to slot 1
     EXPECT_TRUE(w.IsDirty());
 }
 
@@ -423,9 +426,16 @@ TEST(VfxCurvesEditorWidget, HitTest_EmptyCanvasReturnsCanvas) {
     VFXCurve c;
     VfxCurvesEditorWidget w;
     w.BindFloat(&c);
-    // No keys.
+    // No keys. Since phase 12.5 the top `toolbarHeight` strip of the
+    // widget is the toolbar, so probe inside the plot-area Canvas item.
     const auto layout = w.ComputeLayout(kCanvas);
-    const auto hit = w.HitTest(layout, kCanvas.x + 10.0f, kCanvas.y + 10.0f);
+    const VfxCurveLayoutItem* plot = nullptr;
+    for (const auto& it : layout) {
+        if (it.type == VfxCurveItemType::Canvas) { plot = &it; break; }
+    }
+    ASSERT_NE(plot, nullptr);
+    EXPECT_GE(plot->rect.y, kCanvas.y + w.toolbarHeight);
+    const auto hit = w.HitTest(layout, plot->rect.x + 10.0f, plot->rect.y + 10.0f);
     EXPECT_EQ(hit.type, VfxCurveItemType::Canvas);
 }
 

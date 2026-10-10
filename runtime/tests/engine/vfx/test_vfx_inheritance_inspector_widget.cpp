@@ -171,10 +171,19 @@ TEST(VfxInheritanceInspector, RevertOverrideRemovesFromChild) {
     ASSERT_EQ(w.RowCount(), 4u);
 
     // Revert row 1 (Gravity replace) → should become Inherited.
+    // Row count is unchanged: every parent module still has a row, only
+    // Gravity's classification flips. The remaining child entries shift
+    // down one slot in `modules[]`.
     w.RevertOverride(1);
-    ASSERT_EQ(w.RowCount(), 3u); // Burst add removed index shift but Gravity now inherited
+    ASSERT_EQ(w.RowCount(), 4u);
     EXPECT_EQ(w.Rows()[1].moduleType, "Gravity");
     EXPECT_EQ(w.Rows()[1].kind, VfxInheritanceRowKind::Inherited);
+    EXPECT_EQ(w.Rows()[1].childModulesIndex, UINT32_MAX);
+    EXPECT_EQ(w.Rows()[2].kind, VfxInheritanceRowKind::OverrideRemove);
+    EXPECT_EQ(w.Rows()[2].childModulesIndex, 0u);
+    EXPECT_EQ(w.Rows()[3].kind, VfxInheritanceRowKind::OverrideAdd);
+    EXPECT_EQ(w.Rows()[3].childModulesIndex, 1u);
+    EXPECT_EQ(child.find("\"replace\""), std::string::npos);
 }
 
 TEST(VfxInheritanceInspector, RevertInvalidRowNoOp) {
@@ -201,6 +210,33 @@ TEST(VfxInheritanceInspector, RevertInheritedRowNoOp) {
     const uint32_t before = w.RowCount();
     w.RevertOverride(0);
     EXPECT_EQ(w.RowCount(), before);
+}
+
+TEST(VfxInheritanceInspector, UnmatchedOverridesFollowResolver) {
+    // VfxResolveInheritance appends a `replace` whose target is missing
+    // from the parent and drops a `remove` whose target is missing.
+    std::string child = R"({
+        "format": "uzvfx",
+        "version": 1,
+        "parent": "parent.uzvfx",
+        "modules": [
+            { "type": "Vortex", "action": "replace", "config": {} },
+            { "type": "Orbit",  "action": "remove" }
+        ]
+    })";
+    VfxInheritanceInspectorWidget::InputModel m;
+    m.childJson = &child;
+    m.parentLoader = [](const std::string&) { return kParentJson; };
+
+    VfxInheritanceInspectorWidget w;
+    w.SetInputModel(m);
+    ASSERT_EQ(w.RowCount(), 4u);
+    for (uint32_t i = 0; i < 3u; ++i) {
+        EXPECT_EQ(w.Rows()[i].kind, VfxInheritanceRowKind::Inherited);
+    }
+    EXPECT_EQ(w.Rows()[3].moduleType, "Vortex");
+    EXPECT_EQ(w.Rows()[3].kind, VfxInheritanceRowKind::OverrideAdd);
+    EXPECT_EQ(w.Rows()[3].childModulesIndex, 0u);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

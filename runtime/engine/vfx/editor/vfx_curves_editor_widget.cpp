@@ -573,6 +573,14 @@ VfxCurveHitResult VfxCurvesEditorWidget::HitTest(
     VfxCurveHitResult hit;
     for (const auto& item : layout) {
         if (!item.rect.Contains(x, y)) continue;
+        // Grid lines and axis labels are paint-only. Their enum values sit
+        // above KeyDot, so letting them compete would hide every key that
+        // lies on a grid line (t = 0, 0.25, ..., v = 0, 0.5, 1).
+        if (item.type == VfxCurveItemType::GridMajor ||
+            item.type == VfxCurveItemType::GridMinor ||
+            item.type == VfxCurveItemType::AxisLabel) {
+            continue;
+        }
         if (static_cast<int>(item.type) > static_cast<int>(hit.type) ||
             hit.type == VfxCurveItemType::None) {
             hit.type  = item.type;

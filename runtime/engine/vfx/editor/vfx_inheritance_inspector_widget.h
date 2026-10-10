@@ -15,7 +15,9 @@
 ///
 /// Each row in the display list is tagged with one of four kinds:
 /// - `Inherited`      : from parent, not overridden in child.
-/// - `OverrideAdd`    : child-only (`action: "add"`).
+/// - `OverrideAdd`    : child-only (`action: "add"`, a `replace` with no
+///                       matching parent module, or any child entry
+///                       when no parent is bound — same as the resolver).
 /// - `OverrideReplace`: child replaces parent's matching module.
 /// - `OverrideRemove` : child removes parent's module (row shown
 ///                       crossed out for clarity).
