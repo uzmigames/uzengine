@@ -54,7 +54,9 @@ enum class VfxTangentMode : uint8_t {
     /// average of adjacent segment slopes). Default for new keys.
     Auto    = 0,
 
-    /// Straight-line segments: in/outTangent forced to 0 at evaluate time.
+    /// Straight-line segments: the authored in/outTangent are ignored and
+    /// replaced at evaluate time by the adjacent segment's chord slope, so a
+    /// segment between two Linear keys is an exact straight line.
     Linear  = 1,
 
     /// `inTangent == outTangent`; editor shows one handle per key.
@@ -81,7 +83,8 @@ struct VfxTangentCurve {
     /// Inserts a key preserving the sort-by-time invariant.
     uint32_t AddKey(const VfxTangentKey& key);
 
-    /// Convenience: append a linear key (zero tangents, Linear mode).
+    /// Convenience: append a linear key (Linear mode; stored tangents are 0
+    /// and ignored — evaluation uses the chord slope).
     void AddLinearKey(float time, float value);
 
     /// Empties every key.

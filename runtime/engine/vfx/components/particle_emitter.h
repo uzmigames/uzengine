@@ -784,7 +784,14 @@ struct ParticleEmitter {
     ///
     /// Uses `emissionRate` and `dt`, carrying fractional particles via
     /// `spawnAccumulator`. Returns 0 if the emitter is not active or not
-    /// initialized. The result is clamped to available buffer capacity.
+    /// initialized. The result (rate + bursts) is clamped to `maxParticles`,
+    /// the pool bound (the granted buffer capacity never exceeds it), so a
+    /// single frame never requests more spawns than the pool can hold.
+    ///
+    /// The CPU does not track live particles: `cpuAliveCount` is NOT an input
+    /// and is set to `buffer.capacity` (update dispatch size). Free-slot
+    /// availability is resolved on the GPU by the free list — the spawn CS
+    /// discards spawns once `freeListHead` is exhausted.
     ///
     /// # Parameters
     /// - `dt`: Frame delta time in seconds. Must be >= 0.

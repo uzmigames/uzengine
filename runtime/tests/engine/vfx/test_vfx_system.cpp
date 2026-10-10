@@ -301,9 +301,12 @@ TEST(VFXSystem, Tick_NotInitialized_NoOp) {
     EXPECT_EQ(sys.GetTotalAliveParticles(), 0u);
 }
 
-/// Tick() calls CalculateSpawnCount() on each emitter. After a Tick() the
-/// emitter's spawnAccumulator advances (proving CalculateSpawnCount was invoked).
-TEST(VFXSystem, Tick_InvokesCalculateSpawnCountOnAllEmitters) {
+/// Tick() must NOT call CalculateSpawnCount(): the frame's VFX simulation
+/// dispatch (frame_vfx_inline.cpp) is the sole consumer of the spawn
+/// accumulator. Commit 9fc06229 removed the Tick() call because consuming the
+/// accumulator in both places double-counted spawns. Tick() only advances
+/// the per-emitter registration clock (used for start delays / bursts).
+TEST(VFXSystem, Tick_DoesNotConsumeSpawnAccumulator) {
     MockRHIDevice device;
     VFXSystem sys;
     sys.Initialize(&device, 100000u);
@@ -319,15 +322,27 @@ TEST(VFXSystem, Tick_InvokesCalculateSpawnCountOnAllEmitters) {
     sys.RegisterEmitter(&e1);
     sys.RegisterEmitter(&e2);
 
+    const float t1Before = e1.timeSinceRegistration;
+    const float t2Before = e2.timeSinceRegistration;
+
     sys.Tick(0.016f);
 
-    // After Tick(), the accumulators must be advanced (non-zero fractional parts).
-    // 100 * 0.016 = 1.6 → spawn 1, carry 0.6
-    // 50  * 0.016 = 0.8 → spawn 0, carry 0.8
-    EXPECT_NEAR(e1.spawnAccumulator, 0.6f, 1e-5f)
-        << "e1 accumulator must hold 0.6 after Tick()";
-    EXPECT_NEAR(e2.spawnAccumulator, 0.8f, 1e-5f)
-        << "e2 accumulator must hold 0.8 after Tick()";
+    // Accumulators untouched: no spawn was consumed by Tick().
+    EXPECT_FLOAT_EQ(e1.spawnAccumulator, 0.0f)
+        << "Tick() must not accumulate spawns (double-counting regression)";
+    EXPECT_FLOAT_EQ(e2.spawnAccumulator, 0.0f)
+        << "Tick() must not accumulate spawns (double-counting regression)";
+
+    // Registration clock advanced on every registered emitter.
+    EXPECT_NEAR(e1.timeSinceRegistration, t1Before + 0.016f, 1e-6f);
+    EXPECT_NEAR(e2.timeSinceRegistration, t2Before + 0.016f, 1e-6f);
+
+    // The sole consumer still sees the full, un-consumed frame of spawns:
+    // 100 * 0.016 = 1.6 → spawn 1, carry 0.6; 50 * 0.016 = 0.8 → spawn 0, carry 0.8.
+    EXPECT_EQ(e1.CalculateSpawnCount(0.016f), 1u);
+    EXPECT_EQ(e2.CalculateSpawnCount(0.016f), 0u);
+    EXPECT_NEAR(e1.spawnAccumulator, 0.6f, 1e-5f);
+    EXPECT_NEAR(e2.spawnAccumulator, 0.8f, 1e-5f);
 
     e1.Shutdown(&device, sys.GetBudget());
     e2.Shutdown(&device, sys.GetBudget());

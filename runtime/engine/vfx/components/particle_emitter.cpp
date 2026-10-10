@@ -316,11 +316,24 @@ uint32_t ParticleEmitter::CalculateSpawnCount(float dt) noexcept {
 
     // Extract integer part as the spawn count.
     const float integerPart = std::floor(spawnAccumulator);
-    uint32_t spawnCount = static_cast<uint32_t>(integerPart);
     spawnAccumulator -= integerPart;
 
-    // Add any burst contributions.
-    spawnCount += burstFired;
+    // A single frame can never usefully spawn more particles than the pool
+    // holds: the GPU free list has at most `buffer.capacity` entries (the
+    // budget grant, always <= maxParticles), so any excess would be
+    // dispatched only to be discarded by the spawn CS overflow guard. The
+    // bound is `maxParticles` — the same pool bound the spawn-rate-curve
+    // clamp above uses — so the rate math stays independent of GPU buffer
+    // state. Clamp BEFORE the cast: converting a float >= 2^32 to uint32_t
+    // is undefined behaviour (reachable with huge rate * dt). The clamp runs
+    // in double, which represents every uint32_t exactly, so the bound never
+    // rounds up.
+    const uint32_t poolBound = maxParticles;
+    uint32_t spawnCount = static_cast<uint32_t>(
+        std::min(static_cast<double>(integerPart), static_cast<double>(poolBound)));
+
+    // Add any burst contributions, saturating at the pool bound (no uint32 wrap).
+    spawnCount += std::min(burstFired, poolBound - spawnCount);
 
     // Godot pattern: CPU doesn't track alive count. Dispatch = capacity.
     // The GPU free-list handles slot allocation — spawn shader pops from

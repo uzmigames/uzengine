@@ -25,12 +25,22 @@ namespace {
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// World units are centimetres (engine convention, see vfx_lod.h).
+constexpr float kCentimetresPerMetre = 100.0f;
+
 /// Returns a Vec3 at the given distance along the X axis from the origin.
 Vec3 AtDistance(float dist) {
     return Vec3{dist, 0.0f, 0.0f};
 }
 
-/// Returns a default (valid) VFXLodSettings with thresholds 50/100/200.
+/// Returns a Vec3 at the given distance, expressed in metres, along the X axis
+/// (converted to centimetre world units).
+Vec3 AtMetres(float metres) {
+    return AtDistance(metres * kCentimetresPerMetre);
+}
+
+/// Returns a default (valid) VFXLodSettings with thresholds 50/100/200 m
+/// (5000/10000/20000 cm).
 VFXLodSettings DefaultSettings() {
     return VFXLodSettings{};
 }
@@ -92,19 +102,19 @@ TEST(UZ_VFXLodLevelToSpawnFactor, UnknownValue_ReturnsZero) {
 // VFXLodSettings — default values
 // =============================================================================
 
-TEST(UZ_VFXLodSettings, DefaultValues_DistanceZeroIsFifty) {
+TEST(UZ_VFXLodSettings, DefaultValues_DistanceZeroIsFiftyMetres) {
     const VFXLodSettings s;
-    EXPECT_FLOAT_EQ(s.distances[0], 50.0f);
+    EXPECT_FLOAT_EQ(s.distances[0], 50.0f * kCentimetresPerMetre);
 }
 
-TEST(UZ_VFXLodSettings, DefaultValues_DistanceOneIsOneHundred) {
+TEST(UZ_VFXLodSettings, DefaultValues_DistanceOneIsOneHundredMetres) {
     const VFXLodSettings s;
-    EXPECT_FLOAT_EQ(s.distances[1], 100.0f);
+    EXPECT_FLOAT_EQ(s.distances[1], 100.0f * kCentimetresPerMetre);
 }
 
-TEST(UZ_VFXLodSettings, DefaultValues_DistanceTwoIsTwoHundred) {
+TEST(UZ_VFXLodSettings, DefaultValues_DistanceTwoIsTwoHundredMetres) {
     const VFXLodSettings s;
-    EXPECT_FLOAT_EQ(s.distances[2], 200.0f);
+    EXPECT_FLOAT_EQ(s.distances[2], 200.0f * kCentimetresPerMetre);
 }
 
 // =============================================================================
@@ -189,7 +199,7 @@ TEST(UZ_VFXLodSettings_IsValid, SecondLessThanFirst_IsInvalid) {
 // VFXLodEvaluator::ComputeFromDistance — threshold boundaries
 // =============================================================================
 
-// Default thresholds: 50 / 100 / 200 m
+// Default thresholds: 50 / 100 / 200 m (5000 / 10000 / 20000 cm)
 // Bands: [0, 50) → Full, [50, 100) → Reduced, [100, 200) → Minimal, [200, ∞) → Culled
 
 TEST(UZ_VFXLodEvaluator_ComputeFromDistance, ZeroDistance_ReturnsFull) {
@@ -203,22 +213,22 @@ TEST(UZ_VFXLodEvaluator_ComputeFromDistance, ZeroDistance_ReturnsFull) {
 TEST(UZ_VFXLodEvaluator_ComputeFromDistance, DistanceJustBelowFirstThreshold_ReturnsFull) {
     const auto s = DefaultSettings();
     const auto lod = VFXLodEvaluator::ComputeFromDistance(
-        AtDistance(49.9f), Vec3{0, 0, 0}, s);
+        AtMetres(49.9f), Vec3{0, 0, 0}, s);
     EXPECT_EQ(lod, VFXLodLevel::Full);
 }
 
 TEST(UZ_VFXLodEvaluator_ComputeFromDistance, DistanceAtFirstThreshold_ReturnsReduced) {
     const auto s = DefaultSettings();
-    // distances[0] = 50; at exactly 50m → Reduced (no longer < 50^2)
+    // distances[0] = 50 m; at exactly 50 m → Reduced (no longer < 50^2)
     const auto lod = VFXLodEvaluator::ComputeFromDistance(
-        AtDistance(50.0f), Vec3{0, 0, 0}, s);
+        AtMetres(50.0f), Vec3{0, 0, 0}, s);
     EXPECT_EQ(lod, VFXLodLevel::Reduced);
 }
 
 TEST(UZ_VFXLodEvaluator_ComputeFromDistance, DistanceBetweenFirstAndSecond_ReturnsReduced) {
     const auto s = DefaultSettings();
     const auto lod = VFXLodEvaluator::ComputeFromDistance(
-        AtDistance(75.0f), Vec3{0, 0, 0}, s);
+        AtMetres(75.0f), Vec3{0, 0, 0}, s);
     EXPECT_EQ(lod, VFXLodLevel::Reduced);
 }
 
@@ -226,14 +236,14 @@ TEST(UZ_VFXLodEvaluator_ComputeFromDistance, DistanceAtSecondThreshold_ReturnsMi
     const auto s = DefaultSettings();
     // distances[1] = 100; exactly 100m → Minimal
     const auto lod = VFXLodEvaluator::ComputeFromDistance(
-        AtDistance(100.0f), Vec3{0, 0, 0}, s);
+        AtMetres(100.0f), Vec3{0, 0, 0}, s);
     EXPECT_EQ(lod, VFXLodLevel::Minimal);
 }
 
 TEST(UZ_VFXLodEvaluator_ComputeFromDistance, DistanceBetweenSecondAndThird_ReturnsMinimal) {
     const auto s = DefaultSettings();
     const auto lod = VFXLodEvaluator::ComputeFromDistance(
-        AtDistance(150.0f), Vec3{0, 0, 0}, s);
+        AtMetres(150.0f), Vec3{0, 0, 0}, s);
     EXPECT_EQ(lod, VFXLodLevel::Minimal);
 }
 
@@ -241,22 +251,23 @@ TEST(UZ_VFXLodEvaluator_ComputeFromDistance, DistanceAtThirdThreshold_ReturnsCul
     const auto s = DefaultSettings();
     // distances[2] = 200; exactly 200m → Culled
     const auto lod = VFXLodEvaluator::ComputeFromDistance(
-        AtDistance(200.0f), Vec3{0, 0, 0}, s);
+        AtMetres(200.0f), Vec3{0, 0, 0}, s);
     EXPECT_EQ(lod, VFXLodLevel::Culled);
 }
 
 TEST(UZ_VFXLodEvaluator_ComputeFromDistance, DistanceBeyondThirdThreshold_ReturnsCulled) {
     const auto s = DefaultSettings();
     const auto lod = VFXLodEvaluator::ComputeFromDistance(
-        AtDistance(500.0f), Vec3{0, 0, 0}, s);
+        AtMetres(500.0f), Vec3{0, 0, 0}, s);
     EXPECT_EQ(lod, VFXLodLevel::Culled);
 }
 
 TEST(UZ_VFXLodEvaluator_ComputeFromDistance, NonAxisAlignedVector_CorrectTier) {
-    // Place emitter at (30, 40, 0) → distance = sqrt(900+1600) = 50 → Reduced.
+    // Place emitter at (30, 40, 0) m → distance = sqrt(900+1600) = 50 m → Reduced.
     const auto s = DefaultSettings();
     const auto lod = VFXLodEvaluator::ComputeFromDistance(
-        Vec3{30.0f, 40.0f, 0.0f}, Vec3{0.0f, 0.0f, 0.0f}, s);
+        Vec3{30.0f * kCentimetresPerMetre, 40.0f * kCentimetresPerMetre, 0.0f},
+        Vec3{0.0f, 0.0f, 0.0f}, s);
     EXPECT_EQ(lod, VFXLodLevel::Reduced)
         << "3D distance at exactly 50m must return Reduced";
 }
@@ -392,13 +403,13 @@ TEST(UZ_VFXLodEvaluator_ComputeFromScreenSize, ZeroRadius_ReturnsCulled) {
 // =============================================================================
 
 TEST(UZ_VFXLodEvaluator_Evaluate, CloseAndLarge_ReturnsFull) {
-    // Distance < 50 (Full by distance) AND large on screen (Full by screen).
+    // Distance < 50 m (Full by distance) AND large on screen (Full by screen).
     // Result: Full.
     const auto s = DefaultSettings();
     const auto lod = VFXLodEvaluator::Evaluate(
-        Vec3{10.0f, 0.0f, 0.0f},   // 10m away
+        AtMetres(10.0f),
         Vec3{0.0f, 0.0f, 0.0f},
-        /*boundingRadius=*/5.0f,
+        /*boundingRadius=*/5.0f * kCentimetresPerMetre,
         /*screenHeight=*/1080.0f,
         s,
         /*minScreenPixels=*/4.0f
@@ -407,13 +418,13 @@ TEST(UZ_VFXLodEvaluator_Evaluate, CloseAndLarge_ReturnsFull) {
 }
 
 TEST(UZ_VFXLodEvaluator_Evaluate, FarButLarge_ReturnsDistanceTier) {
-    // Emitter at 150m (Minimal by distance) but huge radius → screen says Full.
+    // Emitter at 150 m (Minimal by distance) but huge radius → screen says Full.
     // Worst wins → Minimal.
     const auto s = DefaultSettings();
     const auto lod = VFXLodEvaluator::Evaluate(
-        Vec3{150.0f, 0.0f, 0.0f},
+        AtMetres(150.0f),
         Vec3{0.0f, 0.0f, 0.0f},
-        /*boundingRadius=*/100.0f,     // projects to many pixels at 150m
+        /*boundingRadius=*/100.0f * kCentimetresPerMetre,  // many pixels at 150 m
         /*screenHeight=*/1080.0f,
         s,
         /*minScreenPixels=*/4.0f
@@ -423,11 +434,11 @@ TEST(UZ_VFXLodEvaluator_Evaluate, FarButLarge_ReturnsDistanceTier) {
 }
 
 TEST(UZ_VFXLodEvaluator_Evaluate, CloseButTiny_ReturnsCulled) {
-    // Emitter at 10m (Full by distance) but radius=0.001 → sub-pixel → screen says Culled.
-    // Worst wins → Culled.
+    // Emitter at 10 m (Full by distance) but radius=0.001 cm → sub-pixel → screen
+    // says Culled. Worst wins → Culled.
     const auto s = DefaultSettings();
     const auto lod = VFXLodEvaluator::Evaluate(
-        Vec3{10.0f, 0.0f, 0.0f},
+        AtMetres(10.0f),
         Vec3{0.0f, 0.0f, 0.0f},
         /*boundingRadius=*/0.001f,
         /*screenHeight=*/1080.0f,
@@ -439,10 +450,10 @@ TEST(UZ_VFXLodEvaluator_Evaluate, CloseButTiny_ReturnsCulled) {
 }
 
 TEST(UZ_VFXLodEvaluator_Evaluate, FarAndTiny_ReturnsCulled) {
-    // Both criteria demand Culled.
+    // Both criteria demand Culled (300 m is beyond the 200 m cull threshold).
     const auto s = DefaultSettings();
     const auto lod = VFXLodEvaluator::Evaluate(
-        Vec3{300.0f, 0.0f, 0.0f},
+        AtMetres(300.0f),
         Vec3{0.0f, 0.0f, 0.0f},
         /*boundingRadius=*/0.001f,
         /*screenHeight=*/1080.0f,
@@ -455,7 +466,7 @@ TEST(UZ_VFXLodEvaluator_Evaluate, ZeroBoundingRadius_ReturnsCulled) {
     // Even if distance is in Full zone, zero radius means screen says Culled.
     const auto s = DefaultSettings();
     const auto lod = VFXLodEvaluator::Evaluate(
-        Vec3{5.0f, 0.0f, 0.0f},
+        AtMetres(5.0f),
         Vec3{0.0f, 0.0f, 0.0f},
         /*boundingRadius=*/0.0f,
         /*screenHeight=*/1080.0f,
@@ -466,16 +477,16 @@ TEST(UZ_VFXLodEvaluator_Evaluate, ZeroBoundingRadius_ReturnsCulled) {
 }
 
 TEST(UZ_VFXLodEvaluator_Evaluate, MediumDistanceMediumSize_ReturnsReducedOrWorse) {
-    // Emitter at 75m (Reduced by distance), reasonable size.
+    // Emitter at 75 m (Reduced by distance), reasonable size.
     const auto s = DefaultSettings();
     const auto lod = VFXLodEvaluator::Evaluate(
-        Vec3{75.0f, 0.0f, 0.0f},
+        AtMetres(75.0f),
         Vec3{0.0f, 0.0f, 0.0f},
-        /*boundingRadius=*/2.0f,
+        /*boundingRadius=*/2.0f * kCentimetresPerMetre,
         /*screenHeight=*/1080.0f,
         s
     );
-    // Distance says Reduced; screen with radius=2 at 75m: (2/75)*1080*0.5 = 14.4px > 4 → Full
+    // Distance says Reduced; screen with radius=2 m at 75 m: (2/75)*1080*0.5 = 14.4px > 4 → Full
     // Worst of (Reduced, Full) = Reduced.
     EXPECT_EQ(lod, VFXLodLevel::Reduced);
 }

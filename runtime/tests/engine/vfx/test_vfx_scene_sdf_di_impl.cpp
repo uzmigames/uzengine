@@ -47,6 +47,26 @@ TEST(VfxSceneSDFDI, RegistryComposeProducesAllFragments) {
     EXPECT_NE(fragments.callSite.find("ResolveCollision"),      std::string::npos);
 }
 
+TEST(VfxSceneSDFDI, HelperFunctionsDefineEveryCallSiteSymbol) {
+    // The call site invokes SampleSDF + VfxSceneSDFResolveCollision; both must
+    // be *defined* by the helper fragment (not only referenced), otherwise the
+    // composed update CS fails to compile with undeclared identifiers.
+    VfxSceneSDFDataInterface di;
+    const auto helpers = di.EmitHelperFunctions();
+    EXPECT_NE(helpers.find("float SampleSceneSDF(float3 worldPos)"), std::string::npos);
+    EXPECT_NE(helpers.find("float3 GradientSceneSDF(float3 worldPos, float eps)"),
+              std::string::npos);
+    EXPECT_NE(helpers.find("float SampleSDF(float3 worldPos)"), std::string::npos);
+    EXPECT_NE(helpers.find(
+                  "void VfxSceneSDFResolveCollision(inout float3 position, inout float3 velocity)"),
+              std::string::npos);
+    // The HLSL resolver mirrors the CPU reference: push-out along the
+    // normalised gradient, (1 + e) reflection, world-Z degenerate fallback.
+    EXPECT_NE(helpers.find("position += n * (radius - distance);"), std::string::npos);
+    EXPECT_NE(helpers.find("(1.0f + saturate(restitution)) * vDotN * n"), std::string::npos);
+    EXPECT_NE(helpers.find("float3(0.0f, 0.0f, 1.0f)"), std::string::npos);
+}
+
 TEST(VfxSceneSDFDI, CombinedWithAdvectionInOneRegistry) {
     // Both DIs can coexist in a single registry.
     VfxDIRegistry reg;

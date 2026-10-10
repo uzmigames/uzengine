@@ -119,7 +119,8 @@ TEST(VfxComputeTrailV_PerRibbon, FourStrandsProduceQuarterBands) {
 TEST(TrailAssetUV, DefaultIsStretch) {
     const char* kJson = R"({
         "format": "uztrail",
-        "material_path": "test.uzmat"
+        "version": 1,
+        "material": "test.uzmat"
     })";
     auto asset = TrailAsset::LoadFromString(kJson);
     ASSERT_NE(asset, nullptr);
@@ -130,7 +131,8 @@ TEST(TrailAssetUV, DefaultIsStretch) {
 TEST(TrailAssetUV, LoadsTiledModeWithTileCount) {
     const char* kJson = R"({
         "format": "uztrail",
-        "material_path": "test.uzmat",
+        "version": 1,
+        "material": "test.uzmat",
         "uv_mode": "tiled",
         "tiles_per_ribbon": 8.0
     })";
@@ -143,7 +145,8 @@ TEST(TrailAssetUV, LoadsTiledModeWithTileCount) {
 TEST(TrailAssetUV, LoadsPerRibbonMode) {
     const char* kJson = R"({
         "format": "uztrail",
-        "material_path": "test.uzmat",
+        "version": 1,
+        "material": "test.uzmat",
         "uv_mode": "per_ribbon"
     })";
     auto asset = TrailAsset::LoadFromString(kJson);
@@ -154,7 +157,8 @@ TEST(TrailAssetUV, LoadsPerRibbonMode) {
 TEST(TrailAssetUV, UnknownUvModeRejected) {
     const char* kJson = R"({
         "format": "uztrail",
-        "material_path": "test.uzmat",
+        "version": 1,
+        "material": "test.uzmat",
         "uv_mode": "magic"
     })";
     auto asset = TrailAsset::LoadFromString(kJson);
@@ -164,7 +168,8 @@ TEST(TrailAssetUV, UnknownUvModeRejected) {
 TEST(TrailAssetUV, NegativeTilesRejected) {
     const char* kJson = R"({
         "format": "uztrail",
-        "material_path": "test.uzmat",
+        "version": 1,
+        "material": "test.uzmat",
         "uv_mode": "tiled",
         "tiles_per_ribbon": -1.0
     })";

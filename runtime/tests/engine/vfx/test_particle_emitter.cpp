@@ -441,55 +441,86 @@ TEST(ParticleEmitter, CalculateSpawnCount_AccumulatorRemainder_IsSubOne) {
 // CalculateSpawnCount — capacity clamping
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// CalculateSpawnCount() is clamped by available capacity (capacity - cpuAliveCount).
-/// If all slots are full, spawn count is 0.
-TEST(ParticleEmitter, CalculateSpawnCount_AllSlotsFull_ReturnsZero) {
+// The CPU does not track live particles (GPU free-list design, commit
+// 0b4e3f5f "VFX alive count — Godot pattern"): free-slot availability is
+// resolved by the spawn CS, which discards spawns once the free list is
+// exhausted. A CPU-side (capacity - cpuAliveCount) clamp starved spawning
+// permanently and was removed. What the CPU does guarantee is that a single
+// frame never requests more spawns than the pool can ever hold.
+
+/// A rate that wants more particles than the pool holds is clamped to the
+/// pool bound (maxParticles == granted capacity here), and the fractional
+/// remainder stays in the accumulator.
+TEST(ParticleEmitter, CalculateSpawnCount_ExceedsCapacity_ClampedToCapacity) {
     MockRHIDevice device;
     ParticleBudget budget(10000u);
+    // capacity = 100, rate = 10000, dt = 1.0 → wants 10000, pool holds 100
     ParticleEmitter e = MakeEmitter(100u, 10000.0f);
-    e.Initialize(&device, budget);
-    // Simulate all particles alive.
-    e.cpuAliveCount = 100u;
+    ASSERT_TRUE(e.Initialize(&device, budget));
+    ASSERT_EQ(e.buffer.capacity, e.maxParticles) << "Budget must grant in full";
 
     const uint32_t count = e.CalculateSpawnCount(1.0f);
 
-    EXPECT_EQ(count, 0u)
-        << "Spawn count must be 0 when capacity is fully occupied";
+    EXPECT_EQ(count, 100u)
+        << "Spawn count must be clamped to the 100-particle pool";
+    EXPECT_GE(e.spawnAccumulator, 0.0f);
+    EXPECT_LT(e.spawnAccumulator, 1.0f)
+        << "Clamping must not leave a backlog in the accumulator";
 
     e.Shutdown(&device, budget);
 }
 
-/// Spawn count is clamped to (capacity - cpuAliveCount) even if accumulator
-/// would produce more.
-TEST(ParticleEmitter, CalculateSpawnCount_ClampedToAvailableSlots) {
+/// cpuAliveCount is not an input to spawning: even a "full" CPU mirror must
+/// not block spawns (the GPU free list decides), and the call re-publishes
+/// cpuAliveCount as the capacity used for the update dispatch.
+TEST(ParticleEmitter, CalculateSpawnCount_CpuAliveCountDoesNotGateSpawning) {
     MockRHIDevice device;
     ParticleBudget budget(10000u);
-    // capacity = 100, rate = 10000, dt = 1.0 → wants 10000, only 20 free
-    ParticleEmitter e = MakeEmitter(100u, 10000.0f);
-    e.Initialize(&device, budget);
-    e.cpuAliveCount = 80u;  // 20 slots available
+    ParticleEmitter e = MakeEmitter(1000u, 100.0f);
+    ASSERT_TRUE(e.Initialize(&device, budget));
+    e.cpuAliveCount = 1000u;  // CPU mirror claims every slot is occupied
 
     const uint32_t count = e.CalculateSpawnCount(1.0f);
 
-    EXPECT_EQ(count, 20u)
-        << "Spawn count must be clamped to available capacity (20 slots)";
+    EXPECT_EQ(count, 100u)
+        << "100/s * 1s must spawn 100 regardless of cpuAliveCount";
+    EXPECT_EQ(e.cpuAliveCount, e.buffer.capacity)
+        << "cpuAliveCount must mirror the capacity (dispatch = capacity)";
 
     e.Shutdown(&device, budget);
 }
 
-/// When cpuAliveCount > capacity (defensive check), available is 0.
-TEST(ParticleEmitter, CalculateSpawnCount_AliveExceedsCapacity_ReturnsZero) {
+/// A stale cpuAliveCount larger than capacity must neither underflow nor gate
+/// spawning; it is reset to the capacity.
+TEST(ParticleEmitter, CalculateSpawnCount_AliveExceedsCapacity_NoUnderflow) {
     MockRHIDevice device;
     ParticleBudget budget(10000u);
     ParticleEmitter e = MakeEmitter(100u, 100.0f);
-    e.Initialize(&device, budget);
-    // Over-alive — defensive clamp should prevent underflow.
-    e.cpuAliveCount = 200u;
+    ASSERT_TRUE(e.Initialize(&device, budget));
+    e.cpuAliveCount = 200u;  // stale / corrupt mirror above capacity
 
     const uint32_t count = e.CalculateSpawnCount(1.0f);
 
-    EXPECT_EQ(count, 0u)
-        << "When cpuAliveCount >= capacity the spawn count must be 0";
+    EXPECT_EQ(count, 100u)
+        << "100/s * 1s = 100 fits the 100-slot pool exactly";
+    EXPECT_EQ(e.cpuAliveCount, 100u)
+        << "cpuAliveCount must be reset to the capacity, not left at 200";
+
+    e.Shutdown(&device, budget);
+}
+
+/// A pathological rate * dt far beyond UINT32_MAX must clamp to capacity
+/// instead of performing an undefined float -> uint32 conversion.
+TEST(ParticleEmitter, CalculateSpawnCount_HugeRate_ClampedWithoutOverflow) {
+    MockRHIDevice device;
+    ParticleBudget budget(10000u);
+    ParticleEmitter e = MakeEmitter(100u, 1.0e12f);
+    ASSERT_TRUE(e.Initialize(&device, budget));
+
+    const uint32_t count = e.CalculateSpawnCount(1.0f);
+
+    EXPECT_EQ(count, 100u)
+        << "1e12 particles requested in one frame must clamp to the 100-slot pool";
 
     e.Shutdown(&device, budget);
 }

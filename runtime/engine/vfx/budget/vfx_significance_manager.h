@@ -10,10 +10,10 @@
 ///
 /// # Significance Formula
 /// ```
-/// score = priority * (1.0 / (1.0 + distance * 0.01)) * (visible ? 1.0 : 0.1)
+/// score = priority * (1.0 / (1.0 + distance * 0.0001)) * (visible ? 1.0 : 0.1)
 /// ```
 /// - `priority`   -- user-assigned weight (higher = more important)
-/// - distance     -- attenuates with a shallow 1% falloff per metre
+/// - distance     -- world units (cm); shallow 1% falloff per metre (100 cm)
 /// - visibility   -- off-screen emitters receive a 10x penalty
 ///
 /// # LOD Degradation Order
@@ -63,7 +63,7 @@ struct VFXEmitterSignificance {
     /// Higher values indicate more important emitters. Populated by `RankEmitters()`.
     float score = 0.0f;
 
-    /// Distance from the emitter origin to the camera, in metres.
+    /// Distance from the emitter origin to the camera, in world units (cm).
     /// Used in the significance formula: shorter distance → higher score.
     float distanceToCamera = 0.0f;
 
@@ -116,16 +116,16 @@ public:
 
     /// Computes the significance score for a single emitter.
     ///
-    /// Formula: `priority * (1.0 / (1.0 + distance * 0.01)) * (visible ? 1.0 : 0.1)`
+    /// Formula: `priority * (1.0 / (1.0 + distance * 0.0001)) * (visible ? 1.0 : 0.1)`
     ///
     /// The distance term uses a shallow 1%-per-metre falloff so that emitters
-    /// at 100 m have half the base score of emitters at 0 m. The visibility
+    /// at 10000 cm (100 m) have half the base score of emitters at 0 cm. The visibility
     /// multiplier heavily penalises off-screen emitters without culling them
     /// entirely, preserving priority for important background effects.
     ///
     /// # Parameters
     /// - `priority`          -- User weight (any uint32_t; higher = more important).
-    /// - `distanceToCamera`  -- Distance in metres. Clamped to [0, ∞) internally.
+    /// - `distanceToCamera`  -- Distance in world units (cm). Clamped to [0, ∞) internally.
     /// - `isFrustumVisible`  -- True if any part of the emitter is inside the frustum.
     ///
     /// # Returns

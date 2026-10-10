@@ -115,12 +115,14 @@ TEST(TurbulenceModule, GetName_ReturnsTurbulence) {
     EXPECT_STREQ(TurbulenceModule{}.GetName(), "turbulence");
 }
 
-TEST(TurbulenceModule, GetParameters_ThreeParameters_StrengthFrequencyOctaves) {
+/// `use_curl_mode` (Bridson 2007 curl noise) was added in commit 3035aef3.
+TEST(TurbulenceModule, GetParameters_FourParameters_StrengthFrequencyOctavesCurlMode) {
     const auto params = TurbulenceModule{}.GetParameters();
-    EXPECT_EQ(params.size(), 3u);
+    EXPECT_EQ(params.size(), 4u);
     EXPECT_TRUE(HasParameter(params, "strength"));
     EXPECT_TRUE(HasParameter(params, "frequency"));
     EXPECT_TRUE(HasParameter(params, "octaves"));
+    EXPECT_TRUE(HasParameter(params, "use_curl_mode"));
 }
 
 // =============================================================================

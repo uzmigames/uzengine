@@ -48,9 +48,13 @@ void ResolveTangents(const std::vector<VfxTangentKey>& keys,
     float aOut = a.outTangent;
     float bIn  = b.inTangent;
 
-    // Linear mode forces zero tangents.
-    if (a.mode == VfxTangentMode::Linear) aOut = 0.0f;
-    if (b.mode == VfxTangentMode::Linear) bIn  = 0.0f;
+    // Linear mode uses the segment's chord slope. Zero Hermite tangents would
+    // give a smoothstep ease (h01(u) = 3u^2 - 2u^3), not a straight line;
+    // with M0 = M1 = (P1 - P0) the cubic terms cancel and the basis reduces
+    // exactly to P0 + u * (P1 - P0).
+    const float chordSlope = (b.value - a.value) / dt;
+    if (a.mode == VfxTangentMode::Linear) aOut = chordSlope;
+    if (b.mode == VfxTangentMode::Linear) bIn  = chordSlope;
 
     // Auto mode derives the slope from neighbours.
     if (a.mode == VfxTangentMode::Auto) {

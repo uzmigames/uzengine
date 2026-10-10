@@ -364,11 +364,17 @@ TEST(VFXIntegration, ZeroEmissionRate_60Frames_AccumulatorStaysZero) {
 /// Creates an emitter with emissionRate=100000 (extremely high) and
 /// maxParticles=1000 (small capacity). Ticks 60 frames. Each frame the
 /// spawn count requested by the accumulator would vastly exceed 1000, but
-/// CalculateSpawnCount must clamp to available capacity.
+/// CalculateSpawnCount must clamp to the pool size (maxParticles, which
+/// equals the granted capacity here).
+///
+/// Free-slot availability is a GPU decision (free-list design, commit
+/// 0b4e3f5f): the CPU never gates spawning on `cpuAliveCount`, it only bounds
+/// one frame's request by what the pool can hold.
 ///
 /// Verifies:
-/// - CalculateSpawnCount() never returns more than (capacity - cpuAliveCount).
-/// - After filling the buffer (cpuAliveCount set to capacity), spawn count is 0.
+/// - CalculateSpawnCount() never returns more than capacity.
+/// - A saturated CPU mirror (cpuAliveCount == capacity) does not block or
+///   inflate spawning — the request stays exactly at capacity.
 /// - 60-frame tick runs without crashes even at extreme emission pressure.
 /// - spawnAccumulator does NOT wrap or overflow during saturation.
 TEST(VFXIntegration, HighEmissionRate_SaturatesCapacity_SpawnNeverExceedsCapacity) {
@@ -400,14 +406,17 @@ TEST(VFXIntegration, HighEmissionRate_SaturatesCapacity_SpawnNeverExceedsCapacit
         sys.Tick(0.016f);
     }
 
-    // Now saturate: simulate a fully-loaded buffer.
+    // Now saturate the CPU mirror: it must neither block nor inflate spawning.
+    // 100000/s * 0.016 s = 1600 requested per frame → clamped to capacity.
     e.cpuAliveCount = capacity;
 
     for (int frame = 30; frame < 60; ++frame) {
         const uint32_t spawnCount = e.CalculateSpawnCount(0.016f);
-        EXPECT_EQ(spawnCount, 0u)
-            << "Spawn count must be 0 when all " << capacity
-            << " slots are occupied at frame " << frame;
+        EXPECT_EQ(spawnCount, capacity)
+            << "A saturated cpuAliveCount must not gate spawning; the request is "
+               "bounded only by capacity (" << capacity << ") at frame " << frame;
+        EXPECT_EQ(e.cpuAliveCount, capacity)
+            << "cpuAliveCount must mirror the capacity at frame " << frame;
         sys.Tick(0.016f);
     }
 
@@ -527,8 +536,14 @@ TEST(VFXIntegration, EmitterShutdown_DestroysExactlyAsManyBuffersAsCreated) {
     ASSERT_TRUE(emitter.Initialize(&device, sys.GetBudget()));
 
     const uint32_t createdAfterInit = device.buffersCreated.load();
-    EXPECT_EQ(createdAfterInit, 22u)
-        << "One emitter must create exactly 22 GPU buffers (20 particle + 2 sort)";
+    // 16 attribute (8 required channels x 2 ping-pong sets) + 6 shared
+    // + kAliveReadbackRingSize (3) alive-count readback + 2 sort.
+    constexpr uint32_t kExpectedBuffers =
+        2u * 8u + 6u + GPUParticleBuffer::kAliveReadbackRingSize + 2u;
+    static_assert(kExpectedBuffers == 27u);
+    EXPECT_EQ(createdAfterInit, kExpectedBuffers)
+        << "One emitter must create exactly 27 GPU buffers "
+           "(16 attribute + 6 shared + 3 alive readback + 2 sort)";
 
     emitter.Shutdown(&device, sys.GetBudget());
 

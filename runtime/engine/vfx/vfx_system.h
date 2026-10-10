@@ -2,10 +2,11 @@
 
 /// VFX System -- central manager for all active GPU particle emitters.
 ///
-/// Owns the global ParticleBudget and orchestrates per-frame spawn counting.
-/// Each registered emitter gets its spawn count calculated during Tick().
-/// Actual compute shader dispatch is handled by render passes that query
-/// GetActiveEmitters().
+/// Owns the global ParticleBudget and tracks registered emitters. Tick()
+/// advances each emitter's registration clock and aggregates alive-count
+/// stats; per-frame spawn counts are computed (exactly once) by the frame's
+/// VFX simulation dispatch, which also issues the compute work for the
+/// emitters returned by GetActiveEmitters().
 ///
 /// # Lifecycle
 /// ```
@@ -48,7 +49,7 @@ struct ParticleEmitter;
 /// # Responsibilities
 /// - Maintain the global particle budget
 /// - Track registered emitters
-/// - Calculate per-frame spawn counts (Tick)
+/// - Advance emitter registration clocks and aggregate alive stats (Tick)
 /// - Provide emitter list to render passes
 ///
 /// # Non-Responsibilities
@@ -106,7 +107,10 @@ public:
     /// - `emitter`: Non-null pointer to a previously registered emitter.
     void UnregisterEmitter(ParticleEmitter* emitter);
 
-    /// Ticks all registered emitters: calculates spawn counts for this frame.
+    /// Ticks all registered emitters: advances `timeSinceRegistration`, polls
+    /// the alive-count readback and aggregates stats. Does NOT consume the
+    /// spawn accumulator — `CalculateSpawnCount` has a single caller (the
+    /// frame VFX simulation dispatch) to avoid double-counted spawns.
     ///
     /// Does NOT dispatch compute -- that is done by the render passes which
     /// iterate `GetActiveEmitters()` and bind each emitters GPU resources.

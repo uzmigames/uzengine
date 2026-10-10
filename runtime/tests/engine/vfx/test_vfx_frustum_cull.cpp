@@ -29,12 +29,17 @@ Mat4 MakePerspective(float fovY = 1.0472f, // ~60 degrees
     return Mat4::Perspective(fovY, aspect, nearZ, farZ);
 }
 
-/// Builds a simple view matrix looking along +Z from the origin.
+/// Builds a view matrix at the origin looking along the engine forward axis.
+///
+/// Engine convention is Z-up, X-forward, left-handed: forward = +X,
+/// right = +Y, up = +Z (Vec3::Forward/Right/Up). The look direction must not
+/// be parallel to the up vector, otherwise the LookAt basis degenerates
+/// (right = up x forward = 0) and the side/top/bottom planes collapse.
 Mat4 MakeViewLookingForward() {
-    return Mat4::LookAt(Vec3::Zero(), Vec3{0.0f, 0.0f, 1.0f}, Vec3::Up());
+    return Mat4::LookAt(Vec3::Zero(), Vec3::Forward(), Vec3::Up());
 }
 
-/// Builds a view-projection matrix: camera at origin looking along +Z.
+/// Builds a view-projection matrix: camera at origin looking along +X (Z-up).
 Mat4 MakeDefaultVP() {
     return MakeViewLookingForward() * MakePerspective();
 }
@@ -81,51 +86,53 @@ TEST(VFXFrustumCull, ExtractFromPerspective_PlanesAreNormalized) {
 
 TEST(VFXFrustumCull, SphereAtCenter_InsidePerspective) {
     const FrustumPlanes frustum = ExtractFrustumPlanes(MakeDefaultVP());
-    // Sphere at (0, 0, 10) — well inside a frustum looking along +Z.
-    EXPECT_TRUE(IsSphereInsideFrustum(frustum, Vec3{0.0f, 0.0f, 10.0f}, 1.0f));
+    // Sphere at (10, 0, 0) — well inside a frustum looking along +X.
+    EXPECT_TRUE(IsSphereInsideFrustum(frustum, Vec3{10.0f, 0.0f, 0.0f}, 1.0f));
 }
 
 TEST(VFXFrustumCull, SphereBehindCamera_OutsidePerspective) {
     const FrustumPlanes frustum = ExtractFrustumPlanes(MakeDefaultVP());
-    // Sphere at (0, 0, -50) — behind the camera (looking along +Z).
-    EXPECT_FALSE(IsSphereInsideFrustum(frustum, Vec3{0.0f, 0.0f, -50.0f}, 1.0f));
+    // Sphere at (-50, 0, 0) — behind the camera (looking along +X).
+    EXPECT_FALSE(IsSphereInsideFrustum(frustum, Vec3{-50.0f, 0.0f, 0.0f}, 1.0f));
 }
 
 TEST(VFXFrustumCull, SphereFarToLeft_OutsidePerspective) {
     const FrustumPlanes frustum = ExtractFrustumPlanes(MakeDefaultVP());
-    // Sphere far to the left at distance 10 along Z.
+    // Sphere far to the left (-Y) at distance 10 along the forward axis (+X).
     // With a 60-degree FOV and 16:9 aspect, the horizontal half-angle is roughly
-    // atan(tan(30deg) * 16/9) ~ 43 degrees. At Z=10, the frustum width is ~9.3.
-    // A sphere at X=-100 is well outside.
-    EXPECT_FALSE(IsSphereInsideFrustum(frustum, Vec3{-100.0f, 0.0f, 10.0f}, 1.0f));
+    // atan(tan(30deg) * 16/9) ~ 46 degrees. At X=10, the frustum half-width is ~10.3.
+    // A sphere at Y=-100 is well outside.
+    EXPECT_FALSE(IsSphereInsideFrustum(frustum, Vec3{10.0f, -100.0f, 0.0f}, 1.0f));
 }
 
 TEST(VFXFrustumCull, SphereFarToRight_OutsidePerspective) {
     const FrustumPlanes frustum = ExtractFrustumPlanes(MakeDefaultVP());
-    EXPECT_FALSE(IsSphereInsideFrustum(frustum, Vec3{100.0f, 0.0f, 10.0f}, 1.0f));
+    // Right is +Y in the Z-up, X-forward, left-handed basis.
+    EXPECT_FALSE(IsSphereInsideFrustum(frustum, Vec3{10.0f, 100.0f, 0.0f}, 1.0f));
 }
 
 TEST(VFXFrustumCull, SphereFarAbove_OutsidePerspective) {
     const FrustumPlanes frustum = ExtractFrustumPlanes(MakeDefaultVP());
-    EXPECT_FALSE(IsSphereInsideFrustum(frustum, Vec3{0.0f, 100.0f, 10.0f}, 1.0f));
+    // Up is +Z.
+    EXPECT_FALSE(IsSphereInsideFrustum(frustum, Vec3{10.0f, 0.0f, 100.0f}, 1.0f));
 }
 
 TEST(VFXFrustumCull, SphereFarBelow_OutsidePerspective) {
     const FrustumPlanes frustum = ExtractFrustumPlanes(MakeDefaultVP());
-    EXPECT_FALSE(IsSphereInsideFrustum(frustum, Vec3{0.0f, -100.0f, 10.0f}, 1.0f));
+    EXPECT_FALSE(IsSphereInsideFrustum(frustum, Vec3{10.0f, 0.0f, -100.0f}, 1.0f));
 }
 
 TEST(VFXFrustumCull, SphereBeyondFarPlane_OutsidePerspective) {
     const FrustumPlanes frustum = ExtractFrustumPlanes(MakeDefaultVP());
-    // Sphere well beyond the far plane (1000 units).
-    EXPECT_FALSE(IsSphereInsideFrustum(frustum, Vec3{0.0f, 0.0f, 2000.0f}, 1.0f));
+    // Sphere well beyond the far plane (1000 units along +X).
+    EXPECT_FALSE(IsSphereInsideFrustum(frustum, Vec3{2000.0f, 0.0f, 0.0f}, 1.0f));
 }
 
 TEST(VFXFrustumCull, LargeSpherePartiallyInside_ReturnsTrue) {
     const FrustumPlanes frustum = ExtractFrustumPlanes(MakeDefaultVP());
     // Sphere behind camera but with a huge radius that reaches into the frustum.
-    // Center at Z=-5, radius=100 — extends from Z=-105 to Z=+95, overlapping the frustum.
-    EXPECT_TRUE(IsSphereInsideFrustum(frustum, Vec3{0.0f, 0.0f, -5.0f}, 100.0f));
+    // Center at X=-5, radius=100 — extends from X=-105 to X=+95, overlapping the frustum.
+    EXPECT_TRUE(IsSphereInsideFrustum(frustum, Vec3{-5.0f, 0.0f, 0.0f}, 100.0f));
 }
 
 TEST(VFXFrustumCull, ZeroRadiusSphere_AtOrigin_InsideIdentity) {
