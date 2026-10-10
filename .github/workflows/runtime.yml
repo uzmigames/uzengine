@@ -21,15 +21,24 @@ on:
       - "scripts/tools/**"
       - "scripts/falcor/**"
       - ".github/workflows/runtime.yml"
+  workflow_dispatch:
 
 concurrency:
   group: runtime-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build:
-    name: Build
+  build-test:
+    name: Build & Test
     runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      # Single Zig cache for global + local entries (setup-zig redirects both here).
+      ZIG_CACHE_PATH: .zig-cache
+      # Bump to discard every saved Zig cache.
+      ZIG_CACHE_VERSION: zig-v1-0.15.2
+      # Over this size the cache is emptied before saving, so it cannot grow without bound.
+      ZIG_CACHE_LIMIT_GB: 12
     steps:
       - uses: actions/checkout@v4
 
@@ -37,40 +46,81 @@ jobs:
         with:
           python-version: "3.13"
 
+      # Archives are stored by SHA-256 and re-verified, so a stale prefix match is safe.
+      - name: Restore native download cache
+        id: native-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .tools/native-cache
+          key: native-${{ runner.os }}-${{ hashFiles('scripts/native-dependencies.lock.json') }}
+          restore-keys: native-${{ runner.os }}-
+
       - name: Provision locked Windows dependencies
         run: pwsh -NoProfile -File scripts/setup-native.ps1
 
+      - name: Save native download cache
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .tools/native-cache
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
+
+      # setup-zig's own cache wipes itself above 2 GiB, which a Debug build exceeds.
       - name: Install Zig
         uses: mlugg/setup-zig@v2
         with:
           version: 0.15.2
+          use-cache: false
+
+      - name: Pin Zig cache directory
+        run: |
+          $dir = Join-Path $env:GITHUB_WORKSPACE $env:ZIG_CACHE_PATH
+          "ZIG_GLOBAL_CACHE_DIR=$dir" >> $env:GITHUB_ENV
+          "ZIG_LOCAL_CACHE_DIR=$dir" >> $env:GITHUB_ENV
+
+      # Run-unique key so every run saves its updated state; the newest prefix match is restored.
+      - name: Restore Zig cache
+        id: zig-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.ZIG_CACHE_PATH }}
+          key: ${{ env.ZIG_CACHE_VERSION }}-${{ runner.os }}-${{ hashFiles('runtime/build.zig', 'runtime/build.zig.zon', 'scripts/native-dependencies.lock.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ${{ env.ZIG_CACHE_VERSION }}-${{ runner.os }}-${{ hashFiles('runtime/build.zig', 'runtime/build.zig.zon', 'scripts/native-dependencies.lock.json') }}-
+            ${{ env.ZIG_CACHE_VERSION }}-${{ runner.os }}-
 
       - name: Build (Debug)
+        id: build-debug
         working-directory: runtime
         run: zig build '-Dnative-deps=thirdparty/.native' -Ddll=true
 
+      # `test` depends on the install step, so every Debug object is a cache hit here.
+      # Without -Ddll a DLL-only failure cannot hide test results.
+      - name: Run tests
+        if: ${{ !cancelled() && steps.build-debug.conclusion != 'skipped' }}
+        working-directory: runtime
+        run: zig build test '-Dnative-deps=thirdparty/.native'
+
       - name: Build (ReleaseFast)
+        if: ${{ !cancelled() && steps.build-debug.outcome == 'success' && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
         working-directory: runtime
         run: zig build '-Dnative-deps=thirdparty/.native' -Doptimize=ReleaseFast
 
-  test:
-    name: Test
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
+      - name: Cap Zig cache size
+        if: ${{ always() && steps.build-debug.conclusion != 'skipped' }}
+        run: |
+          if (-not (Test-Path $env:ZIG_CACHE_PATH)) { exit 0 }
+          $bytes = (Get-ChildItem $env:ZIG_CACHE_PATH -Recurse -File -Force | Measure-Object Length -Sum).Sum
+          "Zig cache: {0:N2} GiB (limit $env:ZIG_CACHE_LIMIT_GB GiB)" -f ($bytes / 1GB)
+          if ($bytes -gt [double]$env:ZIG_CACHE_LIMIT_GB * 1GB) {
+            Get-ChildItem $env:ZIG_CACHE_PATH -Force | Remove-Item -Recurse -Force
+            "Zig cache exceeded the limit and was cleared; the next run rebuilds from scratch."
+          }
 
-      - uses: actions/setup-python@v5
+      # always(): the test step currently fails, and partial work from cancelled runs is still reusable.
+      - name: Save Zig cache
+        if: ${{ always() && steps.build-debug.conclusion != 'skipped' }}
+        uses: actions/cache/save@v4
         with:
-          python-version: "3.13"
-
-      - name: Provision locked Windows dependencies
-        run: pwsh -NoProfile -File scripts/setup-native.ps1
-
-      - name: Install Zig
-        uses: mlugg/setup-zig@v2
-        with:
-          version: 0.15.2
-
-      - name: Run tests
-        working-directory: runtime
-        run: zig build test '-Dnative-deps=thirdparty/.native'
+          path: ${{ env.ZIG_CACHE_PATH }}
+          key: ${{ steps.zig-cache.outputs.cache-primary-key }}
