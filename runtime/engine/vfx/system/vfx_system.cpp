@@ -16,6 +16,13 @@ namespace uz {
 
 namespace {
 
+/// `.uzvfxsys` documents are handled as insertion-ordered JSON so the
+/// `parameters` object keeps its authoring order on load and on save
+/// (`VfxSystem::parameters` is documented as "in authoring order"). The
+/// default `nlohmann::json` stores objects in a std::map, which would
+/// silently re-sort parameters alphabetically.
+using VfxSystemJson = nlohmann::ordered_json;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Core Parse + Validate
 // ─────────────────────────────────────────────────────────────────────────────
@@ -25,7 +32,7 @@ namespace {
 /// # Returns
 /// Populated unique_ptr on success, nullptr on validation failure.
 /// Logs all validation errors with VFX category.
-[[nodiscard]] std::unique_ptr<VfxSystem> ParseAndValidate(const nlohmann::json& root) {
+[[nodiscard]] std::unique_ptr<VfxSystem> ParseAndValidate(const VfxSystemJson& root) {
     // -- format field --
     if (!root.contains("format") || !root["format"].is_string()) {
         UZ_LOG(VFX, Error, "VfxSystem: missing or invalid 'format' field");
@@ -241,10 +248,10 @@ namespace {
 // ─────────────────────────────────────────────────────────────────────────────
 
 std::unique_ptr<VfxSystem> VfxSystem::LoadFromString(const std::string& jsonStr) {
-    nlohmann::json root;
+    VfxSystemJson root;
     try {
-        root = nlohmann::json::parse(jsonStr);
-    } catch (const nlohmann::json::parse_error& e) {
+        root = VfxSystemJson::parse(jsonStr);
+    } catch (const VfxSystemJson::parse_error& e) {
         UZ_LOG(VFX, Error, "VfxSystem: JSON parse error: {}", e.what());
         return nullptr;
     }
@@ -281,16 +288,16 @@ std::unique_ptr<VfxSystem> VfxSystem::Load(const std::string& path, IVFS* vfs) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 bool VfxSystem::SaveToFile(const std::string& path) const {
-    nlohmann::json root;
+    VfxSystemJson root;
     root["format"] = "uzvfxsys";
     root["version"] = 1;
     if (!name.empty()) {
         root["name"] = name;
     }
 
-    nlohmann::json emittersJson = nlohmann::json::array();
+    VfxSystemJson emittersJson = VfxSystemJson::array();
     for (const auto& ref : emitters) {
-        nlohmann::json e;
+        VfxSystemJson e;
         if (!ref.name.empty()) e["name"] = ref.name;
         e["path"] = ref.emitterPath;
         if (!ref.id.empty()) e["id"] = ref.id;
@@ -303,9 +310,9 @@ bool VfxSystem::SaveToFile(const std::string& path) const {
     // Parameters block (7.2.0): only written when non-empty to keep legacy
     // fireball.uzvfxsys round-trip stable.
     if (!parameters.empty()) {
-        nlohmann::json paramsJson = nlohmann::json::object();
+        VfxSystemJson paramsJson = VfxSystemJson::object();
         for (const auto& p : parameters) {
-            nlohmann::json entry;
+            VfxSystemJson entry;
             switch (p.componentCount) {
                 case 1:
                     entry["type"] = "float";
