@@ -1,0 +1,68 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash 'e:\\UzmiGames\\UzEngine\\.codex\\hooks\\block-destructive-git.sh'",
+            "timeout": 5,
+            "statusMessage": "Checking git safety..."
+          }
+        ]
+      },
+      {
+        "matcher": "Bash(cd*zig build*)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash 'e:\\UzmiGames\\UzEngine\\.codex\\hooks\\clean-shader-cache.sh' 2>/dev/null || true",
+            "timeout": 10,
+            "statusMessage": "Cleaning shader cache..."
+          }
+        ]
+      },
+      {
+        "matcher": "Bash(git commit*)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash 'e:\\UzmiGames\\UzEngine\\.codex\\hooks\\validate-commit.sh' 2>/dev/null || true",
+            "timeout": 15,
+            "statusMessage": "Validating commit..."
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash 'e:\\UzmiGames\\UzEngine\\.codex\\hooks\\protect-task-scaffolding.sh'"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash 'e:\\UzmiGames\\UzEngine\\.codex\\hooks\\no-os-scheduling.sh'"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash 'e:\\UzmiGames\\UzEngine\\.codex\\hooks\\jev-gate.sh' prompt",
+            "timeout": 8
+          }
+        ]
+      }
+    ]
+  }
+}
