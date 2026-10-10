@@ -31,14 +31,16 @@ cbuffer PerFrameCB : register(b1) {
     float4   lightColor          : packoffset(c7);
     float4   ambientColor        : packoffset(c8);
     float    mipBias             : packoffset(c30);
+    // Members are declared in ascending packoffset order: DXC's SPIR-V backend lays the
+    // block out in declaration order and rejects a packoffset below the previous member's.
+    // Diagnostic (byte 972): bit0 = ignore normal maps, bit1 = ignore material AO maps.
+    uint     materialMapMask           : packoffset(c60.w);
     // Diagnostic material overrides (-1 = off). followup-14 item 1.5: Sponza contains
     // no mirror or glossy surfaces, so the only way to measure a TAA change on that
     // material class is to force it here, where both the lighting and the recorded
     // G-buffer roughness pick it up.
     float    materialRoughnessOverride : packoffset(c63.y);
     float    materialMetallicOverride  : packoffset(c63.z);
-    // Diagnostic (byte 972): bit0 = ignore normal maps, bit1 = ignore material AO maps.
-    uint     materialMapMask           : packoffset(c60.w);
 };
 
 cbuffer PerObjectCB : register(b2) {

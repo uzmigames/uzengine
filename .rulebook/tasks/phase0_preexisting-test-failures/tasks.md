@@ -2,7 +2,16 @@
 - [ ] 1.1 Fix the MaterialGraph id-0 sentinel collision (or the test), with the reason recorded.
 - [ ] 1.2 Find the shared state behind the MaterialGraphHlslCodegen order dependence.
 - [ ] 1.3 Decide each default-drift test (fix the test or the default): fog, sky, camera, project-loader CVar order.
-- [ ] 1.4 ShaderCrossBackend: add gbuffer/ to the fixture; make the non-bindless deferred lighting compile with a real shadow-atlas register bound by the C++ side, or exclude that permutation with the reason.
+- [x] 1.4 ShaderCrossBackend: add gbuffer/ to the fixture; make the non-bindless deferred lighting compile with a real shadow-atlas register bound by the C++ side, or exclude that permutation with the reason.
+  Done 2026-10-10: the fixture searched the pre-rewrite `geometry/`/`post/` dirs, now `gbuffer/`. The SM5
+  block of `deferred_lighting_ps.hlsl` lost `shadowAtlasTexture : register(t3)` in the shader rewrite
+  (bd4db199); restored at t3, the slot `LightingPass` and `ShadowDataParams` (kShadowAtlasSlot) bind. The
+  glass block read the bindless-only `gBufIndices` unguarded; SM5 now treats the environment as absent
+  (the sentinel case). Two causes the note missed: `gbuffer_ps.hlsl` declared `packoffset(c60.w)` after
+  `c63.y/z`, which DXC's SPIR-V layout rejects ("packoffset caused overlap"), now ascending; and the
+  `ShaderPipelineMetal` suite tested the `!_WIN32` Slang→MSL implementation on Windows, where the class is
+  the DXC/FXC one, so it is compiled only where its subject is (`#ifndef _WIN32`). Result: 17 passed,
+  4 pre-existing DXBC pixel-shader skips; `*Shader*` 425 passed, 11 pre-existing skips, 0 failed.
 - [ ] 1.5 Re-run the full test_runtime and publish a dated failure list with an owner per suite (the VFX / editor suites stay with the VFX work in progress).
 
 ## 2. Tail (mandatory — enforced by rulebook v5.3.0)

@@ -52,6 +52,9 @@ ConstantBuffer<GBufferIndices> gBufIndices : register(b0);
 Texture2D<float4> gbufferAlbedo    : register(t0);
 Texture2D<float4> gbufferNormal    : register(t1);
 Texture2D<float>  gbufferDepth     : register(t2);
+// CSM atlas read by shadow.hlsli's SM5 path. Bound at t3 by LightingPass (SetFragmentTexture(3))
+// and by ShadowDataParams metadata (kShadowAtlasSlot = 3).
+Texture2D<float>  shadowAtlasTexture : register(t3);
 Texture2D<float4> gbufferPositionWS : register(t4);
 Texture2D<float>  gtaoTextureT9    : register(t9);
 Texture2D<float4> gbufferEmissive  : register(t10);
@@ -1399,7 +1402,14 @@ LightingOutput main(FSInput input) {
     //
     // At normal incidence (center): ~96% transmission, ~4% reflection (F0=0.04 for glass)
     // At grazing angles (rim): ~100% reflection (Fresnel → 1.0)
-    if (transmission > 0.0 && gBufIndices.iblPrefilteredSrvIdx != kSentinelSrvIndex) {
+#ifdef UZ_BINDLESS
+    const bool glassEnvAvailable = gBufIndices.iblPrefilteredSrvIdx != kSentinelSrvIndex;
+#else
+    // The SM5 path declares no prefiltered cubemap register (the split-sum IBL above is bindless-only
+    // too), so the environment this approximation samples is absent: same as the bindless sentinel.
+    const bool glassEnvAvailable = false;
+#endif
+    if (transmission > 0.0 && glassEnvAvailable) {
         // @ref Three.js MeshPhysicalMaterial — specular=0.5 → F0=0.04 → IOR=1.5
         // @constants F0_dielectric = specular * 0.08, IOR = (1+√F0)/(1-√F0)
         float specularFromAlpha = frac(packedAlpha / 16.0) * 16.0;

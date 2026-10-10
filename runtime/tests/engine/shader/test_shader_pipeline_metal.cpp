@@ -1,5 +1,12 @@
 /// ShaderPipeline macOS (Slang→MSL) tests
 /// (task phase1_port-metal-shader-pipeline, Phase 2).
+///
+/// The Slang→MSL ShaderPipeline is the `#else // !_WIN32` implementation in
+/// shader_pipeline.cpp; Windows builds compile the DXC/FXC implementation of the
+/// same class instead, so these tests are compiled where the code under test is.
+/// Where libslang cannot be loaded at runtime they skip via IsInitialized().
+
+#ifndef _WIN32
 
 #include <gtest/gtest.h>
 
@@ -113,3 +120,5 @@ float4 main() : SV_Target { return float4(1, 1, 1, 1); }
 }
 
 } // namespace
+
+#endif // !_WIN32
