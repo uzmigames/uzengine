@@ -75,10 +75,8 @@ target_link_libraries(${PROJECT_NAME}
 
 # Copy DLL + dependencies alongside uzengine.node
 set(RUNTIME_BIN_DIR ${CMAKE_SOURCE_DIR}/../runtime/build/bin)
-set(FFMPEG_BIN_DIR ${CMAKE_SOURCE_DIR}/../runtime/thirdparty/ffmpeg/bin)
 
 file(GLOB RUNTIME_DLLS "${RUNTIME_BIN_DIR}/*.dll")
-file(GLOB FFMPEG_DLLS "${FFMPEG_BIN_DIR}/*.dll")
 
 # All runtime DLLs go flat into the build output dir.
 if(RUNTIME_DLLS)
@@ -87,9 +85,5 @@ if(RUNTIME_DLLS)
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RUNTIME_DLLS} $<TARGET_FILE_DIR:${PROJECT_NAME}>/
   )
 endif()
-if(FFMPEG_DLLS)
-  add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-    COMMENT "Copying FFmpeg DLLs (H.264 encoding)..."
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${FFMPEG_DLLS} $<TARGET_FILE_DIR:${PROJECT_NAME}>/
-  )
-endif()
+# The runtime build deploys the selected profile's FFmpeg DLLs here too.
+# Copying again from the legacy SDK would overwrite them with another version.

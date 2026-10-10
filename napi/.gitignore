@@ -5,4 +5,4 @@ node_modules/
 build/
 
 # Lock file (regenerated per machine)
-package-lock.json
+!/package-lock.json

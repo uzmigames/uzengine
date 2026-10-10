@@ -6,6 +6,7 @@
 #include "normal_smoother.h"
 #include "engine/asset/formats/uzmesh_format.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <unordered_map>

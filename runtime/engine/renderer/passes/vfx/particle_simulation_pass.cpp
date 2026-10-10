@@ -442,9 +442,9 @@ void AddParticleSimulationPass(rg::RgBuilder& builder,
 
     for (size_t i = 0; i < desc.emitters.size(); ++i) {
         UZ_CHECKF(desc.emitters[i].buffer != nullptr,
-                  "ParticleSimulationPass: emitter[{}] has null GPUParticleBuffer", i);
+                  "ParticleSimulationPass: emitter[%zu] has null GPUParticleBuffer", i);
         UZ_CHECKF(desc.emitters[i].buffer->IsValid(),
-                  "ParticleSimulationPass: emitter[{}] GPUParticleBuffer is not allocated", i);
+                  "ParticleSimulationPass: emitter[%zu] GPUParticleBuffer is not allocated", i);
     }
 
     builder.AddPass("VFX_ParticleSimulation", [desc](rg::RgPassBuilder& pb) {

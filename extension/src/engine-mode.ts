@@ -22,66 +22,60 @@ const STATE_KEY = 'uzengine.engineModeActive';
 /// focuses the Scene Hierarchy view so the user sees the engine layout
 /// immediately without manual panel management.
 export class EngineMode {
-    private readonly statusBarItem: vscode.StatusBarItem;
-    private isEngineMode: boolean;
+  private readonly statusBarItem: vscode.StatusBarItem;
+  private isEngineMode: boolean;
 
-    constructor(private readonly context: vscode.ExtensionContext) {
-        // Restore persisted state from the previous session.
-        this.isEngineMode =
-            context.workspaceState.get<boolean>(STATE_KEY, false);
+  constructor(private readonly context: vscode.ExtensionContext) {
+    // Restore persisted state from the previous session.
+    this.isEngineMode = context.workspaceState.get<boolean>(STATE_KEY, false);
 
-        this.statusBarItem = vscode.window.createStatusBarItem(
-            vscode.StatusBarAlignment.Left,
-            100
-        );
-        this.statusBarItem.command = 'uzengine.toggleEngineMode';
-        this.updateStatusBar();
-        this.statusBarItem.show();
+    this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+    this.statusBarItem.command = 'uzengine.toggleEngineMode';
+    this.updateStatusBar();
+    this.statusBarItem.show();
 
-        // Register for disposal via the extension context.
-        context.subscriptions.push(this.statusBarItem);
+    // Register for disposal via the extension context.
+    context.subscriptions.push(this.statusBarItem);
+  }
+
+  // ── Public API ────────────────────────────────────────────────────────────
+
+  /// Toggles between Code Mode and Engine Mode.
+  ///
+  /// When switching TO Engine Mode:
+  ///   - Opens the viewport panel (`uzengine.openViewport`)
+  ///   - Focuses the Scene Hierarchy view (`uzengine.sceneTree.focus`)
+  ///
+  /// When switching BACK to Code Mode the layout is left as-is; the user
+  /// can rearrange panels manually. A notification confirms the change.
+  toggle(): void {
+    this.isEngineMode = !this.isEngineMode;
+    // Persist so the mode survives extension restarts.
+    void this.context.workspaceState.update(STATE_KEY, this.isEngineMode);
+    this.updateStatusBar();
+
+    if (this.isEngineMode) {
+      // Open the viewport and bring the scene tree into focus.
+      void vscode.commands.executeCommand('uzengine.openViewport');
+      void vscode.commands.executeCommand('uzengine.sceneTree.focus');
     }
 
-    // ── Public API ────────────────────────────────────────────────────────────
+    vscode.window.showInformationMessage(
+      this.isEngineMode ? 'Engine Mode activated' : 'Code Mode activated',
+    );
+  }
 
-    /// Toggles between Code Mode and Engine Mode.
-    ///
-    /// When switching TO Engine Mode:
-    ///   - Opens the viewport panel (`uzengine.openViewport`)
-    ///   - Focuses the Scene Hierarchy view (`uzengine.sceneTree.focus`)
-    ///
-    /// When switching BACK to Code Mode the layout is left as-is; the user
-    /// can rearrange panels manually. A notification confirms the change.
-    toggle(): void {
-        this.isEngineMode = !this.isEngineMode;
-        // Persist so the mode survives extension restarts.
-        void this.context.workspaceState.update(STATE_KEY, this.isEngineMode);
-        this.updateStatusBar();
+  // ── Private helpers ───────────────────────────────────────────────────────
 
-        if (this.isEngineMode) {
-            // Open the viewport and bring the scene tree into focus.
-            void vscode.commands.executeCommand('uzengine.openViewport');
-            void vscode.commands.executeCommand('uzengine.sceneTree.focus');
-        }
-
-        vscode.window.showInformationMessage(
-            this.isEngineMode ? 'Engine Mode activated' : 'Code Mode activated'
-        );
+  private updateStatusBar(): void {
+    if (this.isEngineMode) {
+      this.statusBarItem.text = '$(game) Engine Mode';
+      this.statusBarItem.tooltip = 'UzEngine: Engine Mode active — click to switch to Code Mode';
+      this.statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+    } else {
+      this.statusBarItem.text = '$(code) Code Mode';
+      this.statusBarItem.tooltip = 'UzEngine: Code Mode active — click to switch to Engine Mode';
+      this.statusBarItem.backgroundColor = undefined;
     }
-
-    // ── Private helpers ───────────────────────────────────────────────────────
-
-    private updateStatusBar(): void {
-        if (this.isEngineMode) {
-            this.statusBarItem.text = '$(game) Engine Mode';
-            this.statusBarItem.tooltip = 'UzEngine: Engine Mode active — click to switch to Code Mode';
-            this.statusBarItem.backgroundColor = new vscode.ThemeColor(
-                'statusBarItem.warningBackground'
-            );
-        } else {
-            this.statusBarItem.text = '$(code) Code Mode';
-            this.statusBarItem.tooltip = 'UzEngine: Code Mode active — click to switch to Engine Mode';
-            this.statusBarItem.backgroundColor = undefined;
-        }
-    }
+  }
 }

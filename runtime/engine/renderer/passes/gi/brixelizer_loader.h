@@ -17,6 +17,10 @@
 
 #pragma once
 
+// FidelityFX 1.1 uses std::popcount and global C math functions without
+// including their defining headers. Supply them at the SDK boundary.
+#include <bit>
+#include <math.h>
 #include <FidelityFX/host/ffx_brixelizer.h>
 #include <FidelityFX/host/ffx_brixelizergi.h>
 

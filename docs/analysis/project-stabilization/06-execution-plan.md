@@ -13,10 +13,15 @@ are the operational counterparts of this plan.
 
 ## Scope of the current delivery
 
-The analysis is organized and linked. Corrective implementation is pending.
-No runtime/shader/editor fix, current-source C++ build or GPU pass is claimed by
-this documentation task. Do not archive the stabilization task while corrective
-items remain open. Before handing an item off, create its follow-up through
+The initial analysis is preserved in files 01–06. The approved baseline
+implementation is now tracked in five focused tasks linked from
+[07 — Baseline implementation](07-baseline-implementation.md), with locked native
+builds in [08](08-native-bootstrap.md) and final coverage/first-frame evidence in
+[09](09-test-coverage-and-first-frames.md). Stage 0 is complete: current build inputs,
+honest validation outcomes and startup diagnostics are recorded. Native suite
+failures and renderer/editor corrections remain with their named owners; final
+visual acceptance is stage 3.
+Do not archive the stabilization task while corrective items remain open. Before handing an item off, create its follow-up through
 Rulebook and record the link; do not leave ownership only in prose.
 
 An existing task link is a scope reference, not a declaration that its historical

@@ -1,0 +1,25 @@
+name: Validation tools
+
+on:
+  push:
+    branches: [main]
+    paths: ["scripts/tools/**", "scripts/falcor/**", "runtime/tools/uzembed.cpp", ".github/workflows/validation-tools.yml"]
+  pull_request:
+    branches: [main]
+    paths: ["scripts/tools/**", "scripts/falcor/**", "runtime/tools/uzembed.cpp", ".github/workflows/validation-tools.yml"]
+
+jobs:
+  gates:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+      - run: python -m pip install -r scripts/falcor/requirements-gate.txt
+      - run: python -m unittest discover -s scripts/tools -p "test_*.py"
+      - run: python -m unittest discover -s scripts/falcor -p test_falcor_reference_gate.py
+      - run: python scripts/tools/rulebook_queue.py --check

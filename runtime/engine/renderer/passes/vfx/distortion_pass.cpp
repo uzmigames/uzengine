@@ -106,9 +106,9 @@ void AddDistortionAccumulationPass(rg::RgBuilder& builder,
 {
     for (size_t i = 0; i < desc.emitters.size(); ++i) {
         UZ_CHECKF(desc.emitters[i].buffer != nullptr,
-                  "DistortionAccumulationPass: emitter[{}] has null GPUParticleBuffer", i);
+                  "DistortionAccumulationPass: emitter[%zu] has null GPUParticleBuffer", i);
         UZ_CHECKF(desc.emitters[i].buffer->IsValid(),
-                  "DistortionAccumulationPass: emitter[{}] GPUParticleBuffer is not allocated", i);
+                  "DistortionAccumulationPass: emitter[%zu] GPUParticleBuffer is not allocated", i);
     }
 
     // Copy desc so we can sort emitters inside the lambda.

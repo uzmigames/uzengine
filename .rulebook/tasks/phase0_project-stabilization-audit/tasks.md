@@ -1,11 +1,11 @@
 - [x] 0.1 Review the working tree and record source findings, executed checks and limits for the 2026-10-10 audit.
 - [x] 0.2 Organize F-001 through F-022 into numbered analysis files with priorities, evidence, confidence, impact and acceptance criteria; map existing task ownership.
 - [x] 0.3 Validate the completed Rulebook proposal, checklist, design and spec delta; check documentation links and finding coverage (Rulebook 7.4.0 passed; 11 Markdown files, 118 local links and 22 findings checked on 2026-10-10).
-- [ ] 1.1 Establish a reproducible source/build manifest and align clean-checkout dependencies, lockfiles and the C++23/Zig contract (F-013, F-017; execution-plan stage 0).
-- [ ] 1.2 Correct PowerShell gate roots and source coverage, then verify invocation from unrelated directories and paths with spaces (F-016; after 1.1).
-- [ ] 1.3 Fix extension lint, required test discovery, fixture failure semantics and coverage dependencies; reconcile current native failures with phase0_preexisting-test-failures (F-014; after 1.1).
-- [ ] 1.4 Make required Falcor comparisons reject missing, mismatched and below-35-dB evidence, including negative-control cases (F-015).
-- [ ] 1.5 Capture a current-build diagnostic baseline and provenance before rendering edits; do not reuse old binaries as current evidence (after 1.1 and relevant gates).
+- [x] 1.1 Establish a reproducible source/build manifest and align clean-checkout dependencies, lockfiles and the C++23/Zig contract (F-013, F-017; execution-plan stage 0).
+- [x] 1.2 Correct PowerShell gate roots and source coverage, then verify invocation from unrelated directories and paths with spaces (F-016; after 1.1).
+- [x] 1.3 Fix extension lint, required test discovery, fixture failure semantics and coverage dependencies; reconcile current native failures with phase0_preexisting-test-failures (F-014; after 1.1).
+- [x] 1.4 Make required Falcor comparisons reject missing, mismatched and below-35-dB evidence, including negative-control cases (F-015).
+- [x] 1.5 Capture a current-build diagnostic baseline and provenance before rendering edits; do not reuse old binaries as current evidence (after 1.1 and relevant gates).
 - [ ] 2.1 Correct ECS slot/version bookkeeping with bounded-memory churn and stale-handle compatibility tests (F-009; after 1.1).
 - [ ] 2.2 Establish owner-thread world mutation and queued scene/property commands; verify concurrent rendering, resize and shutdown (F-010; after 2.1).
 - [ ] 2.3 Make scene-load outcomes explicit and preserve existing scene/resources/CVars on validation failure (F-011; after 2.2).
@@ -26,3 +26,17 @@
 - [ ] 6.1 Update or create documentation covering the implementation and link each closed finding to its revision, diagnostics and accepted evidence.
 - [ ] 6.2 Write tests covering the new behavior, including meaningful negative controls and applicable rendering scenarios.
 - [ ] 6.3 Run tests and confirm they pass, including required native, TypeScript, integration and visual gates; never mark missing or skipped required evidence as passing.
+
+## Approved baseline implementation — 2026-10-10
+
+Items 1.1–1.5 are complete through focused tasks within stage 0:
+
+- 1.1: [Build provenance](../phase0_stabilization-build-provenance/tasks.md), completed; locked source-only runtime/DLL, MSVC static consumer and addon builds verified.
+- 1.2: [PowerShell gates](../phase0_stabilization-powershell-gates/tasks.md), script-semantics implementation verified by controlled-tool regressions; real clang acceptance is not claimed.
+- 1.3: [Test integrity](../phase0_stabilization-test-integrity/tasks.md), completed; 116 extension and 88 MCP tests pass with all global coverage metrics above 95%. The full native run has 84 failures and 12 skips retained by its existing owner.
+- 1.4: [Falcor gate](../phase0_stabilization-falcor-gate/tasks.md), completed with 13 passing regressions; no renderer parity pass is inferred.
+- 1.5: [Diagnostic baseline](../phase0_stabilization-diagnostic-baseline/tasks.md), completed; current DX12 frames 0–8, preload control and capture regressions verified. Rendering warnings and final matched-reference acceptance remain open under the corrective milestones.
+
+[Current evidence and limitations](../../../docs/analysis/project-stabilization/09-test-coverage-and-first-frames.md).
+The baseline gate is satisfied; state/lifetime/rendering work follows its remaining
+dependencies. No audit-wide closure or archive is claimed.

@@ -5,10 +5,14 @@ on:
     branches: [main]
     paths:
       - "extension/**"
+      - ".github/workflows/extension.yml"
+      - "package.json"
   pull_request:
     branches: [main]
     paths:
       - "extension/**"
+      - ".github/workflows/extension.yml"
+      - "package.json"
 
 concurrency:
   group: extension-${{ github.ref }}
@@ -26,7 +30,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.23.3
       - run: npm ci
       - run: npm run build
 
@@ -37,7 +41,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.23.3
       - run: npm ci
       - run: npm run lint
 
@@ -48,7 +52,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.23.3
       - run: npm ci
       - run: npm run format:check
 
@@ -59,6 +63,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.23.3
       - run: npm ci
+      # The build job cannot enforce order across jobs; check types here first.
+      - run: npm run build:ts
       - run: npm run test:coverage

@@ -168,7 +168,10 @@ void AttractorModule::UploadAttractors(IRHIDevice* device)
     primary.killOnArrival = killOnArrival ? 1u : 0u;
     primary.killDistance  = kKillDistance;
 
-    attractorBuffer.AddAttractor(primary);
+    if (!attractorBuffer.AddAttractor(primary)) {
+        UZ_CHECKF(false, "AttractorModule::UploadAttractors: primary attractor rejected");
+        return;
+    }
 
     attractorBuffer.UploadToGPU(device);
 }

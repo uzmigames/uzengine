@@ -73,7 +73,7 @@ template <typename T, size_t Capacity> class FrameArray {
     /// Asserts if the array is full (Count == Capacity).
     T& Push(const T& item) {
         UZ_CHECK(m_count < Capacity);
-        T* ptr = new (&Storage(m_count)) T(item);
+        T* ptr = new (Storage(m_count)) T(item);
         ++m_count;
         return *ptr;
     }
@@ -90,7 +90,7 @@ template <typename T, size_t Capacity> class FrameArray {
     /// Asserts if the array is full.
     T& Push(T&& item) {
         UZ_CHECK(m_count < Capacity);
-        T* ptr = new (&Storage(m_count)) T(static_cast<T&&>(item));
+        T* ptr = new (Storage(m_count)) T(static_cast<T&&>(item));
         ++m_count;
         return *ptr;
     }
@@ -107,7 +107,7 @@ template <typename T, size_t Capacity> class FrameArray {
     /// Asserts if the array is full.
     template <typename... Args> T& Emplace(Args&&... args) {
         UZ_CHECK(m_count < Capacity);
-        T* ptr = new (&Storage(m_count)) T(static_cast<Args&&>(args)...);
+        T* ptr = new (Storage(m_count)) T(static_cast<Args&&>(args)...);
         ++m_count;
         return *ptr;
     }
@@ -161,12 +161,13 @@ template <typename T, size_t Capacity> class FrameArray {
     const T* end() const { return Data() + m_count; }
 
   private:
-    T& At(size_t i) { return reinterpret_cast<T&>(m_storage[i]); }
-    const T& At(size_t i) const { return reinterpret_cast<const T&>(m_storage[i]); }
+    T& At(size_t i) { return *std::launder(reinterpret_cast<T*>(m_storage[i].bytes)); }
+    const T& At(size_t i) const { return *std::launder(reinterpret_cast<const T*>(m_storage[i].bytes)); }
 
-    char& Storage(size_t i) { return reinterpret_cast<char&>(m_storage[i]); }
+    void* Storage(size_t i) { return m_storage[i].bytes; }
 
-    typename std::aligned_storage<sizeof(T), alignof(T)>::type m_storage[Capacity];
+    struct alignas(T) StorageSlot { std::byte bytes[sizeof(T)]; };
+    StorageSlot m_storage[Capacity];
     size_t m_count = 0;
 };
 

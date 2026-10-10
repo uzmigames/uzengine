@@ -9,7 +9,7 @@
 ///
 /// # Usage
 /// ```cpp
-/// FramePacer pacer;
+/// AdaptiveFramePacer pacer;
 /// pacer.Init({.autoTuneBufferCount = true, .targetFrameTimeMs = 16.67f});
 ///
 /// // Each frame:
@@ -36,7 +36,7 @@ namespace uz {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Configuration for the frame pacer.
-struct FramePacerConfig {
+struct AdaptiveFramePacerConfig {
     /// Target frame time in milliseconds. Used for dropped-frame detection.
     float targetFrameTimeMs = 16.667f;
 
@@ -64,7 +64,7 @@ struct FramePacerConfig {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FramePacer
+// AdaptiveFramePacer
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Monitors frame timing and recommends swap chain buffer count adjustments.
@@ -72,21 +72,21 @@ struct FramePacerConfig {
 /// Tracks per-frame CPU time between `BeginFrame()` and `EndFrame()`, maintains
 /// a rolling average, detects dropped frames, and optionally recommends buffer
 /// count changes for latency/throughput trade-offs.
-class FramePacer {
+class AdaptiveFramePacer {
 public:
-    FramePacer() = default;
-    ~FramePacer() = default;
+    AdaptiveFramePacer() = default;
+    ~AdaptiveFramePacer() = default;
 
-    FramePacer(const FramePacer&) = delete;
-    FramePacer& operator=(const FramePacer&) = delete;
-    FramePacer(FramePacer&&) = default;
-    FramePacer& operator=(FramePacer&&) = default;
+    AdaptiveFramePacer(const AdaptiveFramePacer&) = delete;
+    AdaptiveFramePacer& operator=(const AdaptiveFramePacer&) = delete;
+    AdaptiveFramePacer(AdaptiveFramePacer&&) = default;
+    AdaptiveFramePacer& operator=(AdaptiveFramePacer&&) = default;
 
     /// Initializes the frame pacer with the given configuration.
     ///
     /// # Returns
     /// `true` on success, `false` if configuration is invalid (e.g., min > max buffers).
-    bool Init(const FramePacerConfig& config = {});
+    bool Init(const AdaptiveFramePacerConfig& config = {});
 
     /// Resets all state and clears history.
     void Shutdown();
@@ -131,7 +131,7 @@ private:
     using Clock = std::chrono::high_resolution_clock;
     using TimePoint = Clock::time_point;
 
-    FramePacerConfig m_config;
+    AdaptiveFramePacerConfig m_config;
     bool m_initialized = false;
 
     TimePoint m_frameBegin{};

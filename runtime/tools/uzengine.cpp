@@ -9,6 +9,7 @@
 #define NOMINMAX
 
 #include "config.h"
+#include "capture_sequence.h"
 #include "rhi_config.h"
 #include "rhi_backend.h"
 #include "log.h"
@@ -569,6 +570,8 @@ struct RunStats {
     uint32_t regionFiles = 0;
     uint32_t regionInvalid = 0;
     uint32_t renderWidth = 0, renderHeight = 0;
+    struct Capture { uint32_t frame; bool preload; bool assetsReady; std::string path; };
+    std::vector<Capture> captures;
     /// Per-pass GPU time over the measured window: sum, sample count, min and max ms.
     /// G5 asks about GPU cost; CPU wall time is a different quantity and cannot stand in for it.
     struct GpuAcc { double sum = 0.0; uint32_t count = 0; float minMs = 0.f; float maxMs = 0.f; };
@@ -661,11 +664,20 @@ static void WriteRunManifest(const std::string& path, const uz::Config& config,
     o << "  \"camera\": {\"position\": [" << stats.cameraPos[0] << ", " << stats.cameraPos[1] << ", " << stats.cameraPos[2]
       << "], \"target\": [" << stats.cameraTarget[0] << ", " << stats.cameraTarget[1] << ", " << stats.cameraTarget[2] << "]},\n";
     o << "  \"region_dump\": {\"files\": " << stats.regionFiles << ", \"invalid\": " << stats.regionInvalid << "},\n";
+    o << "  \"captures\": [";
+    for (size_t i = 0; i < stats.captures.size(); ++i) {
+        const auto& capture = stats.captures[i];
+        o << (i ? ", " : "") << "{\"frame\": " << capture.frame
+          << ", \"preload\": " << (capture.preload ? "true" : "false")
+          << ", \"assets_ready\": " << (capture.assetsReady ? "true" : "false")
+          << ", \"path\": \"" << JsonEscape(capture.path) << "\"}";
+    }
+    o << "],\n";
 
     o << "  \"cli\": {";
     bool firstCli = true;
     for (const char* key : {"regions", "region-fields", "region-first", "region-last", "screenshot",
-                            "screenshot-frames", "frames", "view-mode", "run-manifest"}) {
+                            "screenshot-frames", "screenshot-preload", "frames", "view-mode", "run-manifest"}) {
         const std::string v = config.GetString(key, "");
         if (v.empty()) continue;
         if (!firstCli) o << ", ";
@@ -748,21 +760,12 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     // process (numbered <screenshot base>_<frame>.png). Consecutive frames then share
     // history, loading state and timing — what a static-vs-motion flicker analysis
     // needs; separate `--screenshot-frame K` runs only approximate that.
-    uint32_t seqFirst = 0, seqLast = 0, seqStep = 1; bool seqActive = false;
-    if (!screenshotFrames.empty() && !screenshotPath.empty()) {
-        unsigned a = 0, b = 0, st = 1;
-        const int n = std::sscanf(screenshotFrames.c_str(), "%u-%u:%u", &a, &b, &st);
-        // A single frame "N" means "N-N". Until 2026-10-08 it was rejected with a warning and the harnesses
-        // that passed one number (test_layered_reflections.py, test_env_mis.py, test_cloud_noise_assets.py)
-        // got the default screenshot frame (5) instead of the one they named.
-        if (n == 1) { b = a; }
-        if (n >= 1 && b >= a) { seqFirst = a; seqLast = b; seqStep = std::max(st, 1u); seqActive = true; }
-        else UZ_LOG(Engine, Warning, "--screenshot-frames '{}' not understood (expected N, A-B or A-B:step)", screenshotFrames);
-    }
-    std::string seqBase = screenshotPath, seqExt = ".png";
-    if (seqActive) {
-        const size_t dot = screenshotPath.find_last_of('.');
-        if (dot != std::string::npos && dot > screenshotPath.find_last_of("/\\") + 0) { seqBase = screenshotPath.substr(0, dot); seqExt = screenshotPath.substr(dot); }
+    const auto sequence = CaptureSequence::Parse(screenshotFrames);
+    const bool seqActive = !screenshotFrames.empty();
+    const bool capturePreload = configPtr && configPtr->GetBool("screenshot-preload", false);
+    if ((seqActive && (!sequence || screenshotPath.empty())) || (capturePreload && !seqActive)) {
+        UZ_LOG(Engine, Error, "Sequence capture requires --screenshot <path> and --screenshot-frames N, A-B or A-B:step (positive step)");
+        return kExitRenderError;
     }
     // --diag / --pixel-debug / --pass-dump: enforce a frame limit
     int effectiveMaxFrames = maxFrames;
@@ -1080,6 +1083,14 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     // the lightweight DrainPendingTextureLoads (no full RenderFrame overhead).
     uint32_t frameIndex = 0;
     uint64_t globalFenceValue = 0;
+    auto requestSequenceCapture = [&](bool preloading) {
+        if (!seqActive || !sceneRendererReady) return;
+        const bool ready = sceneRenderer.IsSceneFullyLoaded();
+        if (!sequence->Includes(frameIndex, ready, preloading, capturePreload)) return;
+        const auto path = CaptureSequence::ImagePath(screenshotPath, frameIndex);
+        sceneRenderer.RequestScreenshot(path);
+        runStats.captures.push_back({frameIndex, preloading, ready, path});
+    };
 
     // Finalize skeletal-mesh components after SceneRenderer is up: loads the
     // .uzmesh / .uzskel / .uzanim for every animated entity, wires per-entity
@@ -1101,6 +1112,7 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         // window messages until readiness, presenting nothing.
         sceneRenderer.SetPreloading(true);   // mesh SDF bakes unthrottled while nothing is presented (block B.3)
         while (window.PumpMessages() && window.IsOpen()) {
+            requestSequenceCapture(true);
             sceneRenderer.RenderFrame(cmdList, swapChain, &world, &vfs, 0.016f, frameIndex);
             device->WaitIdle();
             ++frameIndex;
@@ -1113,6 +1125,7 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
             if (sceneRenderer.IsSceneFullyLoaded()) {
                 // Exposure reads the previous HDR frame, then its result returns
                 // through a one-frame GPU readback. Seed both with the ready scene.
+                requestSequenceCapture(true);
                 sceneRenderer.RenderFrame(cmdList, swapChain, &world, &vfs, 0.0f, frameIndex++);
                 device->WaitIdle();
                 cmdList->Begin();
@@ -1120,6 +1133,7 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
                 cmdList->End();
                 cmdList->Execute();
                 device->WaitIdle();
+                requestSequenceCapture(true);
                 sceneRenderer.RenderFrame(cmdList, swapChain, &world, &vfs, 0.0f, frameIndex++);
                 device->WaitIdle();
                 UZ_LOG(Engine, Info, "Pre-load complete: assets ready and exposure seeded after {} frames; no partial scene presented", frameIndex);
@@ -1224,6 +1238,7 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         SkeletalMeshSubsystem::Get().TickAll(dt);
 
         // Render
+        requestSequenceCapture(false);
         if (sceneRendererReady) {
             sceneRenderer.RenderFrame(cmdList, swapChain, &world, &vfs, dt, frameIndex);
         } else {
@@ -1237,17 +1252,7 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
             // Log asset loading state once per frame until ready
             if (frameIndex % 30 == 0) (void)sceneRenderer.IsSceneFullyLoadedDebug();
         }
-        if (seqActive) {
-            // RenderFrame(frameIndex) has already run at this point, so a request issued now is
-            // captured from the NEXT frame's render: name the file by the frame it will contain
-            // (renderIdx) so `<base>_<N>.png` and the region dump's `region_<N>.bin` refer to the
-            // same render. Captures made before 2026-09-09 carry the old naming (file N = render N+1).
-            const uint32_t renderIdx = frameIndex + 1;
-            if (sceneRendererReady && renderIdx >= seqFirst && renderIdx <= seqLast
-                && (renderIdx - seqFirst) % seqStep == 0 && sceneRenderer.IsSceneFullyLoaded()) {
-                sceneRenderer.RequestScreenshot(seqBase + "_" + std::to_string(renderIdx) + seqExt);
-            }
-        } else if (sceneRendererReady && !screenshotPath.empty() && !screenshotRequested
+        if (!seqActive && sceneRendererReady && !screenshotPath.empty() && !screenshotRequested
             && frameIndex >= static_cast<uint32_t>(screenshotFrame)
             // No 120-frame timeout bypass: readiness is now exact (budget-deferred
             // meshes, uploads, SDF bakes and async slots all count), so waiting for

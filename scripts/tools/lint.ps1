@@ -1,82 +1,29 @@
-$ErrorActionPreference = "Stop"
-$Root = Split-Path $PSScriptRoot
+param([string]$RuntimeCompileDatabase, [string]$NapiCompileDatabase)
+. (Join-Path $PSScriptRoot 'quality_common.ps1')
 
-# Refresh PATH from registry
-$machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
-$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-$env:Path = "$machinePath;$userPath"
-
-Write-Host "============================================" -ForegroundColor Cyan
-Write-Host " UzEngine Lint" -ForegroundColor Cyan
-Write-Host "============================================" -ForegroundColor Cyan
-Write-Host ""
-
-$failed = @()
-
-# C++ modules (clang-tidy)
-$clangTidy = Get-Command clang-tidy -ErrorAction SilentlyContinue
-
-# Runtime — lint src/, core/, platform/, demos/, tools/
-$runtimePath = Join-Path $Root "runtime"
-if (Test-Path (Join-Path $runtimePath ".clang-tidy")) {
-    Write-Host "[runtime] clang-tidy..." -ForegroundColor Yellow
-    if ($clangTidy) {
-        $runtimeDirs = @("src", "core", "platform", "demos", "tools")
-        $sources = @()
-        foreach ($dir in $runtimeDirs) {
-            $dirPath = Join-Path $runtimePath $dir
-            if (Test-Path $dirPath) {
-                $sources += Get-ChildItem -Path $dirPath -Filter "*.cpp" -Recurse | Select-Object -ExpandProperty FullName
-            }
+$clangTidy = Get-QualityTool 'clang-tidy'
+foreach ($module in @('runtime', 'napi')) {
+    $explicit = if ($module -eq 'runtime') { $RuntimeCompileDatabase } else { $NapiCompileDatabase }
+    $database = Get-QualityCompilationDatabase $module $explicit
+    $allowed = @(Get-QualitySources $module)
+    $entries = @(Get-Content -LiteralPath $database -Raw | ConvertFrom-Json)
+    $sources = @(foreach ($entry in $entries) {
+        $directory = if ([IO.Path]::IsPathRooted($entry.directory)) { $entry.directory } else {
+            Join-Path (Split-Path $database) $entry.directory
         }
-        if ($sources) {
-            $includes = @("-I$runtimePath/src")
-            & clang-tidy $sources -- -std=c++17 $includes
-            if ($LASTEXITCODE -ne 0) { $failed += "runtime" }
-            else { Write-Host "[runtime] OK" -ForegroundColor Green }
-        }
-    } else {
-        Write-Host "[runtime] SKIP - clang-tidy not found" -ForegroundColor DarkYellow
+        $file = if ([IO.Path]::IsPathRooted($entry.file)) { $entry.file } else { Join-Path $directory $entry.file }
+        $file = [IO.Path]::GetFullPath($file)
+        if ($file -in $allowed) { $file }
+    }) | Sort-Object -Unique
+    if (-not $sources) { throw "Compilation database contains no $module sources" }
+    if ($module -eq 'runtime' -and -not ($sources | Where-Object { $_ -like "$(Join-Path $Root 'runtime/engine')*" })) {
+        throw 'Runtime compilation database omits engine sources'
     }
-    Write-Host ""
-}
-
-# N-API module
-$napiPath = Join-Path $Root "napi"
-if (Test-Path (Join-Path $napiPath ".clang-tidy")) {
-    $napiSrc = Join-Path $napiPath "src"
-    Write-Host "[napi] clang-tidy..." -ForegroundColor Yellow
-    if ($clangTidy) {
-        $sources = Get-ChildItem -Path $napiSrc -Filter "*.cpp" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
-        if ($sources) {
-            $includes = @("-I$napiPath/src", "-I$runtimePath/src", "-I$napiPath/node_modules/node-addon-api")
-            & clang-tidy $sources -- -std=c++17 $includes
-            if ($LASTEXITCODE -ne 0) { $failed += "napi" }
-            else { Write-Host "[napi] OK" -ForegroundColor Green }
-        }
-    } else {
-        Write-Host "[napi] SKIP - clang-tidy not found" -ForegroundColor DarkYellow
+    foreach ($source in $sources) {
+        Invoke-QualityCommand $clangTidy @($source, '-p', (Split-Path $database), '--warnings-as-errors=*')
     }
-    Write-Host ""
 }
-
-# TS modules (eslint)
-$tsModules = @("extension", "mcp")
-foreach ($mod in $tsModules) {
-    $modPath = Join-Path $Root $mod
-    if (-not (Test-Path (Join-Path $modPath "eslint.config.mjs"))) { continue }
-
-    Write-Host "[$mod] eslint..." -ForegroundColor Yellow
-    Push-Location $modPath
-    npx eslint src/
-    if ($LASTEXITCODE -ne 0) { $failed += $mod }
-    else { Write-Host "[$mod] OK" -ForegroundColor Green }
-    Pop-Location
-    Write-Host ""
+foreach ($module in @('extension', 'mcp')) {
+    Invoke-TypeScriptQuality $module 'eslint/bin/eslint.js' @('src/', '--max-warnings=0')
 }
-
-if ($failed.Count -gt 0) {
-    Write-Host "FAILED: $($failed -join ', ')" -ForegroundColor Red
-    exit 1
-}
-Write-Host "All modules passed lint." -ForegroundColor Green
+Write-Host 'All required lint checks passed.' -ForegroundColor Green

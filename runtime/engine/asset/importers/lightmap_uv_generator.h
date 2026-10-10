@@ -12,6 +12,7 @@
 /// Thread-safe — xatlas is reentrant. Each call allocates its own context.
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace uz {

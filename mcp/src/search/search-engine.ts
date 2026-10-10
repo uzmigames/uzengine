@@ -3,12 +3,12 @@
 /// Loads docs.json, builds BM25 index and HNSW index, and serves
 /// hybrid search queries.
 
-import type { DocumentedEntity, SearchFilters, SearchResult } from "../../tools/types.js";
-import { splitIdentifier, tokenize, removeStopWords } from "./tokenizer.js";
-import { embed, buildIdfMap, entityToTokens } from "./embeddings.js";
-import { Bm25Index } from "./bm25.js";
-import { HnswIndex } from "./hnsw.js";
-import { reciprocalRankFusion } from "./fusion.js";
+import type { DocumentedEntity, SearchFilters, SearchResult } from '../../tools/types.js';
+import { splitIdentifier, tokenize, removeStopWords } from './tokenizer.js';
+import { embed, buildIdfMap, entityToTokens } from './embeddings.js';
+import { Bm25Index } from './bm25.js';
+import { HnswIndex } from './hnsw.js';
+import { reciprocalRankFusion } from './fusion.js';
 
 /// The loaded search state.
 export class SearchEngine {
@@ -24,23 +24,26 @@ export class SearchEngine {
   /// Load entities and build BM25 index (fast).
   /// HNSW index is built lazily on first search query.
   load(entities: DocumentedEntity[]): void {
-    this.entities = entities;
-    this.entityById.clear();
-    for (const e of entities) {
-      this.entityById.set(e.id, e);
-    }
-
-    // Tokenize all entities
-    this.tokenCache = entities.map((e) => entityToTokens(e));
+    // Prepare a complete replacement before publishing it. A malformed fixture
+    // must not leave old BM25/HNSW state paired with a partially replaced corpus.
+    const tokenCache = entities.map((e) => entityToTokens(e));
 
     // Build IDF map from corpus
-    this.idfMap = buildIdfMap(this.tokenCache);
+    const idfMap = buildIdfMap(tokenCache);
 
     // Build BM25 index (fast — ~100ms for 9K entities)
-    this.bm25.build(this.tokenCache);
+    const bm25 = new Bm25Index();
+    bm25.build(tokenCache);
 
     // Pre-compute embeddings (fast — ~200ms for 9K entities)
-    this.embeddings = this.tokenCache.map((tokens) => embed(tokens, this.idfMap));
+    const embeddings = tokenCache.map((tokens) => embed(tokens, idfMap));
+
+    this.entities = entities;
+    this.entityById = new Map(entities.map((e) => [e.id, e]));
+    this.tokenCache = tokenCache;
+    this.idfMap = idfMap;
+    this.bm25 = bm25;
+    this.embeddings = embeddings;
 
     // HNSW is built lazily on first search
     this.hnsw = null;
@@ -66,11 +69,7 @@ export class SearchEngine {
   }
 
   /// Hybrid search: BM25 + HNSW + RRF.
-  search(
-    query: string,
-    filters?: SearchFilters,
-    limit = 10,
-  ): SearchResult[] {
+  search(query: string, filters?: SearchFilters, limit = 10): SearchResult[] {
     // Tokenize query
     const queryIdent = splitIdentifier(query);
     const queryText = tokenize(query);
@@ -133,11 +132,7 @@ export class SearchEngine {
   }
 
   /// Get entities related to a given entity (graph traversal).
-  getRelationships(
-    id: string,
-    depth = 1,
-    kind?: string,
-  ): DocumentedEntity[] {
+  getRelationships(id: string, depth = 1, kind?: string): DocumentedEntity[] {
     const visited = new Set<string>();
     const result: DocumentedEntity[] = [];
 
@@ -194,7 +189,7 @@ export class SearchEngine {
         if (author && !ref.author.toLowerCase().includes(author.toLowerCase())) continue;
         if (year && ref.year !== year) continue;
 
-        const key = `${ref.author}|${ref.year ?? ""}|${ref.title}`;
+        const key = `${ref.author}|${ref.year ?? ''}|${ref.title}`;
         const existing = refMap.get(key);
         if (existing) {
           existing.entityIds.push(entity.id);
@@ -217,22 +212,28 @@ export class SearchEngine {
   traceDataFlow(
     fieldName: string,
   ): Array<{ entityId: string; file: string; line: number; role: string; field: string }> {
-    const stages: Array<{ entityId: string; file: string; line: number; role: string; field: string }> = [];
+    const stages: Array<{
+      entityId: string;
+      file: string;
+      line: number;
+      role: string;
+      field: string;
+    }> = [];
 
     for (const entity of this.entities) {
       if (entity.name !== fieldName) continue;
 
       let role: string;
-      if (entity.file.includes("/ecs/") || entity.name.endsWith("Component")) {
-        role = "component";
-      } else if (entity.kind === "shader_cb") {
-        role = "cbuffer";
-      } else if (entity.language === "hlsl") {
-        role = "shader";
-      } else if (entity.file.includes("/renderer/")) {
-        role = "renderer";
+      if (entity.file.includes('/ecs/') || entity.name.endsWith('Component')) {
+        role = 'component';
+      } else if (entity.kind === 'shader_cb') {
+        role = 'cbuffer';
+      } else if (entity.language === 'hlsl') {
+        role = 'shader';
+      } else if (entity.file.includes('/renderer/')) {
+        role = 'renderer';
       } else {
-        role = "other";
+        role = 'other';
       }
 
       stages.push({
@@ -245,7 +246,7 @@ export class SearchEngine {
     }
 
     // Sort by pipeline order
-    const order = ["component", "renderer", "cbuffer", "shader", "other"];
+    const order = ['component', 'renderer', 'cbuffer', 'shader', 'other'];
     stages.sort((a, b) => order.indexOf(a.role) - order.indexOf(b.role));
 
     return stages;

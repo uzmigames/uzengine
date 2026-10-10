@@ -18,27 +18,27 @@ namespace uz {
 // Lifecycle
 // ─────────────────────────────────────────────────────────────────────────────
 
-bool FramePacer::Init(const FramePacerConfig& config) {
+bool AdaptiveFramePacer::Init(const AdaptiveFramePacerConfig& config) {
     if (m_initialized) {
-        UZ_LOG(RHI, Warning, "FramePacer::Init called while already initialized");
+        UZ_LOG(RHI, Warning, "AdaptiveFramePacer::Init called while already initialized");
         return false;
     }
 
     if (config.minSwapChainBuffers > config.maxSwapChainBuffers) {
-        UZ_LOG(RHI, Error, "FramePacer::Init: minSwapChainBuffers ({}) > maxSwapChainBuffers ({})",
+        UZ_LOG(RHI, Error, "AdaptiveFramePacer::Init: minSwapChainBuffers ({}) > maxSwapChainBuffers ({})",
                config.minSwapChainBuffers, config.maxSwapChainBuffers);
         return false;
     }
 
     if (config.latencyThresholdMs >= config.throughputThresholdMs) {
-        UZ_LOG(RHI, Error, "FramePacer::Init: latencyThresholdMs ({:.1f}) must be < "
+        UZ_LOG(RHI, Error, "AdaptiveFramePacer::Init: latencyThresholdMs ({:.1f}) must be < "
                "throughputThresholdMs ({:.1f})",
                config.latencyThresholdMs, config.throughputThresholdMs);
         return false;
     }
 
     if (config.historySize == 0) {
-        UZ_LOG(RHI, Error, "FramePacer::Init: historySize must be > 0");
+        UZ_LOG(RHI, Error, "AdaptiveFramePacer::Init: historySize must be > 0");
         return false;
     }
 
@@ -53,13 +53,13 @@ bool FramePacer::Init(const FramePacerConfig& config) {
     m_consecutiveBelowThreshold = 0;
     m_initialized = true;
 
-    UZ_LOG(RHI, Info, "FramePacer initialized: target={:.2f}ms buffers={}-{} autoTune={}",
+    UZ_LOG(RHI, Info, "AdaptiveFramePacer initialized: target={:.2f}ms buffers={}-{} autoTune={}",
            config.targetFrameTimeMs, config.minSwapChainBuffers,
            config.maxSwapChainBuffers, config.autoTuneBufferCount);
     return true;
 }
 
-void FramePacer::Shutdown() {
+void AdaptiveFramePacer::Shutdown() {
     if (!m_initialized) {
         return;
     }
@@ -67,19 +67,19 @@ void FramePacer::Shutdown() {
     m_frameTimeHistory.clear();
     m_initialized = false;
 
-    UZ_LOG(RHI, Info, "FramePacer shut down");
+    UZ_LOG(RHI, Info, "AdaptiveFramePacer shut down");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Per-frame timing
 // ─────────────────────────────────────────────────────────────────────────────
 
-void FramePacer::BeginFrame() {
+void AdaptiveFramePacer::BeginFrame() {
     m_frameBegin = Clock::now();
 }
 
-void FramePacer::EndFrame() {
-    UZ_PROFILE_SCOPE("FramePacer::EndFrame");
+void AdaptiveFramePacer::EndFrame() {
+    UZ_PROFILE_SCOPE("AdaptiveFramePacer::EndFrame");
 
     if (!m_initialized) {
         return;
@@ -127,14 +127,14 @@ void FramePacer::EndFrame() {
         m_recommendedBufferCount = m_config.maxSwapChainBuffers;
         m_consecutiveAboveThreshold = 0;
         UZ_STAT_INCREMENT(Rendering, SwapChainResizes);
-        UZ_LOG(RHI, Info, "FramePacer: recommending {} buffers (avg={:.2f}ms > {:.1f}ms)",
+        UZ_LOG(RHI, Info, "AdaptiveFramePacer: recommending {} buffers (avg={:.2f}ms > {:.1f}ms)",
                m_recommendedBufferCount, avgMs, m_config.throughputThresholdMs);
     } else if (m_consecutiveBelowThreshold >= m_config.hysteresisFrames &&
                m_recommendedBufferCount > m_config.minSwapChainBuffers) {
         m_recommendedBufferCount = m_config.minSwapChainBuffers;
         m_consecutiveBelowThreshold = 0;
         UZ_STAT_INCREMENT(Rendering, SwapChainResizes);
-        UZ_LOG(RHI, Info, "FramePacer: recommending {} buffers (avg={:.2f}ms < {:.1f}ms)",
+        UZ_LOG(RHI, Info, "AdaptiveFramePacer: recommending {} buffers (avg={:.2f}ms < {:.1f}ms)",
                m_recommendedBufferCount, avgMs, m_config.latencyThresholdMs);
     }
 }
@@ -143,11 +143,11 @@ void FramePacer::EndFrame() {
 // Queries
 // ─────────────────────────────────────────────────────────────────────────────
 
-float FramePacer::GetLastFrameTimeMs() const {
+float AdaptiveFramePacer::GetLastFrameTimeMs() const {
     return m_lastFrameTimeMs;
 }
 
-float FramePacer::GetAvgFrameTimeMs() const {
+float AdaptiveFramePacer::GetAvgFrameTimeMs() const {
     if (m_frameTimeHistory.empty()) {
         return 0.0f;
     }
@@ -166,26 +166,26 @@ float FramePacer::GetAvgFrameTimeMs() const {
     return sum / static_cast<float>(count);
 }
 
-uint32_t FramePacer::GetDroppedFrameCount() const {
+uint32_t AdaptiveFramePacer::GetDroppedFrameCount() const {
     return m_droppedFrames;
 }
 
-uint32_t FramePacer::GetRecommendedBufferCount() const {
+uint32_t AdaptiveFramePacer::GetRecommendedBufferCount() const {
     return m_recommendedBufferCount;
 }
 
-bool FramePacer::ShouldResizeSwapChain() const {
+bool AdaptiveFramePacer::ShouldResizeSwapChain() const {
     return m_recommendedBufferCount != m_currentBufferCount;
 }
 
-void FramePacer::SetCurrentBufferCount(uint32_t count) {
+void AdaptiveFramePacer::SetCurrentBufferCount(uint32_t count) {
     m_currentBufferCount = count;
-    UZ_LOG(RHI, Debug, "FramePacer: current buffer count set to {}", count);
+    UZ_LOG(RHI, Debug, "AdaptiveFramePacer: current buffer count set to {}", count);
 }
 
-void FramePacer::LogSummary() const {
+void AdaptiveFramePacer::LogSummary() const {
     UZ_LOG(RHI, Info,
-           "FramePacer: last={:.2f}ms avg={:.2f}ms dropped={} buffers={}/{} recommended={}",
+           "AdaptiveFramePacer: last={:.2f}ms avg={:.2f}ms dropped={} buffers={}/{} recommended={}",
            m_lastFrameTimeMs, GetAvgFrameTimeMs(), m_droppedFrames,
            m_currentBufferCount, m_config.maxSwapChainBuffers, m_recommendedBufferCount);
 }

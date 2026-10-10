@@ -4,10 +4,10 @@
   "private": true,
   "description": "UzEngine N-API addon — bridge between runtime and VSCode/Electron",
   "scripts": {
-    "build:runtime": "cd ../runtime && zig build -Doptimize=ReleaseFast",
-    "build:runtime:debug": "cd ../runtime && zig build",
+    "build:runtime": "cd ../runtime && zig build -Ddll=true -Doptimize=ReleaseFast",
+    "build:runtime:debug": "cd ../runtime && zig build -Ddll=true",
     "build:native": "cmake-js compile -d . --runtime=electron --runtime-version=39.8.0 --CDCMAKE_BUILD_TYPE=Release",
-    "build:native:debug": "cmake-js compile -d . --runtime=electron --runtime-version=39.8.0 --CDCMAKE_BUILD_TYPE=Debug",
+    "build:native:debug": "cmake-js compile -d . --runtime=electron --runtime-version=39.8.0 --debug",
     "build": "npm run build:runtime && npm run build:native",
     "build:debug": "npm run build:runtime:debug && npm run build:native:debug",
     "rebuild": "npm run build:runtime && cmake-js rebuild -d . --runtime=electron --runtime-version=39.8.0 --CDCMAKE_BUILD_TYPE=Release"

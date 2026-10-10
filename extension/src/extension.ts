@@ -54,26 +54,26 @@ let _client: RuntimeClient | undefined;
 /// need the full engine (viewport creation, scene load, etc.) so that the addon
 /// loads as late as possible without blocking the Extension Host startup.
 function ensureClient(): RuntimeClient {
-    if (_client) return _client;
+  if (_client) return _client;
 
-    log.info('[Extension] ensureClient: creating RuntimeClient + spawning worker');
-    _client = new RuntimeClient(log);
+  log.info('[Extension] ensureClient: creating RuntimeClient + spawning worker');
+  _client = new RuntimeClient(log);
 
-    // Wire up console log forwarding.
-    engineConsole.attachClient(_client);
+  // Wire up console log forwarding.
+  engineConsole.attachClient(_client);
 
-    // Remember the engine dir so RuntimeClient.init() can apply it.
-    // Don't call setEngineDir here — the worker hasn't loaded the addon yet,
-    // and the SceneEditorProvider may restart it immediately. The setEngineDir
-    // is applied inside client.init() via rememberedEngineDir.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const nodePath = require('path') as typeof import('path');
-    const nativeDir = nodePath.join(__dirname, '..', 'native');
-    _client.setEngineDir(nativeDir).catch(() => {
-        // Expected to fail on first create — init() will re-apply.
-    });
+  // Remember the engine dir so RuntimeClient.init() can apply it.
+  // Don't call setEngineDir here — the worker hasn't loaded the addon yet,
+  // and the SceneEditorProvider may restart it immediately. The setEngineDir
+  // is applied inside client.init() via rememberedEngineDir.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const nodePath = require('path') as typeof import('path');
+  const nativeDir = nodePath.join(__dirname, '..', 'native');
+  _client.setEngineDir(nativeDir).catch(() => {
+    // Expected to fail on first create — init() will re-apply.
+  });
 
-    return _client;
+  return _client;
 }
 
 // ── Activation ────────────────────────────────────────────────────────────────
@@ -90,119 +90,114 @@ function ensureClient(): RuntimeClient {
 /// # Arguments
 /// * `context` - Extension context used to register disposables and persist state.
 export function activate(context: vscode.ExtensionContext): void {
-    // ── Logging channel ───────────────────────────────────────────────────────
-    log = vscode.window.createOutputChannel('UzEngine', { log: true });
-    context.subscriptions.push(log);
+  // ── Logging channel ───────────────────────────────────────────────────────
+  log = vscode.window.createOutputChannel('UzEngine', { log: true });
+  context.subscriptions.push(log);
 
-    // ── Console panel — output channel created immediately, callback deferred ─
-    engineConsole = new EngineConsole();
-    context.subscriptions.push(engineConsole);
+  // ── Console panel — output channel created immediately, callback deferred ─
+  engineConsole = new EngineConsole();
+  context.subscriptions.push(engineConsole);
 
-    // ── Scene tree provider — registered immediately, queries client lazily ───
-    sceneTree = new SceneTreeProvider(() => _client);
-    const treeView = vscode.window.createTreeView('uzengine.sceneTree', {
-        treeDataProvider: sceneTree,
-        showCollapseAll: true,
-    });
-    context.subscriptions.push(treeView);
+  // ── Scene tree provider — registered immediately, queries client lazily ───
+  sceneTree = new SceneTreeProvider(() => _client);
+  const treeView = vscode.window.createTreeView('uzengine.sceneTree', {
+    treeDataProvider: sceneTree,
+    showCollapseAll: true,
+  });
+  context.subscriptions.push(treeView);
 
-    // ── Scene editor — opens .uzscene files in the viewport ──────────────────
-    context.subscriptions.push(
-        vscode.window.registerCustomEditorProvider(
-            SceneEditorProvider.viewType,
-            new SceneEditorProvider(ensureClient, sceneTree, log),
-            { supportsMultipleEditorsPerDocument: false }
-        )
-    );
+  // ── Scene editor — opens .uzscene files in the viewport ──────────────────
+  context.subscriptions.push(
+    vscode.window.registerCustomEditorProvider(
+      SceneEditorProvider.viewType,
+      new SceneEditorProvider(ensureClient, sceneTree, log),
+      { supportsMultipleEditorsPerDocument: false },
+    ),
+  );
 
-    // ── Engine mode status bar toggle ─────────────────────────────────────────
-    engineMode = new EngineMode(context);
+  // ── Engine mode status bar toggle ─────────────────────────────────────────
+  engineMode = new EngineMode(context);
 
-    // ── Commands ──────────────────────────────────────────────────────────────
-    context.subscriptions.push(
-
-        // uzengine.start — initialise the runtime (useful for testing without
-        // opening the full viewport).
-        vscode.commands.registerCommand('uzengine.start', () => {
-            const client = ensureClient();
-            client.init()
-                .then(() => client.getVersion())
-                .then((version) => {
-                    log.info(`[Extension] Runtime initialized — v${version}`);
-                    void vscode.window.showInformationMessage(
-                        `UzEngine ${version} initialized`
-                    );
-                })
-                .catch((e: unknown) => {
-                    const msg = e instanceof Error ? e.message : String(e);
-                    log.error(`[Extension] Runtime init failed: ${msg}`);
-                    void vscode.window.showErrorMessage(`UzEngine init failed: ${msg}`);
-                });
-        }),
-
-        // uzengine.openViewport — create the viewport panel (or reveal if already open).
-        vscode.commands.registerCommand('uzengine.openViewport', () => {
-            const client = ensureClient();
-            if (viewport) {
-                viewport.reveal();
-                return;
-            }
-            viewport = new ViewportPanel(context.extensionUri, client, sceneTree);
-            viewport.onDidDispose(() => {
-                viewport = undefined;
-            });
-        }),
-
-        // uzengine.openScene — show file picker, load .uzscene, refresh tree.
-        vscode.commands.registerCommand(
-            'uzengine.openScene',
-            async (uri?: vscode.Uri) => {
-                if (!uri) {
-                    const files = await vscode.window.showOpenDialog({
-                        canSelectMany: false,
-                        filters: { 'UzEngine Scene': ['uzscene'] },
-                        title: 'Open UzEngine Scene',
-                    });
-                    if (!files || files.length === 0) return;
-                    uri = files[0];
-                }
-
-                const client = ensureClient();
-
-                // Ensure viewport is open so the scene has somewhere to render.
-                if (!viewport) {
-                    viewport = new ViewportPanel(context.extensionUri, client, sceneTree);
-                    viewport.onDidDispose(() => {
-                        viewport = undefined;
-                    });
-                } else {
-                    viewport.reveal();
-                }
-
-                try {
-                    await client.loadScene(uri.fsPath);
-                    sceneTree.refresh();
-                    log.info(`[Extension] Scene loaded: ${uri.fsPath}`);
-                } catch (e: unknown) {
-                    const msg = e instanceof Error ? e.message : String(e);
-                    log.error(`[Extension] Failed to load scene: ${msg}`);
-                    void vscode.window.showErrorMessage(`Failed to load scene: ${msg}`);
-                }
-            }
-        ),
-
-        // uzengine.toggleEngineMode — switch between Code Mode and Engine Mode.
-        vscode.commands.registerCommand('uzengine.toggleEngineMode', () => {
-            engineMode.toggle();
-        }),
-
-        // uzengine.refreshSceneTree — force re-query of the entity hierarchy.
-        vscode.commands.registerCommand('uzengine.refreshSceneTree', () => {
-            sceneTree.refresh();
+  // ── Commands ──────────────────────────────────────────────────────────────
+  context.subscriptions.push(
+    // uzengine.start — initialise the runtime (useful for testing without
+    // opening the full viewport).
+    vscode.commands.registerCommand('uzengine.start', () => {
+      const client = ensureClient();
+      client
+        .init()
+        .then(() => client.getVersion())
+        .then((version) => {
+          log.info(`[Extension] Runtime initialized — v${version}`);
+          void vscode.window.showInformationMessage(`UzEngine ${version} initialized`);
         })
-    );
+        .catch((e: unknown) => {
+          const msg = e instanceof Error ? e.message : String(e);
+          log.error(`[Extension] Runtime init failed: ${msg}`);
+          void vscode.window.showErrorMessage(`UzEngine init failed: ${msg}`);
+        });
+    }),
 
-    log.info('[Extension] UzEngine extension activated (worker deferred until first scene open)');
+    // uzengine.openViewport — create the viewport panel (or reveal if already open).
+    vscode.commands.registerCommand('uzengine.openViewport', () => {
+      const client = ensureClient();
+      if (viewport) {
+        viewport.reveal();
+        return;
+      }
+      viewport = new ViewportPanel(context.extensionUri, client, sceneTree);
+      viewport.onDidDispose(() => {
+        viewport = undefined;
+      });
+    }),
+
+    // uzengine.openScene — show file picker, load .uzscene, refresh tree.
+    vscode.commands.registerCommand('uzengine.openScene', async (uri?: vscode.Uri) => {
+      if (!uri) {
+        const files = await vscode.window.showOpenDialog({
+          canSelectMany: false,
+          filters: { 'UzEngine Scene': ['uzscene'] },
+          title: 'Open UzEngine Scene',
+        });
+        if (!files || files.length === 0) return;
+        uri = files[0];
+      }
+
+      const client = ensureClient();
+
+      // Ensure viewport is open so the scene has somewhere to render.
+      if (!viewport) {
+        viewport = new ViewportPanel(context.extensionUri, client, sceneTree);
+        viewport.onDidDispose(() => {
+          viewport = undefined;
+        });
+      } else {
+        viewport.reveal();
+      }
+
+      try {
+        await client.loadScene(uri.fsPath);
+        sceneTree.refresh();
+        log.info(`[Extension] Scene loaded: ${uri.fsPath}`);
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        log.error(`[Extension] Failed to load scene: ${msg}`);
+        void vscode.window.showErrorMessage(`Failed to load scene: ${msg}`);
+      }
+    }),
+
+    // uzengine.toggleEngineMode — switch between Code Mode and Engine Mode.
+    vscode.commands.registerCommand('uzengine.toggleEngineMode', () => {
+      engineMode.toggle();
+    }),
+
+    // uzengine.refreshSceneTree — force re-query of the entity hierarchy.
+    vscode.commands.registerCommand('uzengine.refreshSceneTree', () => {
+      sceneTree.refresh();
+    }),
+  );
+
+  log.info('[Extension] UzEngine extension activated (worker deferred until first scene open)');
 }
 
 // ── Deactivation ──────────────────────────────────────────────────────────────
@@ -213,12 +208,12 @@ export function activate(context: vscode.ExtensionContext): void {
 /// extension is explicitly disabled. Resources must be released promptly.
 /// The RuntimeClient sends a graceful shutdown to the worker and then kills it.
 export function deactivate(): void {
-    if (viewport) {
-        viewport.dispose();
-        viewport = undefined;
-    }
-    if (_client) {
-        _client.dispose();
-        _client = undefined;
-    }
+  if (viewport) {
+    viewport.dispose();
+    viewport = undefined;
+  }
+  if (_client) {
+    _client.dispose();
+    _client = undefined;
+  }
 }

@@ -12,7 +12,11 @@
 #ifndef _WIN32
 #include <unistd.h>
 #endif
+#ifdef _WIN32
+#include "platform_process.h"
+#else
 #include "process.h"
+#endif
 #include "shared_memory.h"
 #include "environment.h"
 #include "log.h"

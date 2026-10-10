@@ -20,10 +20,7 @@ export interface FusedResult {
 ///
 /// Items appearing in both lists get boosted scores from both contributions.
 /// Ranks are 1-based.
-export function reciprocalRankFusion(
-  listA: RankedItem[],
-  listB: RankedItem[],
-): FusedResult[] {
+export function reciprocalRankFusion(listA: RankedItem[], listB: RankedItem[]): FusedResult[] {
   const scores = new Map<number, number>();
 
   for (const { id, rank } of listA) {

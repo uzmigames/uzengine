@@ -5,10 +5,22 @@ on:
     branches: [main]
     paths:
       - "runtime/**"
+      - "scripts/setup*"
+      - "scripts/build*"
+      - "scripts/native-dependencies.lock.json"
+      - "scripts/tools/**"
+      - "scripts/falcor/**"
+      - ".github/workflows/runtime.yml"
   pull_request:
     branches: [main]
     paths:
       - "runtime/**"
+      - "scripts/setup*"
+      - "scripts/build*"
+      - "scripts/native-dependencies.lock.json"
+      - "scripts/tools/**"
+      - "scripts/falcor/**"
+      - ".github/workflows/runtime.yml"
 
 concurrency:
   group: runtime-${{ github.ref }}
@@ -21,6 +33,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Provision locked Windows dependencies
+        run: pwsh -NoProfile -File scripts/setup-native.ps1
+
       - name: Install Zig
         uses: mlugg/setup-zig@v2
         with:
@@ -28,17 +47,24 @@ jobs:
 
       - name: Build (Debug)
         working-directory: runtime
-        run: zig build
+        run: zig build '-Dnative-deps=thirdparty/.native' -Ddll=true
 
       - name: Build (ReleaseFast)
         working-directory: runtime
-        run: zig build -Doptimize=ReleaseFast
+        run: zig build '-Dnative-deps=thirdparty/.native' -Doptimize=ReleaseFast
 
   test:
     name: Test
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Provision locked Windows dependencies
+        run: pwsh -NoProfile -File scripts/setup-native.ps1
 
       - name: Install Zig
         uses: mlugg/setup-zig@v2
@@ -47,4 +73,4 @@ jobs:
 
       - name: Run tests
         working-directory: runtime
-        run: zig build test
+        run: zig build test '-Dnative-deps=thirdparty/.native'

@@ -1,6 +1,7 @@
 #pragma once
 
 /// UzEngine Process Management — Child process creation and I/O on Windows.
+/// Named explicitly to avoid shadowing the Windows CRT's <process.h>.
 ///
 /// Wraps Win32 CreateProcess with stdout/stderr pipe capture.
 /// Provides non-blocking reads, wait, and termination.

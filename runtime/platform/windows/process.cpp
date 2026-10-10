@@ -2,7 +2,7 @@
 ///
 /// CreateProcessW with anonymous pipe capture for stdout/stderr.
 
-#include "process.h"
+#include "platform_process.h"
 
 #ifdef _WIN32
 

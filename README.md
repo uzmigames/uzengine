@@ -2,7 +2,7 @@
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![C++23](https://img.shields.io/badge/C%2B%2B-23-blue.svg)]()
-[![Zig](https://img.shields.io/badge/Zig-0.15-orange.svg)]()
+[![Zig](https://img.shields.io/badge/Zig-0.15.2-orange.svg)]()
 [![MSVC](https://img.shields.io/badge/MSVC-17.14-blue.svg)]()
 [![Clang](https://img.shields.io/badge/Clang-21-green.svg)]()
 [![VSCode](https://img.shields.io/badge/VSCode-1.85+-purple.svg)]()
@@ -110,7 +110,7 @@ runtime/
 ├── demos/         triangle, vfx_viewport, vfx_viewport_app
 ├── tests/         GoogleTest suites (test_runtime.exe)
 ├── schemas/       JSON schemas for engine formats
-└── thirdparty/    Vendored libraries (provisioned by scripts/setup.ps1)
+└── thirdparty/    Vendored sources and isolated locked native profile
 ```
 
 ## Getting Started
@@ -118,21 +118,34 @@ runtime/
 ### Prerequisites
 
 - Windows 10/11 x64 with a DX12-capable GPU (DXR-capable for the ray-traced GI and path tracer)
-- [Zig 0.15+](https://ziglang.org/download/)
+- [Zig 0.15.2](https://ziglang.org/download/0.15.2/release-notes.html) (Windows baseline)
 - [Node.js 22+](https://nodejs.org/)
 - [Visual Studio Build Tools 2022](https://visualstudio.microsoft.com/downloads/) (C++ workload)
 - [CMake 3.21+](https://cmake.org/) (for MSVC/Clang builds)
 
 ### Setup
 
-Fetches and configures every thirdparty dependency into `runtime/thirdparty/`:
+The Windows stabilization profile preserves the vendored sources and provisions
+the missing native dependencies from a checked-in lock. Install Python 3.11+,
+Visual Studio 2022 C++ Build Tools and Windows SDK **10.0.26100.0** first:
 
 ```bash
-scripts/setup.ps1    # PowerShell
-scripts/setup.bat    # CMD
+pwsh -NoProfile -File scripts/setup-native.ps1
+cd runtime
+zig build '-Dnative-deps=thirdparty/.native' -Ddll=true
 ```
 
-> Never `git clone` or download dependencies into `runtime/thirdparty/` by hand — add them to `scripts/setup.ps1` instead.
+Archives are SHA-256 checked before extraction. Headers and DLLs use the same
+locked package. LuaJIT is rebuilt from the repository's explicit source list.
+Use `-VerifyOnly` to verify an existing profile and `-Offline` for a populated
+download cache. A changed or incomplete profile fails; choose a new `-Destination`
+and pass that runtime-relative directory with `-Dnative-deps`.
+
+This profile excludes optional DLSS/Brixelizer binaries. Existing developer
+builds without `-Dnative-deps` keep their configured SDK layout. The older
+`scripts/setup.ps1` / `setup.bat` vendor-refresh installer uses moving sources
+and is not the reproducible baseline path. See the
+[native bootstrap evidence](docs/analysis/project-stabilization/08-native-bootstrap.md).
 
 ### Build
 
@@ -540,7 +553,10 @@ scripts/tools/test.ps1 --compiler=msvc   # MSVC tests
 
 ## Thirdparty Dependencies
 
-Thirdparty libraries live under `runtime/thirdparty/` and are provisioned by [`scripts/setup.ps1`](scripts/setup.ps1). See [`runtime/thirdparty/README.md`](runtime/thirdparty/README.md) for the full list with versions, licenses, and extracted files.
+Thirdparty libraries live under `runtime/thirdparty/`. The Windows baseline uses
+[`scripts/setup-native.ps1`](scripts/setup-native.ps1) and its checked-in lock;
+[`scripts/setup.ps1`](scripts/setup.ps1) is the legacy vendor-refresh installer.
+See [`runtime/thirdparty/README.md`](runtime/thirdparty/README.md) for the library inventory.
 
 ## Documentation
 

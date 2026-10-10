@@ -6,6 +6,31 @@
 
 using namespace uz;
 
+TEST(FrameArrayTest, OveralignedObjectsSurviveStorageReuse) {
+    struct alignas(64) Entry {
+        const int value;
+        int* destructions;
+        Entry(int v, int* count) : value(v), destructions(count) {}
+        ~Entry() { ++*destructions; }
+    };
+    int destructions = 0;
+    {
+        FrameArray<Entry, 2> array;
+        array.Emplace(7, &destructions);
+        array.Emplace(9, &destructions);
+        EXPECT_EQ(reinterpret_cast<uintptr_t>(&array[0]) % alignof(Entry), 0u);
+        EXPECT_EQ(reinterpret_cast<uintptr_t>(&array[1]) % alignof(Entry), 0u);
+        EXPECT_EQ(array.Data() + 1, &array[1]);
+        array.Clear();
+        EXPECT_EQ(destructions, 2);
+        array.Emplace(13, &destructions);
+        const auto& readOnly = array;
+        EXPECT_EQ(readOnly[0].value, 13);
+        EXPECT_EQ(array.Count(), 1u);
+    }
+    EXPECT_EQ(destructions, 3);
+}
+
 TEST(FrameArrayTest, EmptyOnConstruction) {
     FrameArray<int, 8> arr;
     EXPECT_TRUE(arr.IsEmpty());

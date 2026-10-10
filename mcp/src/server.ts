@@ -9,165 +9,192 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { mcpLog } from './logger.js';
 import { SearchEngine } from './search/search-engine.js';
 import type { DocsDatabase, EntityKind } from '../tools/types.js';
 
-/// Creates the MCP server instance for UzEngine.
-const server = new McpServer({
-  name: 'uzengine-mcp',
-  version: '0.3.0',
-});
+/// Creates an independent server around the supplied documentation index.
+export function createServer(searchEngine: SearchEngine): McpServer {
+  const server = new McpServer({
+    name: 'uzengine-mcp',
+    version: '0.3.0',
+  });
 
-/// Global search engine instance.
-const searchEngine = new SearchEngine();
+  /// All valid entity kinds for filtering.
+  const ENTITY_KINDS: EntityKind[] = [
+    'file',
+    'class',
+    'struct',
+    'enum',
+    'enum_value',
+    'function',
+    'method',
+    'field',
+    'macro',
+    'shader_fn',
+    'shader_cb',
+    'typedef',
+  ];
 
-/// All valid entity kinds for filtering.
-const ENTITY_KINDS: EntityKind[] = [
-  'file', 'class', 'struct', 'enum', 'enum_value', 'function',
-  'method', 'field', 'macro', 'shader_fn', 'shader_cb', 'typedef',
-];
+  // ─── Tool Registration ─────────────────────────────────────────
 
-// ─── Tool Registration ─────────────────────────────────────────
+  /// search_docs — Primary hybrid BM25 + HNSW search.
+  server.tool(
+    'search_docs',
+    'Search UzEngine codebase documentation using hybrid BM25 + HNSW semantic search',
+    {
+      query: z.string().describe('Search term or natural language query'),
+      kind: z
+        .enum(ENTITY_KINDS as [string, ...string[]])
+        .optional()
+        .describe('Filter by entity kind'),
+      subsystem: z.string().optional().describe('Filter by subsystem name'),
+      tags: z.array(z.string()).optional().describe('Filter by tags (AND logic)'),
+      limit: z.number().default(10).describe('Max results to return'),
+    },
+    async ({ query, kind, subsystem, tags, limit }) => {
+      const filters = {
+        kind: kind as EntityKind | undefined,
+        subsystem,
+        tags,
+      };
+      const results = searchEngine.search(query, filters, limit);
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({ results, total: results.length, query }, null, 2),
+          },
+        ],
+      };
+    },
+  );
 
-/// search_docs — Primary hybrid BM25 + HNSW search.
-server.tool(
-  'search_docs',
-  'Search UzEngine codebase documentation using hybrid BM25 + HNSW semantic search',
-  {
-    query: z.string().describe('Search term or natural language query'),
-    kind: z.enum(ENTITY_KINDS as [string, ...string[]]).optional().describe('Filter by entity kind'),
-    subsystem: z.string().optional().describe('Filter by subsystem name'),
-    tags: z.array(z.string()).optional().describe('Filter by tags (AND logic)'),
-    limit: z.number().default(10).describe('Max results to return'),
-  },
-  async ({ query, kind, subsystem, tags, limit }) => {
-    const filters = {
-      kind: kind as EntityKind | undefined,
-      subsystem,
-      tags,
-    };
-    const results = searchEngine.search(query, filters, limit);
-    return {
-      content: [{
-        type: 'text' as const,
-        text: JSON.stringify({ results, total: results.length, query }, null, 2),
-      }],
-    };
-  },
-);
+  /// get_entity — Fetch full entity by ID.
+  server.tool(
+    'get_entity',
+    'Get complete documentation for a specific code entity by ID',
+    {
+      id: z.string().describe('Entity ID (file_path::entity_name)'),
+    },
+    async ({ id }) => {
+      const entity = searchEngine.getEntity(id);
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: entity
+              ? JSON.stringify(entity, null, 2)
+              : JSON.stringify({ error: 'Entity not found', id }),
+          },
+        ],
+      };
+    },
+  );
 
-/// get_entity — Fetch full entity by ID.
-server.tool(
-  'get_entity',
-  'Get complete documentation for a specific code entity by ID',
-  {
-    id: z.string().describe('Entity ID (file_path::entity_name)'),
-  },
-  async ({ id }) => {
-    const entity = searchEngine.getEntity(id);
-    return {
-      content: [{
-        type: 'text' as const,
-        text: entity
-          ? JSON.stringify(entity, null, 2)
-          : JSON.stringify({ error: 'Entity not found', id }),
-      }],
-    };
-  },
-);
+  /// get_relationships — Graph traversal from entity.
+  server.tool(
+    'get_relationships',
+    'Get entities related to a given entity via relationships (inheritance, binding, etc.)',
+    {
+      id: z.string().describe('Entity ID to traverse from'),
+      depth: z.number().default(1).describe('Traversal depth (1-3)'),
+      kind: z.string().optional().describe('Filter by relationship kind'),
+    },
+    async ({ id, depth, kind }) => {
+      const related = searchEngine.getRelationships(id, depth, kind);
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(
+              {
+                source: id,
+                depth,
+                related: related.map((e) => ({
+                  id: e.id,
+                  name: e.name,
+                  kind: e.kind,
+                  file: e.file,
+                  brief: e.brief,
+                })),
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    },
+  );
 
-/// get_relationships — Graph traversal from entity.
-server.tool(
-  'get_relationships',
-  'Get entities related to a given entity via relationships (inheritance, binding, etc.)',
-  {
-    id: z.string().describe('Entity ID to traverse from'),
-    depth: z.number().default(1).describe('Traversal depth (1-3)'),
-    kind: z.string().optional().describe('Filter by relationship kind'),
-  },
-  async ({ id, depth, kind }) => {
-    const related = searchEngine.getRelationships(id, depth, kind);
-    return {
-      content: [{
-        type: 'text' as const,
-        text: JSON.stringify({
-          source: id,
-          depth,
-          related: related.map((e) => ({
-            id: e.id,
-            name: e.name,
-            kind: e.kind,
-            file: e.file,
-            brief: e.brief,
-          })),
-        }, null, 2),
-      }],
-    };
-  },
-);
+  /// get_data_flow — Trace a field from component → CB → shader.
+  server.tool(
+    'get_data_flow',
+    'Trace a field name through the component → renderer → cbuffer → shader pipeline',
+    {
+      field: z.string().describe('Field name to trace (e.g. "fogDensity")'),
+    },
+    async ({ field }) => {
+      const stages = searchEngine.traceDataFlow(field);
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({ field, stages }, null, 2),
+          },
+        ],
+      };
+    },
+  );
 
-/// get_data_flow — Trace a field from component → CB → shader.
-server.tool(
-  'get_data_flow',
-  'Trace a field name through the component → renderer → cbuffer → shader pipeline',
-  {
-    field: z.string().describe('Field name to trace (e.g. "fogDensity")'),
-  },
-  async ({ field }) => {
-    const stages = searchEngine.traceDataFlow(field);
-    return {
-      content: [{
-        type: 'text' as const,
-        text: JSON.stringify({ field, stages }, null, 2),
-      }],
-    };
-  },
-);
-
-/// get_subsystem_map — Overview of all subsystems.
-server.tool(
-  'get_subsystem_map',
-  'List all code subsystems with entity counts',
-  {},
-  async () => {
+  /// get_subsystem_map — Overview of all subsystems.
+  server.tool('get_subsystem_map', 'List all code subsystems with entity counts', {}, async () => {
     const map = searchEngine.getSubsystemMap();
     return {
-      content: [{
-        type: 'text' as const,
-        text: JSON.stringify(map, null, 2),
-      }],
+      content: [
+        {
+          type: 'text' as const,
+          text: JSON.stringify(map, null, 2),
+        },
+      ],
     };
-  },
-);
+  });
 
-/// get_refs — Academic references index.
-server.tool(
-  'get_refs',
-  'List academic paper references cited in the codebase',
-  {
-    author: z.string().optional().describe('Filter by author name'),
-    year: z.string().optional().describe('Filter by year'),
-  },
-  async ({ author, year }) => {
-    const refs = searchEngine.getRefs(author, year);
-    return {
-      content: [{
-        type: 'text' as const,
-        text: JSON.stringify(refs, null, 2),
-      }],
-    };
-  },
-);
+  /// get_refs — Academic references index.
+  server.tool(
+    'get_refs',
+    'List academic paper references cited in the codebase',
+    {
+      author: z.string().optional().describe('Filter by author name'),
+      year: z.string().optional().describe('Filter by year'),
+    },
+    async ({ author, year }) => {
+      const refs = searchEngine.getRefs(author, year);
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(refs, null, 2),
+          },
+        ],
+      };
+    },
+  );
+
+  return server;
+}
 
 // ─── Index Loading ─────────────────────────────────────────────
 
 /// Loads the doc search index from docs.json at startup.
-function loadSearchIndex(): boolean {
-  const docsPath = resolve(import.meta.dirname ?? '.', '../../data/docs.json');
-
+export function loadSearchIndex(searchEngine: SearchEngine, docsPath: string): boolean {
   if (!existsSync(docsPath)) {
-    mcpLog.warn('docs.json not found — run "npm run generate-docs" first. Search tools will return empty results.');
+    mcpLog.warn(
+      'docs.json not found — run "npm run generate-docs" first. Search tools will return empty results.',
+    );
     return false;
   }
 
@@ -190,19 +217,25 @@ function loadSearchIndex(): boolean {
 // ─── Main ──────────────────────────────────────────────────────
 
 /// Initializes and runs the MCP server.
-async function main(): Promise<void> {
+export async function startServer(docsPath: string, transport: Transport): Promise<McpServer> {
   mcpLog.info('UzEngine MCP server starting');
 
   // Load search index
-  loadSearchIndex();
-
-  const transport = new StdioServerTransport();
+  const searchEngine = new SearchEngine();
+  loadSearchIndex(searchEngine, docsPath);
+  const server = createServer(searchEngine);
   await server.connect(transport);
   mcpLog.info('UzEngine MCP server connected (6 doc search tools registered)');
+  return server;
 }
 
 /// Entry point: starts the MCP server.
-main().catch((err) => {
-  mcpLog.fatal({ err }, 'MCP server fatal error');
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  startServer(
+    resolve(import.meta.dirname, '../../data/docs.json'),
+    new StdioServerTransport(),
+  ).catch((err) => {
+    mcpLog.fatal({ err }, 'MCP server fatal error');
+    process.exit(1);
+  });
+}

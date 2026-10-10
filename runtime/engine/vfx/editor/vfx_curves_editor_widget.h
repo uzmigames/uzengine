@@ -31,6 +31,7 @@
 #include "engine/vfx/curves/vfx_curve.h"
 #include "engine/vfx/editor/vfx_stack_panel_widget.h" // VfxStackRect
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <string>

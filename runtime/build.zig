@@ -26,13 +26,31 @@ pub fn build(b: *std.Build) void {
     const is_apple = is_macos or is_ios;
 
     const tp = "thirdparty/";
+    // Explicit locked profile; absent means the existing developer SDK layout.
+    // Provision with scripts/setup-native.ps1 before selecting this profile.
+    const native_root = b.option([]const u8, "native-deps", "Locked native profile directory, relative to runtime");
+    if (native_root) |root| {
+        if (!is_windows or std.fs.path.isAbsolute(root))
+            std.debug.panic("native-deps requires a runtime-relative Windows profile path", .{});
+        accessAbsolute(b, b.path(b.fmt("{s}/provision.json", .{root})).getPath(b)) catch
+            std.debug.panic("Native profile missing: {s}; run scripts/setup-native.ps1", .{root});
+    }
+    const ffmpeg = if (native_root) |root| b.fmt("{s}/ffmpeg/", .{root}) else tp ++ "ffmpeg/";
+    const luajit = if (native_root) |root| b.fmt("{s}/luajit/src/", .{root}) else tp ++ "luajit/src/";
+    const dxc = if (native_root) |root| b.fmt("{s}/dxc/", .{root}) else tp ++ "dxc/";
+    const agility = if (native_root) |root| b.fmt("{s}/agility/build/native/", .{root}) else tp ++ "agility/";
+    const fxc = if (native_root) |root| b.fmt("{s}/fxc/", .{root}) else tp ++ "fxc/";
+    const fastgltf = if (native_root) |root| b.fmt("{s}/fastgltf/", .{root}) else tp ++ "fastgltf/";
+    const meshoptimizer = if (native_root) |root| b.fmt("{s}/meshoptimizer/", .{root}) else tp ++ "meshoptimizer/";
+    const entt = if (native_root) |root| b.fmt("{s}/entt/", .{root}) else tp ++ "entt/";
+    const simdjson = if (native_root) |root| b.fmt("{s}/simdjson/singleheader", .{root}) else tp ++ "fastgltf/deps/simdjson";
 
     // -Deditor=true  → also build editor.lib (grid, font, stats, screenshot)
     // Default: false — runtime.lib only (play mode / headless)
     const build_editor = b.option(bool, "editor", "Build editor.lib alongside runtime.lib") orelse false;
 
     const cpp_flags: []const []const u8 =
-        &.{ "-std=c++17", "-DSPDLOG_COMPILED_LIB", "-DUZ_PROFILING_ENABLED", "-DTRACY_ENABLE", "-DTRACY_ON_DEMAND", "-DSPNG_STATIC" };
+        &.{ "-std=c++23", "-DSPDLOG_COMPILED_LIB", "-DUZ_PROFILING_ENABLED", "-DTRACY_ENABLE", "-DTRACY_ON_DEMAND", "-DSPNG_STATIC" };
 
     // ── Include path tables (shared between runtime and tests) ───────────
 
@@ -172,12 +190,12 @@ pub fn build(b: *std.Build) void {
         tp ++ "vulkan_headers/include",
         tp ++ "volk",
         tp ++ "vma/include",
-        tp ++ "fastgltf/include",
-        tp ++ "fastgltf/deps/simdjson",
-        tp ++ "meshoptimizer/src",
+        b.fmt("{s}include", .{fastgltf}),
+        simdjson,
+        b.fmt("{s}src", .{meshoptimizer}),
         tp ++ "mikktspace",
-        tp ++ "entt/single_include",
-        tp ++ "luajit/src",
+        b.fmt("{s}single_include", .{entt}),
+        luajit,
         tp ++ "ufbx",
         tp ++ "etcpak",
         tp ++ "xatlas/source/xatlas",
@@ -187,7 +205,7 @@ pub fn build(b: *std.Build) void {
         tp ++ "msdfgen/ext",
         tp ++ "freetype/include",
         tp ++ "smaa",
-        tp ++ "ffmpeg/include",
+        b.fmt("{s}include", .{ffmpeg}),
         // Slang headers — slang_compiler.cpp dlopens libslang on every platform.
         tp ++ "slang/include",
     };
@@ -202,15 +220,15 @@ pub fn build(b: *std.Build) void {
 
     // zlib and zstd are compiled from the vcpkg-extracted sources; the exact
     // directory name depends on the vcpkg baseline, so resolve it at configure time.
-    const zlib_src = vcpkgSrcDir(b, "zlib");
-    const zstd_src = vcpkgSrcDir(b, "zstd");
+    const zlib_src = if (native_root) |root| b.fmt("{s}/zlib", .{root}) else vcpkgSrcDir(b, "zlib");
+    const zstd_src = if (native_root) |root| b.fmt("{s}/zstd", .{root}) else vcpkgSrcDir(b, "zstd");
 
     const windows_thirdparty_include_dirs = [_][]const u8{
         tp ++ "d3d12ma/include",
         tp ++ "directx_headers/include",
         tp ++ "directx_headers/include/directx",
-        tp ++ "agility/include",
-        tp ++ "dxc/inc",
+        b.fmt("{s}include", .{agility}),
+        b.fmt("{s}inc", .{dxc}),
         // vcpkg-installed headers (zlib required by libpng, freetype, etc.)
         // zlib headers from source (not vcpkg DLL headers)
         zlib_src,
@@ -372,12 +390,12 @@ pub fn build(b: *std.Build) void {
         runtime_mod.addIncludePath(b.path("engine/rhi/dx11"));
         runtime_mod.addIncludePath(b.path(tp ++ "d3d12ma/src"));
         // LuaJIT pre-built library (built by setup.ps1 via msvcbuild.bat)
-        runtime_mod.addObjectFile(b.path(tp ++ "luajit/src/lua51.lib"));
+        runtime_mod.addObjectFile(b.path(b.fmt("{s}lua51.lib", .{luajit})));
         // FFmpeg pre-built shared libraries (H.264 encoding for viewport streaming)
-        runtime_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avcodec.lib"));
-        runtime_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avutil.lib"));
-        runtime_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/swscale.lib"));
-        runtime_mod.addLibraryPath(b.path(tp ++ "ffmpeg/lib"));
+        runtime_mod.addObjectFile(b.path(b.fmt("{s}lib/avcodec.lib", .{ffmpeg})));
+        runtime_mod.addObjectFile(b.path(b.fmt("{s}lib/avutil.lib", .{ffmpeg})));
+        runtime_mod.addObjectFile(b.path(b.fmt("{s}lib/swscale.lib", .{ffmpeg})));
+        runtime_mod.addLibraryPath(b.path(b.fmt("{s}lib", .{ffmpeg})));
     } else if (target.result.os.tag == .linux) {
         addCppDir(runtime_mod, b, "platform/linux", cpp_flags);
     }
@@ -438,12 +456,12 @@ pub fn build(b: *std.Build) void {
     // so the header's implementation list stays consistent.
     const simdjson_flags = [_][]const u8{ "-std=c++17", "-DSIMDJSON_IMPLEMENTATION_ICELAKE=0" };
     runtime_mod.addCSourceFiles(.{
-        .root = b.path(tp ++ "fastgltf/deps/simdjson"),
+        .root = b.path(simdjson),
         .files = &.{"simdjson.cpp"},
         .flags = &simdjson_flags,
     });
     runtime_mod.addCSourceFiles(.{
-        .root = b.path(tp ++ "fastgltf/src"),
+        .root = b.path(b.fmt("{s}src", .{fastgltf})),
         .files = &.{ "fastgltf.cpp", "base64.cpp", "io.cpp" },
         .flags = &simdjson_flags,
     });
@@ -589,7 +607,7 @@ pub fn build(b: *std.Build) void {
 
     // Thirdparty — meshoptimizer (mesh optimization library)
     runtime_mod.addCSourceFiles(.{
-        .root = b.path(tp ++ "meshoptimizer/src"),
+        .root = b.path(b.fmt("{s}src", .{meshoptimizer})),
         .files = &.{
             "allocator.cpp",
             "clusterizer.cpp",
@@ -901,6 +919,8 @@ pub fn build(b: *std.Build) void {
     //
     // Output: build/bin/uz_brixelizer.dll → copied to runtime/build/bin/.
     const has_brixelizer_libs = blk: {
+        // Optional local SDKs must not silently change a locked baseline build.
+        if (native_root != null) break :blk false;
         if (!has_brixelizer_headers) break :blk false;
         const brix_dll = tp ++ "amd-fidelityfx-1.1/wrapper/build/bin/uz_brixelizer.dll";
         const brix_dll_resolved = b.path(brix_dll).getPath(b);
@@ -935,6 +955,7 @@ pub fn build(b: *std.Build) void {
     // DLSS uses a static lib (nvsdk_ngx_d.lib) that dynamically loads nvngx_dlss.dll
     // at runtime via LoadLibrary. Define UZ_DLSS_ENABLED=1 when SDK is present.
     const has_dlss = blk: {
+        if (native_root != null) break :blk false;
         if (!is_windows) break :blk false;
         const dlss_inc = tp ++ "dlss/include/";
         const dlss_resolved = b.path(dlss_inc).getPath(b);
@@ -959,7 +980,7 @@ pub fn build(b: *std.Build) void {
 
     // Include paths — cross-platform
     for (engine_include_dirs) |dir| runtime_mod.addIncludePath(b.path(dir));
-    for (thirdparty_include_dirs) |dir| runtime_mod.addIncludePath(b.path(dir));
+    for (thirdparty_include_dirs) |dir| addThirdPartyInclude(runtime_mod, b, dir);
 
     // Generated shader headers (from uzembed tool)
     runtime_mod.addIncludePath(b.path("build/generated/shaders"));
@@ -967,7 +988,7 @@ pub fn build(b: *std.Build) void {
     // Include paths — platform-specific
     if (is_windows) {
         for (windows_engine_include_dirs) |dir| runtime_mod.addIncludePath(b.path(dir));
-        for (windows_thirdparty_include_dirs) |dir| runtime_mod.addIncludePath(b.path(dir));
+        for (windows_thirdparty_include_dirs) |dir| addThirdPartyInclude(runtime_mod, b, dir);
     } else if (target.result.os.tag == .linux) {
         for (linux_engine_include_dirs) |dir| runtime_mod.addIncludePath(b.path(dir));
     }
@@ -1084,12 +1105,12 @@ pub fn build(b: *std.Build) void {
         // Include paths — same as runtime so editor code can include engine headers
         editor_mod.addIncludePath(b.path("."));
         for (engine_include_dirs) |dir| editor_mod.addIncludePath(b.path(dir));
-        for (thirdparty_include_dirs) |dir| editor_mod.addIncludePath(b.path(dir));
+        for (thirdparty_include_dirs) |dir| addThirdPartyInclude(editor_mod, b, dir);
         editor_mod.addIncludePath(b.path("build/generated/shaders"));
         editor_mod.addIncludePath(b.path("editor"));
         if (is_windows) {
             for (windows_engine_include_dirs) |dir| editor_mod.addIncludePath(b.path(dir));
-            for (windows_thirdparty_include_dirs) |dir| editor_mod.addIncludePath(b.path(dir));
+            for (windows_thirdparty_include_dirs) |dir| addThirdPartyInclude(editor_mod, b, dir);
             editor_mod.addIncludePath(b.path("engine/rhi/dx12"));
             editor_mod.addIncludePath(b.path("engine/rhi/vulkan"));
         }
@@ -1153,10 +1174,10 @@ pub fn build(b: *std.Build) void {
         // headers it transitively includes.
         dll_mod.addIncludePath(b.path("."));
         for (engine_include_dirs) |dir| dll_mod.addIncludePath(b.path(dir));
-        for (thirdparty_include_dirs) |dir| dll_mod.addIncludePath(b.path(dir));
+        for (thirdparty_include_dirs) |dir| addThirdPartyInclude(dll_mod, b, dir);
         dll_mod.addIncludePath(b.path("build/generated/shaders"));
         for (windows_engine_include_dirs) |dir| dll_mod.addIncludePath(b.path(dir));
-        for (windows_thirdparty_include_dirs) |dir| dll_mod.addIncludePath(b.path(dir));
+        for (windows_thirdparty_include_dirs) |dir| addThirdPartyInclude(dll_mod, b, dir);
         dll_mod.addIncludePath(b.path("engine/rhi/dx12"));
         dll_mod.addIncludePath(b.path("engine/rhi/dx11"));
         dll_mod.addIncludePath(b.path("engine/rhi/vulkan"));
@@ -1176,12 +1197,12 @@ pub fn build(b: *std.Build) void {
         // editor.lib — screenshot_capture.cpp and other editor symbols.
         dll_mod.addObjectFile(editor_lib.getEmittedBin());
         // LuaJIT static lib — Lua VM referenced by LuaVM.cpp.
-        dll_mod.addObjectFile(b.path(tp ++ "luajit/src/lua51.lib"));
+        dll_mod.addObjectFile(b.path(b.fmt("{s}lua51.lib", .{luajit})));
         // FFmpeg import libs for H.264 encoding.
-        dll_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avcodec.lib"));
-        dll_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avutil.lib"));
-        dll_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/swscale.lib"));
-        dll_mod.addLibraryPath(b.path(tp ++ "ffmpeg/lib"));
+        dll_mod.addObjectFile(b.path(b.fmt("{s}lib/avcodec.lib", .{ffmpeg})));
+        dll_mod.addObjectFile(b.path(b.fmt("{s}lib/avutil.lib", .{ffmpeg})));
+        dll_mod.addObjectFile(b.path(b.fmt("{s}lib/swscale.lib", .{ffmpeg})));
+        dll_mod.addLibraryPath(b.path(b.fmt("{s}lib", .{ffmpeg})));
         // DLSS: no static lib — uses LoadLibrary/GetProcAddress at runtime.
 
         const dll = b.addLibrary(.{
@@ -1295,7 +1316,7 @@ pub fn build(b: *std.Build) void {
     // Engine + thirdparty headers for tests
     test_mod.addIncludePath(b.path("."));
     for (engine_include_dirs) |dir| test_mod.addIncludePath(b.path(dir));
-    for (thirdparty_include_dirs) |dir| test_mod.addIncludePath(b.path(dir));
+    for (thirdparty_include_dirs) |dir| addThirdPartyInclude(test_mod, b, dir);
     test_mod.addIncludePath(b.path("build/generated/shaders"));
     test_mod.addIncludePath(b.path("tests/engine/vfx")); // mock_rhi_device.h
 
@@ -1303,7 +1324,7 @@ pub fn build(b: *std.Build) void {
         test_mod.addIncludePath(b.path("engine/rhi/dx12"));
         test_mod.addIncludePath(b.path("engine/rhi/vulkan"));
         for (windows_engine_include_dirs) |dir| test_mod.addIncludePath(b.path(dir));
-        for (windows_thirdparty_include_dirs) |dir| test_mod.addIncludePath(b.path(dir));
+        for (windows_thirdparty_include_dirs) |dir| addThirdPartyInclude(test_mod, b, dir);
     } else if (target.result.os.tag == .linux) {
         test_mod.addIncludePath(b.path("engine/rhi/vulkan"));
         for (linux_engine_include_dirs) |dir| test_mod.addIncludePath(b.path(dir));
@@ -1325,11 +1346,11 @@ pub fn build(b: *std.Build) void {
 
     // LuaJIT — needed by scripting tests that call lua C API directly
     if (is_windows) {
-        test_mod.addObjectFile(b.path(tp ++ "luajit/src/lua51.lib"));
+        test_mod.addObjectFile(b.path(b.fmt("{s}lua51.lib", .{luajit})));
         // FFmpeg import libs for H.264 encoder
-        test_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avcodec.lib"));
-        test_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avutil.lib"));
-        test_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/swscale.lib"));
+        test_mod.addObjectFile(b.path(b.fmt("{s}lib/avcodec.lib", .{ffmpeg})));
+        test_mod.addObjectFile(b.path(b.fmt("{s}lib/avutil.lib", .{ffmpeg})));
+        test_mod.addObjectFile(b.path(b.fmt("{s}lib/swscale.lib", .{ffmpeg})));
         // DLSS: no static lib — uses LoadLibrary/GetProcAddress at runtime.
     }
 
@@ -1374,9 +1395,9 @@ pub fn build(b: *std.Build) void {
             linkLibCpp(b, tool_mod, is_apple);
             tool_mod.addIncludePath(b.path("."));
             for (engine_include_dirs) |dir| tool_mod.addIncludePath(b.path(dir));
-            for (thirdparty_include_dirs) |dir| tool_mod.addIncludePath(b.path(dir));
+            for (thirdparty_include_dirs) |dir| addThirdPartyInclude(tool_mod, b, dir);
             for (windows_engine_include_dirs) |dir| tool_mod.addIncludePath(b.path(dir));
-            for (windows_thirdparty_include_dirs) |dir| tool_mod.addIncludePath(b.path(dir));
+            for (windows_thirdparty_include_dirs) |dir| addThirdPartyInclude(tool_mod, b, dir);
             tool_mod.addIncludePath(b.path("engine/rhi/dx12"));
             tool_mod.addIncludePath(b.path("build/generated/shaders"));
 
@@ -1395,11 +1416,11 @@ pub fn build(b: *std.Build) void {
             // to preserve static initializers for auto-registration.
             addCppDir(tool_mod, b, "engine/ecs/environment", cpp_flags);
 
-            tool_mod.addObjectFile(b.path(tp ++ "luajit/src/lua51.lib"));
+            tool_mod.addObjectFile(b.path(b.fmt("{s}lua51.lib", .{luajit})));
             // FFmpeg import libs for H.264 encoder
-            tool_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avcodec.lib"));
-            tool_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/avutil.lib"));
-            tool_mod.addObjectFile(b.path(tp ++ "ffmpeg/lib/swscale.lib"));
+            tool_mod.addObjectFile(b.path(b.fmt("{s}lib/avcodec.lib", .{ffmpeg})));
+            tool_mod.addObjectFile(b.path(b.fmt("{s}lib/avutil.lib", .{ffmpeg})));
+            tool_mod.addObjectFile(b.path(b.fmt("{s}lib/swscale.lib", .{ffmpeg})));
             // DLSS: no static lib — uses LoadLibrary/GetProcAddress at runtime.
             // FFX SDK 1.1.4: requires MSVC CRT — not linked in Zig build.
             // Enable via MSVC CMake preset or DLL wrapper (future).
@@ -1421,9 +1442,9 @@ pub fn build(b: *std.Build) void {
             linkLibCpp(b, dbg_mod, is_apple);
             dbg_mod.addIncludePath(b.path("."));
             for (engine_include_dirs) |dir| dbg_mod.addIncludePath(b.path(dir));
-            for (thirdparty_include_dirs) |dir| dbg_mod.addIncludePath(b.path(dir));
+            for (thirdparty_include_dirs) |dir| addThirdPartyInclude(dbg_mod, b, dir);
             for (windows_engine_include_dirs) |dir| dbg_mod.addIncludePath(b.path(dir));
-            for (windows_thirdparty_include_dirs) |dir| dbg_mod.addIncludePath(b.path(dir));
+            for (windows_thirdparty_include_dirs) |dir| addThirdPartyInclude(dbg_mod, b, dir);
 
             dbg_mod.addCSourceFiles(.{
                 .root = b.path("tests/debug_skin_reference"),
@@ -1461,28 +1482,28 @@ pub fn build(b: *std.Build) void {
 
         // Agility SDK (SM6.6+ on Win10 — EXE only, not deployed for DLL builds)
         b.getInstallStep().dependOn(&b.addInstallBinFile(
-            b.path(tp ++ "agility/bin/x64/D3D12Core.dll"), "D3D12Core.dll",
+            b.path(b.fmt("{s}bin/x64/D3D12Core.dll", .{agility})), "D3D12Core.dll",
         ).step);
         b.getInstallStep().dependOn(&b.addInstallBinFile(
-            b.path(tp ++ "agility/bin/x64/d3d12SDKLayers.dll"), "d3d12SDKLayers.dll",
+            b.path(b.fmt("{s}bin/x64/d3d12SDKLayers.dll", .{agility})), "d3d12SDKLayers.dll",
         ).step);
 
         // DXC
         b.getInstallStep().dependOn(&b.addInstallBinFile(
-            b.path(tp ++ "dxc/bin/x64/dxcompiler.dll"), "dxcompiler.dll",
+            b.path(b.fmt("{s}bin/x64/dxcompiler.dll", .{dxc})), "dxcompiler.dll",
         ).step);
         b.getInstallStep().dependOn(&b.addInstallBinFile(
-            b.path(tp ++ "dxc/bin/x64/dxil.dll"), "dxil.dll",
+            b.path(b.fmt("{s}bin/x64/dxil.dll", .{dxc})), "dxil.dll",
         ).step);
 
         // FXC (SM 5.0 fallback + future DX11)
         b.getInstallStep().dependOn(&b.addInstallBinFile(
-            b.path(tp ++ "fxc/bin/x64/d3dcompiler_47.dll"), "d3dcompiler_47.dll",
+            b.path(b.fmt("{s}bin/x64/d3dcompiler_47.dll", .{fxc})), "d3dcompiler_47.dll",
         ).step);
 
         // LuaJIT
         b.getInstallStep().dependOn(&b.addInstallBinFile(
-            b.path(tp ++ "luajit/src/lua51.dll"), "lua51.dll",
+            b.path(b.fmt("{s}lua51.dll", .{luajit})), "lua51.dll",
         ).step);
 
         // Engine content the renderer loads at run time for every project: the cloud noise volumes
@@ -1522,13 +1543,14 @@ pub fn build(b: *std.Build) void {
             "swscale-9.dll",
         };
         for (ffmpeg_dlls) |dll| {
-            const src_path = b.fmt("{s}ffmpeg/bin/{s}", .{ tp, dll });
+            const src_path = b.fmt("{s}bin/{s}", .{ ffmpeg, dll });
             // Check whether the source file exists before adding the
             // install step — zig's addInstallBinFile otherwise fails
             // the build when the file is missing.
             const abs_src = b.path(src_path).getPath(b);
             accessAbsolute(b, abs_src) catch {
-                // Source not present — skip. setup.ps1 re-run needed.
+                // Locked profiles must deploy every required DLL or fail the build.
+                if (native_root != null) std.debug.panic("Missing locked dependency: {s}", .{src_path});
                 continue;
             };
             b.getInstallStep().dependOn(&b.addInstallBinFile(
@@ -1642,8 +1664,10 @@ fn addCppDir(
 ) void {
     // D3D12MA needs special flags to suppress upstream warnings
     const d3d12ma_flags = &[_][]const u8{
-        "-std=c++17",
+        "-std=c++23",
         "-fno-sanitize=undefined",
+        // Zig 0.15.2 injects a UBSan runtime flag before this TU disables UBSan.
+        "-Wno-unused-command-line-argument",
         "-Wno-undefined-bool-conversion",
         "-Wno-switch",
         "-Wno-unused-private-field",
@@ -1690,5 +1714,15 @@ fn addCppDir(
             .files = &.{"dx12_d3d12ma.cpp"},
             .flags = d3d12ma_flags,
         });
+    }
+}
+
+// SDK names (DirectXMath/D3D12/zlib) must precede Zig's MinGW headers.
+// Only nlohmann is system-only: its Debug assertion compares uint8_t to 400.
+fn addThirdPartyInclude(mod: *std.Build.Module, b: *std.Build, dir: []const u8) void {
+    if (std.mem.eql(u8, dir, "thirdparty/nlohmann")) {
+        mod.addSystemIncludePath(b.path(dir));
+    } else {
+        mod.addIncludePath(b.path(dir));
     }
 }

@@ -3,7 +3,7 @@
 /// Pure TypeScript implementation for approximate nearest neighbor search.
 /// Uses cosine distance (1 - cosine_similarity) as the distance metric.
 
-import { EMBED_DIM } from "./embeddings.js";
+import { EMBED_DIM } from './embeddings.js';
 
 /// Distance function: cosine distance = 1 - dot(a, b).
 /// Assumes both vectors are L2-normalized.
@@ -76,10 +76,7 @@ export class HnswIndex {
       const current = candidates.shift()!;
 
       // Furthest in results
-      const furthest = results.reduce(
-        (max, r) => (r.dist > max.dist ? r : max),
-        results[0],
-      );
+      const furthest = results.reduce((max, r) => (r.dist > max.dist ? r : max), results[0]);
       if (current.dist > furthest.dist && results.length >= ef) break;
 
       // Explore neighbors
@@ -112,10 +109,7 @@ export class HnswIndex {
   }
 
   /// Select neighbors using simple heuristic (closest M).
-  private selectNeighbors(
-    candidates: Array<{ id: number; dist: number }>,
-    M: number,
-  ): number[] {
+  private selectNeighbors(candidates: Array<{ id: number; dist: number }>, M: number): number[] {
     return candidates
       .sort((a, b) => a.dist - b.dist)
       .slice(0, M)
@@ -123,7 +117,15 @@ export class HnswIndex {
   }
 
   /// Insert a vector into the index.
+  /// IDs are contiguous corpus positions: 0, 1, ... . Reject gaps/replacements
+  /// before mutation, because graph edges and the binary format use these positions.
   insert(id: number, vector: Float32Array): void {
+    if (id !== this.nodes.length) {
+      throw new RangeError(`Expected next vector ID ${this.nodes.length}, got ${id}`);
+    }
+    if (vector.length !== this.dimensions || !vector.every(Number.isFinite)) {
+      throw new RangeError(`Expected ${this.dimensions} finite vector components`);
+    }
     const level = this.randomLevel();
     const node: HnswNode = {
       id,
@@ -138,11 +140,7 @@ export class HnswIndex {
       return;
     }
 
-    // Ensure node array is large enough
-    while (this.nodes.length <= id) {
-      this.nodes.push(null as unknown as HnswNode);
-    }
-    this.nodes[id] = node;
+    this.nodes.push(node);
 
     let currentNode = this.entryPoint;
 
@@ -154,12 +152,7 @@ export class HnswIndex {
 
     // Insert at levels level down to 0
     for (let l = Math.min(level, this.maxLevel); l >= 0; l--) {
-      const candidates = this.searchLayer(
-        vector,
-        currentNode,
-        this.efConstruction,
-        l,
-      );
+      const candidates = this.searchLayer(vector, currentNode, this.efConstruction, l);
       const neighbors = this.selectNeighbors(candidates, this.M);
 
       node.neighbors[l] = neighbors;
@@ -223,7 +216,6 @@ export class HnswIndex {
     // Calculate graph size
     let graphSize = 0;
     for (const node of this.nodes) {
-      if (!node) continue;
       for (const level of node.neighbors) {
         graphSize += 2 + level.length * 4; // count(u16) + neighbors(u32[])
       }
@@ -234,19 +226,21 @@ export class HnswIndex {
     let offset = 0;
 
     // Header
-    buf.write("UZDX", offset); offset += 4;
-    buf.writeUInt32LE(1, offset); offset += 4; // version
-    buf.writeUInt32LE(this.nodes.length, offset); offset += 4;
-    buf.writeUInt32LE(this.dimensions, offset); offset += 4;
-    buf.writeUInt32LE(this.M, offset); offset += 4;
-    buf.writeUInt32LE(this.maxLevel, offset); offset += 4;
+    buf.write('UZDX', offset);
+    offset += 4;
+    buf.writeUInt32LE(1, offset);
+    offset += 4; // version
+    buf.writeUInt32LE(this.nodes.length, offset);
+    offset += 4;
+    buf.writeUInt32LE(this.dimensions, offset);
+    offset += 4;
+    buf.writeUInt32LE(this.M, offset);
+    offset += 4;
+    buf.writeUInt32LE(this.maxLevel, offset);
+    offset += 4;
 
     // Embeddings
     for (const node of this.nodes) {
-      if (!node) {
-        offset += this.dimensions * 4;
-        continue;
-      }
       for (let i = 0; i < this.dimensions; i++) {
         buf.writeFloatLE(node.vector[i], offset);
         offset += 4;
@@ -255,15 +249,14 @@ export class HnswIndex {
 
     // Graph
     for (const node of this.nodes) {
-      if (!node) {
-        buf.writeUInt32LE(0, offset); offset += 4;
-        continue;
-      }
-      buf.writeUInt32LE(node.neighbors.length, offset); offset += 4;
+      buf.writeUInt32LE(node.neighbors.length, offset);
+      offset += 4;
       for (const level of node.neighbors) {
-        buf.writeUInt16LE(level.length, offset); offset += 2;
+        buf.writeUInt16LE(level.length, offset);
+        offset += 2;
         for (const n of level) {
-          buf.writeUInt32LE(n, offset); offset += 4;
+          buf.writeUInt32LE(n, offset);
+          offset += 4;
         }
       }
     }
@@ -275,16 +268,22 @@ export class HnswIndex {
   static deserialize(buf: Buffer): HnswIndex {
     let offset = 0;
 
-    const magic = buf.toString("utf-8", offset, offset + 4); offset += 4;
-    if (magic !== "UZDX") throw new Error(`Invalid magic: ${magic}`);
+    const magic = buf.toString('utf-8', offset, offset + 4);
+    offset += 4;
+    if (magic !== 'UZDX') throw new Error(`Invalid magic: ${magic}`);
 
-    const version = buf.readUInt32LE(offset); offset += 4;
+    const version = buf.readUInt32LE(offset);
+    offset += 4;
     if (version !== 1) throw new Error(`Unsupported version: ${version}`);
 
-    const count = buf.readUInt32LE(offset); offset += 4;
-    const dim = buf.readUInt32LE(offset); offset += 4;
-    const M = buf.readUInt32LE(offset); offset += 4;
-    const maxLevel = buf.readUInt32LE(offset); offset += 4;
+    const count = buf.readUInt32LE(offset);
+    offset += 4;
+    const dim = buf.readUInt32LE(offset);
+    offset += 4;
+    const M = buf.readUInt32LE(offset);
+    offset += 4;
+    const maxLevel = buf.readUInt32LE(offset);
+    offset += 4;
 
     const index = new HnswIndex({ M, dimensions: dim });
     index.maxLevel = maxLevel;
@@ -302,10 +301,12 @@ export class HnswIndex {
 
     // Read graph
     for (let i = 0; i < count; i++) {
-      const levelCount = buf.readUInt32LE(offset); offset += 4;
+      const levelCount = buf.readUInt32LE(offset);
+      offset += 4;
       const neighbors: number[][] = [];
       for (let l = 0; l < levelCount; l++) {
-        const nCount = buf.readUInt16LE(offset); offset += 2;
+        const nCount = buf.readUInt16LE(offset);
+        offset += 2;
         const level: number[] = [];
         for (let n = 0; n < nCount; n++) {
           level.push(buf.readUInt32LE(offset));

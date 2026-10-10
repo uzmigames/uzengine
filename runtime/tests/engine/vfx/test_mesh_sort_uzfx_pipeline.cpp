@@ -131,20 +131,29 @@ TEST(UZ_MeshSortUzfxPipeline, ApplyStack_CalledTwice_DoesNotDuplicate) {
     const auto registry = MakeRegistryWithMeshRender();
 
     ApplyEmitterStackToModuleStack(e, registry);
-    auto* firstPtr = e.moduleStack.renderModule.get();
-    ASSERT_NE(firstPtr, nullptr);
+    auto* first = dynamic_cast<MeshRenderModule*>(e.moduleStack.renderModule.get());
+    ASSERT_NE(first, nullptr);
+    first->ApplyJsonConfig(nlohmann::json{{"sort_mode", "None"}, {"max_instances", 1}});
+    ASSERT_EQ(first->GetConfig().sortMode, MeshSortMode::None);
+    ASSERT_EQ(first->GetConfig().maxInstances, 1u);
 
-    // Second application should clear the previous module and create a fresh
-    // one — the pointer must change but the result must remain consistent.
+    // An allocator may reuse the address of the released module. Verify the
+    // observable contract: materialization replaces stale runtime configuration.
     ApplyEmitterStackToModuleStack(e, registry);
     ASSERT_NE(e.moduleStack.renderModule, nullptr);
-    EXPECT_NE(e.moduleStack.renderModule.get(), firstPtr)
-        << "Second ApplyEmitterStackToModuleStack must rebuild from scratch";
 
     const auto* mesh = dynamic_cast<const MeshRenderModule*>(
         e.moduleStack.renderModule.get());
     ASSERT_NE(mesh, nullptr);
     EXPECT_EQ(mesh->GetConfig().sortMode, MeshSortMode::ViewDepth);
+    EXPECT_EQ(mesh->GetConfig().maxInstances, 256u);
+    EXPECT_TRUE(e.moduleStack.spawnModules.empty());
+    EXPECT_TRUE(e.moduleStack.updateModules.empty());
+
+    // Removing the serialized module must also remove the previously live one.
+    e.stack.GetEntry(VfxStage::Render).modules[0].enabled = false;
+    ApplyEmitterStackToModuleStack(e, registry);
+    EXPECT_EQ(e.moduleStack.renderModule, nullptr);
 }
 
 // =============================================================================

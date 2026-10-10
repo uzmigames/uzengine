@@ -3,6 +3,7 @@
 
 # Local toolchains pinned to project (e.g. zig 0.15.2 download)
 .tools/
+runtime/thirdparty/.native*/
 
 !/.rulebook/rules/
 
@@ -38,7 +39,12 @@ build/
 
 # Node
 node_modules/
+# Application lockfiles are required by npm ci. Vendor lockfiles stay ignored.
 package-lock.json
+!/package-lock.json
+!/extension/package-lock.json
+!/mcp/package-lock.json
+!/napi/package-lock.json
 
 # Build artifacts
 napi/build/

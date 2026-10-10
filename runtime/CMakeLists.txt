@@ -12,11 +12,35 @@ if(APPLE)
     enable_language(OBJCXX)
 endif()
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+
+set(UZ_NATIVE_DEPS_ROOT "" CACHE PATH "Locked Windows profile produced by scripts/setup-native.ps1")
+set(UZ_FFMPEG_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/ffmpeg")
+set(UZ_LUAJIT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/luajit/src")
+set(UZ_DXC_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/dxc")
+set(UZ_FXC_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/fxc")
+set(UZ_FASTGLTF_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/fastgltf")
+set(UZ_MESHOPTIMIZER_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/meshoptimizer")
+set(UZ_ENTT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/entt")
+set(UZ_SIMDJSON_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/fastgltf/deps/simdjson")
+if(UZ_NATIVE_DEPS_ROOT)
+    if(NOT WIN32 OR NOT EXISTS "${UZ_NATIVE_DEPS_ROOT}/provision.json")
+        message(FATAL_ERROR "UZ_NATIVE_DEPS_ROOT requires a provisioned Windows profile")
+    endif()
+    set(UZ_FFMPEG_ROOT "${UZ_NATIVE_DEPS_ROOT}/ffmpeg")
+    set(UZ_LUAJIT_ROOT "${UZ_NATIVE_DEPS_ROOT}/luajit/src")
+    set(UZ_DXC_ROOT "${UZ_NATIVE_DEPS_ROOT}/dxc")
+    set(UZ_FXC_ROOT "${UZ_NATIVE_DEPS_ROOT}/fxc")
+    set(UZ_FASTGLTF_ROOT "${UZ_NATIVE_DEPS_ROOT}/fastgltf")
+    set(UZ_MESHOPTIMIZER_ROOT "${UZ_NATIVE_DEPS_ROOT}/meshoptimizer")
+    set(UZ_ENTT_ROOT "${UZ_NATIVE_DEPS_ROOT}/entt")
+    set(UZ_SIMDJSON_ROOT "${UZ_NATIVE_DEPS_ROOT}/simdjson/singleheader")
+endif()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Compiler Flags
@@ -420,28 +444,28 @@ set(ETCPAK_SOURCES
     thirdparty/etcpak/bc7enc.cpp
 )
 set(FASTGLTF_SOURCES
-    thirdparty/fastgltf/deps/simdjson/simdjson.cpp
-    thirdparty/fastgltf/src/fastgltf.cpp
-    thirdparty/fastgltf/src/base64.cpp
-    thirdparty/fastgltf/src/io.cpp
+    ${UZ_SIMDJSON_ROOT}/simdjson.cpp
+    ${UZ_FASTGLTF_ROOT}/src/fastgltf.cpp
+    ${UZ_FASTGLTF_ROOT}/src/base64.cpp
+    ${UZ_FASTGLTF_ROOT}/src/io.cpp
 )
 set(MESHOPT_SOURCES
-    thirdparty/meshoptimizer/src/allocator.cpp
-    thirdparty/meshoptimizer/src/clusterizer.cpp
-    thirdparty/meshoptimizer/src/indexcodec.cpp
-    thirdparty/meshoptimizer/src/indexgenerator.cpp
-    thirdparty/meshoptimizer/src/overdrawanalyzer.cpp
-    thirdparty/meshoptimizer/src/overdrawoptimizer.cpp
-    thirdparty/meshoptimizer/src/quantization.cpp
-    thirdparty/meshoptimizer/src/simplifier.cpp
-    thirdparty/meshoptimizer/src/spatialorder.cpp
-    thirdparty/meshoptimizer/src/stripifier.cpp
-    thirdparty/meshoptimizer/src/vcacheanalyzer.cpp
-    thirdparty/meshoptimizer/src/vcacheoptimizer.cpp
-    thirdparty/meshoptimizer/src/vertexcodec.cpp
-    thirdparty/meshoptimizer/src/vertexfilter.cpp
-    thirdparty/meshoptimizer/src/vfetchanalyzer.cpp
-    thirdparty/meshoptimizer/src/vfetchoptimizer.cpp
+    ${UZ_MESHOPTIMIZER_ROOT}/src/allocator.cpp
+    ${UZ_MESHOPTIMIZER_ROOT}/src/clusterizer.cpp
+    ${UZ_MESHOPTIMIZER_ROOT}/src/indexcodec.cpp
+    ${UZ_MESHOPTIMIZER_ROOT}/src/indexgenerator.cpp
+    ${UZ_MESHOPTIMIZER_ROOT}/src/overdrawanalyzer.cpp
+    ${UZ_MESHOPTIMIZER_ROOT}/src/overdrawoptimizer.cpp
+    ${UZ_MESHOPTIMIZER_ROOT}/src/quantization.cpp
+    ${UZ_MESHOPTIMIZER_ROOT}/src/simplifier.cpp
+    ${UZ_MESHOPTIMIZER_ROOT}/src/spatialorder.cpp
+    ${UZ_MESHOPTIMIZER_ROOT}/src/stripifier.cpp
+    ${UZ_MESHOPTIMIZER_ROOT}/src/vcacheanalyzer.cpp
+    ${UZ_MESHOPTIMIZER_ROOT}/src/vcacheoptimizer.cpp
+    ${UZ_MESHOPTIMIZER_ROOT}/src/vertexcodec.cpp
+    ${UZ_MESHOPTIMIZER_ROOT}/src/vertexfilter.cpp
+    ${UZ_MESHOPTIMIZER_ROOT}/src/vfetchanalyzer.cpp
+    ${UZ_MESHOPTIMIZER_ROOT}/src/vfetchoptimizer.cpp
 )
 
 
@@ -491,11 +515,12 @@ foreach(d IN LISTS RUNTIME_EXTRA_DIRS)
     file(GLOB _srcs ${d}/*.cpp)
     list(APPEND RUNTIME_EXTRA_SOURCES ${_srcs})
 endforeach()
-# Windows-only sources pulled in by the extra dirs: Brixelizer loader is
-# DX12/LoadLibrary-based; the particle sim pass compiles shaders at runtime
-# through the Windows-only ShaderCompiler.
+# This CMake consumer does not configure the optional FidelityFX wrapper or
+# UZ_BRIXELIZER_ENABLED. Match gi_pass's disabled-backend configuration; the
+# SDK-backed loader is compiled by build.zig when that integration is enabled.
+list(FILTER RUNTIME_EXTRA_SOURCES EXCLUDE REGEX "brixelizer_loader\\.cpp$")
+# Particle simulation uses the Windows-only ShaderCompiler.
 if(NOT WIN32)
-    list(FILTER RUNTIME_EXTRA_SOURCES EXCLUDE REGEX "brixelizer_loader\\.cpp$")
     list(FILTER RUNTIME_EXTRA_SOURCES EXCLUDE REGEX "particle_simulation_pass\\.cpp$")
 endif()
 
@@ -756,12 +781,12 @@ target_include_directories(uzengine_runtime PUBLIC
     thirdparty/vulkan_headers/include
     thirdparty/volk
     thirdparty/vma/include
-    thirdparty/fastgltf/include
-    thirdparty/fastgltf/deps/simdjson
-    thirdparty/meshoptimizer/src
+    ${UZ_FASTGLTF_ROOT}/include
+    ${UZ_SIMDJSON_ROOT}
+    ${UZ_MESHOPTIMIZER_ROOT}/src
     thirdparty/mikktspace
-    thirdparty/entt/single_include
-    thirdparty/luajit/src
+    ${UZ_ENTT_ROOT}/single_include
+    ${UZ_LUAJIT_ROOT}
     thirdparty/ufbx
     thirdparty/etcpak
     thirdparty/xatlas/source/xatlas
@@ -771,11 +796,49 @@ target_include_directories(uzengine_runtime PUBLIC
     thirdparty/msdfgen/ext
     thirdparty/freetype/include
     thirdparty/smaa
-    thirdparty/ffmpeg/include
+    ${UZ_FFMPEG_ROOT}/include
     thirdparty/slang/include
 )
 # Windows-only includes
 if(WIN32)
+    # Match build.zig's static zlib sources without depending on vcpkg's
+    # revision-dependent extraction suffix. An ambiguous checkout must choose
+    # its source explicitly instead of silently taking a different version.
+    set(UZ_ZLIB_SOURCE_DIR "" CACHE PATH "Extracted zlib source directory for the Windows build")
+    if(UZ_NATIVE_DEPS_ROOT AND NOT UZ_ZLIB_SOURCE_DIR)
+        set(UZ_ZLIB_SOURCE_DIR "${UZ_NATIVE_DEPS_ROOT}/zlib")
+    endif()
+    if(NOT UZ_ZLIB_SOURCE_DIR)
+        file(GLOB _zlib_candidates LIST_DIRECTORIES true
+            "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/vcpkg/buildtrees/zlib/src/*.clean")
+        set(_zlib_valid_sources)
+        foreach(_candidate IN LISTS _zlib_candidates)
+            if(EXISTS "${_candidate}/zlib.h" AND EXISTS "${_candidate}/zconf.h"
+               AND EXISTS "${_candidate}/adler32.c")
+                list(APPEND _zlib_valid_sources "${_candidate}")
+            endif()
+        endforeach()
+        list(LENGTH _zlib_valid_sources _zlib_count)
+        if(NOT _zlib_count EQUAL 1)
+            message(FATAL_ERROR "Expected one extracted zlib source; run setup or set UZ_ZLIB_SOURCE_DIR explicitly")
+        endif()
+        list(GET _zlib_valid_sources 0 UZ_ZLIB_SOURCE_DIR)
+    endif()
+    foreach(_required IN ITEMS zlib.h zconf.h adler32.c)
+        if(NOT EXISTS "${UZ_ZLIB_SOURCE_DIR}/${_required}")
+            message(FATAL_ERROR "UZ_ZLIB_SOURCE_DIR is missing ${_required}")
+        endif()
+    endforeach()
+    foreach(_source IN ITEMS
+            adler32.c compress.c crc32.c deflate.c
+            gzclose.c gzlib.c gzread.c gzwrite.c
+            infback.c inffast.c inflate.c inftrees.c
+            trees.c uncompr.c zutil.c)
+        target_sources(uzengine_runtime PRIVATE "${UZ_ZLIB_SOURCE_DIR}/${_source}")
+    endforeach()
+    target_include_directories(uzengine_runtime PRIVATE "${UZ_ZLIB_SOURCE_DIR}")
+    target_compile_definitions(uzengine_runtime PRIVATE ZLIB_STATIC)
+
     target_include_directories(uzengine_runtime PUBLIC
         platform/windows
     )
@@ -783,7 +846,7 @@ if(WIN32)
         thirdparty/d3d12ma/include
         thirdparty/directx_headers/include
         thirdparty/directx_headers/include/directx
-        thirdparty/dxc/inc
+        ${UZ_DXC_ROOT}/inc
     )
     target_include_directories(uzengine_runtime PUBLIC
         engine/rhi/dx12
@@ -821,7 +884,7 @@ if(WIN32)
     )
     if(NOT MSVC)
         target_link_libraries(uzengine_runtime PUBLIC
-            ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/luajit/src/lua51.lib
+            ${UZ_LUAJIT_ROOT}/lua51.lib
         )
     endif()
 endif()
@@ -1115,16 +1178,16 @@ if(WIN32)
     foreach(tgt IN LISTS DEPLOY_TARGETS)
         add_custom_command(TARGET ${tgt} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/dxc/bin/x64/dxcompiler.dll
+                ${UZ_DXC_ROOT}/bin/x64/dxcompiler.dll
                 $<TARGET_FILE_DIR:${tgt}>/dxcompiler.dll
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/dxc/bin/x64/dxil.dll
+                ${UZ_DXC_ROOT}/bin/x64/dxil.dll
                 $<TARGET_FILE_DIR:${tgt}>/dxil.dll
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/fxc/bin/x64/d3dcompiler_47.dll
+                ${UZ_FXC_ROOT}/bin/x64/d3dcompiler_47.dll
                 $<TARGET_FILE_DIR:${tgt}>/d3dcompiler_47.dll
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/luajit/src/lua51.dll
+                ${UZ_LUAJIT_ROOT}/lua51.dll
                 $<TARGET_FILE_DIR:${tgt}>/lua51.dll
             COMMENT "Deploying runtime DLLs for ${tgt}"
         )

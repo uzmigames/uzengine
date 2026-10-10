@@ -1,6 +1,7 @@
 /// Tests for ShaderArchive — binary archive for shipping shader bytecode.
 
 #include "shader_archive.h"
+#include <algorithm>
 #include <gtest/gtest.h>
 #include <filesystem>
 #include <fstream>

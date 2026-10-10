@@ -2,12 +2,18 @@
     .name = .uzengine,
     .version = "0.2.0",
     .fingerprint = 0x90e074d6904e450b,
-    .minimum_zig_version = "0.14.0",
+    .minimum_zig_version = "0.15.2",
 
     .paths = .{
         "build.zig",
         "build.zig.zon",
-        "src",
+        "engine",
+        "editor",
+        "platform",
+        "shaders",
+        "tests",
+        "tools",
+        "thirdparty",
     },
 
     .dependencies = .{},

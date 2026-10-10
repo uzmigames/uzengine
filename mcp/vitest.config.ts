@@ -11,7 +11,7 @@ import { defineConfig } from 'vitest/config';
 /// - Environment: Node.js (no DOM)
 /// - Globals: Test functions available without import
 /// - Test Files: `tests/**/*.test.ts`
-/// - Pass on empty: Allows configs to pass even with no tests
+/// - Empty required suites fail; missing integration fixtures also fail
 ///
 /// # Coverage Requirements (95% threshold)
 /// All of the following must achieve ≥95% coverage:
@@ -26,7 +26,7 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['tests/**/*.test.ts'],
-    passWithNoTests: true,
+    passWithNoTests: false,
     coverage: {
       provider: 'v8',
       include: ['src/**/*.ts'],

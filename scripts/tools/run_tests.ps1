@@ -1,7 +1,4 @@
-$ErrorActionPreference = "Stop"
-$machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
-$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-$env:Path = "$machinePath;$userPath"
-
-Set-Location (Join-Path $PSScriptRoot "..\runtime")
-zig build test
+. (Join-Path $PSScriptRoot 'quality_common.ps1')
+Push-Location (Join-Path $Root 'runtime')
+try { Invoke-QualityCommand (Get-QualityZig) (@('build', 'test') + $args) }
+finally { Pop-Location }

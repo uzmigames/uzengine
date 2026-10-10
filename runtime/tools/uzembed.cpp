@@ -225,9 +225,28 @@ static bool GenerateHeader(const fs::path& inputPath, const fs::path& outputPath
     out << "// " << filename << ".gen.h -- AUTO-GENERATED, DO NOT EDIT\n";
     out << "#pragma once\n";
     out << "namespace uz::generated {\n";
-    out << "inline constexpr char " << constName << "[] = R\"hlsl(\n";
-    out << source << "\n";
-    out << ")hlsl\";\n";
+    // MSVC C2026 limits each literal to 16380 bytes before concatenation.
+    // https://learn.microsoft.com/en-us/cpp/error-messages/compiler-errors-1/compiler-error-c2026
+    // Keep the original leading/trailing newline and split only C++ tokens;
+    // concatenation reconstructs exactly the same embedded shader bytes.
+    constexpr size_t kLiteralChunkBytes = 8192;
+    const std::string embedded = "\n" + source + "\n";
+    std::string delimiter = "hlsl";
+    while (embedded.find(")" + delimiter + "\"") != std::string::npos) {
+        delimiter += '_';
+    }
+    if (delimiter.size() > 16) {
+        fprintf(stderr, "[uzembed] error: no valid raw literal delimiter for '%s'\n", filename.c_str());
+        return false;
+    }
+    out << "inline constexpr char " << constName << "[] =\n";
+    for (size_t offset = 0; offset < embedded.size(); offset += kLiteralChunkBytes) {
+        out << "R\"" << delimiter << '(';
+        out.write(embedded.data() + offset,
+                  static_cast<std::streamsize>(std::min(kLiteralChunkBytes, embedded.size() - offset)));
+        out << ')' << delimiter << "\"\n";
+    }
+    out << ";\n";
     out << "} // namespace uz::generated\n";
 
     return true;

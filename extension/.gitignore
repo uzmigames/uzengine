@@ -8,5 +8,5 @@ dist/
 # Native addon (copied by build pipeline)
 native/
 
-# Lock file
-package-lock.json
+# Application lockfile is required by npm ci; auxiliary packages stay ignored.
+!/package-lock.json

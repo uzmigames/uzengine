@@ -23,8 +23,7 @@ export class Bm25Index {
   build(documents: string[][]): void {
     this.docCount = documents.length;
     this.docLengths = documents.map((d) => d.length);
-    this.avgDocLength =
-      this.docLengths.reduce((a, b) => a + b, 0) / (this.docCount || 1);
+    this.avgDocLength = this.docLengths.reduce((a, b) => a + b, 0) / (this.docCount || 1);
 
     this.invertedIndex.clear();
 
@@ -55,10 +54,7 @@ export class Bm25Index {
 
   /// Search for documents matching query tokens.
   /// Returns ranked list of (docIndex, score) pairs.
-  search(
-    queryTokens: string[],
-    topK: number,
-  ): Array<{ doc: number; score: number }> {
+  search(queryTokens: string[], topK: number): Array<{ doc: number; score: number }> {
     const scores = new Map<number, number>();
 
     for (const term of queryTokens) {
@@ -68,7 +64,7 @@ export class Bm25Index {
 
       for (const { doc, tf } of postings) {
         const dl = this.docLengths[doc];
-        const tfNorm = (tf * (K1 + 1)) / (tf + K1 * (1 - B + B * dl / this.avgDocLength));
+        const tfNorm = (tf * (K1 + 1)) / (tf + K1 * (1 - B + (B * dl) / this.avgDocLength));
         const termScore = idf * tfNorm;
         scores.set(doc, (scores.get(doc) ?? 0) + termScore);
       }

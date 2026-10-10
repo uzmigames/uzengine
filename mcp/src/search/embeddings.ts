@@ -3,7 +3,7 @@
 /// Produces 256-dimensional float vectors for search entities.
 /// Pure TypeScript — zero external API calls.
 
-import { splitIdentifier, tokenize, removeStopWords } from "./tokenizer.js";
+import { splitIdentifier, tokenize, removeStopWords } from './tokenizer.js';
 
 /// Embedding dimension.
 export const EMBED_DIM = 256;
@@ -22,10 +22,7 @@ export function fnv1a(str: string): number {
 ///
 /// Uses FNV1a hash for bucket assignment and signed hashing to avoid
 /// all-positive vector collapse. Result is L2-normalized.
-export function embed(
-  tokens: string[],
-  idfMap: Map<string, number>,
-): Float32Array {
+export function embed(tokens: string[], idfMap: Map<string, number>): Float32Array {
   const vec = new Float32Array(EMBED_DIM);
   if (tokens.length === 0) return vec;
 
@@ -41,7 +38,7 @@ export function embed(
     const weight = tf * idf;
 
     const bucket = fnv1a(term) % EMBED_DIM;
-    const sign = fnv1a(term + "_sign") % 2 === 0 ? 1 : -1;
+    const sign = fnv1a(term + '_sign') % 2 === 0 ? 1 : -1;
     vec[bucket] += sign * weight;
   }
 

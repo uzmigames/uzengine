@@ -1,12 +1,14 @@
-/// MSVC 14.36 shim for spdlog compiled-lib mode.
+/// Legacy synchronous-only shim for spdlog compiled-lib mode.
 ///
-/// MSVC 14.36's <thread> header has a bug where std::thread constructor template
-/// cannot find _beginthreadex. This prevents compiling:
+/// This was introduced when the engine's Windows process.h shadowed the CRT
+/// header included by <thread>, leaving _beginthreadex undeclared in:
 ///   - spdlog/src/async.cpp (constructs std::thread in thread_pool)
 ///   - spdlog/src/color_sinks.cpp (includes <spdlog/async.h>)
 ///
 /// This file provides the symbols those files would have provided, minus the
 /// async-specific instantiations that require thread construction.
+/// The header collision is fixed by platform_process.h; the CMake consumer
+/// still selects this synchronous-only source set explicitly.
 
 #ifdef _MSC_VER
 
@@ -46,6 +48,6 @@ spdlog::stderr_color_st<spdlog::synchronous_factory>(const std::string &logger_n
                                                      spdlog::color_mode mode);
 
 // NOTE: async_factory instantiations are intentionally omitted — they require
-// thread_pool which constructs std::thread, triggering the MSVC 14.36 bug.
+// the async source set excluded by this legacy CMake configuration.
 
 #endif // _MSC_VER

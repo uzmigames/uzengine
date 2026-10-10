@@ -864,8 +864,32 @@ namespace DirectX
         float& operator() (size_t Row, size_t Column) noexcept { return m[Row][Column]; }
 
 #if (__cplusplus >= 202002L)
-        bool operator == (const XMFLOAT3X3&) const = default;
-        auto operator <=> (const XMFLOAT3X3&) const = default;
+        constexpr bool operator==(const XMFLOAT3X3& M) const noexcept
+        {
+            return _11 == M._11 && _12 == M._12 && _13 == M._13 && _21 == M._21 && _22 == M._22 && _23 == M._23 && _31 == M._31
+                   && _32 == M._32 && _33 == M._33;
+        }
+
+        constexpr auto operator<=>(const XMFLOAT3X3& M) const noexcept
+        {
+            if (auto cmp = _11 <=> M._11; cmp != 0)
+                return cmp;
+            if (auto cmp = _12 <=> M._12; cmp != 0)
+                return cmp;
+            if (auto cmp = _13 <=> M._13; cmp != 0)
+                return cmp;
+            if (auto cmp = _21 <=> M._21; cmp != 0)
+                return cmp;
+            if (auto cmp = _22 <=> M._22; cmp != 0)
+                return cmp;
+            if (auto cmp = _23 <=> M._23; cmp != 0)
+                return cmp;
+            if (auto cmp = _31 <=> M._31; cmp != 0)
+                return cmp;
+            if (auto cmp = _32 <=> M._32; cmp != 0)
+                return cmp;
+            return _33 <=> M._33;
+        }
 #endif
     };
 
@@ -908,8 +932,38 @@ namespace DirectX
         float& operator() (size_t Row, size_t Column) noexcept { return m[Row][Column]; }
 
 #if (__cplusplus >= 202002L)
-        bool operator == (const XMFLOAT4X3&) const = default;
-        auto operator <=> (const XMFLOAT4X3&) const = default;
+        constexpr bool operator==(const XMFLOAT4X3& M) const noexcept
+        {
+            return _11 == M._11 && _12 == M._12 && _13 == M._13 && _21 == M._21 && _22 == M._22 && _23 == M._23 && _31 == M._31
+                   && _32 == M._32 && _33 == M._33 && _41 == M._41 && _42 == M._42 && _43 == M._43;
+        }
+
+        constexpr auto operator<=>(const XMFLOAT4X3& M) const noexcept
+        {
+            if (auto cmp = _11 <=> M._11; cmp != 0)
+                return cmp;
+            if (auto cmp = _12 <=> M._12; cmp != 0)
+                return cmp;
+            if (auto cmp = _13 <=> M._13; cmp != 0)
+                return cmp;
+            if (auto cmp = _21 <=> M._21; cmp != 0)
+                return cmp;
+            if (auto cmp = _22 <=> M._22; cmp != 0)
+                return cmp;
+            if (auto cmp = _23 <=> M._23; cmp != 0)
+                return cmp;
+            if (auto cmp = _31 <=> M._31; cmp != 0)
+                return cmp;
+            if (auto cmp = _32 <=> M._32; cmp != 0)
+                return cmp;
+            if (auto cmp = _33 <=> M._33; cmp != 0)
+                return cmp;
+            if (auto cmp = _41 <=> M._41; cmp != 0)
+                return cmp;
+            if (auto cmp = _42 <=> M._42; cmp != 0)
+                return cmp;
+            return _43 <=> M._43;
+        }
 #endif
     };
 
@@ -955,8 +1009,38 @@ namespace DirectX
         float& operator() (size_t Row, size_t Column) noexcept { return m[Row][Column]; }
 
 #if (__cplusplus >= 202002L)
-        bool operator == (const XMFLOAT3X4&) const = default;
-        auto operator <=> (const XMFLOAT3X4&) const = default;
+        constexpr bool operator==(const XMFLOAT3X4& M) const noexcept
+        {
+            return _11 == M._11 && _12 == M._12 && _13 == M._13 && _14 == M._14 && _21 == M._21 && _22 == M._22 && _23 == M._23
+                   && _24 == M._24 && _31 == M._31 && _32 == M._32 && _33 == M._33 && _34 == M._34;
+        }
+
+        constexpr auto operator<=>(const XMFLOAT3X4& M) const noexcept
+        {
+            if (auto cmp = _11 <=> M._11; cmp != 0)
+                return cmp;
+            if (auto cmp = _12 <=> M._12; cmp != 0)
+                return cmp;
+            if (auto cmp = _13 <=> M._13; cmp != 0)
+                return cmp;
+            if (auto cmp = _14 <=> M._14; cmp != 0)
+                return cmp;
+            if (auto cmp = _21 <=> M._21; cmp != 0)
+                return cmp;
+            if (auto cmp = _22 <=> M._22; cmp != 0)
+                return cmp;
+            if (auto cmp = _23 <=> M._23; cmp != 0)
+                return cmp;
+            if (auto cmp = _24 <=> M._24; cmp != 0)
+                return cmp;
+            if (auto cmp = _31 <=> M._31; cmp != 0)
+                return cmp;
+            if (auto cmp = _32 <=> M._32; cmp != 0)
+                return cmp;
+            if (auto cmp = _33 <=> M._33; cmp != 0)
+                return cmp;
+            return _34 <=> M._34;
+        }
 #endif
     };
 
@@ -1004,8 +1088,47 @@ namespace DirectX
         float& operator() (size_t Row, size_t Column) noexcept { return m[Row][Column]; }
 
 #if (__cplusplus >= 202002L)
-        bool operator == (const XMFLOAT4X4&) const = default;
-        auto operator <=> (const XMFLOAT4X4&) const = default;
+        constexpr bool operator==(const XMFLOAT4X4& M) const noexcept
+        {
+            return _11 == M._11 && _12 == M._12 && _13 == M._13 && _14 == M._14 && _21 == M._21 && _22 == M._22 && _23 == M._23
+                   && _24 == M._24 && _31 == M._31 && _32 == M._32 && _33 == M._33 && _34 == M._34 && _41 == M._41 && _42 == M._42
+                   && _43 == M._43 && _44 == M._44;
+        }
+
+        constexpr auto operator<=>(const XMFLOAT4X4& M) const noexcept
+        {
+            if (auto cmp = _11 <=> M._11; cmp != 0)
+                return cmp;
+            if (auto cmp = _12 <=> M._12; cmp != 0)
+                return cmp;
+            if (auto cmp = _13 <=> M._13; cmp != 0)
+                return cmp;
+            if (auto cmp = _14 <=> M._14; cmp != 0)
+                return cmp;
+            if (auto cmp = _21 <=> M._21; cmp != 0)
+                return cmp;
+            if (auto cmp = _22 <=> M._22; cmp != 0)
+                return cmp;
+            if (auto cmp = _23 <=> M._23; cmp != 0)
+                return cmp;
+            if (auto cmp = _24 <=> M._24; cmp != 0)
+                return cmp;
+            if (auto cmp = _31 <=> M._31; cmp != 0)
+                return cmp;
+            if (auto cmp = _32 <=> M._32; cmp != 0)
+                return cmp;
+            if (auto cmp = _33 <=> M._33; cmp != 0)
+                return cmp;
+            if (auto cmp = _34 <=> M._34; cmp != 0)
+                return cmp;
+            if (auto cmp = _41 <=> M._41; cmp != 0)
+                return cmp;
+            if (auto cmp = _42 <=> M._42; cmp != 0)
+                return cmp;
+            if (auto cmp = _43 <=> M._43; cmp != 0)
+                return cmp;
+            return _44 <=> M._44;
+        }
 #endif
     };
 

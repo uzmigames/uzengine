@@ -5,4 +5,4 @@ node_modules/
 dist/
 
 # Lock file
-package-lock.json
+!/package-lock.json

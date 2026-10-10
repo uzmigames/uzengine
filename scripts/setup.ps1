@@ -1,6 +1,8 @@
 # setup.ps1 — UzEngine dependency setup script
 # Downloads and configures all thirdparty dependencies for the runtime.
 # Run from project root: .\scripts\setup.ps1
+# Legacy vendor-refresh installer. For reproducible Windows baseline builds,
+# use scripts/setup-native.ps1; it preserves tracked sources and verifies a lock.
 
 $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12

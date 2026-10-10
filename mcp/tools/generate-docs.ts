@@ -6,7 +6,7 @@
 
 import { glob } from "glob";
 import { readFileSync, writeFileSync, existsSync, statSync } from "node:fs";
-import { resolve, relative } from "node:path";
+import { resolve, relative, dirname } from "node:path";
 
 import type { DocumentedEntity, DocsDatabase, DocsMeta } from "./types.js";
 import { parseCppFile } from "./parsers/cpp-parser.js";
@@ -18,7 +18,18 @@ import { generateTags } from "./resolvers/tag-generator.js";
 
 // ─── Configuration ─────────────────────────────────────────────
 
-const REPO_ROOT = resolve(import.meta.dirname ?? ".", "../..");
+// Both tools/*.ts and dist/tools/*.js must resolve the same repository.
+function findRepositoryRoot(start: string): string {
+  let directory = resolve(start);
+  while (!existsSync(resolve(directory, "runtime/build.zig")) ||
+         !existsSync(resolve(directory, "mcp/package.json"))) {
+    const parent = dirname(directory);
+    if (parent === directory) throw new Error(`Repository root not found from ${start}`);
+    directory = parent;
+  }
+  return directory;
+}
+const REPO_ROOT = findRepositoryRoot(import.meta.dirname ?? ".");
 const OUTPUT_DIR = resolve(REPO_ROOT, "mcp", "data");
 const DOCS_JSON = resolve(OUTPUT_DIR, "docs.json");
 const META_JSON = resolve(OUTPUT_DIR, ".docs-meta.json");
@@ -143,6 +154,7 @@ async function main(): Promise<void> {
 
   // Discover source files
   const allFiles = await discoverFiles();
+  if (allFiles.length === 0) throw new Error("No documentation sources found; refusing an empty fixture");
   console.log(`[generate-docs] Found ${allFiles.length} source files`);
 
   // Determine which files to parse

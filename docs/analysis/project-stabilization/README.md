@@ -1,6 +1,7 @@
 # UzEngine project stabilization audit
 
-Date: 2026-10-10. Status: **analysis organized; corrective implementation pending**.
+Date: 2026-10-10. Status: **stage-0 baseline complete; renderer/editor corrections remain open**.
+Latest implementation: [test coverage and first-frame diagnostics](09-test-coverage-and-first-frames.md).
 Rulebook task: [phase0_project-stabilization-audit](../../../.rulebook/tasks/phase0_project-stabilization-audit/proposal.md).
 
 The review identifies 22 findings: **11 P1, 10 P2 and 1 P3**. The first work should
@@ -24,6 +25,9 @@ not all reproduced runtime failures or proven causes of the user's rendering bug
 | [04 — Build and validation](04-build-and-validation.md) | F-013–F-017: CI, tests, Falcor gate, scripts and toolchain consistency |
 | [05 — Performance and maintainability](05-performance-and-maintainability.md) | F-018–F-022: batching, VFS, IPC, paths and architecture |
 | [06 — Execution plan](06-execution-plan.md) | Dependencies, existing task ownership, acceptance matrix and closure criteria |
+| [07 — Baseline implementation](07-baseline-implementation.md) | Five implementation tasks, changes, executed checks and remaining gates |
+| [08 — Native bootstrap](08-native-bootstrap.md) | Locked dependency provisioning and isolated native build evidence |
+| [09 — Coverage and first frames](09-test-coverage-and-first-frames.md) | Current test results, startup captures and scoped baseline closure |
 
 ## Finding register
 
@@ -55,7 +59,7 @@ in its thematic file. IDs are global and stable within this analysis.
 | [F-021](05-performance-and-maintainability.md) | P2 | DLSS discovery assumes an absolute Windows path | Source-confirmed project-rule violation |
 | [F-022](05-performance-and-maintainability.md) | P3 | Module boundaries, shared layouts and capability claims need maintenance | Architectural recommendation |
 
-## What was verified
+## Initial audit evidence
 
 TypeScript checks passed in extension and MCP; MCP ran 68 tests successfully.
 Extension lint failed, its Vitest command collected no tests while exiting zero,
@@ -64,7 +68,8 @@ syntax checks found no syntax errors in the inspected files.
 
 There was **no current-source C++ build, GPU reproduction or Falcor PSNR result**.
 The working tree included substantial uncommitted changes; its HEAD hash is not
-a complete snapshot. See 01 for exact scope and command results.
+a complete snapshot. See 01 for exact scope and command results. These are the
+initial observations; reports 07–09 record the subsequent implementation and checks.
 
 ## How to resume
 
@@ -73,5 +78,5 @@ Follow the [execution plan](06-execution-plan.md) and
 Recheck current source and existing task progress before each correction. Record
 root cause and diagnostics before shader edits, retain Falcor as the reference,
 and close an item only with its stated acceptance evidence. Existing task scopes
-are linked rather than duplicated, and no implementation is marked complete by
-this audit.
+are linked rather than duplicated. Audit items 1.1–1.5 are now complete within
+stage 0; the umbrella and its remaining corrective milestones stay open.

@@ -6,7 +6,7 @@ Priority review: 2026-10-10. Stabilize the current Windows renderer and editor b
 
 **Start with the first ready item below. Phase numbers and old `in-progress` metadata do not set priority.**
 
-Inventory: 81 task directories; 2 blocked; 4 completed; 4 in-progress; 67 pending; 4 untracked.
+Inventory: 86 task directories; 2 blocked; 9 completed; 5 in-progress; 66 pending; 4 untracked.
 Progress is read from current checklists. Completed metadata is a closure claim, not fresh test evidence.
 
 P0 = trustworthy execution and state/lifetime blockers; P1 = current visual correctness; P2 = complete existing paths and measured improvements; P3 = expansion.
@@ -15,19 +15,18 @@ Planning gates and dependencies below are local queue constraints; they do not r
 
 ## Next action
 
-[Make build and validation trustworthy](phase0_project-stabilization-audit/tasks.md)
+[Render graph state registry](phase0_render-graph-state-registry/tasks.md)
 
-1.1 Establish a reproducible source/build manifest and align clean-checkout dependencies, lockfiles and the C++23/Zig contract (F-013, F-017; execution-plan stage 0).
+2.1 Graph imports switched to tracked imports (the design's 7.1) with the required fixes.
 
-## P0 — execution order (7 items)
+## P0 — execution order (6 items)
 
 | Order | Work and scope | Why now | Readiness |
 |---|---|---|---|
-| 10 | [Make build and validation trustworthy](phase0_project-stabilization-audit/tasks.md) — items 1.1, 1.2, 1.3, 1.4, 1.5 | Without a current build, real tests and an honest Falcor gate, later fixes cannot be accepted. | Ready for next action |
-| 20 | [Render graph state registry](phase0_render-graph-state-registry/tasks.md) — 3/9 checked; pending | Systemic before-state and declared-access correctness. Include audit F-003 remaining UAV/transient acceptance (audit item 3.1). | Waiting: gate baseline |
+| 20 | [Render graph state registry](phase0_render-graph-state-registry/tasks.md) — 3/9 checked; pending | Systemic before-state and declared-access correctness. Include audit F-003 remaining UAV/transient acceptance (audit item 3.1). | Ready for next action |
 | 30 | [Fix dx12 first frame resource state crash](phase0_fix-dx12-first-frame-resource-state-crash/tasks.md) — 11/29 checked; pending | Reproduce the old startup crash on the current build and reconcile remaining init barriers; do not reintroduce frame-index state guesses. | Waiting: phase0_render-graph-state-registry |
-| 40 | [Fix entity lifetime, scene loading and editor ownership](phase0_project-stabilization-audit/tasks.md) — items 2.1, 2.2, 2.3, 2.4, 2.5, 2.6 | Bound ECS generations, serialize world mutation, preserve scenes on load failure, bound IPC and remove absolute discovery paths. | Waiting: gate baseline |
-| 50 | [Preexisting test failures](phase0_preexisting-test-failures/tasks.md) — 0/8 checked; pending | Stop carrying native failures as an unowned exception; rebaseline the current build and fix owned suites. | Waiting: gate baseline |
+| 40 | [Fix entity lifetime, scene loading and editor ownership](phase0_project-stabilization-audit/tasks.md) — items 2.1, 2.2, 2.3, 2.4, 2.5, 2.6 | Bound ECS generations, serialize world mutation, preserve scenes on load failure, bound IPC and remove absolute discovery paths. | Ready for next action |
+| 50 | [Preexisting test failures](phase0_preexisting-test-failures/tasks.md) — 0/8 checked; pending | Stop carrying native failures as an unowned exception; rebaseline the current build and fix owned suites. | Ready for next action |
 | 60 | [Sdf gpu fixture refresh](phase0_sdf-gpu-fixture-refresh/tasks.md) — 0/5 checked; pending | Stale root constants and samplers invalidate several SDF/GI measurements. | Waiting: phase0_render-graph-state-registry |
 | 70 | [Frame allocation layout dependence](phase0_frame-allocation-layout-dependence/tasks.md) — 0/6 checked; pending | Allocation-dependent pixels undermine regression evidence; isolate the first differing pass before more visual tuning. | Waiting: phase0_render-graph-state-registry |
 
@@ -35,8 +34,8 @@ Planning gates and dependencies below are local queue constraints; they do not r
 
 | Order | Work and scope | Why now | Readiness |
 |---|---|---|---|
-| 80 | [Correct temporal history, unavailable upscalers and mesh motion](phase0_project-stabilization-audit/tasks.md) — items 3.2, 3.3, 3.4 | Fix inputs and resource validity before tuning flicker or enabling temporal SDK features. | Waiting: phase0_render-graph-state-registry; gate baseline |
-| 90 | [Correct material graph context and glass contracts](phase0_project-stabilization-audit/tasks.md) — items 3.5, 3.6 | Real time, camera, object, vertex and viewport data precede BRDF feature expansion. | Waiting: gate baseline |
+| 80 | [Correct temporal history, unavailable upscalers and mesh motion](phase0_project-stabilization-audit/tasks.md) — items 3.2, 3.3, 3.4 | Fix inputs and resource validity before tuning flicker or enabling temporal SDK features. | Waiting: phase0_render-graph-state-registry |
+| 90 | [Correct material graph context and glass contracts](phase0_project-stabilization-audit/tasks.md) — items 3.5, 3.6 | Real time, camera, object, vertex and viewport data precede BRDF feature expansion. | Ready for next action |
 | 100 | [Sponza flicker correction](phase0_sponza-flicker-correction/tasks.md) — 0/7 checked; pending | Directly addresses the visible instability, using current baselines and region-specific gates. | Waiting: phase0_frame-allocation-layout-dependence; gate temporal |
 | 110 | [Ssr exposure correction](phase0_ssr-exposure-correction/tasks.md) — 0/5 checked; pending | Concrete exposure-contract defect in an existing reflection path; precedes a wider SSR rewrite. | Waiting: phase0_render-graph-state-registry |
 | 120 | [Lighting ddgi sdf writer parity head](phase0_lighting-ddgi-sdf-writer-parity-head/tasks.md) — 0/6 checked; pending | Align current occluder sets and remeasure writer energy before indirect-light recalibration. | Waiting: phase0_sdf-gpu-fixture-refresh |
@@ -44,7 +43,7 @@ Planning gates and dependencies below are local queue constraints; they do not r
 | 140 | [Gi final gather bias coupling](phase0_gi-final-gather-bias-coupling/tasks.md) — 0/6 checked; pending | Establish reference convergence and separate diffuse/reflection/AO coupling before tuning energy. | Waiting: phase0_sdf-gpu-fixture-refresh; phase0_frame-allocation-layout-dependence |
 | 150 | [Vfx mesh bindless attr read bug](phase0_vfx-mesh-bindless-attr-read-bug/tasks.md) — 9/23 checked; blocked | Garbage mesh-particle attributes are a correctness defect; retain the existing GPU-capture blocker, not a fake ready state. | Waiting: existing Rulebook blocker: read task evidence; phase0_render-graph-state-registry |
 | 160 | [Vfx sort pipeline hardware validation](phase16_vfx-sort-pipeline-hardware-validation/tasks.md) — 0/15 checked; blocked | Validate mesh-particle sorting only after attribute reads work; requires real DX12 capture evidence. | Waiting: existing Rulebook blocker: read task evidence; phase0_vfx-mesh-bindless-attr-read-bug |
-| 170 | [Accept the corrected renderer with images and sequences](phase0_project-stabilization-audit/tasks.md) — items 4.1 | Record matched Falcor and temporal evidence before treating the renderer as the next feature baseline. | Waiting: phase0_sponza-flicker-correction; phase0_ssr-exposure-correction; gate baseline; gate lifecycle; gate temporal; gate materials |
+| 170 | [Accept the corrected renderer with images and sequences](phase0_project-stabilization-audit/tasks.md) — items 4.1 | Record matched Falcor and temporal evidence before treating the renderer as the next feature baseline. | Waiting: phase0_sponza-flicker-correction; phase0_ssr-exposure-correction; gate lifecycle; gate temporal; gate materials |
 
 ## P2 — execution order (14 items)
 
@@ -136,7 +135,7 @@ These are scope/status reviews, not new implementation assignments. Do not repea
 - [Project stabilization audit](phase0_project-stabilization-audit/tasks.md): Tracking umbrella; execute the scoped milestones above, not all 28 items before any other task.
 - [Ue5 visual parity roadmap](phase3a-3.50.0-ue5-visual-parity-roadmap/tasks.md): Broad roadmap, not an executable bug task. Its old parity percentage and feature ticks are not present-day acceptance.
 
-## Completed-status closure candidates (1)
+## Completed-status closure candidates (6)
 
 The user asked Claude to archive completed tasks. [Read the archive handoff](../../docs/planning/claude-rulebook-archive-handoff.md).
 Validate evidence and archive with Rulebook; this view does not archive or certify implementations.
@@ -145,6 +144,11 @@ Validate evidence and archive with Rulebook; this view does not archive or certi
 <summary>Show candidates outside the execution queue</summary>
 
 - [Rulebook priority queue](phase0_rulebook-priority-queue/tasks.md) (`phase0_rulebook-priority-queue`)
+- [Stabilization build provenance](phase0_stabilization-build-provenance/tasks.md) (`phase0_stabilization-build-provenance`)
+- [Stabilization diagnostic baseline](phase0_stabilization-diagnostic-baseline/tasks.md) (`phase0_stabilization-diagnostic-baseline`)
+- [Stabilization falcor gate](phase0_stabilization-falcor-gate/tasks.md) (`phase0_stabilization-falcor-gate`)
+- [Stabilization powershell gates](phase0_stabilization-powershell-gates/tasks.md) (`phase0_stabilization-powershell-gates`)
+- [Stabilization test integrity](phase0_stabilization-test-integrity/tasks.md) (`phase0_stabilization-test-integrity`)
 
 </details>
 

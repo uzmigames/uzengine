@@ -32,7 +32,7 @@
 ///
 /// Timing benchmark (bonus — addressable via --gtest_filter=*Timing*):
 ///   For 1k, 4k, 16k capacity emitters, measures the wall-clock cost of the
-///   150-tick CPU accumulator loop and writes .sandbox/seek-warmup-timings.json
+///   150-tick CPU accumulator loop and round-trips a temporary JSON artifact
 ///   for phase 3's docs-operator. GPU timing is zero (no real device).
 ///
 /// All tests are CPU-only — no GPU hardware required.
@@ -51,6 +51,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 
 using namespace uz;
@@ -461,7 +462,7 @@ TEST(VfxSeekDeterminism, MultiFrameSplit_SeekCompletesInOneFrame_2p5s) {
 // =============================================================================
 
 /// Measures CPU accumulator timing for 1k, 4k, 16k capacity emitters and
-/// writes .sandbox/seek-warmup-timings.json for the phase 3 docs-operator.
+/// round-trips a temporary JSON file and prints it for the phase 3 docs-operator.
 /// GPU timing is always 0 ms (no real DX12 device in the test build).
 TEST(VfxSeekDeterminism_Timing, Measure_WriteJson_1k_4k_16k) {
     static constexpr float    kSeekS     = 2.5f;
@@ -483,23 +484,23 @@ TEST(VfxSeekDeterminism_Timing, Measure_WriteJson_1k_4k_16k) {
     }
 
     const std::string json = FormatTimingJson(results, 3);
-    const std::string outPath = "e:/UzmiEngine/uzengine/.sandbox/seek-warmup-timings.json";
+    const auto outPath = std::filesystem::temp_directory_path()
+        / ("uzengine-seek-warmup-" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()) + ".json");
 
     {
-        std::error_code ec;
-        std::filesystem::create_directories(
-            std::filesystem::path(outPath).parent_path(), ec);
-        // ec is intentionally ignored — test passes even if dir cannot be created.
+        std::ofstream f(outPath);
+        ASSERT_TRUE(f.is_open()) << "Could not write " << outPath;
+        f << json;
+        ASSERT_TRUE(f.good()) << "Could not finish writing " << outPath;
     }
 
-    std::ofstream f(outPath);
-    if (f.is_open()) {
-        f << json;
-    } else {
-        // Print to stdout so CI logs capture it even without disk write.
-        ADD_FAILURE() << "Could not write " << outPath
-                      << ". JSON:\n" << json;
+    {
+        std::ifstream f(outPath);
+        const std::string written{std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>()};
+        EXPECT_EQ(written, json);
     }
+    EXPECT_TRUE(std::filesystem::remove(outPath));
 
     std::cout << "[seek-warmup-timings]\n" << json << std::flush;
 }

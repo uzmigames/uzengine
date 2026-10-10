@@ -16,6 +16,7 @@
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
     "test": "vitest run",
+    "type-check": "tsc -p tsconfig.test.json",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },
@@ -27,12 +28,13 @@
     "@types/node": "^25.5.0",
     "@typescript-eslint/eslint-plugin": "^8.57.2",
     "@typescript-eslint/parser": "^8.57.2",
+    "@vitest/coverage-v8": "4.1.1",
     "chokidar": "^5.0.0",
     "eslint": "^9.39.4",
     "glob": "^13.0.6",
     "prettier": "^3.8.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.1"
+    "vitest": "4.1.1"
   }
 }

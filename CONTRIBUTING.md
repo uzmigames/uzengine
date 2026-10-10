@@ -49,22 +49,25 @@ docs/             All documentation (never put docs inside runtime/)
 
 | Tool | Version | Purpose |
 |------|---------|---------|
-| Zig  | 0.14.x  | Build system |
-| MSVC / Clang | Latest | C++20 compiler |
+| Zig  | 0.15.2  | Windows baseline build system and bundled Clang |
+| MSVC / Clang | C++23 support | MSVC builds LuaJIT and the addon; CMake consumers validate separately |
+| Python | 3.11+ | Locked native provisioning and validation tools |
+| Windows SDK | 10.0.26100.0 | Locked Windows profile and FXC DLL |
 | DXC  | Agility SDK 614+ | Shader compilation |
-| Node.js | 22.x | Extension and MCP |
+| Node.js | 22.13+ (22.x) | Extension and MCP dependency engine requirement |
 
 ### Build Commands
 
 ```bash
 # Build the runtime library
+cd runtime
 zig build
 
 # Build and run all tests
 zig build test
 
 # Build a specific demo (each demo is standalone)
-cd runtime/demos/<demo_name>
+cd ../demos/<demo_name>
 zig build
 
 # Extension
@@ -82,9 +85,15 @@ npm run build
 
 ### First-Time Setup
 
-1. Deploy `dxcompiler.dll` + `dxil.dll` to `zig-out/bin/`
-2. Deploy `D3D12Core.dll` to `zig-out/bin/D3D12/`
-3. Verify with `zig build test` — all tests must pass before your first PR.
+1. Run `pwsh -NoProfile -File scripts/setup-native.ps1` from the repository root.
+2. In `runtime`, run `zig build '-Dnative-deps=thirdparty/.native' -Ddll=true`.
+   The build deploys its selected DLLs into `build/bin/`.
+3. Run `zig build test '-Dnative-deps=thirdparty/.native'`. Existing baseline
+   failures remain failures; do not lower thresholds or skip suites to close a task.
+4. Use `npm ci` in extension, MCP and N-API. Preserve their package lockfiles.
+
+The [native bootstrap report](docs/analysis/project-stabilization/08-native-bootstrap.md)
+records the profile's scope, commands, actual results and remaining acceptance gaps.
 
 ---
 
@@ -92,7 +101,7 @@ npm run build
 
 ### Language: C++ (engine)
 
-- **Standard**: C++20, no compiler extensions.
+- **Standard**: C++23, no compiler extensions.
 - **Max file size**: 1 500 lines. Split proactively at ~1 000.
 - **Single responsibility**: one file = one concern. If a file does two things, split it.
 - **Naming**: `snake_case` for files (`gbuffer_pass.h`), `PascalCase` for types, `camelCase` for locals, `kConstantName` for `constexpr` constants.
