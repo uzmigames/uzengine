@@ -1,0 +1,17 @@
+{
+  "id": "2026-10-10T03-58-01-project-stabilization-audit-separate-source-evidence-from-runtime-acceptance",
+  "title": "Project stabilization audit: separate source evidence from runtime acceptance",
+  "content": "The 2026-10-10 audit is indexed at docs/analysis/project-stabilization/README.md with 22 findings and the ownership/dependency plan in 06-execution-plan.md. Source evidence identified temporal history/state coupling, packed EnTT IDs used as vector indices, shared-world native entry points and false-positive validation gates. TypeScript checks and MCP tests passed, but extension Vitest collected no tests, extension lint failed and both coverage providers were missing. No current C++ build or GPU/Falcor result was obtained; HEAD alone does not identify the dirty reviewed tree. Preserve that distinction in future reports. For organization, use the local analysis skill: numbered thematic files, global F-IDs, evidence/impact/confidence/acceptance, and an execution plan linked to existing tasks. Create tracking via rulebook task create; validate via rulebook task validate phase0_project-stabilization-audit. Also verify every local link and F-ID coverage across index, checklist, ownership and specs. Runtime fixes remain pending.",
+  "source": "manual",
+  "relatedTask": "phase0_project-stabilization-audit",
+  "tags": [
+    "analysis:project-stabilization",
+    "audit",
+    "evidence",
+    "validation",
+    "rulebook"
+  ],
+  "createdAt": "2026-10-10T03:58:01.193Z",
+  "occurrences": 1,
+  "lastSeenAt": "2026-10-10T03:58:01.193Z"
+}

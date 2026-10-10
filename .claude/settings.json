@@ -10,8 +10,13 @@
       "Edit(*)",
       "Glob(*)",
       "Grep(*)",
-      "Agent(*)"
-    ]
+      "Agent(*)",
+      "WebFetch(*)",
+      "WebSearch",
+      "TodoWrite",
+      "mcp__rulebook"
+    ],
+    "defaultMode": "acceptEdits"
   },
   "hooks": {
     "PreToolUse": [
@@ -49,55 +54,31 @@
         ]
       },
       {
+        "matcher": "Edit|Write",
         "hooks": [
           {
             "type": "command",
-            "command": "bash E:/UzEngine/.claude/hooks/enforce-no-deferred.sh"
+            "command": "bash $CLAUDE_PROJECT_DIR/.claude/hooks/protect-task-scaffolding.sh"
           }
         ]
       },
       {
+        "matcher": "Bash|Edit|Write",
         "hooks": [
           {
             "type": "command",
-            "command": "bash E:/UzEngine/.claude/hooks/enforce-no-shortcuts.sh"
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash E:/UzEngine/.claude/hooks/enforce-mcp-for-tasks.sh"
+            "command": "bash $CLAUDE_PROJECT_DIR/.claude/hooks/no-os-scheduling.sh"
           }
         ]
       }
     ],
-    "SessionStart": [
-      {
-        "matcher": "compact",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash E:/UzEngine/.claude/hooks/on-compact-reinject.sh"
-          }
-        ]
-      },
+    "UserPromptSubmit": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "bash E:/UzEngine/.claude/hooks/resume-from-handoff.sh"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash E:/UzEngine/.claude/hooks/check-context-and-handoff.sh"
+            "command": "bash $CLAUDE_PROJECT_DIR/.claude/hooks/jev-gate.sh prompt",
+            "timeout": 8
           }
         ]
       }

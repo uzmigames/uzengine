@@ -1,22 +1,15 @@
 {
-  "version": "5.4.0",
+  "version": "7.4.0",
   "installedAt": "2026-04-20T20:32:55.168Z",
-  "updatedAt": "2026-04-20T20:32:55.168Z",
-  "projectId": "uzengine",
+  "updatedAt": "2026-10-10T03:47:02.511Z",
+  "projectId": "UzEngine",
   "mode": "full",
   "features": {
-    "watcher": false,
-    "agent": false,
     "logging": true,
-    "telemetry": false,
-    "notifications": false,
-    "dryRun": false,
-    "gitHooks": true,
-    "repl": false,
+    "gitHooks": false,
     "templates": true,
     "context": true,
     "health": true,
-    "plugins": false,
     "parallel": true,
     "smartContinue": true
   },
@@ -30,38 +23,7 @@
     "cliResponse": 60000,
     "testRun": 120000
   },
-  "memory": {
-    "enabled": false,
-    "dbPath": ".rulebook/memory/memory.db",
-    "maxSizeBytes": 524288000,
-    "autoCapture": false,
-    "vectorDimensions": 256
-  },
-  "ralph": {
-    "enabled": true,
-    "maxIterations": 10,
-    "tool": "claude",
-    "maxContextLoss": 3,
-    "securityGate": {
-      "enabled": true,
-      "failOn": "high",
-      "tool": "auto"
-    },
-    "contextCompression": {
-      "enabled": true,
-      "recentCount": 3,
-      "threshold": 5
-    },
-    "parallel": {
-      "enabled": false,
-      "maxWorkers": 3
-    },
-    "planCheckpoint": {
-      "enabled": false,
-      "autoApproveAfterSeconds": 0,
-      "requireApprovalForStories": "all"
-    }
-  },
+  "gitPushMode": "manual",
   "skills": {
     "enabled": [
       "core/agent-automation",
@@ -79,5 +41,11 @@
       "core/workspace"
     ]
   },
-  "agentsMode": "full"
+  "agentsMode": "full",
+  "integrations": {
+    "typesafe": {
+      "enabled": true,
+      "askedAt": "2026-10-10T03:47:02.480Z"
+    }
+  }
 }

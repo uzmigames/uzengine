@@ -1,73 +1,31 @@
 <!-- LUA:START -->
-# Lua Project Rules
+# Lua rules
 
-## Agent Automation Commands
+## Non-negotiables
 
-**CRITICAL**: Execute these commands after EVERY implementation (see AGENT_AUTOMATION module for full workflow).
+- Target Lua 5.4 or LuaJIT 2.1+ and pick one — 5.4 features (integer division `//`, `goto` differences, `<close>`) do not exist on LuaJIT (5.1 semantics).
+- Format gate is `stylua --check src/ tests/` — plain `stylua` (writes) locally vs `--check` in CI is the classic mismatch.
+- Lint with `luacheck src/ tests/` and pass the correct std (`--std luajit` or `--std lua54`) matching the runtime.
+- No accidental globals — luacheck flags them; declare everything `local`.
+- Local commands MUST match `.github/workflows/*.yml` exactly.
 
-```bash
-# Complete quality check sequence:
-stylua --check .          # Format check
-luacheck .                # Linting
-busted                    # All tests (100% pass)
+## Conventions
 
-# No standard security audit for Lua
-```
+- Modules return a table; constructors via `M.new()` and methods with `:` (implicit `self`).
+- `local` by default, including cached stdlib functions in hot loops.
+- Error handling: `nil, err` returns for expected failures; `error()`/`pcall` for exceptional ones — don't mix styles within a module.
+- Keep luacheck config in `.luacheckrc` (std, globals, per-path overrides) rather than long CLI flags.
+- StyLua config in `stylua.toml`; do not hand-format.
 
-## Lua Configuration
+## Testing
 
-**CRITICAL**: Use Lua 5.4 or LuaJIT with linting.
+- busted (preferred) or luaunit; specs in `tests/`, run with `busted tests/`.
+- busted style: `describe`/`it`/`before_each`, assertions via `assert.are.same` (deep equality) and `assert.has_no.errors`.
+- Test both runtimes in CI if the code claims 5.4 + LuaJIT support.
 
-- **Version**: Lua 5.4 or LuaJIT 2.1+
-- **Linter**: luacheck
-- **Formatter**: StyLua
-- **Testing**: busted or luaunit
+## Build & tooling
 
-## Code Quality Standards
-
-### Mandatory Quality Checks
-
-**IMPORTANT**: These commands MUST match your GitHub Actions workflows!
-
-```bash
-# Pre-Commit Checklist (MUST match .github/workflows/*.yml)
-
-# 1. Format check (matches workflow)
-stylua --check src/ tests/
-
-# 2. Lint (matches workflow)
-luacheck src/ tests/ --std luajit --no-unused-args
-
-# 3. Run tests (matches workflow)
-busted tests/
-
-# If ANY fails: ❌ DO NOT COMMIT - Fix first!
-```
-
-**Why This Matters:**
-- Example: Using `stylua` (writes) locally but `stylua --check` in CI = failure
-
-### Testing Example (busted)
-
-```lua
-describe("DataProcessor", function()
-  local processor
-  
-  before_each(function()
-    processor = require("data_processor").new()
-  end)
-  
-  it("processes valid input", function()
-    local result = processor:process({1, 2, 3})
-    assert.are.same({2, 4, 6}, result)
-  end)
-  
-  it("handles empty input", function()
-    assert.has_no.errors(function()
-      processor:process({})
-    end)
-  end)
-end)
-```
-
+- Dependencies via LuaRocks; declare them in a `.rockspec`.
+- No standard security-audit tool exists for Lua — review dependencies manually and pin rock versions.
+- Never commit `lua_modules/` or compiled `.so`/`.dll` artifacts.
 <!-- LUA:END -->
