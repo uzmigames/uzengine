@@ -276,38 +276,10 @@ static int SceneGetWorldPosition(lua_State* L) {
     return 3;
 }
 
-/// uz.scene.set_rotation(entity, x, y, z, w) -> void
-///
-/// Sets the LOCAL rotation on the entity's SceneComponent. The quaternion
-/// MUST be normalized — caller is responsible.
-static int SceneSetRotation(lua_State* L) {
-    World* world = GetWorld(L);
-    if (!world) return 0;
-    const Entity entity = CheckEntity(L, 1, "set_rotation");
-    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
-    if (!world->HasComponent<SceneComponent>(entity)) return 0;
-    const float x = static_cast<float>(luaL_checknumber(L, 2));
-    const float y = static_cast<float>(luaL_checknumber(L, 3));
-    const float z = static_cast<float>(luaL_checknumber(L, 4));
-    const float w = static_cast<float>(luaL_checknumber(L, 5));
-    world->GetComponent<SceneComponent>(entity).SetRotation(Quat{x, y, z, w});
-    return 0;
-}
-
-/// uz.scene.get_rotation(entity) -> x, y, z, w (or nil)
-static int SceneGetRotation(lua_State* L) {
-    World* world = GetWorld(L);
-    if (!world) { lua_pushnil(L); return 1; }
-    const Entity entity = CheckEntity(L, 1, "get_rotation");
-    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
-    if (!world->HasComponent<SceneComponent>(entity)) { lua_pushnil(L); return 1; }
-    const Quat& q = world->GetComponent<SceneComponent>(entity).GetRotation();
-    lua_pushnumber(L, q.x);
-    lua_pushnumber(L, q.y);
-    lua_pushnumber(L, q.z);
-    lua_pushnumber(L, q.w);
-    return 4;
-}
+// uz.scene.set_rotation / get_rotation are not defined here: lua_scene_api.cpp
+// owns them with the documented Euler-degree signature (pitch, yaw, roll).
+// LuaRegisterEntityAPI runs after LuaRegisterSceneAPI, so a same-named
+// registration here would silently replace that public contract.
 
 /// uz.scene.set_rotation_yaw(entity, yawRadians) -> void
 ///
@@ -700,12 +672,6 @@ void LuaRegisterEntityAPI(lua_State* L) {
 
     lua_pushcfunction(L, SceneGetWorldPosition);
     lua_setfield(L, -2, "get_world_position");
-
-    lua_pushcfunction(L, SceneSetRotation);
-    lua_setfield(L, -2, "set_rotation");
-
-    lua_pushcfunction(L, SceneGetRotation);
-    lua_setfield(L, -2, "get_rotation");
 
     lua_pushcfunction(L, SceneSetRotationYaw);
     lua_setfield(L, -2, "set_rotation_yaw");

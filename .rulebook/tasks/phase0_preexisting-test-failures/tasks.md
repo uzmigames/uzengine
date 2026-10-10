@@ -1,7 +1,24 @@
 ## 1. Items
 - [ ] 1.1 Fix the MaterialGraph id-0 sentinel collision (or the test), with the reason recorded.
 - [ ] 1.2 Find the shared state behind the MaterialGraphHlslCodegen order dependence.
-- [ ] 1.3 Decide each default-drift test (fix the test or the default): fog, sky, camera, project-loader CVar order.
+- [x] 1.3 Decide each default-drift test (fix the test or the default): fog, sky, camera, project-loader CVar order.
+  Done 2026-10-10. Fog (`HeightFogComponent.{DensityDefaultIs0_0436, ColorDefaultIsBlack,
+  DirectionalInscatteringColorDefault}`, `RenderingParity.HeightFogDefaults_{PrimaryLayer,
+  DirectionalInscattering}`): **code** was wrong. f094fe9c / af18b667 replaced the reference defaults
+  with look-tuned values (density 0.15, blue colour, warm glow) against the parity rule. Restored:
+  colour and directional colour black (reference constructor), density 0.0436 (the fog actor of the
+  reference default level, the same placement `baseHeight = -5000` encodes). Sky
+  (`SkyAtmosphereComponent.FallbackSunDiskIntensityIsOne`): **code** was wrong. 33fb5cd0 set 0.1 to dim
+  the disk; the multiplier is an identity scale, so it is back to 1.0. Camera
+  (`SceneLoaderTest.CameraComponent_DefaultValues_WhenFieldsAbsent`): **test** was stale. 1eb426b1 made
+  a scene camera without `active` active on purpose; all 144 shipped scene cameras set the key.
+  Project CVars (`ProjectLoaderTest.CvarsBlock_NumbersAndBoolsParsed`): **code** bug. The default
+  `nlohmann::json` keeps objects in a std::map, so cvars came back alphabetical instead of in file order,
+  the order `ProjectConfig::cvarOverrides` documents. Now parsed as `ordered_json`. Lua
+  (`LuaSceneAPITest.SetAndGetRotationRoundTrips`): **code** bug. lua_entity_api.cpp (c0f9df43) registered
+  quaternion `set_rotation`/`get_rotation` after lua_scene_api.cpp and replaced the documented
+  Euler-degree API (arg #5 missing → chunk error). Removed the duplicates. All 9 pass; the
+  HeightFog*/RenderingParity*/SkyAtmosphere*/SceneLoader*/ProjectLoader*/LuaScene* suites pass 267/267.
 - [x] 1.4 ShaderCrossBackend: add gbuffer/ to the fixture; make the non-bindless deferred lighting compile with a real shadow-atlas register bound by the C++ side, or exclude that permutation with the reason.
   Done 2026-10-10: the fixture searched the pre-rewrite `geometry/`/`post/` dirs, now `gbuffer/`. The SM5
   block of `deferred_lighting_ps.hlsl` lost `shadowAtlasTexture : register(t3)` in the shader rewrite
