@@ -18,7 +18,8 @@ class QualityScriptTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="uz quality ")
         self.addCleanup(self.temp.cleanup)
-        self.base = Path(self.temp.name)
+        # pwsh canonicalizes $PSScriptRoot (8.3 RUNNER~1 -> runneradmin); expect canonical paths.
+        self.base = Path(self.temp.name).resolve()
         self.root = self.base / "checkout with spaces"
         self.other = self.base / "unrelated cwd"
         self.other.mkdir()

@@ -3,7 +3,9 @@
   "platform": "windows-x64",
   "windows_sdk": {
     "version": "10.0.26100.0",
-    "fxc_sha256": "2b23efdc8b45adc4b79c1c0b940a906336628cd35ed80defd489d70d22ff6d74"
+    "fxc_sha256": [
+      "2b23efdc8b45adc4b79c1c0b940a906336628cd35ed80defd489d70d22ff6d74"
+    ]
   },
   "packages": [
     {

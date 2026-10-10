@@ -9,7 +9,10 @@ function Invoke-QualityCommand {
     param([string]$FilePath, [string[]]$Arguments = @())
     & $FilePath @Arguments
     if ($LASTEXITCODE -ne 0) {
-        throw "$FilePath failed with exit code $LASTEXITCODE"
+        $message = "$FilePath failed with exit code $LASTEXITCODE"
+        # ConciseView wraps the thrown record at console width; keep one greppable line.
+        [Console]::Error.WriteLine($message)
+        throw $message
     }
 }
 

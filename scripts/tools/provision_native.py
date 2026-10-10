@@ -19,6 +19,50 @@ def digest(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def is_sha256(value: object) -> bool:
+    return (isinstance(value, str) and len(value) == 64
+            and all(c in "0123456789abcdef" for c in value))
+
+
+def file_version(path: Path) -> str:
+    """PE fixed file version for diagnostics only; never part of a trust decision."""
+    if os.name != "nt":
+        return "unknown"
+    import ctypes
+    from ctypes import wintypes
+    api = ctypes.WinDLL("version")
+    api.GetFileVersionInfoSizeW.argtypes = [wintypes.LPCWSTR, wintypes.LPDWORD]
+    api.GetFileVersionInfoW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p]
+    api.VerQueryValueW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR,
+                                   ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(wintypes.UINT)]
+    size = api.GetFileVersionInfoSizeW(str(path), None)
+    data = ctypes.create_string_buffer(size)
+    info, length = ctypes.c_void_p(), wintypes.UINT()
+    if (not size or not api.GetFileVersionInfoW(str(path), 0, size, data)
+            or not api.VerQueryValueW(data, "\\", ctypes.byref(info), ctypes.byref(length))
+            or length.value < 16):
+        return "unknown"
+    # VS_FIXEDFILEINFO: dwSignature, dwStrucVersion, dwFileVersionMS, dwFileVersionLS, ...
+    signature, _, high, low = ctypes.cast(info, ctypes.POINTER(ctypes.c_uint32 * 4)).contents
+    if signature != 0xFEEF04BD:
+        return "unknown"
+    return f"{high >> 16}.{high & 0xFFFF}.{low >> 16}.{low & 0xFFFF}"
+
+
+def check_fxc(fxc: Path, windows_sdk: dict) -> None:
+    """Accept only SDK FXC builds whose bytes are listed in the lock."""
+    allowed = windows_sdk["fxc_sha256"]
+    if isinstance(allowed, str):  # Single-hash locks predate the servicing allow-list.
+        allowed = [allowed]
+    if not isinstance(allowed, list) or not allowed or not all(is_sha256(h) for h in allowed):
+        raise ValueError("Invalid Windows SDK FXC SHA-256 allow-list in native lock")
+    actual = digest(fxc)
+    if actual not in allowed:
+        raise ValueError(f"Windows SDK FXC hash differs from lock: {fxc} (sha256 {actual}, "
+                         f"file version {file_version(fxc)}); after verifying this SDK install, "
+                         "add the sha256 to windows_sdk.fxc_sha256 in scripts/native-dependencies.lock.json")
+
+
 def child(root: Path, name: str) -> Path:
     parts = PurePosixPath(name)
     if (not name or "\\" in name or ":" in name or parts.is_absolute()
@@ -32,7 +76,7 @@ def child(root: Path, name: str) -> Path:
 
 def fetch(package: dict, cache: Path, offline: bool) -> Path:
     expected = package["sha256"]
-    if len(expected) != 64 or any(c not in "0123456789abcdef" for c in expected):
+    if not is_sha256(expected):
         raise ValueError("Invalid SHA-256 in native lock")
     target = child(cache, expected + ".archive")
     if not target.exists():
@@ -118,7 +162,9 @@ def lua_sources(root: Path, names: list[str]) -> list[Path]:
 
 
 def source_hash(root: Path, names: list[str]) -> str:
-    entries = {p.relative_to(root).as_posix(): digest(p) for p in lua_sources(root, names)}
+    # lua_sources returns resolved paths; an 8.3 or junction root must be resolved to match.
+    base = root.resolve()
+    entries = {p.relative_to(base).as_posix(): digest(p) for p in lua_sources(root, names)}
     return hashlib.sha256(json.dumps(entries, sort_keys=True).encode()).hexdigest()
 
 
@@ -144,8 +190,7 @@ def provision(root: Path, lock: Path, target: Path, cache: Path,
     if os.name != "nt":
         raise RuntimeError("Provisioning requires Windows x64 and MSVC")
     fxc = sdk / "bin" / spec["windows_sdk"]["version"] / "x64/d3dcompiler_47.dll"
-    if digest(fxc) != spec["windows_sdk"]["fxc_sha256"]:
-        raise ValueError(f"Windows SDK FXC hash differs from lock: {fxc}")
+    check_fxc(fxc, spec["windows_sdk"])
     if not vcvars.is_file():
         raise FileNotFoundError(f"Missing MSVC environment script: {vcvars}")
     cache.mkdir(parents=True, exist_ok=True)
@@ -162,7 +207,7 @@ def provision(root: Path, lock: Path, target: Path, cache: Path,
     fxc_dest = stage / "fxc/bin/x64/d3dcompiler_47.dll"
     fxc_dest.parent.mkdir(parents=True)
     shutil.copyfile(fxc, fxc_dest)
-    vendor = root / "runtime/thirdparty/luajit"
+    vendor = (root / "runtime/thirdparty/luajit").resolve()
     for source in lua_sources(root, spec["luajit_sources"]):
         dest = child(stage / "luajit", source.relative_to(vendor).as_posix())
         dest.parent.mkdir(parents=True, exist_ok=True)
