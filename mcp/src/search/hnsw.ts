@@ -20,6 +20,74 @@ interface HnswNode {
   neighbors: number[][];
 }
 
+/// A node ID paired with its distance to the current query.
+interface Candidate {
+  id: number;
+  dist: number;
+}
+
+/// Binary heap of candidates. `outranks(a, b)` is true when `a` belongs
+/// above `b`, so `a.dist < b.dist` yields a min-heap and `>` a max-heap.
+/// @ref Malkov & Yashunin 2018 "Efficient and robust approximate nearest
+/// neighbor search using Hierarchical Navigable Small World graphs" (Alg. 2
+/// keeps candidates and results in priority queues: O(log ef) per update).
+class CandidateHeap {
+  private readonly items: Candidate[] = [];
+
+  constructor(private readonly outranks: (a: Candidate, b: Candidate) => boolean) {}
+
+  get size(): number {
+    return this.items.length;
+  }
+
+  /// Top element; the heap must be non-empty.
+  peek(): Candidate {
+    return this.items[0];
+  }
+
+  push(item: Candidate): void {
+    const items = this.items;
+    let i = items.length;
+    items.push(item);
+    while (i > 0) {
+      const parent = (i - 1) >> 1;
+      if (!this.outranks(item, items[parent])) break;
+      items[i] = items[parent];
+      i = parent;
+    }
+    items[i] = item;
+  }
+
+  /// Removes and returns the top element; the heap must be non-empty.
+  pop(): Candidate {
+    const items = this.items;
+    const top = items[0];
+    const last = items.pop()!;
+    if (items.length === 0) return top;
+
+    let i = 0;
+    for (;;) {
+      const left = 2 * i + 1;
+      if (left >= items.length) break;
+      const right = left + 1;
+      const child = right < items.length && this.outranks(items[right], items[left]) ? right : left;
+      if (!this.outranks(items[child], last)) break;
+      items[i] = items[child];
+      i = child;
+    }
+    items[i] = last;
+    return top;
+  }
+
+  /// Heap contents in unspecified order.
+  toArray(): Candidate[] {
+    return this.items.slice();
+  }
+}
+
+const closerFirst = (a: Candidate, b: Candidate): boolean => a.dist < b.dist;
+const furtherFirst = (a: Candidate, b: Candidate): boolean => a.dist > b.dist;
+
 /// HNSW index for approximate nearest neighbor search.
 export class HnswIndex {
   private nodes: HnswNode[] = [];
@@ -63,21 +131,22 @@ export class HnswIndex {
     entryId: number,
     ef: number,
     level: number,
-  ): Array<{ id: number; dist: number }> {
+  ): Candidate[] {
     const visited = new Set<number>([entryId]);
-    const candidates: Array<{ id: number; dist: number }> = [
-      { id: entryId, dist: cosineDistance(query, this.nodes[entryId].vector) },
-    ];
-    const results = [...candidates];
+    const entry: Candidate = {
+      id: entryId,
+      dist: cosineDistance(query, this.nodes[entryId].vector),
+    };
+    // Closest unexpanded node on top.
+    const candidates = new CandidateHeap(closerFirst);
+    candidates.push(entry);
+    // Furthest kept result on top, so the eviction bound is O(1) to read.
+    const results = new CandidateHeap(furtherFirst);
+    results.push(entry);
 
-    while (candidates.length > 0) {
-      // Get closest candidate
-      candidates.sort((a, b) => a.dist - b.dist);
-      const current = candidates.shift()!;
-
-      // Furthest in results
-      const furthest = results.reduce((max, r) => (r.dist > max.dist ? r : max), results[0]);
-      if (current.dist > furthest.dist && results.length >= ef) break;
+    while (candidates.size > 0) {
+      const current = candidates.pop();
+      if (current.dist > results.peek().dist && results.size >= ef) break;
 
       // Explore neighbors
       const neighbors = this.nodes[current.id].neighbors[level] ?? [];
@@ -87,25 +156,18 @@ export class HnswIndex {
 
         const dist = cosineDistance(query, this.nodes[nId].vector);
 
-        const furthestResult = results.reduce(
-          (max, r) => (r.dist > max.dist ? r : max),
-          results[0],
-        );
-
-        if (results.length < ef || dist < furthestResult.dist) {
-          candidates.push({ id: nId, dist });
-          results.push({ id: nId, dist });
+        if (results.size < ef || dist < results.peek().dist) {
+          const candidate: Candidate = { id: nId, dist };
+          candidates.push(candidate);
+          results.push(candidate);
 
           // Keep only top ef results
-          if (results.length > ef) {
-            results.sort((a, b) => a.dist - b.dist);
-            results.pop();
-          }
+          if (results.size > ef) results.pop();
         }
       }
     }
 
-    return results.sort((a, b) => a.dist - b.dist);
+    return results.toArray().sort((a, b) => a.dist - b.dist);
   }
 
   /// Select neighbors using simple heuristic (closest M).

@@ -8,20 +8,28 @@ const DOCS_PATH = process.env.UZENGINE_TEST_DOCS_PATH
   ? resolve(process.env.UZENGINE_TEST_DOCS_PATH)
   : resolve(import.meta.dirname ?? ".", "../../data/docs.json");
 
+// The HNSW build over ~15K entities took ~46s locally under v8 coverage;
+// budget for a CI runner at least 2x slower than that.
+const INDEX_BUILD_TIMEOUT_MS = 180_000;
+
 describe("Integration: real codebase search", { timeout: 60000 }, () => {
   const engine = new SearchEngine();
 
   beforeAll(() => {
-    // HNSW index build for 9K entities may take up to 30s
     if (!existsSync(DOCS_PATH)) {
       throw new Error(`Required docs fixture missing: ${DOCS_PATH}. Run 'npm run generate-docs' first.`);
     }
     const db: DocsDatabase = JSON.parse(readFileSync(DOCS_PATH, "utf-8"));
-    const start = performance.now();
+    let start = performance.now();
     engine.load(db.entities);
-    const elapsed = (performance.now() - start).toFixed(0);
-    console.log(`Loaded ${db.entities.length} entities in ${elapsed}ms`);
-  });
+    console.log(`Loaded ${db.entities.length} entities in ${(performance.now() - start).toFixed(0)}ms`);
+
+    // SearchEngine builds its HNSW index lazily on the first query. Pay that
+    // cost here so no individual test absorbs it.
+    start = performance.now();
+    engine.search("warm up vector index");
+    console.log(`Built HNSW index in ${(performance.now() - start).toFixed(0)}ms`);
+  }, INDEX_BUILD_TIMEOUT_MS);
 
   it("search: 'TimeManager' kind=class → TimeManager is #1", () => {
     const results = engine.search("TimeManager", { kind: "class" }, 5);
