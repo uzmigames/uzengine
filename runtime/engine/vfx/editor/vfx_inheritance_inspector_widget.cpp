@@ -4,6 +4,8 @@
 
 #include <json.hpp>
 
+#include <algorithm>
+
 UZ_DECLARE_LOG_CATEGORY(VFX);
 
 namespace uz {
@@ -122,14 +124,24 @@ void VfxInheritanceInspectorWidget::ResolveInternal() {
         rows_.push_back(std::move(row));
     }
 
-    // Append child-only additions (action=add or action-missing without
-    // a parent match).
+    // Append the child's own modules, mirroring `VfxResolveInheritance`:
+    //   - no parent: the resolver keeps every child entry verbatim (the
+    //     action verb is stripped), so every entry is the child's own;
+    //   - parent bound: matched replace/remove entries are already shown
+    //     on their parent row, an unmatched `remove` is dropped, and an
+    //     unmatched `replace` is appended like an `add`.
+    // A child "add" duplicating a parent type still renders as add.
+    const bool hasParent = !parentPath_.empty();
+    const auto parentHasType = [&parentModTypes](const std::string& type) {
+        return std::find(parentModTypes.begin(), parentModTypes.end(), type) !=
+               parentModTypes.end();
+    };
     for (size_t i = 0; i < childMods.size(); ++i) {
         const auto& [type, action] = childMods[i];
-        if (action == "replace" || action == "remove") continue;
-        // Confirm no parent has this type already listed (it would have
-        // been matched above as Inherited; child "add" on a duplicate
-        // still renders as add for clarity).
+        if (hasParent) {
+            if (action == "remove") continue;
+            if (action == "replace" && parentHasType(type)) continue;
+        }
         VfxInheritanceRow row;
         row.moduleType = type;
         row.kind = VfxInheritanceRowKind::OverrideAdd;

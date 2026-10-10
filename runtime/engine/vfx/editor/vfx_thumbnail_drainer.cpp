@@ -56,7 +56,11 @@ VfxThumbnailDrainState VfxThumbnailDrainer::Tick(float /*simDt*/) {
 void VfxThumbnailDrainer::DoPreparing() {
     m_capturer.AdvanceFrame();
     if (m_capturer.IsReadyToCapture()) {
+        // `onCapturePng` fires on the tick the capturer signals ready:
+        // the scene is at the target frame now, and deferring by one
+        // Tick would hand the host a frame past `captureFrame`.
         TransitionTo(VfxThumbnailDrainState::Capturing);
+        DoCapturing();
     }
 }
 

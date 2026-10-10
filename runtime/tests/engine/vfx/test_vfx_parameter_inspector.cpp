@@ -460,7 +460,9 @@ TEST(VfxParameterInspectorWidget, HitTest_RowClickReturnsName) {
         }
     }
     ASSERT_NE(row, nullptr);
-    const float cx = row->rect.x + row->rect.width * 0.5f;
+    // Phase 12.4 splits each row 40/55/5 into label / typed editor /
+    // actions, and the editor outranks the row. Probe the label column.
+    const float cx = row->rect.x + row->rect.width * 0.2f;
     const float cy = row->rect.y + row->rect.height * 0.5f;
     const auto hit = w.HitTest(layout, cx, cy);
     EXPECT_EQ(hit.type, VfxParamItemType::ParameterRow);

@@ -40,8 +40,11 @@ TEST(VfxAssetBrowserWidget, FilterByName) {
     VfxAssetBrowserWidget w;
     w.SetDataSource(MakeTestEntries);
     w.Refresh();
-    w.SetFilter("fire");
-    EXPECT_EQ(w.VisibleTileCount(), 1u); // "Fireball" matches
+    // "ball" appears only in the "Fireball" display name, never in a tag,
+    // so this isolates name matching ("fire" would also hit Fireball's
+    // and Sparks' "fire" tags — spec 10.3 2.2 matches names AND tags).
+    w.SetFilter("ball");
+    EXPECT_EQ(w.VisibleTileCount(), 1u);
 }
 
 TEST(VfxAssetBrowserWidget, FilterByNameCaseInsensitive) {
@@ -65,7 +68,7 @@ TEST(VfxAssetBrowserWidget, EmptyFilterShowsAll) {
     w.SetDataSource(MakeTestEntries);
     w.Refresh();
     w.SetFilter("fire");
-    EXPECT_EQ(w.VisibleTileCount(), 1u);
+    EXPECT_EQ(w.VisibleTileCount(), 2u); // Fireball (name + tag), Sparks (tag)
     w.SetFilter("");
     EXPECT_EQ(w.VisibleTileCount(), 4u);
 }
