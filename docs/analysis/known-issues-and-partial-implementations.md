@@ -332,6 +332,21 @@ shaders".) Sponza enables it from
 task 05. Brixelizer GI was planned as the alternative path; it is dormant (never constructed since
 2026-04-10, entry above) and its task was closed as superseded on 2026-10-08.
 
+**SDF fixture refresh (2026-10-13):** the two standalone GPU fixtures now bind the
+current 9-DWORD mesh bake and 13-DWORD GDF composite layouts, whole-window regions,
+production toroidal window origins, zero slice offset/band, and WRAP s3.
+`test_sdf_window.ps1 -BvhCompare` passes: all 2,097,152 fp16 voxels are bit-identical
+(mesh128/GDF256, mesh voxel 37.500 cm, combined bias 28.516 cm).
+`test_sdf_gpu.ps1` and `test_sdf_refined_controls.ps1` pass; enclosed/transformed/
+mixed-validity reflection controls have max absolute error 0.000195.
+`test_sdf_reflection_energy.ps1` passes its uniform agreement check with RGB
+Karis/plain ratios (0.9965, 0.9949, 0.9949); layered history retains
+(0.8845, 0.8846, 0.8846), a measured approximately 11.55% energy loss.
+The gate remains **blocked**: `test_sdf_surface_origin.ps1` and
+`test_sdf_diffuse_gpu.ps1` cannot compile their wrappers because they supply seven
+arguments to the current eight-argument `GatherSdfDiffuse`. Their old measurements
+are not revalidated. See [fixture refresh evidence](sdf-gpu-fixture-refresh/01-fixture-refresh.md).
+
 Unresolved (carried over from SponzaTest's handoff and reproduced here on 2026-09-08):
 - 1 of 32 world-reflection rays leaks through the enclosed-box fixture
   (`scripts/rendering/test_sdf_surface_origin.ps1`, max abs error 0.009328).

@@ -79,6 +79,7 @@ struct LightingPassDesc {
     RHITextureHandle  emissiveTexture;  ///< Physical emissive texture handle (SM5 fallback, bound at t10).
     CBAllocation      shadowAlloc;      ///< ShadowDataCB allocation (bound at b4 via root param 3). Zero-init if no shadows.
     rg::RgResourceId  shadowAtlasResource; ///< Render graph shadow atlas (read, ShaderResource state for barrier scheduling).
+    rg::RgResourceId  localShadowAtlasResource; ///< Local shadow atlas (read, ShaderResource). Invalid = not imported.
     RHITextureHandle  shadowAtlasTexture; ///< Physical shadow atlas texture handle (SM5 fallback, bound at t3).
     RHITextureHandle  iblIrradiance;    ///< IBL irradiance cubemap (SM5 fallback, bound at t5).
     RHITextureHandle  iblPrefiltered;   ///< IBL prefiltered specular cubemap (SM5 fallback, bound at t6).

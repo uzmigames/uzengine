@@ -16,6 +16,23 @@
 
 using namespace uz;
 
+TEST(DrawCommand, GIOccluderMembership) {
+    DrawCommand draw{};
+    EXPECT_TRUE(IsGIOccluder(draw));
+    draw.materialFlags = 1u; // Masked.
+    EXPECT_TRUE(IsGIOccluder(draw));
+    draw.materialFlags = 2u; // Translucent.
+    EXPECT_FALSE(IsGIOccluder(draw));
+    draw.materialFlags = 3u; // Additive.
+    EXPECT_FALSE(IsGIOccluder(draw));
+    draw.materialFlags = 0x10u; // Opaque mesh decal.
+    EXPECT_FALSE(IsGIOccluder(draw));
+    draw.materialFlags = 0x11u; // Masked mesh decal.
+    EXPECT_FALSE(IsGIOccluder(draw));
+    draw.materialFlags = 0x4u; // Opaque with packed ORM textures.
+    EXPECT_TRUE(IsGIOccluder(draw));
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // PBRMaterial — default values
 // ─────────────────────────────────────────────────────────────────────────────

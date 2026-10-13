@@ -32,6 +32,7 @@ void SceneRenderer::CreateTaaResources(uint32_t width, uint32_t height) {
     }
 
     m_taaHistoryIndex = 0;
+    m_taaHistoryWritten[0] = m_taaHistoryWritten[1] = false;
     m_prevViewProjValid = false;
 
     UZ_LOG(Renderer, Info, "SceneRenderer: TAA history textures created ({}x{}, RGBA16F)", width, height);
@@ -328,7 +329,6 @@ void SceneRenderer::DestroySsrResources() {
         m_clusterListBytes  = 0;
         m_clusterListSrv    = UINT32_MAX;
         m_clusterListUav    = UINT32_MAX;
-        m_clusterListState  = RHIResourceState::Common;
     }
     if (m_ssrRayList.IsValid()) {
         m_device->DestroyBuffer(m_ssrRayList);

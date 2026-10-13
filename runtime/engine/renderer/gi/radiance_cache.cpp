@@ -8,6 +8,7 @@
 /// Probe world offsets computed per-frame to follow camera movement.
 
 #include "radiance_cache.h"
+#include "../render_graph/render_graph_states.h"
 
 #include "global_distance_field.h"
 #include "cb_ring_allocator.h"
@@ -167,7 +168,6 @@ bool RadianceCache::CreateResources(IRHIDevice* device, float worldExtent) {
         m_probeSideSrv = device->GetBufferSRVIndex(m_probeSideBuffer);
         m_probeSideUav = device->GetBufferUAVIndex(m_probeSideBuffer);
     }
-    m_probeSideState = RHIResourceState::Common;
     m_probeSideValid = false;
 
     if (cv_RCDiagnostic->value) {
@@ -223,8 +223,6 @@ void RadianceCache::DestroyResources() {
     m_reachStatsBuffer = {};
     m_reachAirUav = UINT32_MAX;
     m_reachStatsUav = UINT32_MAX;
-    m_reachAirState = RHIResourceState::Common;
-    m_reachStatsState = RHIResourceState::Common;
     if (m_device && m_reachReadback.IsValid()) {
         m_device->DestroyBuffer(m_reachReadback);
     }
@@ -239,8 +237,6 @@ void RadianceCache::DestroyResources() {
     m_historyShBuffer = {};
     m_historyShBufferSrv = UINT32_MAX;
     m_historyShBufferUav = UINT32_MAX;
-    m_shBufferState = RHIResourceState::Common;
-    m_historyShBufferState = RHIResourceState::Common;
     m_gridCenter = Vec3{};
     m_gridOrigin = Vec3{};
     m_completedGridOrigin = Vec3{};
@@ -256,7 +252,6 @@ void RadianceCache::DestroyResources() {
     m_diagnosticReadback = {};
     m_diagnosticStats = {};
     m_diagnosticStatsUav = UINT32_MAX;
-    m_diagnosticStatsState = RHIResourceState::Common;
     m_diagnosticCopyFrame = UINT32_MAX;
     m_diagnosticComplete = false;
     m_diagnosticOrigin = {};
@@ -278,24 +273,13 @@ void RadianceCache::QueueDiagnosticReadback(IRHICommandList* cmdList, uint32_t f
         m_diagnosticComplete = true;
         return;
     }
-    RHIBarrierDesc barrier{};
-    barrier.buffer = m_shBuffer;
-    barrier.stateBefore = RHIResourceState::ShaderResource;
-    barrier.stateAfter = RHIResourceState::CopySrc;
-    cmdList->ResourceBarrier(&barrier, 1);
+    m_rgStates->Transition(cmdList, m_shBuffer, RHIResourceState::CopySrc);
     cmdList->CopyBuffer(m_shBuffer, 0, m_diagnosticReadback, 0, shBytes);
-    barrier.stateBefore = RHIResourceState::CopySrc;
-    barrier.stateAfter = RHIResourceState::ShaderResource;
-    cmdList->ResourceBarrier(&barrier, 1);
+    m_rgStates->Transition(cmdList, m_shBuffer, RHIResourceState::ShaderResource);
     if (statsBytes != 0) {
-        barrier.buffer = m_diagnosticStats;
-        barrier.stateBefore = RHIResourceState::UnorderedAccess;
-        barrier.stateAfter = RHIResourceState::CopySrc;
-        cmdList->ResourceBarrier(&barrier, 1);
+        m_rgStates->Transition(cmdList, m_diagnosticStats, RHIResourceState::CopySrc);
         cmdList->CopyBuffer(m_diagnosticStats, 0, m_diagnosticReadback, shBytes, statsBytes);
-        barrier.stateBefore = RHIResourceState::CopySrc;
-        barrier.stateAfter = RHIResourceState::UnorderedAccess;
-        cmdList->ResourceBarrier(&barrier, 1);
+        m_rgStates->Transition(cmdList, m_diagnosticStats, RHIResourceState::UnorderedAccess);
     }
     m_diagnosticCopyFrame = frameIndex;
     m_diagnosticOrigin = m_gridOrigin;
@@ -339,20 +323,13 @@ void RadianceCache::DispatchProbeSide(IRHICommandList* cmdList, const GlobalDist
                 m_gridExtent * 2.0f};   // the cache's own trace distance (maxTraceDistance)
     static_assert(sizeof(ProbeSideConstants) == 9 * sizeof(uint32_t));
 
-    RHIBarrierDesc barrier{};
-    barrier.buffer      = m_probeSideBuffer;
-    barrier.stateBefore = m_probeSideState;
-    barrier.stateAfter  = RHIResourceState::UnorderedAccess;
-    cmdList->ResourceBarrier(&barrier, 1);
+    m_rgStates->Transition(cmdList, m_probeSideBuffer, RHIResourceState::UnorderedAccess);
     cmdList->SetPipeline(sidePipeline);
     cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&constants), 9);
     cmdList->SetRootCBV(2, allocation.bufferHandle, allocation.offsetBytes,
                         allocation.cpuPtr, kGdfMeshesPerBatch * sizeof(GdfMeshSdfGPU));
     cmdList->Dispatch((kTotalProbes + 63) / 64, 1, 1);
-    barrier.stateBefore = RHIResourceState::UnorderedAccess;
-    barrier.stateAfter  = RHIResourceState::ShaderResource;
-    cmdList->ResourceBarrier(&barrier, 1);
-    m_probeSideState  = RHIResourceState::ShaderResource;
+    m_rgStates->Transition(cmdList, m_probeSideBuffer, RHIResourceState::ShaderResource);
     m_probeSideValid  = true;
     m_probeSideHash   = gdf.GetMeshEntriesHash();
     m_probeSideOrigin = m_gridOrigin;
@@ -374,15 +351,10 @@ void RadianceCache::HandleReachDump(IRHICommandList* cmdList, uint32_t frameInde
             m_reachDumped = true;
             return;
         }
-        RHIBarrierDesc barrier{};
-        barrier.buffer = m_reachAirBuffer;
-        barrier.stateBefore = m_reachAirState;
-        barrier.stateAfter = RHIResourceState::CopySrc;
-        cmdList->ResourceBarrier(&barrier, 1);
+        const auto restoreState = m_rgStates->Get(m_reachAirBuffer);
+        m_rgStates->Transition(cmdList, m_reachAirBuffer, RHIResourceState::CopySrc);
         cmdList->CopyBuffer(m_reachAirBuffer, 0, m_reachReadback, 0, desc.sizeBytes);
-        barrier.stateBefore = RHIResourceState::CopySrc;
-        barrier.stateAfter = m_reachAirState;
-        cmdList->ResourceBarrier(&barrier, 1);
+        m_rgStates->Transition(cmdList, m_reachAirBuffer, restoreState);
         m_reachDumpFrame = frameIndex;
         m_reachDumpGridOrigin = m_probeSideOrigin;
         return;
@@ -439,12 +411,12 @@ bool RadianceCache::DispatchProbeReach(IRHICommandList* cmdList, RHIPipelineHand
         m_reachStatsUav = m_device->GetBufferUAVIndex(m_reachStatsBuffer);
     }
 
-    RHIBarrierDesc toUav[3]{};
-    toUav[0].buffer = m_reachAirBuffer;   toUav[0].stateBefore = m_reachAirState;
-    toUav[1].buffer = m_reachStatsBuffer; toUav[1].stateBefore = m_reachStatsState;
-    toUav[2].buffer = m_probeSideBuffer;  toUav[2].stateBefore = m_probeSideState;
-    for (auto& b : toUav) b.stateAfter = RHIResourceState::UnorderedAccess;
-    cmdList->ResourceBarrier(toUav, 3);
+    for (auto buffer : {m_reachAirBuffer, m_reachStatsBuffer, m_probeSideBuffer}) {
+        if (m_rgStates->Get(buffer) == RHIResourceState::UnorderedAccess)
+            m_rgStates->UavBarrier(cmdList, buffer);
+        else
+            m_rgStates->Transition(cmdList, buffer, RHIResourceState::UnorderedAccess);
+    }
 
     struct ReachConstants {           // probe_reach_cs.hlsl RootConstants (12 DWORDs)
         uint32_t pass, airUav, sideUav, statsUav;
@@ -457,17 +429,14 @@ bool RadianceCache::DispatchProbeReach(IRHICommandList* cmdList, RHIPipelineHand
 
     cmdList->SetPipeline(reachPipeline);
     cmdList->SetRootCBV(2, traceConstants, traceConstantsOffset, traceConstantsCpu, traceConstantsSize);
-    RHIBarrierDesc uavBarrier[3]{};
-    uavBarrier[0].buffer = m_reachAirBuffer;
-    uavBarrier[1].buffer = m_reachStatsBuffer;
-    uavBarrier[2].buffer = m_probeSideBuffer;
-    for (auto& b : uavBarrier) b.stateBefore = b.stateAfter = RHIResourceState::UnorderedAccess;
     const uint32_t groups = kReachResolution / 8;
     const auto run = [&](uint32_t pass, uint32_t x, uint32_t y, uint32_t z) {
         constants.pass = pass;
         cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&constants), 12);
         cmdList->Dispatch(x, y, z);
-        cmdList->ResourceBarrier(uavBarrier, 3);
+        m_rgStates->UavBarrier(cmdList, m_reachAirBuffer);
+        m_rgStates->UavBarrier(cmdList, m_reachStatsBuffer);
+        m_rgStates->UavBarrier(cmdList, m_probeSideBuffer);
     };
     run(3, 1, 1, 1);                                   // reset the seed counter
     run(0, groups, groups, groups);                    // air + seed
@@ -483,14 +452,7 @@ bool RadianceCache::DispatchProbeReach(IRHICommandList* cmdList, RHIPipelineHand
     }
     run(2, 1, 1, (kTotalProbes + 511) / 512);          // per-probe decision
 
-    RHIBarrierDesc toSrv{};
-    toSrv.buffer = m_probeSideBuffer;
-    toSrv.stateBefore = RHIResourceState::UnorderedAccess;
-    toSrv.stateAfter = RHIResourceState::ShaderResource;
-    cmdList->ResourceBarrier(&toSrv, 1);
-    m_probeSideState = RHIResourceState::ShaderResource;
-    m_reachAirState = RHIResourceState::UnorderedAccess;
-    m_reachStatsState = RHIResourceState::UnorderedAccess;
+    m_rgStates->Transition(cmdList, m_probeSideBuffer, RHIResourceState::ShaderResource);
     m_probeSideValid = true;
     m_probeSideOrigin = m_gridOrigin;
     m_probeSideMode = 3;
@@ -726,35 +688,21 @@ void RadianceCache::UpdateProbes(
     std::swap(m_shBuffer, m_historyShBuffer);
     std::swap(m_shBufferSrv, m_historyShBufferSrv);
     std::swap(m_shBufferUav, m_historyShBufferUav);
-    std::swap(m_shBufferState, m_historyShBufferState);
 
     // Cross-probe feedback reads an immutable previous frame (Majercik 2019, section 5.3).
     // Preserve probes outside this frame's update budget in the new output buffer
     // (a full retrace writes every probe, so nothing to preserve).
     if (!fullRetrace) {
-        RHIBarrierDesc toCopy[2]{};
-        toCopy[0].buffer = m_historyShBuffer;
-        toCopy[0].stateBefore = m_historyShBufferState;
-        toCopy[0].stateAfter = RHIResourceState::CopySrc;
-        toCopy[1].buffer = m_shBuffer;
-        toCopy[1].stateBefore = m_shBufferState;
-        toCopy[1].stateAfter = RHIResourceState::CopyDst;
-        cmdList->ResourceBarrier(toCopy, 2);
+        m_rgStates->Transition(cmdList, m_historyShBuffer, RHIResourceState::CopySrc);
+        m_rgStates->Transition(cmdList, m_shBuffer, RHIResourceState::CopyDst);
         cmdList->CopyBuffer(m_historyShBuffer, 0, m_shBuffer, 0,
                             kTotalProbes * (kSHFloat4PerProbe + kGuardFloat4PerProbe) * 4 * sizeof(float));
-        toCopy[0].stateBefore = RHIResourceState::CopySrc;
-        toCopy[0].stateAfter = RHIResourceState::ShaderResource;
-        cmdList->ResourceBarrier(toCopy, 1);
-        m_historyShBufferState = RHIResourceState::ShaderResource;
-        m_shBufferState = RHIResourceState::CopyDst;
     }
+    if (!resetHistory)
+        m_rgStates->Transition(cmdList, m_historyShBuffer, RHIResourceState::ShaderResource);
 
     // Transition SH buffer to UAV for compute read/write
-    RHIBarrierDesc toUav{};
-    toUav.buffer      = m_shBuffer;
-    toUav.stateBefore = m_shBufferState;
-    toUav.stateAfter  = RHIResourceState::UnorderedAccess;
-    cmdList->ResourceBarrier(&toUav, 1);
+    m_rgStates->Transition(cmdList, m_shBuffer, RHIResourceState::UnorderedAccess);
 
     // Set the trace pipeline
     cmdList->SetPipeline(tracePipeline);
@@ -873,12 +821,10 @@ void RadianceCache::UpdateProbes(
     rootConstants[4] = probeBudget;
     rootConstants[5] = pf->prefilteredSrvIndex;
     if (m_diagnosticStats.IsValid() && !m_diagnosticComplete) {
-        RHIBarrierDesc diagnosticBarrier{};
-        diagnosticBarrier.buffer = m_diagnosticStats;
-        diagnosticBarrier.stateBefore = m_diagnosticStatsState;
-        diagnosticBarrier.stateAfter = RHIResourceState::UnorderedAccess;
-        cmdList->ResourceBarrier(&diagnosticBarrier, 1);
-        m_diagnosticStatsState = RHIResourceState::UnorderedAccess;
+        if (m_rgStates->Get(m_diagnosticStats) == RHIResourceState::UnorderedAccess)
+            m_rgStates->UavBarrier(cmdList, m_diagnosticStats);
+        else
+            m_rgStates->Transition(cmdList, m_diagnosticStats, RHIResourceState::UnorderedAccess);
         rootConstants[6] = m_diagnosticStatsUav;
     }
     // [7] the ray sequence: 0 this writer's, 1 the DDGI writer's (diagnostic, followup-01).
@@ -915,6 +861,8 @@ void RadianceCache::UpdateProbes(
         cmdList->SetPipeline(tracePipeline);
         cmdList->SetRootConstants(0, rootConstants, 12);
     }
+    if (rootConstants[10] != UINT32_MAX)
+        m_rgStates->Transition(cmdList, m_probeSideBuffer, RHIResourceState::ShaderResource);
     cmdList->SetRootCBV(2, constAlloc.bufferHandle,
                         constAlloc.offsetBytes,
                         constAlloc.cpuPtr, sizeof(constants));
@@ -925,12 +873,7 @@ void RadianceCache::UpdateProbes(
     cmdList->Dispatch(groupCount, 1, 1);
 
     // Transition back to SRV for lighting shader reads
-    RHIBarrierDesc toSrv{};
-    toSrv.buffer      = m_shBuffer;
-    toSrv.stateBefore = RHIResourceState::UnorderedAccess;
-    toSrv.stateAfter  = RHIResourceState::ShaderResource;
-    cmdList->ResourceBarrier(&toSrv, 1);
-    m_shBufferState = RHIResourceState::ShaderResource;
+    m_rgStates->Transition(cmdList, m_shBuffer, RHIResourceState::ShaderResource);
 
     m_probeUpdateCursor = (probeOffset + probeBudget) % kTotalProbes;
     m_completedGridOrigin = m_gridOrigin;

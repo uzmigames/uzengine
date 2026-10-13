@@ -15,6 +15,7 @@
 #include "fly_camera_controller.h"
 #include "gpu_mesh.h"
 #include "render_graph_builder.h"
+#include "render_graph_states.h"
 #include "render_graph_resources.h"
 #include "profiler.h"
 #include "texture_loader.h"
@@ -69,29 +70,37 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     m_passInspector.BeginFrame();
 
     // ── Deferred StatsOverlay + fallback texture init (first frame only) ─
-    if (!m_statsOverlayInitialized && m_statsOverlay) {
+    if ((!m_statsOverlayInitialized && m_statsOverlay) || !m_fallbackTexturesInitialized) {
         UploadContext upload(m_device);
-        if (m_statsOverlay->Init(m_device, ctx.cmdList, upload,
+        if (!m_statsOverlayInitialized && m_statsOverlay) {
+            if (m_statsOverlay->Init(m_device, ctx.cmdList, upload,
                 m_shaderMgr->GetPipeline(), RHIFormat::RGBA8Unorm,
                 m_width, m_height, ctx.bindless)) {
-            m_statsOverlayInitialized = true;
-        } else {
-            // Disable instead of retrying every frame (each retry ran End / Execute / WaitIdle / Begin
-            // and re-uploaded the fallback textures).
-            UZ_LOG(Renderer, Error, "SceneRenderer: failed to init stats overlay — disabling");
-            m_statsOverlay->Shutdown();
-            m_statsOverlay.reset();
+                m_statsOverlayInitialized = true;
+            } else {
+                // Disable instead of retrying every frame (each retry ran End / Execute / WaitIdle / Begin).
+                UZ_LOG(Renderer, Error, "SceneRenderer: failed to init stats overlay — disabling");
+                m_statsOverlay->Shutdown();
+                m_statsOverlay.reset();
+            }
         }
 
         // Upload 1x1 fallback textures for SM5 unconditional sampling.
-        {
+        if (!m_fallbackTexturesInitialized) {
             const uint8_t whitePixel[4]  = {255, 255, 255, 255};
             const uint8_t blackPixel[4]  = {  0,   0,   0, 255}; // metallic=0 fallback
             const uint8_t normalPixel[4] = {128, 128, 255, 255}; // flat tangent-space normal
 
             upload.UploadTexture(ctx.cmdList, m_fallbackWhite,  whitePixel,  sizeof(whitePixel));
+            m_rgStates->Set(m_fallbackWhite, RHIResourceState::CopyDst);
             upload.UploadTexture(ctx.cmdList, m_fallbackBlack,  blackPixel,  sizeof(blackPixel));
+            m_rgStates->Set(m_fallbackBlack, RHIResourceState::CopyDst);
             upload.UploadTexture(ctx.cmdList, m_fallbackNormal, normalPixel, sizeof(normalPixel));
+            m_rgStates->Set(m_fallbackNormal, RHIResourceState::CopyDst);
+            m_rgStates->Transition(ctx.cmdList, m_fallbackWhite, RHIResourceState::ShaderResource);
+            m_rgStates->Transition(ctx.cmdList, m_fallbackBlack, RHIResourceState::ShaderResource);
+            m_rgStates->Transition(ctx.cmdList, m_fallbackNormal, RHIResourceState::ShaderResource);
+            m_fallbackTexturesInitialized = true;
         }
 
         // Flush the upload commands
@@ -475,37 +484,30 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
 
     // ── Import render graph resources ──────────────────────────────────
     RHITextureHandle backBuffer = ctx.swapChain->GetCurrentBackBuffer();
-    // Import with tracked end-of-frame states from the previous frame.
-    // On frame 0, warmup barriers transition from Common to the expected state.
-    auto hdrState   = m_hdrEndState   != RHIResourceState::Undefined ? m_hdrEndState   : RHIResourceState::RenderTarget;
-    auto depthState = m_depthEndState != RHIResourceState::Undefined ? m_depthEndState : RHIResourceState::DepthStencilWrite;
-    auto albState   = m_albedoEndState!= RHIResourceState::Undefined ? m_albedoEndState: RHIResourceState::RenderTarget;
-    auto nrmState   = m_normalEndState!= RHIResourceState::Undefined ? m_normalEndState: RHIResourceState::RenderTarget;
-
     ctx.bbRes       = rgBuilder.ImportTexture("Backbuffer", backBuffer, RHIResourceState::Present);
-    ctx.hdrRes      = rgBuilder.ImportTexture("HDR_SceneColor", m_hdrSceneColor, hdrState);
-    ctx.albedoRes   = rgBuilder.ImportTexture("GBuf_Albedo",    m_gbuffer.albedo,     albState);
-    ctx.normalRes   = rgBuilder.ImportTexture("GBuf_Normal",    m_gbuffer.normal,     nrmState);
-    ctx.depthRes    = rgBuilder.ImportTexture("GBuf_Depth",     m_gbuffer.depth,      depthState);
-    ctx.positionRes = rgBuilder.ImportTexture("GBuf_Position",  m_gbuffer.positionWS, albState);
-    ctx.emissiveRes = rgBuilder.ImportTexture("GBuf_Emissive",  m_gbuffer.emissive,   albState);
-    ctx.velocityRes = rgBuilder.ImportTexture("GBuf_Velocity",  m_gbuffer.velocity,   albState);
-    ctx.shadowAtlasRes = rgBuilder.ImportTexture("ShadowAtlas", m_shadowAtlas.GetTexture(), RHIResourceState::ShaderResource);
+    ctx.hdrRes      = rgBuilder.ImportTrackedTexture("HDR_SceneColor", m_hdrSceneColor);
+    ctx.albedoRes   = rgBuilder.ImportTrackedTexture("GBuf_Albedo", m_gbuffer.albedo);
+    ctx.normalRes   = rgBuilder.ImportTrackedTexture("GBuf_Normal", m_gbuffer.normal);
+    ctx.depthRes    = rgBuilder.ImportTrackedTexture("GBuf_Depth", m_gbuffer.depth);
+    ctx.positionRes = rgBuilder.ImportTrackedTexture("GBuf_Position", m_gbuffer.positionWS);
+    ctx.emissiveRes = rgBuilder.ImportTrackedTexture("GBuf_Emissive", m_gbuffer.emissive);
+    ctx.velocityRes = rgBuilder.ImportTrackedTexture("GBuf_Velocity", m_gbuffer.velocity);
+    ctx.shadowAtlasRes = rgBuilder.ImportTrackedTexture("ShadowAtlas", m_shadowAtlas.GetTexture());
 
     // Lighting split targets (SV_Target1..3 of the deferred pass). Imported so the graph can
     // schedule the RenderTarget -> ShaderResource transition the `lighting` / `shadows` /
     // `lightingonly` debug views need; without it those views read a target still bound as an RT.
     if (m_debugDirectLight.IsValid() && m_debugIndirectLight.IsValid() && m_debugShadowMask.IsValid()) {
-        ctx.debugDirectRes   = rgBuilder.ImportTexture("Light_Direct",   m_debugDirectLight,   RHIResourceState::RenderTarget);
-        ctx.debugIndirectRes = rgBuilder.ImportTexture("Light_Indirect", m_debugIndirectLight, RHIResourceState::RenderTarget);
-        ctx.debugShadowRes   = rgBuilder.ImportTexture("Light_Shadow",   m_debugShadowMask,    RHIResourceState::RenderTarget);
+        ctx.debugDirectRes   = rgBuilder.ImportTrackedTexture("Light_Direct", m_debugDirectLight);
+        ctx.debugIndirectRes = rgBuilder.ImportTrackedTexture("Light_Indirect", m_debugIndirectLight);
+        ctx.debugShadowRes   = rgBuilder.ImportTrackedTexture("Light_Shadow", m_debugShadowMask);
     }
 
     // ── DBuffer resource imports (decal system) ──────────────────────────
     if (m_dbufferA.IsValid() && m_dbufferB.IsValid() && m_dbufferC.IsValid()) {
-        ctx.dbufferARes = rgBuilder.ImportTexture("DBuffer_A", m_dbufferA, RHIResourceState::RenderTarget);
-        ctx.dbufferBRes = rgBuilder.ImportTexture("DBuffer_B", m_dbufferB, RHIResourceState::RenderTarget);
-        ctx.dbufferCRes = rgBuilder.ImportTexture("DBuffer_C", m_dbufferC, RHIResourceState::RenderTarget);
+        ctx.dbufferARes = rgBuilder.ImportTrackedTexture("DBuffer_A", m_dbufferA);
+        ctx.dbufferBRes = rgBuilder.ImportTrackedTexture("DBuffer_B", m_dbufferB);
+        ctx.dbufferCRes = rgBuilder.ImportTrackedTexture("DBuffer_C", m_dbufferC);
     }
 
     // ── Compute post-process activation flags ─────────────────────────

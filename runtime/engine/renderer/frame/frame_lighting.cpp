@@ -104,17 +104,11 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         const uint32_t curr = m_ptAccumIdx;
         const uint32_t prev = curr ^ 1u;
 
-        // Import both accumulation textures into the render graph each frame
-        // so the graph tracks state across frames. They start as ShaderResource
-        // since the previous frame left them in RT then transitioned at end of pass.
-        const RHIResourceState currImportState = (m_ptAccumSamples == 0)
-            ? RHIResourceState::Common
-            : RHIResourceState::ShaderResource;
-        rg::RgResourceId accumCurrRes = rgBuilder.ImportTexture("PT_AccumCurr",
-            m_ptAccum[curr], currImportState);
-        // Prev is consumed only via the bindless SRV — no need to import as
-        // a render graph resource since we don't declare it as a Read (the
-        // shader reads it via ResourceDescriptorHeap[]).
+        // Track both ping-pong textures, including the previous accumulation's bindless read.
+        rg::RgResourceId accumCurrRes = rgBuilder.ImportTrackedTexture("PT_AccumCurr",
+            m_ptAccum[curr]);
+        rg::RgResourceId accumPrevRes = rgBuilder.ImportTrackedTexture("PT_AccumPrev",
+            m_ptAccum[prev]);
 
         // The reference path tracer consumes GDF clipmaps for bounce-hit
         // normals — keep the SDF GI chain (GDF composite + probe traces)
@@ -124,11 +118,13 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         PathTracerPassDesc ptDesc{};
         ptDesc.hdrTarget         = ctx.hdrRes;
         ptDesc.accumCurr         = accumCurrRes;
+        ptDesc.accumPrev         = accumPrevRes;
         ptDesc.normalGBuffer     = ctx.normalRes;
         ptDesc.depthGBuffer      = ctx.depthRes;
         ptDesc.albedoGBuffer     = ctx.albedoRes;
         ptDesc.positionGBuffer   = ctx.positionRes;
         ptDesc.emissiveGBuffer   = ctx.emissiveRes;
+        ptDesc.shadowAtlas       = ctx.shadowAtlasRes;
         ptDesc.perFrameAlloc     = ctx.perFrameAlloc;
         ptDesc.pipeline          = ctx.pipelines->GetPathTracer();
         ptDesc.normalSrvIndex    = m_gbuffer.normalSRV;
@@ -136,7 +132,12 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         ptDesc.albedoSrvIndex    = m_gbuffer.albedoSRV;
         ptDesc.positionSrvIndex  = m_gbuffer.positionWSSRV;
         ptDesc.emissiveSrvIndex  = m_gbuffer.emissiveSRV;
-        ptDesc.skyCubeSrvIndex   = m_hdriActive ? m_hdriCubemapSrv : m_skyCubemapSrv;
+        // Frame-allocation layout-dependence (phase0): on the plain-sky path the sky cubemap
+        // is captured later in frame 0, so sampling m_skyCubemapSrv before m_skyCubemapFilled
+        // reads uninitialised (allocator-recycled) memory. Fall back to the shader's flat-
+        // skylight sentinel until it is filled. HDRI is uploaded at load, always valid.
+        ptDesc.skyCubeSrvIndex   = m_hdriActive ? m_hdriCubemapSrv
+                                 : (m_skyCubemapFilled ? m_skyCubemapSrv : UINT32_MAX);
         ptDesc.accumPrevSrvIndex = m_ptAccumSrv[prev];
         ptDesc.sampleCount       = m_ptAccumSamples;
         ptDesc.frameIndex        = ctx.frameIndex;
@@ -161,7 +162,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
             && m_rtManager->GetTLASInstanceCount() > 0u) {
             ptDesc.tlasSrvIndex     = m_rtManager->GetTLASSRVIndex();
             ptDesc.skyCubemapSrv    =
-                (m_skyCubemap.IsValid() && m_skyCubemapSrv != UINT32_MAX)
+                (m_skyCubemap.IsValid() && m_skyCubemapSrv != UINT32_MAX && m_skyCubemapFilled)
                     ? m_skyCubemapSrv : UINT32_MAX;
             ptDesc.materialTableSrv = UpdateGIMaterialTable(ctx);
         }
@@ -224,8 +225,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
     // The atmosphere passes later in this frame fill the CURRENT frame's data.
     // Render graph handles UAV→SRV→UAV barriers automatically.
     if (m_apVolume.IsValid() && m_apVolumeSrv != UINT32_MAX) {
-        ctx.apVolumeRes = rgBuilder.ImportTexture("APVolume",
-            m_apVolume, RHIResourceState::UnorderedAccess);
+        ctx.apVolumeRes = rgBuilder.ImportTrackedTexture("APVolume", m_apVolume);
     }
 
     RegisterDeferredLightingPass(rgBuilder, ctx);

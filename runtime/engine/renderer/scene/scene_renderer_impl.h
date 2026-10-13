@@ -325,6 +325,7 @@
     uint32_t m_taaHistorySrv[2] = {UINT32_MAX, UINT32_MAX}; ///< SRV indices for history read.
     uint32_t m_taaHistoryUav[2] = {UINT32_MAX, UINT32_MAX}; ///< UAV indices for history write.
     uint32_t m_taaHistoryIndex = 0;            ///< Index of current write target (0 or 1).
+    bool m_taaHistoryWritten[2] = {false, false}; ///< Content validity, independent of the resource state.
     bool     m_taaEnabled = true;              ///< Enables jitter + temporal upscaler dispatch (DLSS/TSR/TAA).
     Mat4     m_prevViewProj;                   ///< Previous frame's unjittered viewProj for reprojection.
 
@@ -441,7 +442,6 @@
     uint64_t         m_clusterListBytes = 0;        ///< Capacity; grows with the render resolution.
     uint32_t         m_clusterListSrv = UINT32_MAX; ///< Read by the deferred lighting (LightingCB::clusterListSrv).
     uint32_t         m_clusterListUav = UINT32_MAX; ///< Written by the cull pass.
-    RHIResourceState m_clusterListState = RHIResourceState::Common;
 
     // ── SSR (Screen-Space Reflections) ─────────────────────────────────────
 
@@ -483,7 +483,6 @@
     RHITextureHandle m_ssrPrevSceneColor;          ///< RGBA16F copy of prev frame's HDR.
     uint32_t m_ssrPrevSceneColorSrv = UINT32_MAX;  ///< SRV for SSR trace to read.
     bool     m_ssrHasPrevColor = false;            ///< False on first frame (skip SSR).
-    float    m_ssrPrevExposure = 1.0f;             ///< Previous frame's exposure for SSR color correction.
 
     /// Creates SSR output textures at the given resolution.
     /// Called from Init() and Resize().
@@ -653,6 +652,7 @@
     float m_screenPercentage = 100.f;      ///< Render scale (10-200, default 100 = native resolution).
     float m_totalTime = 0.f;
     bool m_statsOverlayInitialized = false;
+    bool m_fallbackTexturesInitialized = false;
     bool m_vfxEditorOverlayInitialized = false;
 
     // ── Screenshot ─────────────────────────────────────────────────────────

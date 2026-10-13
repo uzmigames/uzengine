@@ -22,6 +22,7 @@
 #include "per_frame_params.h"
 #include "pipeline_library.h"
 #include "render_graph_builder.h"
+#include "render_graph_states.h"
 #include "render_graph_pass.h"
 #include "render_graph_resources.h"
 #include "root_slots.h"
@@ -104,25 +105,21 @@ void SceneRenderer::RegisterTranslucentPasses(rg::RgBuilder& rgBuilder, FrameCon
 
             if (!transSceneColor.IsValid() || !hdrTex.IsValid()) return;
 
-            RHIBarrierDesc barriers[2]{};
+            RHIBarrierDesc barriers[1]{};
             barriers[0].texture     = hdrTex;
             barriers[0].stateBefore = RHIResourceState::RenderTarget;
             barriers[0].stateAfter  = RHIResourceState::CopySrc;
-            barriers[1].texture     = transSceneColor;
-            barriers[1].stateBefore = RHIResourceState::ShaderResource;
-            barriers[1].stateAfter  = RHIResourceState::CopyDst;
-            cmd->ResourceBarrier(barriers, 2);
+            cmd->ResourceBarrier(barriers, 1);
+            m_rgStates->Transition(cmd, transSceneColor, RHIResourceState::CopyDst);
 
             cmd->CopyTexture(hdrTex, transSceneColor);
 
-            RHIBarrierDesc restore[2]{};
+            RHIBarrierDesc restore[1]{};
             restore[0].texture     = hdrTex;
             restore[0].stateBefore = RHIResourceState::CopySrc;
             restore[0].stateAfter  = RHIResourceState::RenderTarget;
-            restore[1].texture     = transSceneColor;
-            restore[1].stateBefore = RHIResourceState::CopyDst;
-            restore[1].stateAfter  = RHIResourceState::ShaderResource;
-            cmd->ResourceBarrier(restore, 2);
+            cmd->ResourceBarrier(restore, 1);
+            m_rgStates->Transition(cmd, transSceneColor, RHIResourceState::ShaderResource);
         });
     });
 

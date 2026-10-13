@@ -271,16 +271,19 @@ int main(int argc, char** argv) try {
     std::printf("GPU: %s; debug layer disabled\n", adapterName);
     D3D12_ROOT_PARAMETER parameters[2]{};
     parameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    parameters[0].Constants.Num32BitValues = 9;
+    parameters[0].Constants.Num32BitValues = 13;
     parameters[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     parameters[1].Descriptor.ShaderRegister = 2;
     D3D12_STATIC_SAMPLER_DESC sampler{};
     sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
     sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
     sampler.MaxLOD = D3D12_FLOAT32_MAX; sampler.ShaderRegister = 2;
+    D3D12_STATIC_SAMPLER_DESC samplers[2] = {sampler, sampler};
+    samplers[1].AddressU = samplers[1].AddressV = samplers[1].AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    samplers[1].ShaderRegister = 3;
     D3D12_ROOT_SIGNATURE_DESC signatureDesc{};
     signatureDesc.NumParameters = 2; signatureDesc.pParameters = parameters;
-    signatureDesc.NumStaticSamplers = 1; signatureDesc.pStaticSamplers = &sampler;
+    signatureDesc.NumStaticSamplers = 2; signatureDesc.pStaticSamplers = samplers;
     signatureDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED;
     ComPtr<ID3DBlob> signatureBytes, error;
     Check(D3D12SerializeRootSignature(&signatureDesc, D3D_ROOT_SIGNATURE_VERSION_1, &signatureBytes, &error), "SerializeRootSignature");
@@ -341,10 +344,10 @@ int main(int argc, char** argv) try {
     Transition(list.Get(), texture.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     ID3D12DescriptorHeap* heaps[] = {heap.Get()}; list->SetDescriptorHeaps(1, heaps);
     list->SetComputeRootSignature(signature.Get());
-    struct Constants { UINT uav, srv, count, resolution; float minimum[3], voxel; } constants{0,1,static_cast<UINT>(triangles.size()),resolution | (twoSided ? 0x80000000u : 0u),{-2,-2,-2},4.0f/resolution};
+    struct Constants { UINT uav, srv, count, resolution; float minimum[3], voxel; UINT sliceOffset; } constants{0,1,static_cast<UINT>(triangles.size()),resolution | (twoSided ? 0x80000000u : 0u),{-2,-2,-2},4.0f/resolution,0};
     if (room) { for (float& coordinate:constants.minimum) coordinate=-200; constants.voxel=400.0f/resolution; }
-    static_assert(sizeof(Constants) == 32);
-    list->SetComputeRoot32BitConstants(0, 8, &constants, 0); list->Dispatch(8, 8, 8);
+    static_assert(sizeof(Constants) == 36);
+    list->SetComputeRoot32BitConstants(0, 9, &constants, 0); list->Dispatch(8, 8, 8);
     Transition(list.Get(), texture.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
     cpuLocation.pResource = readback.Get(); list->CopyTextureRegion(&cpuLocation, 0, 0, 0, &gpuLocation, nullptr);
     Check(list->Close(), "Close command list");
@@ -427,11 +430,18 @@ int main(int argc, char** argv) try {
             Transition(list.Get(), rawGlobal.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         }
         list->SetDescriptorHeaps(1, heaps); list->SetComputeRootSignature(signature.Get());
-        struct GlobalConstants { UINT output, count, accumulate, resolution; float center[3], extent; UINT rawOutput; } globalConstants{3,meshCount,0,resolution,{0.5f,-0.25f,0.75f},2,8};
+        struct GlobalConstants { UINT output, count, accumulate, resolution; float center[3], extent; UINT rawOutput, regionOrigin, regionSize, windowOrigin; float band; } globalConstants{3,meshCount,0,resolution,{0.5f,-0.25f,0.75f},2,8,0,resolution | (resolution << 9) | (resolution << 18),0,0};
+        static_assert(sizeof(GlobalConstants) == 52);
         if (plane || room) for (float& coordinate : globalConstants.center) coordinate = 0;
         if (room) globalConstants.extent=200;
         if (transformed) { globalConstants.center[0]=50; globalConstants.center[1]=-25; globalConstants.center[2]=75; }
-        list->SetComputeRoot32BitConstants(0, 9, &globalConstants, 0);
+        UINT windowOrigin[3]{};
+        for (UINT axis=0;axis<3;++axis) {
+            const int64_t first=std::lround((globalConstants.center[axis]-globalConstants.extent)/(2.0f*globalConstants.extent/resolution));
+            windowOrigin[axis]=static_cast<UINT>(((first%resolution)+resolution)%resolution);
+        }
+        globalConstants.windowOrigin=windowOrigin[0]|(windowOrigin[1]<<9)|(windowOrigin[2]<<18);
+        list->SetComputeRoot32BitConstants(0, 13, &globalConstants, 0);
         list->SetComputeRootConstantBufferView(1, meshConstants->GetGPUVirtualAddress()); list->Dispatch(8,8,8);
         Transition(list.Get(), global.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
         Transition(list.Get(), rawGlobal.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
@@ -448,10 +458,11 @@ int main(int argc, char** argv) try {
         Check(readback->Map(0,nullptr,&mapped), "Map global readback");
         unsigned failures = 0, negative = 0; float farCorner = 0;
         for (UINT z=0; z<resolution; ++z) for (UINT y=0; y<resolution; ++y) for (UINT x=0; x<resolution; ++x) {
-            const auto* row = reinterpret_cast<const unsigned short*>(static_cast<const char*>(mapped)+footprint.Offset+(z*rows+y)*footprint.Footprint.RowPitch);
-            const float actual = Half(row[4*x]); negative += actual < 0;
+            const UINT tx=(x+windowOrigin[0])%resolution, ty=(y+windowOrigin[1])%resolution, tz=(z+windowOrigin[2])%resolution;
+            const auto* row = reinterpret_cast<const unsigned short*>(static_cast<const char*>(mapped)+footprint.Offset+(tz*rows+ty)*footprint.Footprint.RowPitch);
+            const float actual = Half(row[4*tx]); negative += actual < 0;
             for (UINT channel=0;channel<3;++channel) {
-                const float material=Half(row[4*x+channel+1]);
+                const float material=Half(row[4*tx+channel+1]);
                 failures += !std::isfinite(material) || std::abs(material-(meshCount ? mesh.tint[channel] : 0.0f))>0.002f;
             }
             float q[] = {std::abs(-2+(x+0.5f)*0.125f)-1, std::abs(-2+(y+0.5f)*0.125f)-0.5f, std::abs(-2+(z+0.5f)*0.125f)-1.5f};
@@ -468,8 +479,9 @@ int main(int argc, char** argv) try {
                 float position = -direction * 1.9375f; bool hit = false;
                 for (int step = 0; step < 96 && std::abs(position) < 2; ++step) {
                     const UINT z = static_cast<UINT>((position+2)/0.125f);
-                    const auto* row = reinterpret_cast<const unsigned short*>(static_cast<const char*>(mapped)+footprint.Offset+(z*rows+16)*footprint.Footprint.RowPitch);
-                    const float distance = Half(row[16*4]);
+                    const UINT tx=(16+windowOrigin[0])%resolution, ty=(16+windowOrigin[1])%resolution, tz=(z+windowOrigin[2])%resolution;
+                    const auto* row = reinterpret_cast<const unsigned short*>(static_cast<const char*>(mapped)+footprint.Offset+(tz*rows+ty)*footprint.Footprint.RowPitch);
+                    const float distance = Half(row[tx*4]);
                     if (distance <= 0.01f) { hit = true; break; }
                     position += direction * std::max(distance, 0.01f);
                 }

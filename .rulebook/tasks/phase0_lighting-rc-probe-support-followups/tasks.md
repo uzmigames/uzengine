@@ -1,11 +1,11 @@
 ## 1. Items
-- [ ] 1.1 A pass/fail harness for the shipped configuration in the closing sweep (reference R3r, P1, P3, C; Sponza S2/S3).
-- [ ] 1.2 A reference wall with an opening for the far-probe question; measure, then decide.
+- [x] 1.1 A pass/fail harness for the shipped configuration in the closing sweep (reference R3r, P1, P3, C; Sponza S2/S3). `test_probe_shipped.py` is wired into `sweep_block_b.sh`; direct harness run EXIT=0, all registered gates passed. R3r 100% on all six PROJECT cameras; P1 1.02155, 0% unsupported; sealed means 5.0e-8..7.18e-7; C zero repeat spread; S2 shadow-wall unsupported 0.109863%, other two ROIs 0%; S3 all four ROIs passed with matching recentres 113/157/201. Report: `.screenshots/rc-probe-support-followups/item11/probe_shipped.json`. The entire unrelated closing sweep was not re-run.
+- [x] 1.2 A reference wall with an opening for the far-probe question; measure, then decide. Measured a 280x300 cm opening: interior floor diffuse luminance 0.0657415, 0% unsupported; 8553/26326 floor pixels have a valid/facing far-corner geometric candidate blocked by the wall (9518 segments). `item12/probe_opening.json` under `.screenshots/rc-probe-support-followups/` records both captures. FLAG for parent: no leak/adoption decision; candidates do not reconstruct the relocation guard, exact weights or actual radiance contributions, and physical irradiance also increases through the opening.
 - [ ] 1.3 P2 against an irradiance solution of the reference.
-- [ ] 1.4 The H-71 hang: the G-buffer position read; the DDGI readback without WaitIdle (the 4-frame guard the radiance cache uses).
+- [x] 1.4 The H-71 hang: the G-buffer position read; the DDGI readback without WaitIdle (the 4-frame guard the radiance cache uses). DDGI queue drain removed under the named lag-4 guard; visible-seed input is conditional and graph-resolved. Shipped Sponza 130-frame exercise completed without hang; both snapshots at 120 were mapped at 124. This does not prove the historical intermittent hang's cause. Evidence: `docs/analysis/rc-probe-support-followups/01-readback.md`, `02-verification.md`.
 - [ ] 1.5 H-62b's wall-flicker candidate on the shipped configuration in motion, with rc_support recorded per frame.
 
 ## 2. Tail (mandatory — enforced by rulebook v5.3.0)
 - [ ] 2.1 Update or create documentation covering the implementation
-- [ ] 2.2 Write tests covering the new behavior
-- [ ] 2.3 Run tests and confirm they pass
+- [x] 2.2 Write tests covering the new behavior. `DDGIDiagnosticReadback.MapsOnlyAfterFourFramesWithoutWaitingIdle` exercises real dispatch/copy/map boundaries with the existing RHI mock seam.
+- [x] 2.3 Run tests and confirm they pass. Vendored Zig 0.15.2 build EXIT=0, Shader integrity OK; owned gtests 7575 passed / 81 environment skips / 0 failed (7656 total), EXIT=0. Separately reproduced the 3 known VfxEditorSlate WIP failures; no VFX changes.

@@ -10,6 +10,7 @@
 #include "hiz_pyramid_pass.h"
 
 #include "render_graph_builder.h"
+#include "render_graph_states.h"
 #include "render_graph_pass.h"
 #include "engine/rhi/rhi.h"
 
@@ -87,23 +88,10 @@ void AddHiZPyramidPass(rg::RgBuilder& builder, const HiZPyramidPassDesc& desc)
             cmd->SetPipeline(desc.pipeline);
 
             // ── Initial barriers: transition all mip textures to UAV ─────
-            // On the first frame, textures are in Common state. On subsequent
-            // frames, they are in SRV state (left there by the UAV→SRV barrier
-            // at the end of each mip dispatch). Either way, transition to UAV.
             {
-                static bool firstExecution = true;
-                const RHIResourceState fromState = firstExecution
-                    ? RHIResourceState::Common
-                    : RHIResourceState::ShaderResource;
-
-                RHIBarrierDesc initBarriers[kHiZMaxMipLevels]{};
                 for (uint32_t m = 0; m < desc.mipCount; ++m) {
-                    initBarriers[m].texture     = desc.mipLevels[m].texture;
-                    initBarriers[m].stateBefore = fromState;
-                    initBarriers[m].stateAfter  = RHIResourceState::UnorderedAccess;
+                    desc.states->Transition(cmd, desc.mipLevels[m].texture, RHIResourceState::UnorderedAccess);
                 }
-                cmd->ResourceBarrier(initBarriers, desc.mipCount);
-                firstExecution = false;
             }
 
             // Track the current input SRV index and dimensions. For mip 0,
@@ -143,11 +131,7 @@ void AddHiZPyramidPass(rg::RgBuilder& builder, const HiZPyramidPassDesc& desc)
 
                 // ── UAV barrier to ensure writes complete before the next
                 //    dispatch reads this mip as input ──────────────────────
-                RHIBarrierDesc barrier{};
-                barrier.texture     = level.texture;
-                barrier.stateBefore = RHIResourceState::UnorderedAccess;
-                barrier.stateAfter  = RHIResourceState::ShaderResource;
-                cmd->ResourceBarrier(&barrier, 1);
+                desc.states->Transition(cmd, level.texture, RHIResourceState::ShaderResource);
 
                 // This mip's SRV becomes the next dispatch's input.
                 inputSrvIndex = level.srvIndex;

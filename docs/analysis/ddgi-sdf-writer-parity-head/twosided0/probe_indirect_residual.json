@@ -1,0 +1,344 @@
+{
+  "status": "complete",
+  "stopped_at": null,
+  "reasons": [],
+  "harness": {
+    "executable": "E:\\UzmiEngine\\uzengine\\runtime\\build\\bin\\uzengine.exe",
+    "size_bytes": 82153984,
+    "sha256": "46e57539524b08930cff0bbd4ba930e1336d9651613beee70b890dfb200fbdce",
+    "modified": "2026-10-12T23:14:23",
+    "captured_at_analysis_time": true
+  },
+  "criteria": {
+    "min_mean": 0.05,
+    "band": 0.05,
+    "fraction": 0.9,
+    "repeat_tol": 0.001
+  },
+  "cvar_overrides": {
+    "r.GI.MeshSdf.TwoSided": "0"
+  },
+  "captures": [
+    {
+      "dir": "docs/analysis/ddgi-sdf-writer-parity-head/twosided0\\residual_r0",
+      "identity": {
+        "source": "docs/analysis/ddgi-sdf-writer-parity-head/twosided0\\residual_r0\\manifest.json",
+        "inherited_from_manifest": true,
+        "executable": {
+          "path": "E:\\UzmiEngine\\uzengine\\runtime\\build\\bin\\uzengine.exe",
+          "hash": "fnv1a64:003fd2d89f64df2f"
+        },
+        "schema": "uzengine.run-manifest/1",
+        "resolution": {
+          "output": [
+            1920,
+            1080
+          ],
+          "render": [
+            1920,
+            1080
+          ]
+        },
+        "cvars_non_default": {
+          "r.AutoExposure": 0,
+          "r.AutoExposure.MinBrightness": 0.001,
+          "r.GI.DDGI.Diagnostic": 1,
+          "r.GI.RadianceCache.Diagnostic": 1,
+          "r.GI.RadianceCache.Diagnostic.DdgiSequence": 1,
+          "r.GI.RadianceCache.GridExtent": 2000,
+          "r.GI.RadianceCache.ProbesPerFrame": 4096,
+          "r.GTAO": 1,
+          "r.RadianceCache": 1,
+          "r.RayTracing": 1,
+          "r.RayTracing.GI": 1,
+          "r.TAA": 1
+        },
+        "cli": {
+          "frames": "240",
+          "run-manifest": "docs/analysis/ddgi-sdf-writer-parity-head/twosided0\\residual_r0\\manifest.json"
+        }
+      }
+    },
+    {
+      "dir": "docs/analysis/ddgi-sdf-writer-parity-head/twosided0\\residual_r1",
+      "identity": {
+        "source": "docs/analysis/ddgi-sdf-writer-parity-head/twosided0\\residual_r1\\manifest.json",
+        "inherited_from_manifest": true,
+        "executable": {
+          "path": "E:\\UzmiEngine\\uzengine\\runtime\\build\\bin\\uzengine.exe",
+          "hash": "fnv1a64:003fd2d89f64df2f"
+        },
+        "schema": "uzengine.run-manifest/1",
+        "resolution": {
+          "output": [
+            1920,
+            1080
+          ],
+          "render": [
+            1920,
+            1080
+          ]
+        },
+        "cvars_non_default": {
+          "r.AutoExposure": 0,
+          "r.AutoExposure.MinBrightness": 0.001,
+          "r.GI.DDGI.Diagnostic": 1,
+          "r.GI.RadianceCache.Diagnostic": 1,
+          "r.GI.RadianceCache.Diagnostic.DdgiSequence": 1,
+          "r.GI.RadianceCache.GridExtent": 2000,
+          "r.GI.RadianceCache.ProbesPerFrame": 4096,
+          "r.GTAO": 1,
+          "r.RadianceCache": 1,
+          "r.RayTracing": 1,
+          "r.RayTracing.GI": 1,
+          "r.TAA": 1
+        },
+        "cli": {
+          "frames": "240",
+          "run-manifest": "docs/analysis/ddgi-sdf-writer-parity-head/twosided0\\residual_r1\\manifest.json"
+        }
+      }
+    }
+  ],
+  "rows": [
+    {
+      "repeat": 0,
+      "probes": 571,
+      "H61_building_field_valid": {
+        "probes": 64,
+        "ddgi_sky_mean": 0.8076171875,
+        "rc_sky_mean": 0.5390625,
+        "sky_escape_difference_pp": 26.85546875
+      },
+      "R1": {
+        "median": 1.6362973784194361,
+        "p10": 1.150475409024668,
+        "p90": 1.8757889198415116,
+        "within_band": 0.01576182136602452,
+        "err_model": 0.4865532411207378,
+        "err_null": 0.36277265102244666,
+        "pass": false
+      },
+      "R2_by_layer": {
+        "0": {
+          "n": 106,
+          "indirect_share_median": 0.17428927485751433,
+          "ratio_m_median": 0.9589467776256558,
+          "ratio_p_median": 0.8257107251424857
+        },
+        "1": {
+          "n": 31,
+          "indirect_share_median": 0.10702703081054843,
+          "ratio_m_median": 1.3233795541610744,
+          "ratio_p_median": 0.8929729691894516
+        },
+        "2": {
+          "n": 31,
+          "indirect_share_median": 0.1343446826199449,
+          "ratio_m_median": 1.4160624632007093,
+          "ratio_p_median": 0.8656553173800551
+        },
+        "3": {
+          "n": 31,
+          "indirect_share_median": 0.14294653729462453,
+          "ratio_m_median": 1.5074851558057425,
+          "ratio_p_median": 0.8570534627053754
+        },
+        "4": {
+          "n": 31,
+          "indirect_share_median": 0.15238989824639412,
+          "ratio_m_median": 1.518220342972769,
+          "ratio_p_median": 0.847610101753606
+        },
+        "5": {
+          "n": 31,
+          "indirect_share_median": 0.15349314943475323,
+          "ratio_m_median": 1.5357593230311049,
+          "ratio_p_median": 0.8465068505652467
+        },
+        "6": {
+          "n": 31,
+          "indirect_share_median": 0.16418860669251484,
+          "ratio_m_median": 1.5036249349890132,
+          "ratio_p_median": 0.8358113933074852
+        },
+        "7": {
+          "n": 31,
+          "indirect_share_median": 0.163398499806948,
+          "ratio_m_median": 1.5322133940877978,
+          "ratio_p_median": 0.836601500193052
+        },
+        "8": {
+          "n": 31,
+          "indirect_share_median": 0.16371761158987294,
+          "ratio_m_median": 1.493663460082469,
+          "ratio_p_median": 0.8362823884101271
+        },
+        "9": {
+          "n": 31,
+          "indirect_share_median": 0.1632159829554917,
+          "ratio_m_median": 1.4187442819025715,
+          "ratio_p_median": 0.8367840170445082
+        },
+        "10": {
+          "n": 31,
+          "indirect_share_median": 0.16332207151636902,
+          "ratio_m_median": 1.3589160095876611,
+          "ratio_p_median": 0.836677928483631
+        },
+        "11": {
+          "n": 31,
+          "indirect_share_median": 0.1629346357228667,
+          "ratio_m_median": 1.3590439509509102,
+          "ratio_p_median": 0.8370653642771332
+        },
+        "12": {
+          "n": 31,
+          "indirect_share_median": 0.15773799359674404,
+          "ratio_m_median": 1.360947660297966,
+          "ratio_p_median": 0.8422620064032559
+        },
+        "13": {
+          "n": 31,
+          "indirect_share_median": 0.1520767437702629,
+          "ratio_m_median": 1.3625038839656456,
+          "ratio_p_median": 0.8479232562297371
+        },
+        "14": {
+          "n": 31,
+          "indirect_share_median": 0.1274828113981217,
+          "ratio_m_median": 1.4020950762757678,
+          "ratio_p_median": 0.8725171886018783
+        },
+        "15": {
+          "n": 31,
+          "indirect_share_median": 0.07529179538227317,
+          "ratio_m_median": 1.445358544556338,
+          "ratio_p_median": 0.924708204617727
+        }
+      },
+      "ratio_m_median": 1.4051584757578233,
+      "ratio_p_median": 0.846508627267777
+    },
+    {
+      "repeat": 1,
+      "probes": 571,
+      "H61_building_field_valid": {
+        "probes": 64,
+        "ddgi_sky_mean": 0.8076171875,
+        "rc_sky_mean": 0.5390625,
+        "sky_escape_difference_pp": 26.85546875
+      },
+      "R1": {
+        "median": 1.6362973784194361,
+        "p10": 1.150475409024668,
+        "p90": 1.8757889198415116,
+        "within_band": 0.01576182136602452,
+        "err_model": 0.4865532411207378,
+        "err_null": 0.36277265102244666,
+        "pass": false
+      },
+      "R2_by_layer": {
+        "0": {
+          "n": 106,
+          "indirect_share_median": 0.17428927485751433,
+          "ratio_m_median": 0.9589467776256558,
+          "ratio_p_median": 0.8257107251424857
+        },
+        "1": {
+          "n": 31,
+          "indirect_share_median": 0.10702703081054843,
+          "ratio_m_median": 1.3233795541610744,
+          "ratio_p_median": 0.8929729691894516
+        },
+        "2": {
+          "n": 31,
+          "indirect_share_median": 0.1343446826199449,
+          "ratio_m_median": 1.4160624632007093,
+          "ratio_p_median": 0.8656553173800551
+        },
+        "3": {
+          "n": 31,
+          "indirect_share_median": 0.14294653729462453,
+          "ratio_m_median": 1.5074851558057425,
+          "ratio_p_median": 0.8570534627053754
+        },
+        "4": {
+          "n": 31,
+          "indirect_share_median": 0.15238989824639412,
+          "ratio_m_median": 1.518220342972769,
+          "ratio_p_median": 0.847610101753606
+        },
+        "5": {
+          "n": 31,
+          "indirect_share_median": 0.15349314943475323,
+          "ratio_m_median": 1.5357593230311049,
+          "ratio_p_median": 0.8465068505652467
+        },
+        "6": {
+          "n": 31,
+          "indirect_share_median": 0.16418860669251484,
+          "ratio_m_median": 1.5036249349890132,
+          "ratio_p_median": 0.8358113933074852
+        },
+        "7": {
+          "n": 31,
+          "indirect_share_median": 0.163398499806948,
+          "ratio_m_median": 1.5322133940877978,
+          "ratio_p_median": 0.836601500193052
+        },
+        "8": {
+          "n": 31,
+          "indirect_share_median": 0.16371761158987294,
+          "ratio_m_median": 1.493663460082469,
+          "ratio_p_median": 0.8362823884101271
+        },
+        "9": {
+          "n": 31,
+          "indirect_share_median": 0.1632159829554917,
+          "ratio_m_median": 1.4187442819025715,
+          "ratio_p_median": 0.8367840170445082
+        },
+        "10": {
+          "n": 31,
+          "indirect_share_median": 0.16332207151636902,
+          "ratio_m_median": 1.3589160095876611,
+          "ratio_p_median": 0.836677928483631
+        },
+        "11": {
+          "n": 31,
+          "indirect_share_median": 0.1629346357228667,
+          "ratio_m_median": 1.3590439509509102,
+          "ratio_p_median": 0.8370653642771332
+        },
+        "12": {
+          "n": 31,
+          "indirect_share_median": 0.15773799359674404,
+          "ratio_m_median": 1.360947660297966,
+          "ratio_p_median": 0.8422620064032559
+        },
+        "13": {
+          "n": 31,
+          "indirect_share_median": 0.1520767437702629,
+          "ratio_m_median": 1.3625038839656456,
+          "ratio_p_median": 0.8479232562297371
+        },
+        "14": {
+          "n": 31,
+          "indirect_share_median": 0.1274828113981217,
+          "ratio_m_median": 1.4020950762757678,
+          "ratio_p_median": 0.8725171886018783
+        },
+        "15": {
+          "n": 31,
+          "indirect_share_median": 0.07529179538227317,
+          "ratio_m_median": 1.445358544556338,
+          "ratio_p_median": 0.924708204617727
+        }
+      },
+      "ratio_m_median": 1.4051584757578233,
+      "ratio_p_median": 0.846508627267777
+    }
+  ],
+  "verdict": "NOT SOLE"
+}

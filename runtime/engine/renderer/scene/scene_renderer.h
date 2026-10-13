@@ -323,7 +323,7 @@ public:
     ///
     /// # Parameters
     /// - `pds`: Non-owning pointer to the PixelDebugSystem, or nullptr.
-    void SetPixelDebugSystem(PixelDebugSystem* pds) noexcept { m_pixelDebugSystem = pds; }
+    void SetPixelDebugSystem(PixelDebugSystem* pds) noexcept;
 
     /// Returns the current pixel debug system, or nullptr if not set.
     [[nodiscard]] PixelDebugSystem* GetPixelDebugSystem() const noexcept { return m_pixelDebugSystem; }
@@ -937,13 +937,6 @@ private:
     RHIBufferHandle m_vfxKillVolumeBuffer;    ///< GPU buffer for kill volume descriptors (16 × 32 bytes).
     RHIBufferHandle m_vfxDeathEventBuffer;    ///< GPU buffer for death events (4096 × 32 bytes).
     RHIBufferHandle m_vfxDeathEventCountBuffer; ///< Death event counter (single uint32).
-    /// End-of-frame resource states for imported textures.
-    /// Updated after each frame's render graph Compile() to provide correct
-    /// initial states for the next frame's imports.
-    RHIResourceState m_hdrEndState    = RHIResourceState::Undefined;
-    RHIResourceState m_depthEndState  = RHIResourceState::Undefined;
-    RHIResourceState m_albedoEndState = RHIResourceState::Undefined;
-    RHIResourceState m_normalEndState = RHIResourceState::Undefined;
     RHIBufferHandle m_decalCubeVB;
     RHIBufferHandle m_vfxZeroBuffer; ///< 4-byte upload buffer containing uint32 0. Used to zero-clear aliveCount.
     RHIBufferHandle m_decalCubeIB;

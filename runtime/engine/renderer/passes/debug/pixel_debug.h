@@ -29,6 +29,7 @@ namespace uz {
 
 class IRHIDevice;
 class IRHICommandList;
+namespace rg { class RgStateRegistry; }
 
 /// A single debug record read back from the GPU.
 struct PixelDebugRecord {
@@ -56,6 +57,8 @@ public:
 
     PixelDebugSystem(const PixelDebugSystem&) = delete;
     PixelDebugSystem& operator=(const PixelDebugSystem&) = delete;
+
+    void SetStateRegistry(rg::RgStateRegistry* states) { m_states = states; }
 
     /// Creates GPU buffers (counter + records + readback + upload).
     /// Call once after device creation.
@@ -100,6 +103,7 @@ public:
     void Shutdown(IRHIDevice* device);
 
 private:
+    rg::RgStateRegistry* m_states = nullptr;
     PixelDebugConfig m_config;
     bool m_initialized = false;
 

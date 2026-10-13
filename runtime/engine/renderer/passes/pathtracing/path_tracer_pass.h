@@ -54,11 +54,13 @@ static_assert(sizeof(GIMeshMaterialGPU) == 16, "GIMeshMaterialGPU must be 16 byt
 struct PathTracerPassDesc {
     rg::RgResourceId  hdrTarget;        ///< HDR scene color RT[1] (write, RenderTarget).
     rg::RgResourceId  accumCurr;        ///< RGBA32F accumulation curr write target RT[0].
+    rg::RgResourceId  accumPrev;        ///< Previous ping-pong accumulation (read).
     rg::RgResourceId  normalGBuffer;    ///< GBuffer normal (read).
     rg::RgResourceId  depthGBuffer;     ///< GBuffer depth  (read).
     rg::RgResourceId  albedoGBuffer;    ///< GBuffer albedo+AO (read).
     rg::RgResourceId  positionGBuffer;  ///< GBuffer worldPos (read).
     rg::RgResourceId  emissiveGBuffer;  ///< GBuffer emissive HDR (read).
+    rg::RgResourceId  shadowAtlas;      ///< CSM shadow atlas (read, ShaderResource).
     CBAllocation      perFrameAlloc;    ///< PerFrame CB at b1.
     RHIPipelineHandle pipeline;         ///< Path tracer fullscreen PSO (2 RTs).
     uint32_t          normalSrvIndex;

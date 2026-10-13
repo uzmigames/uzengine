@@ -175,6 +175,11 @@ public:
     /// Returns a runtime ParticleEmitter by index. May return null.
     [[nodiscard]] ParticleEmitter* GetRuntimeEmitter(int32_t runtimeIdx);
 
+    /// Current swapchain / window width in physical pixels. Updated on resize.
+    [[nodiscard]] uint32_t GetWidth()  const noexcept { return m_width;  }
+    /// Current swapchain / window height in physical pixels.
+    [[nodiscard]] uint32_t GetHeight() const noexcept { return m_height; }
+
     // ── Control ───────────────────────────────────────────────────────────
 
     /// Signals the main loop to exit after the current frame completes.

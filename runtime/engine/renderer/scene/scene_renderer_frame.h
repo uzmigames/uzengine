@@ -126,6 +126,7 @@ struct FrameContext {
     rg::RgResourceId emissiveRes{};
     rg::RgResourceId velocityRes{};
     rg::RgResourceId shadowAtlasRes{};
+    rg::RgResourceId localShadowAtlasRes{};
     rg::RgResourceId apVolumeRes{};        ///< Aerial perspective volume (imported, Read in deferred, Write in AP compute).
     rg::RgResourceId debugDirectRes{};     ///< Lighting split RT1 (written by deferred lighting, read by the debug view).
     rg::RgResourceId debugIndirectRes{};   ///< Lighting split RT2.

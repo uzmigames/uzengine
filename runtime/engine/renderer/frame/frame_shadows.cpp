@@ -15,10 +15,14 @@
 #include "profiler.h"
 #include "rhi.h"
 #include "log.h"
+#include "cvar.h"
 
 #include <cstring>
 
 namespace uz {
+
+static auto* cv_ShadowFreeze = UZ_CVAR_INT("r.Shadow.FreezeAfterFrame", -1,
+    "Diagnostic: stop shadow atlas updates and hold matching cascade constants after this frame.", -1, 100000);
 
 /// Per-cascade shadow constant buffer — mirrors the one in shadow_pass.cpp.
 /// Contains only the light-space view-projection matrix, bound at root slot 3.
@@ -30,6 +34,12 @@ struct ShadowCB {
 
 void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
     if (!m_showFlags.Get(ShowFlag::Shadows)) return;
+    if (cv_ShadowFreeze->value >= 0 && static_cast<int>(ctx.frameIndex) > cv_ShadowFreeze->value) {
+        if (static_cast<int>(ctx.frameIndex) == cv_ShadowFreeze->value + 1) {
+            UZ_LOG(Renderer, Info, "ShadowFreeze active frame={} frozen_after={}", ctx.frameIndex, cv_ShadowFreeze->value);
+        }
+        return;
+    }
     UZ_PROFILE_FUNCTION();
 
     const bool bindless = ctx.bindless;
@@ -110,8 +120,8 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
                 const uint32_t lightId = 0;
 
                 // Import the static shadow atlas for GPU copy operations
-                auto staticAtlasRes = rgBuilder.ImportTexture(
-                    "StaticShadowAtlas", m_staticShadowAtlas, RHIResourceState::ShaderResource);
+                auto staticAtlasRes = rgBuilder.ImportTrackedTexture(
+                    "StaticShadowAtlas", m_staticShadowAtlas);
 
                 // Register a render graph pass that copies the overlapping region
                 // and renders edge-strip static primitives.
@@ -296,8 +306,8 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
             // ── Pass 1: Static geometry into cached atlas (conditional) ──
             // Only re-render when cache is fully invalidated (not scrolling)
             if (needStaticRerender) {
-                auto staticAtlasRes = rgBuilder.ImportTexture(
-                    "StaticShadowAtlas", m_staticShadowAtlas, RHIResourceState::ShaderResource);
+                auto staticAtlasRes = rgBuilder.ImportTrackedTexture(
+                    "StaticShadowAtlas", m_staticShadowAtlas);
 
                 ShadowPassDesc staticDesc{};
                 staticDesc.shadowAtlas        = staticAtlasRes;
@@ -336,8 +346,9 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
         ctx.lightData.spotShadowCount +
         ctx.lightData.pointShadowCount * kPointLightShadowFaces;
     if (m_localShadowAtlas.IsValid() && totalLocalShadowEntries > 0 && !m_meshes.empty()) {
-        auto localShadowAtlasRes = rgBuilder.ImportTexture(
-            "LocalShadowAtlas", m_localShadowAtlas.GetTexture(), RHIResourceState::ShaderResource);
+        ctx.localShadowAtlasRes = rgBuilder.ImportTrackedTexture(
+            "LocalShadowAtlas", m_localShadowAtlas.GetTexture());
+        const auto localShadowAtlasRes = ctx.localShadowAtlasRes;
 
         const auto localAtlasTex = m_localShadowAtlas.GetTexture();
         // Linear-distance variant: the Camera-built light projections are reversed-Z while the

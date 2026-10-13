@@ -30,6 +30,7 @@ namespace uz {
 class IRHIDevice;
 class IRHICommandList;
 class ShaderManager;
+namespace rg { class RgStateRegistry; }
 
 /// GPU compute bloom settings.
 ///
@@ -75,6 +76,8 @@ public:
     BloomPass& operator=(const BloomPass&) = delete;
     BloomPass(BloomPass&&) = delete;
     BloomPass& operator=(BloomPass&&) = delete;
+
+    void SetStateRegistry(rg::RgStateRegistry* states) { m_states = states; }
 
     /// Initialize GPU resources and compile compute shaders.
     ///
@@ -151,6 +154,7 @@ private:
     void DestroyMipChain();
 
     IRHIDevice*    m_device    = nullptr;
+    rg::RgStateRegistry* m_states = nullptr;
     ShaderManager* m_shaderMgr = nullptr;
 
     // ── Mip Chain Textures ──────────────────────────────────────────────

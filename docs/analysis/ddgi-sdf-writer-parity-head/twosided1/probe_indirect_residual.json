@@ -1,0 +1,346 @@
+{
+  "status": "complete",
+  "stopped_at": null,
+  "reasons": [],
+  "harness": {
+    "executable": "E:\\UzmiEngine\\uzengine\\runtime\\build\\bin\\uzengine.exe",
+    "size_bytes": 82153984,
+    "sha256": "46e57539524b08930cff0bbd4ba930e1336d9651613beee70b890dfb200fbdce",
+    "modified": "2026-10-12T23:14:23",
+    "captured_at_analysis_time": true
+  },
+  "criteria": {
+    "min_mean": 0.05,
+    "band": 0.05,
+    "fraction": 0.9,
+    "repeat_tol": 0.001
+  },
+  "cvar_overrides": {
+    "r.GI.MeshSdf.TwoSided": "1"
+  },
+  "captures": [
+    {
+      "dir": "docs/analysis/ddgi-sdf-writer-parity-head/twosided1\\residual_r0",
+      "identity": {
+        "source": "docs/analysis/ddgi-sdf-writer-parity-head/twosided1\\residual_r0\\manifest.json",
+        "inherited_from_manifest": true,
+        "executable": {
+          "path": "E:\\UzmiEngine\\uzengine\\runtime\\build\\bin\\uzengine.exe",
+          "hash": "fnv1a64:003fd2d89f64df2f"
+        },
+        "schema": "uzengine.run-manifest/1",
+        "resolution": {
+          "output": [
+            1920,
+            1080
+          ],
+          "render": [
+            1920,
+            1080
+          ]
+        },
+        "cvars_non_default": {
+          "r.AutoExposure": 0,
+          "r.AutoExposure.MinBrightness": 0.001,
+          "r.GI.DDGI.Diagnostic": 1,
+          "r.GI.MeshSdf.TwoSided": 1,
+          "r.GI.RadianceCache.Diagnostic": 1,
+          "r.GI.RadianceCache.Diagnostic.DdgiSequence": 1,
+          "r.GI.RadianceCache.GridExtent": 2000,
+          "r.GI.RadianceCache.ProbesPerFrame": 4096,
+          "r.GTAO": 1,
+          "r.RadianceCache": 1,
+          "r.RayTracing": 1,
+          "r.RayTracing.GI": 1,
+          "r.TAA": 1
+        },
+        "cli": {
+          "frames": "240",
+          "run-manifest": "docs/analysis/ddgi-sdf-writer-parity-head/twosided1\\residual_r0\\manifest.json"
+        }
+      }
+    },
+    {
+      "dir": "docs/analysis/ddgi-sdf-writer-parity-head/twosided1\\residual_r1",
+      "identity": {
+        "source": "docs/analysis/ddgi-sdf-writer-parity-head/twosided1\\residual_r1\\manifest.json",
+        "inherited_from_manifest": true,
+        "executable": {
+          "path": "E:\\UzmiEngine\\uzengine\\runtime\\build\\bin\\uzengine.exe",
+          "hash": "fnv1a64:003fd2d89f64df2f"
+        },
+        "schema": "uzengine.run-manifest/1",
+        "resolution": {
+          "output": [
+            1920,
+            1080
+          ],
+          "render": [
+            1920,
+            1080
+          ]
+        },
+        "cvars_non_default": {
+          "r.AutoExposure": 0,
+          "r.AutoExposure.MinBrightness": 0.001,
+          "r.GI.DDGI.Diagnostic": 1,
+          "r.GI.MeshSdf.TwoSided": 1,
+          "r.GI.RadianceCache.Diagnostic": 1,
+          "r.GI.RadianceCache.Diagnostic.DdgiSequence": 1,
+          "r.GI.RadianceCache.GridExtent": 2000,
+          "r.GI.RadianceCache.ProbesPerFrame": 4096,
+          "r.GTAO": 1,
+          "r.RadianceCache": 1,
+          "r.RayTracing": 1,
+          "r.RayTracing.GI": 1,
+          "r.TAA": 1
+        },
+        "cli": {
+          "frames": "240",
+          "run-manifest": "docs/analysis/ddgi-sdf-writer-parity-head/twosided1\\residual_r1\\manifest.json"
+        }
+      }
+    }
+  ],
+  "rows": [
+    {
+      "repeat": 0,
+      "probes": 3271,
+      "H61_building_field_valid": {
+        "probes": 441,
+        "ddgi_sky_mean": 0.2860685941043084,
+        "rc_sky_mean": 0.25510204081632654,
+        "sky_escape_difference_pp": 3.096655328798187
+      },
+      "R1": {
+        "median": 1.0090305510914654,
+        "p10": 1.000531502988371,
+        "p90": 1.161798854069737,
+        "within_band": 0.7178232956282482,
+        "err_model": 0.0544264257169682,
+        "err_null": 0.06549176260480005,
+        "pass": false
+      },
+      "R2_by_layer": {
+        "0": {
+          "n": 256,
+          "indirect_share_median": 0.02735231020863707,
+          "ratio_m_median": 0.973073577428299,
+          "ratio_p_median": 0.972647689791363
+        },
+        "1": {
+          "n": 256,
+          "indirect_share_median": 0.03584608957982209,
+          "ratio_m_median": 0.9676942668078707,
+          "ratio_p_median": 0.9641539104201778
+        },
+        "2": {
+          "n": 256,
+          "indirect_share_median": 0.040681804114952154,
+          "ratio_m_median": 0.9615690835887143,
+          "ratio_p_median": 0.9593181958850479
+        },
+        "3": {
+          "n": 256,
+          "indirect_share_median": 0.044256344600132655,
+          "ratio_m_median": 0.9600290033055641,
+          "ratio_p_median": 0.9557436553998673
+        },
+        "4": {
+          "n": 256,
+          "indirect_share_median": 0.05607617819695325,
+          "ratio_m_median": 0.9508172270781658,
+          "ratio_p_median": 0.9439238218030468
+        },
+        "5": {
+          "n": 256,
+          "indirect_share_median": 0.06672934273213887,
+          "ratio_m_median": 0.9447162212087743,
+          "ratio_p_median": 0.9332706572678611
+        },
+        "6": {
+          "n": 256,
+          "indirect_share_median": 0.07930432718885606,
+          "ratio_m_median": 0.9358220764386911,
+          "ratio_p_median": 0.920695672811144
+        },
+        "7": {
+          "n": 144,
+          "indirect_share_median": 0.04400765685146818,
+          "ratio_m_median": 0.9853934135453155,
+          "ratio_p_median": 0.9559923431485319
+        },
+        "8": {
+          "n": 147,
+          "indirect_share_median": 0.06032690860638052,
+          "ratio_m_median": 1.0037382852931094,
+          "ratio_p_median": 0.9396730913936195
+        },
+        "9": {
+          "n": 147,
+          "indirect_share_median": 0.07273776207715289,
+          "ratio_m_median": 1.006418299006226,
+          "ratio_p_median": 0.9272622379228471
+        },
+        "10": {
+          "n": 150,
+          "indirect_share_median": 0.0859592570143182,
+          "ratio_m_median": 0.9898473440052449,
+          "ratio_p_median": 0.9140407429856818
+        },
+        "11": {
+          "n": 150,
+          "indirect_share_median": 0.0845599788700668,
+          "ratio_m_median": 0.9888179769522865,
+          "ratio_p_median": 0.9154400211299332
+        },
+        "12": {
+          "n": 154,
+          "indirect_share_median": 0.07925658377330921,
+          "ratio_m_median": 0.9858001303577416,
+          "ratio_p_median": 0.9207434162266908
+        },
+        "13": {
+          "n": 154,
+          "indirect_share_median": 0.06932871300831764,
+          "ratio_m_median": 0.9867923038712736,
+          "ratio_p_median": 0.9306712869916823
+        },
+        "14": {
+          "n": 177,
+          "indirect_share_median": 0.050717452516250844,
+          "ratio_m_median": 1.011037943491847,
+          "ratio_p_median": 0.9492825474837492
+        },
+        "15": {
+          "n": 256,
+          "indirect_share_median": 0.024028223982671747,
+          "ratio_m_median": 1.059551305109591,
+          "ratio_p_median": 0.9759717760173283
+        }
+      },
+      "ratio_m_median": 0.9715422640408724,
+      "ratio_p_median": 0.9515078932340633
+    },
+    {
+      "repeat": 1,
+      "probes": 3271,
+      "H61_building_field_valid": {
+        "probes": 441,
+        "ddgi_sky_mean": 0.2860685941043084,
+        "rc_sky_mean": 0.25510204081632654,
+        "sky_escape_difference_pp": 3.096655328798187
+      },
+      "R1": {
+        "median": 1.0090305510914654,
+        "p10": 1.000531502988371,
+        "p90": 1.161798854069737,
+        "within_band": 0.7178232956282482,
+        "err_model": 0.0544264257169682,
+        "err_null": 0.06549176260480005,
+        "pass": false
+      },
+      "R2_by_layer": {
+        "0": {
+          "n": 256,
+          "indirect_share_median": 0.02735231020863707,
+          "ratio_m_median": 0.973073577428299,
+          "ratio_p_median": 0.972647689791363
+        },
+        "1": {
+          "n": 256,
+          "indirect_share_median": 0.03584608957982209,
+          "ratio_m_median": 0.9676942668078707,
+          "ratio_p_median": 0.9641539104201778
+        },
+        "2": {
+          "n": 256,
+          "indirect_share_median": 0.040681804114952154,
+          "ratio_m_median": 0.9615690835887143,
+          "ratio_p_median": 0.9593181958850479
+        },
+        "3": {
+          "n": 256,
+          "indirect_share_median": 0.044256344600132655,
+          "ratio_m_median": 0.9600290033055641,
+          "ratio_p_median": 0.9557436553998673
+        },
+        "4": {
+          "n": 256,
+          "indirect_share_median": 0.05607617819695325,
+          "ratio_m_median": 0.9508172270781658,
+          "ratio_p_median": 0.9439238218030468
+        },
+        "5": {
+          "n": 256,
+          "indirect_share_median": 0.06672934273213887,
+          "ratio_m_median": 0.9447162212087743,
+          "ratio_p_median": 0.9332706572678611
+        },
+        "6": {
+          "n": 256,
+          "indirect_share_median": 0.07930432718885606,
+          "ratio_m_median": 0.9358220764386911,
+          "ratio_p_median": 0.920695672811144
+        },
+        "7": {
+          "n": 144,
+          "indirect_share_median": 0.04400765685146818,
+          "ratio_m_median": 0.9853934135453155,
+          "ratio_p_median": 0.9559923431485319
+        },
+        "8": {
+          "n": 147,
+          "indirect_share_median": 0.06032690860638052,
+          "ratio_m_median": 1.0037382852931094,
+          "ratio_p_median": 0.9396730913936195
+        },
+        "9": {
+          "n": 147,
+          "indirect_share_median": 0.07273776207715289,
+          "ratio_m_median": 1.006418299006226,
+          "ratio_p_median": 0.9272622379228471
+        },
+        "10": {
+          "n": 150,
+          "indirect_share_median": 0.0859592570143182,
+          "ratio_m_median": 0.9898473440052449,
+          "ratio_p_median": 0.9140407429856818
+        },
+        "11": {
+          "n": 150,
+          "indirect_share_median": 0.0845599788700668,
+          "ratio_m_median": 0.9888179769522865,
+          "ratio_p_median": 0.9154400211299332
+        },
+        "12": {
+          "n": 154,
+          "indirect_share_median": 0.07925658377330921,
+          "ratio_m_median": 0.9858001303577416,
+          "ratio_p_median": 0.9207434162266908
+        },
+        "13": {
+          "n": 154,
+          "indirect_share_median": 0.06932871300831764,
+          "ratio_m_median": 0.9867923038712736,
+          "ratio_p_median": 0.9306712869916823
+        },
+        "14": {
+          "n": 177,
+          "indirect_share_median": 0.050717452516250844,
+          "ratio_m_median": 1.011037943491847,
+          "ratio_p_median": 0.9492825474837492
+        },
+        "15": {
+          "n": 256,
+          "indirect_share_median": 0.024028223982671747,
+          "ratio_m_median": 1.059551305109591,
+          "ratio_p_median": 0.9759717760173283
+        }
+      },
+      "ratio_m_median": 0.9715422640408724,
+      "ratio_p_median": 0.9515078932340633
+    }
+  ],
+  "verdict": "NOT SOLE"
+}

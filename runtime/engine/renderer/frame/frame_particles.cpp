@@ -213,28 +213,17 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
         // inline sim manages their state, and the billboard VS reads them
         // bindlessly. See `mesh-particle-render-path` task notes for the
         // pre-RC3 import-everywhere path that caused TDR on first frame.
-        const RHIResourceState meshTransformsState = firstCycle
-            ? RHIResourceState::UnorderedAccess
-            : RHIResourceState::ShaderResource;
-        const RHIResourceState meshCountState = RHIResourceState::UnorderedAccess;
-        const RHIResourceState meshIndirectState = firstCycle
-            ? RHIResourceState::UnorderedAccess
-            : RHIResourceState::IndirectArgument;
-
-        ids.meshInstanceTransforms = rgBuilder.ImportBuffer(
-            "VFX_MeshTransforms", gpuBuf.meshInstanceTransforms, meshTransformsState);
-        ids.meshInstanceCount = rgBuilder.ImportBuffer(
-            "VFX_MeshInstCount", gpuBuf.meshInstanceCount, meshCountState);
-        ids.meshIndirectDrawArgs = rgBuilder.ImportBuffer(
-            "VFX_MeshIndDraw", gpuBuf.meshIndirectDrawArgs, meshIndirectState);
+        ids.meshInstanceTransforms = rgBuilder.ImportTrackedBuffer(
+            "VFX_MeshTransforms", gpuBuf.meshInstanceTransforms);
+        ids.meshInstanceCount = rgBuilder.ImportTrackedBuffer(
+            "VFX_MeshInstCount", gpuBuf.meshInstanceCount);
+        ids.meshIndirectDrawArgs = rgBuilder.ImportTrackedBuffer(
+            "VFX_MeshIndDraw", gpuBuf.meshIndirectDrawArgs);
 
         // Per-instance color buffer (owned by `MeshRenderModule`, not
         // `GPUParticleBuffer`). Same import pattern as the transforms
-        // buffer: UAV on the first cycle (pre-init upload state), then
-        // ShaderResource for steady-state once the prior frame's mesh
-        // render pass has consumed it. The mesh instance CS will write
-        // it as UAV again, and the auto-barrier scheduler emits the
-        // SRV→UAV transition before the CS dispatch.
+        // buffer: the registry accounts for buffer decay to Common on submit,
+        // and the graph transitions it to UAV before the mesh instance CS.
         // @ref phase0_vfx-mesh-particle-visibility-debug
         if (emitter->moduleStack.renderModule &&
             std::strcmp(emitter->moduleStack.renderModule->GetName(),
@@ -244,11 +233,8 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
             const RHIBufferHandle instanceColors =
                 meshModule->GetInstanceColorBuffer();
             if (instanceColors.IsValid()) {
-                const RHIResourceState meshColorsState = firstCycle
-                    ? RHIResourceState::UnorderedAccess
-                    : RHIResourceState::ShaderResource;
-                ids.meshInstanceColors = rgBuilder.ImportBuffer(
-                    "VFX_MeshInstColors", instanceColors, meshColorsState);
+                ids.meshInstanceColors = rgBuilder.ImportTrackedBuffer(
+                    "VFX_MeshInstColors", instanceColors);
             }
         }
 

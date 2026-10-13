@@ -1000,8 +1000,10 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
                 perFrame.apSunIntensity   = ctx.sunColor.Length();
                 perFrame.apRayleighScale  = skyComp.rayleighScatteringScale;
                 perFrame.apMieScale       = skyComp.mieScatteringScale;
-                // AP volume SRV (precomputed 32x32x16 3D texture)
-                if (m_apVolumeSrv != UINT32_MAX) {
+                // AP volume SRV (precomputed 32x32x16 3D texture). Gate on m_apVolumeFilled:
+                // before the first AP dispatch the 3D texture is allocator-recycled memory, and
+                // reading it (frame 0 / cross-process) is layout-dependent (phase0 frame-allocation).
+                if (m_apVolumeSrv != UINT32_MAX && m_apVolumeFilled) {
                     perFrame.apVolumeSrvIndex = m_apVolumeSrv;
                 }
             }
@@ -1060,7 +1062,9 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     // direction — if none changed, the previous frame's ShadowDataCB is still valid.
     m_cbUpdatesTotal++;
     ctx.shadowCacheEnabled = false;
-    const bool shadowsDirty = ctx.updateFlags.AreShadowsDirty() || !m_prevShadowValid;
+    const int shadowFreezeFrame = CVarRegistry::Get().GetInt("r.Shadow.FreezeAfterFrame", -1);
+    const bool shadowFrozen = shadowFreezeFrame >= 0 && static_cast<int>(ctx.frameIndex) > shadowFreezeFrame;
+    const bool shadowsDirty = (ctx.updateFlags.AreShadowsDirty() && !shadowFrozen) || !m_prevShadowValid;
 
     if (shadowsDirty) {
         ctx.shadowFrame = SetupShadowFrame(

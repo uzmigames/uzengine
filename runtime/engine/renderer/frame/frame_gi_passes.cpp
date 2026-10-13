@@ -21,6 +21,7 @@
 #include "gpu_mesh.h"
 #include "world.h"
 #include "render_graph_builder.h"
+#include "render_graph_states.h"
 #include "render_graph_resources.h"
 #include "profiler.h"
 #include "rhi.h"
@@ -205,8 +206,7 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
             std::vector<Mat4> meshTransforms;
 
             for (const auto& draw : ctx.drawList.GetCommands()) {
-                // Translucent draws and mesh decals (bit 4) are not distance-field occluders.
-                if ((draw.materialFlags & 0x3u) >= 2u || (draw.materialFlags & 0x10u) != 0u || draw.meshId >= m_meshes.size()) continue;
+                if (!IsGIOccluder(draw) || draw.meshId >= m_meshes.size()) continue;
                 const GPUMesh& gpuMesh = m_meshes[draw.meshId];
                 if (!gpuMesh.HasSDF()) continue;
 
@@ -280,10 +280,14 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
     // writer also runs and updates the octahedral irradiance + depth
     // atlases used by the Chebyshev sampler in deferred lighting.
     // @ref Majercik 2019 "DDGI" — atlases + Chebyshev visibility
+    const bool visibleSeeds = RadianceCache::ClassificationMode() == 3
+        && CVarRegistry::Get().GetBool("r.GI.RadianceCache.ReachVisibleSeeds", false)
+        && !m_meshes.empty();
     rgBuilder.AddPass("RadianceCache_Trace", [&](rg::RgPassBuilder& pb) {
         // Mode 3's visible-surface seeds read the G-buffer world position (r.GI.RadianceCache.ReachVisibleSeeds).
-        pb.Read(ctx.positionRes, RHIResourceState::ShaderResource);
-        pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
+        // Do not bind stale/unwritten positions when the G-buffer pass has no geometry.
+        if (visibleSeeds) pb.Read(ctx.positionRes, RHIResourceState::ShaderResource);
+        pb.SetExecutionCallback([this, &ctx, visibleSeeds](IRHICommandList* cmd, const rg::RgPassResources& res) {
             UZ_PROFILE_SCOPE("RadianceCache::Trace");
 
             // Always run the SDF SH path so the existing deferred lighting
@@ -314,7 +318,10 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
                 const uint32_t classificationMode = RadianceCache::ClassificationMode();
                 const RHIPipelineHandle sidePipeline = classificationMode == 3 ? ctx.pipelines->GetProbeReach()
                     : classificationMode != 0 ? ctx.pipelines->GetProbeSide() : RHIPipelineHandle::Invalid();
-                m_radianceCache.SetVisibleSeedSource(m_gbuffer.positionWSSRV, ctx.renderWidth, ctx.renderHeight);
+                const uint32_t positionSrv = visibleSeeds
+                    ? m_device->GetTextureSRVIndex(res.GetTexture(ctx.positionRes)) : UINT32_MAX;
+                m_radianceCache.SetVisibleSeedSource(positionSrv,
+                    visibleSeeds ? ctx.renderWidth : 0u, visibleSeeds ? ctx.renderHeight : 0u);
                 m_radianceCache.UpdateProbes(
                     cmd, m_globalDistanceField, rcPipeline,
                     m_cbRing.get(),
@@ -468,11 +475,7 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
             // Counter was reset to 0 by last frame's PrepareIndirect pass.
             // Transition counter buffer to UAV for the classify shader.
             {
-                RHIBarrierDesc barrier{};
-                barrier.buffer      = m_ssrRayCounterArgs;
-                barrier.stateBefore = RHIResourceState::IndirectArgument;
-                barrier.stateAfter  = RHIResourceState::UnorderedAccess;
-                cmd->ResourceBarrier(&barrier, 1);
+                m_rgStates->Transition(cmd, m_ssrRayCounterArgs, RHIResourceState::UnorderedAccess);
             }
 
             cmd->SetPipeline(classifyPSO);
@@ -503,11 +506,7 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
 
             // UAV barrier on ray list + counter before prepare indirect reads them
             {
-                RHIBarrierDesc barrier{};
-                barrier.buffer      = m_ssrRayCounterArgs;
-                barrier.stateBefore = RHIResourceState::UnorderedAccess;
-                barrier.stateAfter  = RHIResourceState::UnorderedAccess;
-                cmd->ResourceBarrier(&barrier, 1);
+                m_rgStates->UavBarrier(cmd, m_ssrRayCounterArgs);
             }
         });
     });
@@ -534,11 +533,7 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
 
             // Transition counter/args buffer to IndirectArgument state for DispatchIndirect
             {
-                RHIBarrierDesc barrier{};
-                barrier.buffer      = m_ssrRayCounterArgs;
-                barrier.stateBefore = RHIResourceState::UnorderedAccess;
-                barrier.stateAfter  = RHIResourceState::IndirectArgument;
-                cmd->ResourceBarrier(&barrier, 1);
+                m_rgStates->Transition(cmd, m_ssrRayCounterArgs, RHIResourceState::IndirectArgument);
             }
         });
     });
@@ -556,14 +551,8 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
 
             // Transition both trace output and hit distance to UAV
             {
-                RHIBarrierDesc barriers[2]{};
-                barriers[0].texture     = m_ssrTraceOutput;
-                barriers[0].stateBefore = RHIResourceState::ShaderResource;
-                barriers[0].stateAfter  = RHIResourceState::UnorderedAccess;
-                barriers[1].texture     = m_ssrHitDistance;
-                barriers[1].stateBefore = RHIResourceState::ShaderResource;
-                barriers[1].stateAfter  = RHIResourceState::UnorderedAccess;
-                cmd->ResourceBarrier(barriers, 2);
+                m_rgStates->Transition(cmd, m_ssrTraceOutput, RHIResourceState::UnorderedAccess);
+                m_rgStates->Transition(cmd, m_ssrHitDistance, RHIResourceState::UnorderedAccess);
             }
 
             cmd->SetPipeline(ssrTracePSO);
@@ -581,13 +570,6 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
             // Read SSR MaxRoughness from CVar (avoid hardcoded constant)
             const float ssrMaxRoughness = std::max(0.05f, cv_SSRMaxRoughness->value);
 
-            // Exposure correction: prevColor was at m_ssrPrevExposure, current is ctx exposure.
-            // @ref AMD FidelityFX SSSR — prevColor *= currentExposure / prevExposure.
-            const float currentExposure = ctx.perFrame.exposure;
-            const float exposureRatio = (m_ssrPrevExposure > 0.001f)
-                ? currentExposure / m_ssrPrevExposure
-                : 1.0f;
-
             SsrTraceConstants rc{};
             rc.depthSrvIdx      = m_gbuffer.depthSRV;
             rc.normalSrvIdx     = m_gbuffer.normalSRV;
@@ -604,7 +586,8 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
             rc.hizMip0SrvIdx    = (m_hizMipCount >= 1) ? m_hizMipLevels[0].srvIndex : UINT32_MAX;
             rc.hizMip1SrvIdx    = (m_hizMipCount >= 2) ? m_hizMipLevels[1].srvIndex : UINT32_MAX;
             rc.hizMipCount      = m_hizMipCount;
-            rc.exposureCorrection = exposureRatio;
+            // The previous scene colour is linear HDR, not pre-exposed.
+            rc.exposureCorrection = 1.0f;
             rc.numSteps           = static_cast<uint32_t>(cv_SSRNumSteps->value);
             rc.startMipLevel      = cv_SSRStartMip->value;
             rc.slopeToleranceScale = cv_SSRSlopeTolerance->value;
@@ -621,14 +604,8 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
 
             // Transition both back to SRV
             {
-                RHIBarrierDesc barriers[2]{};
-                barriers[0].texture     = m_ssrTraceOutput;
-                barriers[0].stateBefore = RHIResourceState::UnorderedAccess;
-                barriers[0].stateAfter  = RHIResourceState::ShaderResource;
-                barriers[1].texture     = m_ssrHitDistance;
-                barriers[1].stateBefore = RHIResourceState::UnorderedAccess;
-                barriers[1].stateAfter  = RHIResourceState::ShaderResource;
-                cmd->ResourceBarrier(barriers, 2);
+                m_rgStates->Transition(cmd, m_ssrTraceOutput, RHIResourceState::ShaderResource);
+                m_rgStates->Transition(cmd, m_ssrHitDistance, RHIResourceState::ShaderResource);
             }
         });
     });
@@ -644,11 +621,7 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
             if (!ssrResolvePSO.IsValid() || cv_SSRResolve->value < 0.5f) return;
 
             {
-                RHIBarrierDesc barrier{};
-                barrier.texture     = m_ssrResolvedOutput;
-                barrier.stateBefore = RHIResourceState::ShaderResource;
-                barrier.stateAfter  = RHIResourceState::UnorderedAccess;
-                cmd->ResourceBarrier(&barrier, 1);
+                m_rgStates->Transition(cmd, m_ssrResolvedOutput, RHIResourceState::UnorderedAccess);
             }
 
             cmd->SetPipeline(ssrResolvePSO);
@@ -679,11 +652,7 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
             cmd->Dispatch(groupsX, groupsY, 1);
 
             {
-                RHIBarrierDesc barrier{};
-                barrier.texture     = m_ssrResolvedOutput;
-                barrier.stateBefore = RHIResourceState::UnorderedAccess;
-                barrier.stateAfter  = RHIResourceState::ShaderResource;
-                cmd->ResourceBarrier(&barrier, 1);
+                m_rgStates->Transition(cmd, m_ssrResolvedOutput, RHIResourceState::ShaderResource);
             }
         });
     });
@@ -712,14 +681,8 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
                 if (!ssrTemporalPSO.IsValid() || cv_SSRTemporal->value < 0.5f) return;
 
                 {
-                    RHIBarrierDesc barriers[2]{};
-                    barriers[0].texture     = m_ssrHistory[ssrWriteIdx];
-                    barriers[0].stateBefore = RHIResourceState::ShaderResource;
-                    barriers[0].stateAfter  = RHIResourceState::UnorderedAccess;
-                    barriers[1].texture     = m_ssrHistory[ssrReadIdx];
-                    barriers[1].stateBefore = RHIResourceState::UnorderedAccess;
-                    barriers[1].stateAfter  = RHIResourceState::ShaderResource;
-                    cmd->ResourceBarrier(barriers, 2);
+                    m_rgStates->Transition(cmd, m_ssrHistory[ssrWriteIdx], RHIResourceState::UnorderedAccess);
+                    m_rgStates->Transition(cmd, m_ssrHistory[ssrReadIdx], RHIResourceState::ShaderResource);
                 }
 
                 cmd->SetPipeline(ssrTemporalPSO);
@@ -765,11 +728,7 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
                 cmd->Dispatch(groupsX, groupsY, 1);
 
                 {
-                    RHIBarrierDesc barrier{};
-                    barrier.texture     = m_ssrHistory[ssrWriteIdx];
-                    barrier.stateBefore = RHIResourceState::UnorderedAccess;
-                    barrier.stateAfter  = RHIResourceState::ShaderResource;
-                    cmd->ResourceBarrier(&barrier, 1);
+                    m_rgStates->Transition(cmd, m_ssrHistory[ssrWriteIdx], RHIResourceState::ShaderResource);
                 }
             });
         });
@@ -794,11 +753,7 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
 
                 // Transition resolved output to UAV for writing
                 {
-                    RHIBarrierDesc barrier{};
-                    barrier.texture     = m_ssrResolvedOutput;
-                    barrier.stateBefore = RHIResourceState::ShaderResource;
-                    barrier.stateAfter  = RHIResourceState::UnorderedAccess;
-                    cmd->ResourceBarrier(&barrier, 1);
+                    m_rgStates->Transition(cmd, m_ssrResolvedOutput, RHIResourceState::UnorderedAccess);
                 }
 
                 cmd->SetPipeline(ssrDenoisePSO);
@@ -832,11 +787,7 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
 
                 // Transition back to SRV for lighting to read
                 {
-                    RHIBarrierDesc barrier{};
-                    barrier.texture     = m_ssrResolvedOutput;
-                    barrier.stateBefore = RHIResourceState::UnorderedAccess;
-                    barrier.stateAfter  = RHIResourceState::ShaderResource;
-                    cmd->ResourceBarrier(&barrier, 1);
+                    m_rgStates->Transition(cmd, m_ssrResolvedOutput, RHIResourceState::ShaderResource);
                 }
             });
         });

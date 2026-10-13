@@ -7,6 +7,7 @@
 /// BUILD MARKER: rebuild trigger for shader gen.h dependency tracking.
 
 #include "gtao_pass.h"
+#include "engine/renderer/render_graph/render_graph_states.h"
 
 #include "engine/rhi/rhi.h"
 #include "shader_manager.h"
@@ -356,7 +357,6 @@ void GTAOPass::DestroyTextures() {
         }
         m_aoHistorySrvIndex[i] = UINT32_MAX;
         m_aoHistoryUavIndex[i] = UINT32_MAX;
-        m_aoHistoryState[i]    = RHIResourceState::Common;
     }
     m_historyIndex = 0;
     m_historyValid = false;
@@ -367,8 +367,6 @@ void GTAOPass::DestroyTextures() {
     m_filteredAOUavIndex = UINT32_MAX;
     m_width  = 0;
     m_height = 0;
-    m_initialBarriersDone = false;
-    m_filteredAOCurrentState = RHIResourceState::Common;
 }
 
 bool GTAOPass::Resize(uint32_t width, uint32_t height) {
@@ -782,61 +780,9 @@ uint32_t GTAOPass::Execute(IRHICommandList* cmdList, CBRingAllocator* cbRing,
     const uint32_t         filteredAOUav    = halfRes ? m_filteredAOHalfUavIndex : m_filteredAOUavIndex;
     const uint32_t         filteredAOSrv    = halfRes ? m_filteredAOHalfSrvIndex : m_filteredAOSrvIndex;
 
-    // ── Initial barriers: Common → UAV for first use after texture creation ──
-    // DX12 textures are created in Common state. Unlike buffers, textures do NOT
-    // support implicit Common→UAV promotion. Without this barrier, the first
-    // compute dispatch writes to a texture in the wrong state → GPU hang/TDR.
-    if (!m_initialBarriersDone) {
-        // Full-res textures always need the initial barrier (used directly or as
-        // upsample render target). History textures also need Common→UAV.
-        RHIBarrierDesc initBarriers[6] = {};
-        uint32_t barrierCount = 0;
-
-        initBarriers[barrierCount].texture     = m_rawAOTexture;
-        initBarriers[barrierCount].stateBefore = RHIResourceState::Common;
-        initBarriers[barrierCount].stateAfter  = RHIResourceState::UnorderedAccess;
-        barrierCount++;
-
-        initBarriers[barrierCount].texture     = m_filteredAOTexture;
-        initBarriers[barrierCount].stateBefore = RHIResourceState::Common;
-        initBarriers[barrierCount].stateAfter  = RHIResourceState::UnorderedAccess;
-        barrierCount++;
-
-        // Half-res textures also need initial barriers if they exist
-        if (m_rawAOHalf.IsValid()) {
-            initBarriers[barrierCount].texture     = m_rawAOHalf;
-            initBarriers[barrierCount].stateBefore = RHIResourceState::Common;
-            initBarriers[barrierCount].stateAfter  = RHIResourceState::UnorderedAccess;
-            barrierCount++;
-        }
-        if (m_filteredAOHalf.IsValid()) {
-            initBarriers[barrierCount].texture     = m_filteredAOHalf;
-            initBarriers[barrierCount].stateBefore = RHIResourceState::Common;
-            initBarriers[barrierCount].stateAfter  = RHIResourceState::UnorderedAccess;
-            barrierCount++;
-        }
-
-        // History textures: both start in Common, transition to UAV.
-        // On first frame we will copy into history[cur] and leave history[prev] in UAV
-        // (it will be transitioned to SRV when actually used as history input).
-        for (int i = 0; i < 2; ++i) {
-            if (m_aoHistory[i].IsValid()) {
-                initBarriers[barrierCount].texture     = m_aoHistory[i];
-                initBarriers[barrierCount].stateBefore = RHIResourceState::Common;
-                initBarriers[barrierCount].stateAfter  = RHIResourceState::UnorderedAccess;
-                barrierCount++;
-                m_aoHistoryState[i] = RHIResourceState::UnorderedAccess;
-            }
-        }
-
-        cmdList->ResourceBarrier(initBarriers, barrierCount);
-
-        m_initialBarriersDone = true;
-        m_filteredAOCurrentState = RHIResourceState::UnorderedAccess;
-        UZ_LOG(Renderer, Info,
-               "GTAOPass: initial barriers — Common -> UAV for {} textures (halfRes={})",
-               barrierCount, halfRes);
-    }
+    // Resolve creation, cross-frame and quality-switch states at each use.
+    m_states->Transition(cmdList, rawAOTarget, RHIResourceState::UnorderedAccess);
+    m_states->Transition(cmdList, filteredAOTarget, RHIResourceState::UnorderedAccess);
 
     // ══════════════════════════════════════════════════════════════════════
     // STEP 1: GTAO Compute Pass
@@ -922,11 +868,7 @@ uint32_t GTAOPass::Execute(IRHICommandList* cmdList, CBRingAllocator* cbRing,
 
     // ── UAV barrier: raw AO write → read ──
     {
-        RHIBarrierDesc barrier{};
-        barrier.texture     = rawAOTarget;
-        barrier.stateBefore = RHIResourceState::UnorderedAccess;
-        barrier.stateAfter  = RHIResourceState::ShaderResource;
-        cmdList->ResourceBarrier(&barrier, 1);
+        m_states->Transition(cmdList, rawAOTarget, RHIResourceState::ShaderResource);
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -981,23 +923,12 @@ uint32_t GTAOPass::Execute(IRHICommandList* cmdList, CBRingAllocator* cbRing,
     if (halfRes) {
         // ── Barrier: half-res filtered AO UAV → SRV (for upsample PS to read) ──
         {
-            RHIBarrierDesc barrier{};
-            barrier.texture     = m_filteredAOHalf;
-            barrier.stateBefore = RHIResourceState::UnorderedAccess;
-            barrier.stateAfter  = RHIResourceState::ShaderResource;
-            cmdList->ResourceBarrier(&barrier, 1);
+            m_states->Transition(cmdList, m_filteredAOHalf, RHIResourceState::ShaderResource);
         }
 
         // ── Barrier: full-res filtered AO → RenderTarget (upsample writes here) ──
-        // On the first frame, the initial barriers put this texture in UAV state.
-        // On subsequent frames, the end-of-upsample barriers leave it in SRV state.
-        // Track the correct source state to avoid D3D12 validation errors.
         {
-            RHIBarrierDesc barrier{};
-            barrier.texture     = m_filteredAOTexture;
-            barrier.stateBefore = m_filteredAOCurrentState;
-            barrier.stateAfter  = RHIResourceState::RenderTarget;
-            cmdList->ResourceBarrier(&barrier, 1);
+            m_states->Transition(cmdList, m_filteredAOTexture, RHIResourceState::RenderTarget);
         }
 
         if (!EnsureUpsamplePipeline()) {
@@ -1056,34 +987,14 @@ uint32_t GTAOPass::Execute(IRHICommandList* cmdList, CBRingAllocator* cbRing,
         //   2. Half-res raw AO: SRV → UAV (next frame's GTAO compute writes)
         //   3. Half-res filtered AO: SRV → UAV (next frame's denoise writes)
         {
-            RHIBarrierDesc endBarriers[3] = {};
-
-            endBarriers[0].texture     = m_filteredAOTexture;
-            endBarriers[0].stateBefore = RHIResourceState::RenderTarget;
-            endBarriers[0].stateAfter  = RHIResourceState::ShaderResource;
-
-            endBarriers[1].texture     = m_rawAOHalf;
-            endBarriers[1].stateBefore = RHIResourceState::ShaderResource;
-            endBarriers[1].stateAfter  = RHIResourceState::UnorderedAccess;
-
-            endBarriers[2].texture     = m_filteredAOHalf;
-            endBarriers[2].stateBefore = RHIResourceState::ShaderResource;
-            endBarriers[2].stateAfter  = RHIResourceState::UnorderedAccess;
-
-            cmdList->ResourceBarrier(endBarriers, 3);
+            m_states->Transition(cmdList, m_filteredAOTexture, RHIResourceState::ShaderResource);
+            m_states->Transition(cmdList, m_rawAOHalf, RHIResourceState::UnorderedAccess);
+            m_states->Transition(cmdList, m_filteredAOHalf, RHIResourceState::UnorderedAccess);
         }
 
-        // After upsample, full-res filtered AO is in SRV state.
-        m_filteredAOCurrentState = RHIResourceState::ShaderResource;
     } else {
         // ── Full-res path: transition filtered AO to SRV for temporal/lighting pass ──
-        RHIBarrierDesc barrier{};
-        barrier.texture     = m_filteredAOTexture;
-        barrier.stateBefore = RHIResourceState::UnorderedAccess;
-        barrier.stateAfter  = RHIResourceState::ShaderResource;
-        cmdList->ResourceBarrier(&barrier, 1);
-
-        m_filteredAOCurrentState = RHIResourceState::ShaderResource;
+        m_states->Transition(cmdList, m_filteredAOTexture, RHIResourceState::ShaderResource);
     }
 
     // At this point, m_filteredAOTexture is in SRV state and contains the
@@ -1121,35 +1032,18 @@ uint32_t GTAOPass::Execute(IRHICommandList* cmdList, CBRingAllocator* cbRing,
             // ── First frame: no valid history — copy denoised AO to history[cur] ──
             // This seeds the temporal accumulation with the spatial-only result.
             {
-                RHIBarrierDesc copyBarriers[2] = {};
-                copyBarriers[0].texture     = m_filteredAOTexture;
-                copyBarriers[0].stateBefore = RHIResourceState::ShaderResource;
-                copyBarriers[0].stateAfter  = RHIResourceState::CopySrc;
-
-                copyBarriers[1].texture     = m_aoHistory[curIdx];
-                copyBarriers[1].stateBefore = m_aoHistoryState[curIdx];
-                copyBarriers[1].stateAfter  = RHIResourceState::CopyDst;
-
-                cmdList->ResourceBarrier(copyBarriers, 2);
+                m_states->Transition(cmdList, m_filteredAOTexture, RHIResourceState::CopySrc);
+                m_states->Transition(cmdList, m_aoHistory[curIdx], RHIResourceState::CopyDst);
             }
 
             cmdList->CopyTexture(m_filteredAOTexture, m_aoHistory[curIdx]);
 
             // Transition history[cur] → SRV (final output), filteredAO → SRV (restore)
             {
-                RHIBarrierDesc postCopyBarriers[2] = {};
-                postCopyBarriers[0].texture     = m_aoHistory[curIdx];
-                postCopyBarriers[0].stateBefore = RHIResourceState::CopyDst;
-                postCopyBarriers[0].stateAfter  = RHIResourceState::ShaderResource;
-
-                postCopyBarriers[1].texture     = m_filteredAOTexture;
-                postCopyBarriers[1].stateBefore = RHIResourceState::CopySrc;
-                postCopyBarriers[1].stateAfter  = RHIResourceState::ShaderResource;
-
-                cmdList->ResourceBarrier(postCopyBarriers, 2);
+                m_states->Transition(cmdList, m_aoHistory[curIdx], RHIResourceState::ShaderResource);
+                m_states->Transition(cmdList, m_filteredAOTexture, RHIResourceState::ShaderResource);
             }
 
-            m_aoHistoryState[curIdx] = RHIResourceState::ShaderResource;
             m_historyValid = true;
             finalAOSrvIndex = m_aoHistorySrvIndex[curIdx];
 
@@ -1166,18 +1060,8 @@ uint32_t GTAOPass::Execute(IRHICommandList* cmdList, CBRingAllocator* cbRing,
             // Output: history[cur] (UAV)
             //
             // history[prev]: always in SRV from the previous frame's post-temporal transition.
-            // history[cur]: tracked via m_aoHistoryState — may be UAV (after init/first frame
-            //               didn't touch it) or SRV (from two frames ago when it was the output).
-
             // Transition history[cur] to UAV for the compute write.
-            if (m_aoHistoryState[curIdx] != RHIResourceState::UnorderedAccess) {
-                RHIBarrierDesc barrier{};
-                barrier.texture     = m_aoHistory[curIdx];
-                barrier.stateBefore = m_aoHistoryState[curIdx];
-                barrier.stateAfter  = RHIResourceState::UnorderedAccess;
-                cmdList->ResourceBarrier(&barrier, 1);
-                m_aoHistoryState[curIdx] = RHIResourceState::UnorderedAccess;
-            }
+            m_states->Transition(cmdList, m_aoHistory[curIdx], RHIResourceState::UnorderedAccess);
 
             cmdList->SetPipeline(m_temporalPipeline);
 
@@ -1221,12 +1105,7 @@ uint32_t GTAOPass::Execute(IRHICommandList* cmdList, CBRingAllocator* cbRing,
 
             // ── Barrier: history[cur] UAV → SRV (lighting pass reads it) ──
             {
-                RHIBarrierDesc barrier{};
-                barrier.texture     = m_aoHistory[curIdx];
-                barrier.stateBefore = RHIResourceState::UnorderedAccess;
-                barrier.stateAfter  = RHIResourceState::ShaderResource;
-                cmdList->ResourceBarrier(&barrier, 1);
-                m_aoHistoryState[curIdx] = RHIResourceState::ShaderResource;
+                m_states->Transition(cmdList, m_aoHistory[curIdx], RHIResourceState::ShaderResource);
             }
 
             finalAOSrvIndex = m_aoHistorySrvIndex[curIdx];

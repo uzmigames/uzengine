@@ -13,8 +13,7 @@
       "args": [
         "mcp/dist/src/server.js",
         "--stdio"
-      ],
-      "cwd": "e:/UzEngine"
+      ]
     }
   }
 }

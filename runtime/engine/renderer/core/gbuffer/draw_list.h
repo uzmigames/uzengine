@@ -179,6 +179,12 @@ struct DrawCommand {
     uint32_t lodIndexCount = 0;
 };
 
+/// Shared occluder membership for the distance field and ray-tracing TLAS.
+/// Opaque and masked draws occlude; translucent/additive draws and mesh decals do not.
+[[nodiscard]] inline bool IsGIOccluder(const DrawCommand& draw) noexcept {
+    return (draw.materialFlags & 0x3u) < 2u && (draw.materialFlags & 0x10u) == 0u;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SortKey — 64-bit sort key construction helpers
 // ─────────────────────────────────────────────────────────────────────────────

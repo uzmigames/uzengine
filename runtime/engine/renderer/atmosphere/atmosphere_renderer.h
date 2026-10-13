@@ -27,7 +27,7 @@ class IRHIDevice;
 class IRHICommandList;
 class EnvMapSampler;
 
-namespace rg { class RgBuilder; }
+namespace rg { class RgBuilder; class RgStateRegistry; }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AtmosphereFrameContext — parameters for atmosphere passes
@@ -40,6 +40,7 @@ namespace rg { class RgBuilder; }
 /// to SceneRenderer members.
 struct AtmosphereFrameContext {
     IRHIDevice*       device         = nullptr;
+    rg::RgStateRegistry* states      = nullptr;
     World*            world          = nullptr;
     CBRingAllocator*  cbRing         = nullptr;
     PipelineLibrary*  pipelines      = nullptr;

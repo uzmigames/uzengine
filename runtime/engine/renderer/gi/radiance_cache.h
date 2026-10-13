@@ -26,6 +26,8 @@
 
 namespace uz {
 
+namespace rg { class RgStateRegistry; }
+
 class IRHIDevice;
 class IRHICommandList;
 class CBRingAllocator;
@@ -121,6 +123,8 @@ public:
     /// # Returns
     /// `true` if all resources were created successfully.
     [[nodiscard]] bool CreateResources(IRHIDevice* device, float worldExtent = 5000.0f);
+
+    void SetStateRegistry(rg::RgStateRegistry* states) { m_rgStates = states; }
 
     /// Destroys the SH buffer.
     void DestroyResources();
@@ -273,6 +277,7 @@ private:
                             const void* traceConstantsCpu, uint32_t traceConstantsSize);
 
     IRHIDevice* m_device = nullptr;
+    rg::RgStateRegistry* m_rgStates = nullptr;
 
     /// StructuredBuffer<float4> — kTotalProbes * kSHFloat4PerProbe float4 elements.
     /// Total: 4096 * 7 * 16 = 458,752 bytes (~449 KB).
@@ -282,12 +287,9 @@ private:
     RHIBufferHandle m_historyShBuffer;
     uint32_t        m_historyShBufferSrv = UINT32_MAX;
     uint32_t        m_historyShBufferUav = UINT32_MAX;
-    RHIResourceState m_shBufferState = RHIResourceState::Common;
-    RHIResourceState m_historyShBufferState = RHIResourceState::Common;
     RHIBufferHandle m_diagnosticReadback;
     RHIBufferHandle m_diagnosticStats;
     uint32_t m_diagnosticStatsUav = UINT32_MAX;
-    RHIResourceState m_diagnosticStatsState = RHIResourceState::Common;
     uint32_t m_diagnosticCopyFrame = UINT32_MAX;
     bool m_diagnosticComplete = false;
     Vec3 m_diagnosticOrigin;
@@ -299,7 +301,6 @@ private:
     RHIBufferHandle m_probeSideBuffer;
     uint32_t m_probeSideSrv = UINT32_MAX;
     uint32_t m_probeSideUav = UINT32_MAX;
-    RHIResourceState m_probeSideState = RHIResourceState::Common;
     bool     m_probeSideValid = false;
     uint64_t m_probeSideHash = 0;
     Vec3     m_probeSideOrigin;
@@ -313,8 +314,6 @@ private:
     uint32_t m_reachAirUav = UINT32_MAX;
     RHIBufferHandle m_reachStatsBuffer;
     uint32_t m_reachStatsUav = UINT32_MAX;
-    RHIResourceState m_reachAirState = RHIResourceState::Common;
-    RHIResourceState m_reachStatsState = RHIResourceState::Common;
     /// Camera position of the last Update() — the flood fill's seed.
     Vec3 m_cameraPos;
     /// G-buffer world position the visible-surface seeds read (`r.GI.RadianceCache.ReachVisibleSeeds`).

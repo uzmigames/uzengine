@@ -399,7 +399,7 @@ def run(args, report):
                 work = os.path.join(args.out, f'{c}_r{k}')
                 print(f'  ... {c} repeat {k}', flush=True)
                 res = runner.run_capture(work, os.path.join(runner.REPO, 'scripts', 'rendering', PROJECT),
-                                         ANALYSIS_LAST - SCENE_START + 8, regions=[ROI],
+                                         ANALYSIS_LAST + 32, regions=[ROI],
                                          region_fields=fields, region_first=FIRST,
                                          region_last=ANALYSIS_LAST, cvars=BASE, timing_first=FIRST,
                                          clean=True)
@@ -574,16 +574,20 @@ def _write(args, report):
 
 
 def main():
-    global ANALYSIS_LAST
+    global ANALYSIS_LAST, ROI, NAME
     ap = argparse.ArgumentParser()
     ap.add_argument('--frames', type=int, default=128)
     ap.add_argument('--repeats', type=int, default=3)
     ap.add_argument('--out', default=os.path.join(runner.REPO, '.screenshots', 'flicker-elimination',
                                                   '35-door-reading'))
     ap.add_argument('--reuse', action='store_true')
+    ap.add_argument('--roi', choices=('rear_door', 'right_shadow'), default='rear_door')
     args = ap.parse_args()
+    if args.roi == 'right_shadow':
+        ROI = ('right_shadow', 1472, 464, 256, 256)
+        NAME = ROI[0]
     ANALYSIS_LAST = FIRST + args.frames - 1
-    print(f'rear_door reading — frames {FIRST}..{ANALYSIS_LAST}, {args.repeats} repeats per condition, '
+    print(f'{NAME} reading — frames {FIRST}..{ANALYSIS_LAST}, {args.repeats} repeats per condition, '
           f'conditions {CONDITIONS}')
     report = {'status': 'incomplete', 'stopped_at': None, 'reasons': [], 'restrictions': [],
               'roi': ROI, 'frames': [FIRST, ANALYSIS_LAST], 'repeats': args.repeats,

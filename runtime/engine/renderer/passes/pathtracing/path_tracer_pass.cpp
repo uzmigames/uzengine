@@ -80,12 +80,14 @@ void AddPathTracerPass(rg::RgBuilder& builder, const PathTracerPassDesc& desc)
 {
     builder.AddPass("PathTracer", [desc](rg::RgPassBuilder& pb) {
         pb.Write(desc.accumCurr,       RHIResourceState::RenderTarget);
+        pb.Read(desc.accumPrev,        RHIResourceState::ShaderResource);
         pb.Write(desc.hdrTarget,       RHIResourceState::RenderTarget);
         pb.Read(desc.normalGBuffer,    RHIResourceState::ShaderResource);
         pb.Read(desc.depthGBuffer,     RHIResourceState::ShaderResource);
         pb.Read(desc.albedoGBuffer,    RHIResourceState::ShaderResource);
         pb.Read(desc.positionGBuffer,  RHIResourceState::ShaderResource);
         pb.Read(desc.emissiveGBuffer,  RHIResourceState::ShaderResource);
+        pb.Read(desc.shadowAtlas,      RHIResourceState::ShaderResource);
 
         pb.SetExecutionCallback([desc](IRHICommandList* cmd, const rg::RgPassResources& res) {
             UZ_PROFILE_SCOPE("PathTracer::Execute");

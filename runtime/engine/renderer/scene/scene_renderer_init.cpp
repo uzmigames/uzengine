@@ -43,6 +43,7 @@
 #include "cvar.h"
 #include "raytracing/rt_manager.h"
 #include "passes/raytracing/rt_uv_test_pass.h"
+#include "passes/debug/pixel_debug.h"
 #include "material_pipeline.h"
 #include "engine/material/material_manager.h"
 #include "engine/vfx/vfx_system.h"
@@ -69,6 +70,13 @@ SceneRenderer::~SceneRenderer() {
 
 SceneRenderer::SceneRenderer(SceneRenderer&&) noexcept = default;
 SceneRenderer& SceneRenderer::operator=(SceneRenderer&&) noexcept = default;
+
+void SceneRenderer::SetPixelDebugSystem(PixelDebugSystem* pds) noexcept {
+    m_pixelDebugSystem = pds;
+    if (pds) {
+        pds->SetStateRegistry(m_rgStates.get());
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Init
@@ -149,6 +157,7 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     // ── Stats Overlay (deferred init — needs cmdList in recording state) ─
     m_statsOverlay = std::make_unique<StatsOverlay>();
     m_statsOverlayInitialized = false;
+    m_fallbackTexturesInitialized = false;
 
     // ── Viewport Toolbar (deferred init — needs cmdList in recording state) ─
     m_viewportToolbar = std::make_unique<ViewportToolbar>();
@@ -165,6 +174,12 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     // ── Render Graph Resource Pool ──────────────────────────────────────
     m_rgPool = std::make_unique<rg::RgResourcePool>(device);
     m_rgStates = std::make_unique<rg::RgStateRegistry>(device);
+    m_passInspector.SetStateRegistry(m_rgStates.get());
+    if (m_pixelDebugSystem) {
+        m_pixelDebugSystem->SetStateRegistry(m_rgStates.get());
+    }
+    m_ddgiSystem.SetStateRegistry(m_rgStates.get());
+    m_radianceCache.SetStateRegistry(m_rgStates.get());
 
     // ── Camera ──────────────────────────────────────────────────────────
     m_cameraManager = std::make_unique<CameraManager>();
@@ -575,6 +590,7 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
 
     // ── Environment MIS Temporal Accumulation ────────────────────────
     m_envMISPass = std::make_unique<EnvMISPass>();
+    m_envMISPass->SetStateRegistry(m_rgStates.get());
     if (m_envMISPass->Init(device, m_shaderMgr.get(), width, height)) {
         UZ_LOG(Renderer, Info, "SceneRenderer: EnvMISPass initialized ({}x{})", width, height);
     } else {
@@ -619,12 +635,14 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
 
     // ── Auto-Exposure ────────────────────────────────────────────────
     m_autoExposure = std::make_unique<AutoExposure>();
+    m_autoExposure->SetStateRegistry(m_rgStates.get());
     if (!m_autoExposure->Init(device, m_shaderMgr.get())) {
         UZ_LOG(Renderer, Warning, "SceneRenderer: auto-exposure init failed (will use exposure=1.0)");
     }
 
     // ── GTAO (at render resolution — operates on GBuffer depth/normals) ──
     m_gtaoPass = std::make_unique<GTAOPass>();
+    m_gtaoPass->SetStateRegistry(m_rgStates.get());
     if (!m_gtaoPass->Init(device, m_shaderMgr.get(), m_renderWidth, m_renderHeight)) {
         UZ_LOG(Renderer, Warning, "SceneRenderer: GTAO init failed (SSAO disabled)");
     }
@@ -632,6 +650,7 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     // ── Bloom (at render resolution — operates on HDR scene color) ───
     UZ_LOG(Renderer, Info, "SceneRenderer: initializing BloomPass...");
     m_bloomPass = std::make_unique<BloomPass>();
+    m_bloomPass->SetStateRegistry(m_rgStates.get());
     if (!m_bloomPass->Init(device, m_shaderMgr.get(), m_renderWidth, m_renderHeight)) {
         UZ_LOG(Renderer, Warning, "SceneRenderer: bloom init failed (bloom disabled)");
     }
@@ -1208,6 +1227,8 @@ void SceneRenderer::Resize(uint32_t width, uint32_t height) {
         m_hdrSceneColor = m_device->CreateTexture(hdrDesc);
         m_hdrSceneColorSrv = m_device->GetTextureSRVIndex(m_hdrSceneColor);
     }
+
+    m_hdrHasContent = false;
 
     // Recreate debug MRT targets at render resolution
     {

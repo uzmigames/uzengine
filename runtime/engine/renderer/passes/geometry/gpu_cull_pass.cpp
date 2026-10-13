@@ -8,6 +8,7 @@
 #include "gpu_cull_pass.h"
 
 #include "render_graph_builder.h"
+#include "render_graph_states.h"
 #include "render_graph_pass.h"
 #include "engine/rhi/rhi.h"
 
@@ -84,6 +85,7 @@ void AddGpuCullPass(rg::RgBuilder& builder, const GpuCullPassDesc& desc)
             barriers[1].stateBefore  = RHIResourceState::UnorderedAccess;
             barriers[1].stateAfter   = RHIResourceState::IndirectArgument;
             cmd->ResourceBarrier(barriers, 2);
+            desc.states->Set(desc.indirectArgsBuffer, RHIResourceState::IndirectArgument);
 
             // Log first execution for diagnostics.
             static bool loggedOnce = false;

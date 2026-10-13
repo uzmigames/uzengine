@@ -7,6 +7,7 @@
 
 #include "inspector_pass.h"
 #include "inspector_pass_utils.h"
+#include "render_graph_states.h"
 
 #include "rhi.h"
 #include "log.h"
@@ -38,6 +39,7 @@ namespace {
 [[nodiscard]] std::vector<uint8_t> ReadbackTextureToRGBA8(
     IRHIDevice* device, IRHICommandList* cmdList,
     const RegisteredTarget& target,
+    const rg::RgStateRegistry* states,
     RHIBufferHandle sharedReadbackBuffer, uint64_t sharedBufferSize)
 {
     std::vector<uint8_t> pixels;
@@ -73,13 +75,15 @@ namespace {
     }
 
     RHIBufferHandle readbackBuffer = sharedReadbackBuffer;
+    const auto lastState = states ? states->Find(target.texture).value_or(target.lastState)
+                                  : target.lastState;
 
     // Record barrier + copy + restore barrier.
     cmdList->Begin();
     {
         RHIBarrierDesc barrier{};
         barrier.texture     = target.texture;
-        barrier.stateBefore = target.lastState;
+        barrier.stateBefore = lastState;
         barrier.stateAfter  = RHIResourceState::CopySrc;
         cmdList->ResourceBarrier(&barrier, 1);
 
@@ -87,7 +91,7 @@ namespace {
                                       readbackBuffer, 0, rowPitch, 0);
 
         barrier.stateBefore = RHIResourceState::CopySrc;
-        barrier.stateAfter  = target.lastState;
+        barrier.stateAfter  = lastState;
         cmdList->ResourceBarrier(&barrier, 1);
     }
     cmdList->End();
@@ -296,7 +300,7 @@ void PassInspector::ExecuteDump(IRHIDevice* device, IRHICommandList* cmdList,
         }
 
         // Readback the texture to RGBA8 using the shared buffer.
-        auto pixels = ReadbackTextureToRGBA8(device, cmdList, target, sharedReadback, kMaxReadbackSize);
+        auto pixels = ReadbackTextureToRGBA8(device, cmdList, target, m_states, sharedReadback, kMaxReadbackSize);
         if (pixels.empty()) {
             const RHITextureDesc td = device->GetTextureDesc(target.texture);
             UZ_LOG(PassInspector, Warning,

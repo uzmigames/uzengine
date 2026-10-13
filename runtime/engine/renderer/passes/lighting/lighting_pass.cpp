@@ -51,6 +51,9 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
         if (desc.shadowAtlasResource.IsValid()) {
             pb.Read(desc.shadowAtlasResource, RHIResourceState::ShaderResource);
         }
+        if (desc.localShadowAtlasResource.IsValid()) {
+            pb.Read(desc.localShadowAtlasResource, RHIResourceState::ShaderResource);
+        }
         if (desc.apVolumeResource.IsValid()) {
             pb.Read(desc.apVolumeResource, RHIResourceState::ShaderResource);
         }
