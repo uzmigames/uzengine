@@ -932,6 +932,11 @@ Whether to keep the volume (documented as inert) or remove it, which settles the
 decision N3, owner: `phase0_indoor-lighting-system` (see `docs/guides/indoor-lighting-guide.md`,
 section 4).
 
+**Tail disposition (2026-10-14):** retain the volume as documented inert infrastructure (N3).
+Adding a `LightProbeVolumeComponent` is not a way to brighten an interior; use the active
+radiance cache/DDGI paths or artist-authored local fill lights instead. The tail's render gates
+must measure those active paths, not treat buffer allocation as proof of probe-volume lighting.
+
 ### SkyLight `intensity` / `indirect_lighting_intensity` / lower hemisphere — `OPEN DECISION` (2026-10-08, `phase0_indoor-lighting-system` N1/N2)
 **Files**: [frame_constants.cpp](../../runtime/engine/renderer/frame/frame_constants.cpp) (`:418-454`),
 [deferred_lighting_ps.hlsl](../../runtime/shaders/runtime/lighting/deferred_lighting_ps.hlsl) (`:714-715`),
@@ -982,6 +987,13 @@ therefore does not depend on N1, but it would change under N2 if the GI writers 
 intensity. No harness measures any of this yet (task item 8.2). Evidence and options: the task's
 `tasks.md` header and `docs/guides/indoor-lighting-guide.md`, section 2. Open, owner:
 `phase0_indoor-lighting-system` (N1, N2 and the related items above).
+
+**Tail disposition (2026-10-14):** document the N1/N2 split rather than change scene lighting.
+Use strictly positive indirect-intensity values when measuring the fallback's scaling; zero
+selects the cubemap fallback described above and is not an ambient-off control. A GI-on interior
+must be checked through its consumed indirect-light/probe-support records, not by sweeping a
+SkyLight setting that never reaches that path. Changing the split remains separate implementation
+work; the documentation tail does not make these settings uniform across lighting paths.
 
 ---
 
@@ -1825,3 +1837,27 @@ G-buffer after the render-loop resize (docs/analysis/rendering-arch/render-graph
 D3D12 debug layer cannot run on this workstation to report them. Stage 0 (the registry, observe only) shipped
 in 9735d401; stages 1-3 (tracked imports, the missing reads, the manual barriers) are open, owner:
 `phase0_render-graph-state-registry`.
+
+## GDF incremental - transient-arrival ghosting (G3e), 2026-10-14
+
+`phase0_lighting-block-b-02-gdf-incremental` shipped its regional knock-on (item 4.1); the
+transient-arrival END-strip peak gate **G3e stays at 8.83 % (target <= 5 %)** as an accepted
+limitation. The optimization that targeted it (4.3: persist each change box a few frames and
+retrace only its probes at a decaying blend) was tried 2026-10-06 and made G3e WORSE
+(7.34 % vs 6.51 % HEAD), so it was reverted. Research follow-up, not yet pursued: per-probe
+transport readback on the arrival frames (measure which probes actually received transport the
+frame the object arrives, and retrace only those) rather than a geometric change-box blend.
+
+## Brixelizer GI is a dormant no-op (2026-10-14, phase0_brixelizer-gi-integration)
+
+The AMD FidelityFX Brixelizer GI integration (pass, loader, CVar `r.BrixelizerGI`, debug viz) is
+present and compiles, but is **inert**: the FFX Brixelizer wrapper DLL and SDK libraries are not
+built/linked, so the loader selects the NO-OP implementation - context construction is commented
+out and the GI dispatch returns immediately. The deferred-lighting adopt path therefore sees
+`brixGIDiffuseSrv == UINT32_MAX` (sentinel) every frame and Brixelizer contributes nothing.
+Evidence (2026-10-14): Sponza A with vs without `r.BrixelizerGI` = 85.6 dB PSNR, max diff 1/255
+(no visible change); frame-time delta +0.15 ms (no real bake/dispatch). The test items 8.1-8.5 of
+the task are BLOCKED on this (unit tests cover only public-API safety, in
+`runtime/tests/engine/renderer/test_brixelizer_gi_pass.cpp`, 9 passing). Enabling the feature needs
+the FFX DLL/SDK build + uncommenting construction + SRV wiring - a build-system + engine change,
+out of scope for the test task. Owner: phase0_brixelizer-gi-integration (cannot archive while inert).

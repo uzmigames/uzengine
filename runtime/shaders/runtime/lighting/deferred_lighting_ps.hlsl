@@ -1259,7 +1259,36 @@ LightingOutput main(FSInput input) {
                              / max(1.0 - Ems_d_diff * Favg_d, 0.001);
         float3 totalScatterDielectric = FssEss_d_diff + Fms_d_diff * Ems_d_diff;
 
-        float3 diffuseAmbient = (1.0 - metallic) * cosineIrradiance * baseColor
+        // Unified indirect diffuse irradiance (lumen-lite 4.1-4.4): one quantity,
+        // E/pi in scene-radiance units (albedo + Lambert 1/pi excluded). Sky colour
+        // reaches only the sky-SH fallback - skyTintDiffuse is 1.0 for every GI source
+        // and for the world gather - so it is applied here, before the screen blend,
+        // and screen-traced radiance is never tinted.
+        float3 diffuseIrradiance = cosineIrradiance * skyTintDiffuse;
+
+        // Screen-validity blend (4.1). The legacy screen trace writes the cosine-sampled
+        // mean of hit radiance (misses = 0 => E_screen/pi) and, in its AO target, the
+        // cosine-weighted fraction of rays with no on-screen hit. The screen term owns the
+        // hemisphere it covered; the probe/sky cascade fills only the uncovered fraction:
+        //     E/pi = ssgi + miss * fallback   (miss 0 = screen only, 1 = cascade only).
+        // Summing the two unscaled double-counted the probe bounce (+1.4 dB vs the path
+        // tracer on Sponza pose A). Skipped while the SDF world gather is on (it replaced
+        // cosineIrradiance above and writes a constant 1.0 to the AO target).
+#ifdef UZ_BINDLESS
+        if (ssgiSrvIndex != kSentinelSrvIndex && _ssgiAO != kSentinelSrvIndex
+            && _sdfDiffuseSamples == 0) {
+            Texture2D<float4> ssgiTex   = ResourceDescriptorHeap[ssgiSrvIndex];
+            Texture2D<float>  ssgiAoTex = ResourceDescriptorHeap[_ssgiAO];
+            float3 ssgiColor = ssgiTex.Load(int3(px, 0)).rgb;
+            float  ssgiMiss  = saturate(ssgiAoTex.Load(int3(px, 0)));
+            dbgSsgiConsumed  = ssgiColor;
+            dbgSsgiMode      = 2u;                  // 2 = legacy screen-space SSGI
+            diffuseIrradiance = ssgiColor + ssgiMiss * diffuseIrradiance;
+            dbgPath |= 4u;
+        }
+#endif
+
+        float3 diffuseAmbient = (1.0 - metallic) * diffuseIrradiance * baseColor
                               * (1.0 - totalScatterDielectric);
 
         // SSR is applied POST-TAA to prevent TAA neighborhood contamination.
@@ -1286,38 +1315,8 @@ LightingOutput main(FSInput input) {
             : saturate(pow(NoV + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao);
         specOcclusionOut = specOcclusion;
 
-        // SSGI: screen-space indirect diffuse. ONLY added when no world-space
-        // GI source (DDGI/RC/LPV) provided the irradiance — those probes
-        // already integrate the same bounce transport SSGI estimates, so
-        // adding both double-counts indirect light (measured +1.4 dB error
-        // vs the reference path tracer on Sponza pose A). When a world GI
-        // source is active SSGI is skipped entirely until per-pixel validity
-        // is threaded through the SSGI chain (task 4.1 follow-up: blend by
-        // screen-trace confidence instead of a binary gate).
-        // @ref Falcor MinimalPathTracer — one indirect source per pixel
-#ifdef UZ_BINDLESS
-        // Legacy screen-space SSGI is additive; the world gather already replaced
-        // cosineIrradiance above, so adding it too would double the indirect.
-        if (ssgiSrvIndex != kSentinelSrvIndex && _sdfDiffuseSamples == 0) {
-            Texture2D<float4> ssgiTex = ResourceDescriptorHeap[ssgiSrvIndex];
-            float3 ssgiColor = ssgiTex.Load(int3(px, 0)).rgb;
-            // Recorded whether or not it passes the threshold below: a contribution that is
-            // rejected as too small can still be the thing that varies, and on a region whose
-            // whole output is 1.6e-4 the 0.001 threshold is above the signal.
-            dbgSsgiConsumed = ssgiColor;
-            dbgSsgiMode = 2u;                         // 2 = legacy screen-space SSGI
-            if (any(ssgiColor > 0.001)) {
-                diffuseAmbient += (1.0 - metallic) * ssgiColor * baseColor;
-                dbgPath |= 4u;
-            }
-        }
-#else
-        {
-            float3 ssgiColor = ssgiTextureT12.Load(int3(px, 0)).rgb;
-            if (!irradianceFromGI && any(ssgiColor > 0.001))
-                diffuseAmbient += (1.0 - metallic) * ssgiColor * baseColor;
-        }
-#endif
+        // SSGI is folded into the unified indirect diffuse above by the screen-validity
+        // blend (lumen-lite 4.1); the old additive SSGI branch has been removed.
 
         // ── Brixelizer GI: add sparse SDF voxel indirect lighting ──────
         // @ref AMD 2024 "FidelityFX Brixelizer GI" — screen-space probe GI
@@ -1359,7 +1358,7 @@ LightingOutput main(FSInput input) {
         // default is now 1.0, i.e. plain `ao` — an artistic exponent must be
         // opted into, not baked into every scene's indirect light.
         float aoForDiffuse = pow(saturate(ao), _indirectAOExponent);
-        dbgDiffuseIndirect = diffuseAmbient * aoForDiffuse * skyTintDiffuse;
+        dbgDiffuseIndirect = diffuseAmbient * aoForDiffuse;  // AO once; sky tint was applied to the fallback before the blend
         dbgSpecularIndirect = specularAmbient * specOcclusion * skyTintSpecular;
         // Substituted before it contributes, so the render and the recording agree.
         if (replayActive) dbgSpecularIndirect = replaySpecular;

@@ -13,6 +13,27 @@ references: Wright 2015 SDF GI, Majercik 2019 DDGI, Hillaire 2016 Volume Renderi
 
 ## Overview
 
+### Indirect diffuse exchange convention
+
+Indirect diffuse irradiance is exchanged as E/pi in linear scene-radiance units
+(albedo excluded, Lambert 1/pi included, sky colour x sky intensity included by
+every traced writer), never pre-multiplied by AO; the consumer multiplies by
+(1-metallic)*baseColor*(1-dielectricScatter) once and by ao^k once;
+r.GI.Intensity scales traced probe sources only, so like-for-like blending needs
+r.GI.Intensity=1.
+
+The legacy screen trace stores E_screen/pi with zero radiance for misses. Its AO
+target stores the cosine-weighted miss fraction, so the unified diffuse is
+`ssgi + saturate(miss) * fallback`: screen hits own the covered hemisphere and
+the DDGI/RC/LPV/sky cascade fills only the uncovered fraction. The SDF final
+gather replaces the cascade and bypasses this blend. Sky tint applies to the sky
+fallback before blending, not to traced scene radiance. The compact SH packing
+already bakes A_l/pi, so no additional pi conversion belongs in the consumer.
+
+This convention lives here rather than in `docs/specs/rendering/cb-layouts.md`,
+which does not exist; `docs/analysis/lighting/uzengine/cb-layouts.md` describes
+constant-buffer memory layout rather than radiometric units.
+
 UzEngine implements a **three-tier SDF global illumination system** (Wright 2015 SDF), with Majercik 2019 DDGI as the DXR option. The system computes indirect lighting via:
 
 1. **Tier 1: Mesh SDF** — Per-mesh signed distance fields (32×32×32, R16F) baked on the GPU
