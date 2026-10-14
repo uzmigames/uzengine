@@ -156,7 +156,14 @@ struct DlssUpscaler::Impl {
     /// @ref NVIDIA NGX Programming Guide — NGX core library is driver-provided.
     static HMODULE FindNvNgxInDriverStore() {
         // Enumerate DriverStore directories matching NVIDIA display driver pattern.
-        const wchar_t* driverStoreBase = L"C:\\Windows\\System32\\DriverStore\\FileRepository";
+        // Resolve System32 at runtime via GetSystemDirectoryW so discovery is
+        // path-agnostic (do not assume the Windows system drive is C:).
+        wchar_t systemDir[MAX_PATH];
+        const UINT systemDirLen = ::GetSystemDirectoryW(systemDir, MAX_PATH);
+        if (systemDirLen == 0 || systemDirLen >= MAX_PATH) return nullptr;
+        wchar_t driverStoreBase[MAX_PATH];
+        _snwprintf_s(driverStoreBase, MAX_PATH, _TRUNCATE,
+                     L"%s\\DriverStore\\FileRepository", systemDir);
         WIN32_FIND_DATAW findData{};
         wchar_t searchPattern[MAX_PATH];
         _snwprintf_s(searchPattern, MAX_PATH, _TRUNCATE, L"%s\\nv_dispi.inf_amd64_*", driverStoreBase);
