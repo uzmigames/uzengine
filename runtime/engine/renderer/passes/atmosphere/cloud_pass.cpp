@@ -416,7 +416,10 @@ struct alignas(16) CloudCB {
     float detailErosion;
     float densityScale;
     float jitterScale;
-    float padding[50];
+    float powderScale;
+    float powderExponent;
+    uint32_t multiScatterOctaves;
+    float padding[47];
 };
 
 static_assert(sizeof(CloudCB) == 512, "CloudCB must be 512 bytes for CBV alignment");
@@ -431,6 +434,9 @@ static_assert(offsetof(CloudCB, minStepSize) == 256);
 static_assert(offsetof(CloudCB, stbnSrvIndex) == 268);
 static_assert(offsetof(CloudCB, frameIndex) == 272);
 static_assert(offsetof(CloudCB, shapeOctaves) == 288);
+static_assert(offsetof(CloudCB, powderScale) == 312);
+static_assert(offsetof(CloudCB, powderExponent) == 316);
+static_assert(offsetof(CloudCB, multiScatterOctaves) == 320);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RegisterPasses
@@ -511,6 +517,9 @@ void CloudPass::RegisterPasses(rg::RgBuilder& rgBuilder, rg::RgStateRegistry* st
     cb.detailErosion = cv_CloudErosion->value;
     cb.densityScale = cv_CloudDensScale->value;
     cb.jitterScale = input.jitterScale;
+    cb.powderScale = std::clamp(input.powderScale, 0.0f, 1.0f);
+    cb.powderExponent = std::max(0.0f, input.powderExponent);
+    cb.multiScatterOctaves = std::clamp(input.multiScatterOctaves, 1u, 8u);
 
     auto cbAlloc = cbRing.Allocate(sizeof(CloudCB));
     std::memcpy(cbAlloc.cpuPtr, &cb, sizeof(CloudCB));
@@ -531,6 +540,9 @@ void CloudPass::RegisterPasses(rg::RgBuilder& rgBuilder, rg::RgStateRegistry* st
         UZ_LOG(Renderer, Info,
                "CloudPass: adaptive CB — bytes={}, minStep={}, maxStep={}, perspectiveScale={}, STBN={}, shape={}, iterations=256",
                sizeof(CloudCB), cb.minStepSize, cb.maxStepSize, cb.perspectiveStepScale, cb.stbnSrvIndex, cb.shapeNoiseSrv);
+        UZ_LOG(Renderer, Info,
+               "CloudPass: lighting — multiScatterOctaves={}, powderScale={}, powderExponent={}, skyLightScale={}",
+               cb.multiScatterOctaves, cb.powderScale, cb.powderExponent, cb.ambientMultiplier);
         UZ_LOG(Renderer, Info,
                "CloudPass: root constants — outputUAV={}, depthSRV={}, size={}x{}",
                rootConst[0], rootConst[1], rootConst[2], rootConst[3]);

@@ -47,6 +47,9 @@ UZ_REGISTER_COMPONENT_SERIALIZER(volumetric_clouds, uz::VolumetricCloudsComponen
 
         // Multi-scatter approximation
         c.ambientMultiplier = uz::json::Float(j, "ambient_multiplier", defaults.ambientMultiplier);
+        c.powderScale = uz::json::Float(j, "powder_scale", defaults.powderScale);
+        c.powderExponent = uz::json::Float(j, "powder_exponent", defaults.powderExponent);
+        c.multiScatterOctaves = uz::json::Uint(j, "multi_scatter_octaves", defaults.multiScatterOctaves);
 
         // Ray march parameters
         c.tracingMaxDistanceKm = uz::json::Float(j, "tracing_max_distance_km", defaults.tracingMaxDistanceKm);
@@ -89,6 +92,9 @@ UZ_REGISTER_COMPONENT_SERIALIZER(volumetric_clouds, uz::VolumetricCloudsComponen
 
         // Multi-scatter approximation
         j["ambient_multiplier"] = c->ambientMultiplier;
+        j["powder_scale"] = c->powderScale;
+        j["powder_exponent"] = c->powderExponent;
+        j["multi_scatter_octaves"] = c->multiScatterOctaves;
 
         // Ray march parameters
         j["tracing_max_distance_km"] = c->tracingMaxDistanceKm;

@@ -15,7 +15,7 @@
 /// # Scattering Model
 /// @ref Schneider & Vos 2015 "Real-Time Volumetric Cloudscapes of Horizon Zero Dawn"
 /// @ref Hillaire 2020 "A Scalable and Production Ready Sky and Atmosphere Rendering Technique"
-/// Single-scattering with dual-lobe Henyey-Greenstein phase function.
+/// Bounded multi-scattering octaves with dual-lobe Henyey-Greenstein phase.
 /// Frostbite analytical integration: (S - S*T) / max(ext, eps).
 /// Premultiplied alpha composite: final = cloud.rgb + scene.rgb * transmittance.
 ///
@@ -68,6 +68,9 @@ struct CloudPassInput {
     float    windVelocity[3];
     float    detailWindScale;
     float    ambientMultiplier;
+    float    powderScale = 0.0f;
+    float    powderExponent = 2.0f;
+    uint32_t multiScatterOctaves = 8;
     uint32_t primarySteps;
     uint32_t lightSteps;
     uint32_t depthSrv;

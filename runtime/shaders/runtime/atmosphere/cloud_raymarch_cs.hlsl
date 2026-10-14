@@ -91,8 +91,11 @@ cbuffer CloudCB : register(b2) {
     float   g_detailErosion;
     float   g_densityScale;
     float   g_jitterScale;
-    float2  _cbPad;
-    float4  _cbReserved[12];
+    float   g_powderScale;
+    float   g_powderExponent;
+    uint    g_multiScatterOctaves;
+    float3  _cbPad;
+    float4  _cbReserved[11];
 };
 
 SamplerState linearSampler : register(s3);
@@ -203,6 +206,49 @@ float DualLobeHG(float cosTheta, float g1, float g2, float blend) {
     return lerp(HenyeyGreenstein(cosTheta, g1),
                 HenyeyGreenstein(cosTheta, g2),
                 blend);
+}
+
+// Opt in at shader compilation; the default retains component-controlled dual HG.
+#ifndef ACCURATE_PHASE_FUNCTION
+#define ACCURATE_PHASE_FUNCTION 0
+#endif
+
+/// @ref Draine 2003 "Scattering by Interstellar Dust Grains. I. Optical and Ultraviolet"
+/// @ref NVIDIA 2018 "Approximate Mie Scattering"
+/// @constants gHG=0.988, gD=0.556, alpha=22, Draine weight=0.482.
+float CloudPhase(float cosTheta, float eccentricityScale) {
+#if ACCURATE_PHASE_FUNCTION
+    float g = 0.556f * eccentricityScale;
+    float alpha = 22.0f * eccentricityScale;
+    float g2 = g * g;
+    float denom = 1.0f + g2 - 2.0f * g * cosTheta;
+    float draine = (1.0f - g2) * (1.0f + alpha * cosTheta * cosTheta)
+        / (4.0f * PI * (1.0f + alpha * (1.0f + 2.0f * g2) / 3.0f)
+           * denom * sqrt(denom));
+    return lerp(HenyeyGreenstein(cosTheta, 0.988f * eccentricityScale), draine, 0.482f);
+#else
+    return DualLobeHG(cosTheta, g_phaseG * eccentricityScale,
+                      g_phaseG2 * eccentricityScale, g_phaseBlend);
+#endif
+}
+
+/// @ref Oz & Kulla 2017 "Production Volume Rendering"
+/// @constants kMaxOctaves=8; scattering, extinction and eccentricity attenuation a=b=c=0.5.
+float3 EvaluateMultiScattering(float opticalDepthToSun, float cosTheta) {
+    float3 radiance = 0.0f;
+    float a = 1.0f;
+    float b = 1.0f;
+    float c = 1.0f;
+    static const uint kMaxOctaves = 8;
+    [loop]
+    for (uint octave = 0; octave < min(g_multiScatterOctaves, kMaxOctaves); ++octave) {
+        float beerLambert = exp(-opticalDepthToSun * b);
+        radiance += a * beerLambert * CloudPhase(cosTheta, c) * g_sunColor;
+        a *= 0.5f;
+        b *= 0.5f;
+        c *= 0.5f;
+    }
+    return radiance;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -357,13 +403,15 @@ float DensityMip(float3 direction, float stepLength, float distance) {
     return log2(max(1.0f, max(segmentFootprint, pixelFootprint)));
 }
 
-/// @ref Schneider 2015 — secondary light ray march toward sun
+/// @ref Schneider 2015 — secondary light ray march toward sun.
+/// Return optical depth, not transmittance: higher scattering orders must
+/// attenuate depth before exponentiation, including optically thick samples.
 float LightMarch(float3 samplePosKm, float3 sunDir, float innerRadius,
                  float outerRadius, float layerHeight) {
     float2 outerHit = RaySphereIntersect(samplePosKm, sunDir,
                                           float3(0, 0, 0), outerRadius);
     float lightDist = max(outerHit.y, 0.0f);
-    if (lightDist <= 0.0f) return 1.0f;
+    if (lightDist <= 0.0f) return 0.0f;
     lightDist = min(lightDist, layerHeight * 2.0f);
 
     uint lightSteps = clamp(g_lightSteps, 1u, 8u);
@@ -377,7 +425,7 @@ float LightMarch(float3 samplePosKm, float3 sunDir, float innerRadius,
         totalDensity += SampleDensity(lightPos, innerRadius, layerHeight, mipLevel) * stepLen;
     }
 
-    return exp(-totalDensity * g_extinction * DENSITY_SCALE);
+    return totalDensity * g_extinction * DENSITY_SCALE;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -442,16 +490,6 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     // ── Phase function ──
     float3 sunDir = normalize(g_sunDir);
     float cosTheta = dot(rayDir, sunDir);
-    float phase = DualLobeHG(cosTheta, g_phaseG, g_phaseG2, g_phaseBlend);
-
-    // ── Ambient ──
-    /// @ref Schneider 2015 — multi-scatter ambient approximation
-    /// Fallback to sun fraction when IBL SH is not yet computed.
-    float3 ambient = g_ambientColor;
-    if (dot(ambient, ambient) < 0.001f) {
-        ambient = g_sunColor * 0.25f;
-    }
-    ambient *= g_ambientMultiplier;
 
     // ── Ray march (Frostbite analytical integration) ──
     /// @ref Hillaire 2020 — (S - S*T)/max(ext, eps)
@@ -493,35 +531,24 @@ void main(uint3 DTid : SV_DispatchThreadID) {
         float T_step = exp(-ext * stepLen);
 
         // Light march toward sun for self-shadowing
-        float sunT = LightMarch(samplePos, sunDir, innerRadius, outerRadius, g_layerHeightKm);
+        float opticalDepthToSun = LightMarch(samplePos, sunDir, innerRadius, outerRadius, g_layerHeightKm);
+        float3 radiance = EvaluateMultiScattering(opticalDepthToSun, cosTheta);
 
-        // Multi-scattering energy approximation.
-        /// @ref Schneider 2015 — multi-scatter energy approximation
-        /// @ref Wrenninge 2015 — "Art-Directable Multiple Volumetric Scattering"
-        float msPhase = 1.0f;
-        float msExt   = 1.0f;
-        float3 msLuminance = float3(0.0f, 0.0f, 0.0f);
-        float msSunT = sunT;
-        for (int ms = 0; ms < 3; ++ms) {
-            msPhase *= 0.5f;
-            msExt   *= 0.25f;
-            msSunT = max(msSunT, pow(sunT, msExt));
-            float msP = lerp(phase, 1.0f / (4.0f * PI), 1.0f - msPhase);
-            msLuminance += g_sunColor * msSunT * msP * msPhase;
-        }
+        /// @ref Oz & Kulla 2017 "Production Volume Rendering" — isotropic sky source.
+        /// sh_projection.cpp packs E/pi, not a solid-angle-integrated volume
+        /// source. Convert that radiance proxy before applying isotropic phase.
+        /// Preserve M1's base illumination while allowing brighter exposed tops.
+        /// @constants bottom visibility=0.8, normalized to the legacy base fill.
+        float heightFraction = saturate((length(samplePos) - innerRadius) / g_layerHeightKm);
+        float3 skyIrradiance = g_ambientColor * (4.0f * PI);
+        float skyGradient = lerp(0.8f, 1.0f, heightFraction);
+        float skyLightScale = g_ambientMultiplier / 0.8f;
+        radiance += skyIrradiance * (1.0f / (4.0f * PI)) * skyGradient * skyLightScale;
 
-        // Beer-Powder effect — brightens thin cloud edges (silver lining).
-        // At cloud boundaries where density is low, multi-scattered photons
-        // create a bright rim around the cloud silhouette.
-        /// @ref Schneider 2015 — Beer-Powder approximation
-        /// @constants powder blend = 0.5 (mix between Beer and powder terms)
-        float powder = 1.0f - exp(-density * g_extinction * DENSITY_SCALE * 2.0f);
-        float beerPowder = lerp(1.0f, powder, 0.5f);
-
-        // In-scattering: sun (direct + multi-scatter) + ambient
-        float3 sunScatter = g_sunColor * sunT * phase * beerPowder + msLuminance;
-        float3 ambScatter = ambient;
-        float3 scatter = scat * (sunScatter + ambScatter);
+        /// @ref Schneider & Vos 2015 "Real-Time Volumetric Cloudscapes of Horizon Zero Dawn"
+        /// @constants powderScale=0 disables powder; powderExponent=2 by default.
+        radiance *= 1.0f - g_powderScale * exp(-ext * g_powderExponent);
+        float3 scatter = scat * radiance;
 
         // Frostbite analytical integration
         float3 Sint = (scatter - scatter * T_step) / max(ext, EXT_EPS);

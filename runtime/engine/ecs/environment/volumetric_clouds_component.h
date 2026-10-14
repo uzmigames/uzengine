@@ -121,11 +121,17 @@ struct VolumetricCloudsComponent : public CBDirtyMixin {
 
     // ── Multi-Scatter Approximation ──────────────────────────────────────
 
-    /// Ambient light multiplier for cloud interiors.
-    /// @source Schneider 2015 — multi-scatter ambient approximation.
-    /// Prevents fully black cloud bases by simulating multi-bounce scattering
-    /// with a constant ambient term scaled by this value.
+    /// Sky irradiance scale for the height-dependent isotropic sky source.
+    /// The legacy serialized name is retained; multiple scattering is evaluated
+    /// separately using optical depth toward the sun.
     float ambientMultiplier = 6.0f;
+
+    /// Optional Beer-powder attenuation. Zero disables the effect.
+    float powderScale = 0.0f;
+    float powderExponent = 2.0f;
+
+    /// Oz/Kulla scattering orders including direct light, clamped to [1,8].
+    uint32_t multiScatterOctaves = 8;
 
     // ── Ray March Parameters ─────────────────────────────────────────────
 
