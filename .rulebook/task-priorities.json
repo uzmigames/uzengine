@@ -75,7 +75,6 @@
     {"id": "phase6-6.3.0-navigation-recast-detour", "priority": "P3", "order": 700, "gates": ["lifecycle", "visual"], "reason": "Gameplay navigation expansion, independent of current visual defects."},
     {"id": "phase6-6.4.0-behavior-trees", "priority": "P3", "order": 710, "depends_on": ["phase6-6.3.0-navigation-recast-detour"], "reason": "The proposed gameplay behaviors depend on navigation."},
     {"id": "phase10_10.2.0-ui-modal-dialog-framework", "priority": "P3", "order": 720, "gates": ["lifecycle"], "reason": "Editor authoring convenience after correct input ownership and reliable core workflows."},
-    {"id": "phase0_brixelizer-gi-integration", "lane": "review", "priority": "P2", "order": 3, "reason": "Explicitly closed as superseded, not implemented. Archive only with that resolution and preserved follow-up ownership."},
     {"id": "phase2_material-graph-pipeline", "lane": "review", "priority": "P1", "order": 10, "reason": "0/34 conflicts with the active generated-material path and completed parity-02. Audit F-004 owns the known remaining context defect."},
     {"id": "phase2_froxel-volumetric-fog", "lane": "review", "priority": "P1", "order": 20, "reason": "Proposal says no froxel fog, but block-b-04 already implemented and validated it. Reconcile residual scope instead of rebuilding."},
     {"id": "phase3a-3.32.0-clustered-forward-plus", "lane": "review", "priority": "P1", "order": 30, "reason": "Later block-b-07 and cluster-spot-cone tasks supersede much of the old checklist; preserve only real uncovered acceptance."},

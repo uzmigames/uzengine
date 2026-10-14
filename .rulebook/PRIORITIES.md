@@ -105,7 +105,6 @@ These are scope/status reviews, not new implementation assignments. Do not repea
 
 | Task | Metadata / checklist | Required reconciliation |
 |---|---|---|
-| [Brixelizer gi integration](tasks/phase0_brixelizer-gi-integration/tasks.md) | completed; 42/48 | Explicitly closed as superseded, not implemented. Archive only with that resolution and preserved follow-up ownership. |
 | [Material graph pipeline](tasks/phase2_material-graph-pipeline/tasks.md) | pending; 0/34 | 0/34 conflicts with the active generated-material path and completed parity-02. Audit F-004 owns the known remaining context defect. |
 | [Froxel volumetric fog](tasks/phase2_froxel-volumetric-fog/tasks.md) | pending; 0/31 | Proposal says no froxel fog, but block-b-04 already implemented and validated it. Reconcile residual scope instead of rebuilding. |
 | [Clustered forward plus](tasks/phase3a-3.32.0-clustered-forward-plus/tasks.md) | pending; 3/22 | Later block-b-07 and cluster-spot-cone tasks supersede much of the old checklist; preserve only real uncovered acceptance. |
