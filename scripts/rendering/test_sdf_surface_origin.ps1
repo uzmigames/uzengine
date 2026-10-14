@@ -46,7 +46,7 @@ $call=@'
     radiance=coverage>0?radiance/coverage:0;
 '@
 $override=if($Tilted){'float3 tangent=abs(direction.z)<0.999?normalize(cross(direction,float3(0,0,1))):float3(1,0,0); shadingNormal=normalize(0.5*direction+0.866025403784*tangent);'}else{''}
-$gather=if($Reflections){'GatherSdfReflections(scene,receiver,shadingNormal,direction,shadingNormal,1.0,uint2(id.x,0),frame,16)'}else{'GatherSdfDiffuse(scene,receiver,shadingNormal,direction,uint2(id.x,0),frame,32)'}
+$gather=if($Reflections){'GatherSdfReflections(scene,receiver,shadingNormal,direction,shadingNormal,1.0,uint2(id.x,0),frame,16)'}else{'GatherSdfDiffuse(scene,receiver,shadingNormal,direction,uint2(id.x,0),frame,32,0u)'}
 $glossy=if($Reflections){'true'}else{'false'}
 $call=$call.Replace('SHADING_OVERRIDE',$override).Replace('GATHER_CALL',$gather).Replace('GLOSSY',$glossy)
 $old='float3 radiance = TraceSdfReflectionRadiance(scene,origin,direction);'
