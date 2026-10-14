@@ -1,7 +1,7 @@
 # UzEngine project stabilization audit
 
 Date: 2026-10-10. Status: **stage-0 baseline complete; renderer/editor corrections remain open**.
-Latest implementation: [test coverage and first-frame diagnostics](09-test-coverage-and-first-frames.md).
+Latest reconciliation: [current backlog, shipped mitigations and hierarchy rejection](10-backlog-reconciliation.md).
 Rulebook task: [phase0_project-stabilization-audit](../../../.rulebook/tasks/phase0_project-stabilization-audit/proposal.md).
 
 The review identifies 22 findings: **11 P1, 10 P2 and 1 P3**. The first work should
@@ -28,6 +28,7 @@ not all reproduced runtime failures or proven causes of the user's rendering bug
 | [07 — Baseline implementation](07-baseline-implementation.md) | Five implementation tasks, changes, executed checks and remaining gates |
 | [08 — Native bootstrap](08-native-bootstrap.md) | Locked dependency provisioning and isolated native build evidence |
 | [09 — Coverage and first frames](09-test-coverage-and-first-frames.md) | Current test results, startup captures and scoped baseline closure |
+| [10 — Backlog reconciliation](10-backlog-reconciliation.md) | 2026-10-14 source assessment, graph residuals, capability limits and hierarchy rejection |
 
 ## Finding register
 

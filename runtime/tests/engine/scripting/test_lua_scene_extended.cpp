@@ -365,6 +365,37 @@ TEST_F(LuaSceneExtendedTest, GetParent_RootEntity_ReturnsNil) {
     ));
 }
 
+TEST_F(LuaSceneExtendedTest, AttachTo_RejectsSelfAndAncestorCycles) {
+    CreateNamedEntity("cycle_root");
+    CreateNamedEntity("cycle_child");
+    CreateNamedEntity("cycle_leaf");
+
+    ASSERT_TRUE(DoString(
+        "local root = uz.scene.find('cycle_root')\n"
+        "local child = uz.scene.find('cycle_child')\n"
+        "local leaf = uz.scene.find('cycle_leaf')\n"
+        "uz.scene.attach_to(child, root)\n"
+        "uz.scene.attach_to(leaf, child)\n"
+        "uz.scene.attach_to(root, root)\n"
+        "uz.scene.attach_to(child, child)\n"
+        "uz.scene.attach_to(root, leaf)\n"
+    ));
+
+    EXPECT_TRUE(EvalBool(
+        "(function()\n"
+        "  local root = uz.scene.find('cycle_root')\n"
+        "  local child = uz.scene.find('cycle_child')\n"
+        "  local leaf = uz.scene.find('cycle_leaf')\n"
+        "  return uz.scene.get_parent(root) == nil\n"
+        "     and uz.scene.get_parent(child) == root\n"
+        "     and uz.scene.get_parent(leaf) == child\n"
+        "     and #uz.scene.get_children(root) == 1\n"
+        "     and #uz.scene.get_children(child) == 1\n"
+        "     and #uz.scene.get_children(leaf) == 0\n"
+        "end)()"
+    ));
+}
+
 TEST_F(LuaSceneExtendedTest, GetParent_AfterAttach_ReturnsNonNil) {
     CreateNamedEntity("p_node");
     CreateNamedEntity("c_node");

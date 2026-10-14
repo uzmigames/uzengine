@@ -94,6 +94,13 @@ void SceneComponent::AttachTo(SceneComponent* parent) {
         return; // Already attached to this parent — nothing to do.
     }
 
+    // Validate before detaching so a rejected cycle leaves both hierarchies intact.
+    for (auto* ancestor = parent; ancestor; ancestor = ancestor->m_parent) {
+        if (ancestor == this) {
+            return;
+        }
+    }
+
     // Detach from the existing parent before reparenting.
     Detach();
 
