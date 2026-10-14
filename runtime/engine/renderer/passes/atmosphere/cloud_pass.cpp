@@ -22,6 +22,7 @@
 #include "log.h"
 #include "profiler.h"
 #include "cvar.h"
+#include "engine/math/mat4.h"
 
 #include "paths.h"
 
@@ -44,6 +45,7 @@ static auto* cv_CloudErosion     = UZ_CVAR_FLOAT("r.Cloud.DetailErosion", 0.35f,
 static auto* cv_CloudAerialDens  = UZ_CVAR_FLOAT("r.Cloud.AerialPerspectiveDensity", 0.04f, "Aerial perspective fog density", 0.0f, 0.2f);
 static auto* cv_CloudDensScale   = UZ_CVAR_FLOAT("r.Cloud.DensityScale", 25.0f, "Cloud density normalization scale", 1.0f, 100.0f);
 static auto* cv_CloudProcedural = UZ_CVAR_BOOL("r.Cloud.ProceduralNoise", false, "Compare legacy procedural cloud shape");
+static auto* cv_CloudTemporalUpscale = UZ_CVAR_BOOL("r.Clouds.TemporalUpscale", false, "Opt-in quarter-resolution Bayer cloud temporal upscale");
 
 namespace uz {
 
@@ -81,6 +83,9 @@ bool CloudPass::Init(IRHIDevice* device, ShaderManager* shaderMgr,
     }
 
     m_initialized = true;
+    m_fullWidth = width;
+    m_fullHeight = height;
+    OnResize(width, height);
     UZ_LOG(Renderer, Info, "CloudPass initialized ({}x{} -> half-res {}x{}, SRV={}, UAV={})",
            width, height, halfW, halfH, m_outputSrvIndex, m_outputUavIndex);
     return true;
@@ -139,6 +144,7 @@ void CloudPass::Shutdown() {
     if (!m_initialized) return;
 
     DestroyOutputTexture();
+    DestroyTemporalTextures();
 
     // Destroy noise texture
     if (m_shapeNoiseTexture.IsValid()) {
@@ -176,6 +182,23 @@ void CloudPass::Shutdown() {
         m_device->DestroyShader(m_raymarchCS);
         m_raymarchCS = RHIShaderHandle::Invalid();
     }
+    if (m_upscaleRaymarchPipeline.IsValid()) {
+        m_device->DestroyPipeline(m_upscaleRaymarchPipeline);
+        m_upscaleRaymarchPipeline = RHIPipelineHandle::Invalid();
+    }
+    if (m_upscaleRaymarchCS.IsValid()) {
+        m_device->DestroyShader(m_upscaleRaymarchCS);
+        m_upscaleRaymarchCS = RHIShaderHandle::Invalid();
+    }
+    if (m_temporalPipeline.IsValid()) {
+        m_device->DestroyPipeline(m_temporalPipeline);
+        m_temporalPipeline = RHIPipelineHandle::Invalid();
+    }
+    if (m_temporalCS.IsValid()) {
+        m_device->DestroyShader(m_temporalCS);
+        m_temporalCS = RHIShaderHandle::Invalid();
+    }
+    m_temporalUpscale = false;
 
     m_device      = nullptr;
     m_shaderMgr   = nullptr;
@@ -187,13 +210,61 @@ void CloudPass::Shutdown() {
 }
 
 void CloudPass::OnResize(uint32_t width, uint32_t height) {
-    uint32_t halfW = (width + 1) / 2;
-    uint32_t halfH = (height + 1) / 2;
+    const bool temporalUpscale = cv_CloudTemporalUpscale->value != 0;
+    const uint32_t divisor = temporalUpscale ? 4 : 2;
+    uint32_t halfW = (width + divisor - 1) / divisor;
+    uint32_t halfH = (height + divisor - 1) / divisor;
 
-    if (halfW == m_halfWidth && halfH == m_halfHeight) return;
+    if (halfW == m_halfWidth && halfH == m_halfHeight
+        && width == m_fullWidth && height == m_fullHeight
+        && temporalUpscale == m_temporalUpscale) return;
 
     DestroyOutputTexture();
+    DestroyTemporalTextures();
+    m_fullWidth = width;
+    m_fullHeight = height;
+    m_temporalUpscale = temporalUpscale;
     CreateOutputTexture(halfW, halfH);
+    if (temporalUpscale) CreateTemporalTextures(width, height);
+}
+
+bool CloudPass::CreateTemporalTextures(uint32_t width, uint32_t height) {
+    RHITextureDesc desc{};
+    desc.width = m_halfWidth;
+    desc.height = m_halfHeight;
+    desc.format = RHIFormat::R32Float;
+    desc.usage = RHITextureUsage::ShaderResource | RHITextureUsage::UnorderedAccess;
+    desc.debugName = "Cloud_FrontDepth";
+    m_frontDepthTexture = m_device->CreateTexture(desc);
+    if (!m_frontDepthTexture.IsValid()) return false;
+    m_frontDepthSrv = m_device->GetTextureSRVIndex(m_frontDepthTexture);
+    m_frontDepthUav = m_device->GetTextureUAVIndex(m_frontDepthTexture);
+    desc.width = width;
+    desc.height = height;
+    desc.format = RHIFormat::RGBA16Float;
+    for (uint32_t i = 0; i < 2; ++i) {
+        desc.debugName = i == 0 ? "Cloud_History0" : "Cloud_History1";
+        m_historyTexture[i] = m_device->CreateTexture(desc);
+        if (!m_historyTexture[i].IsValid()) return false;
+        m_historySrv[i] = m_device->GetTextureSRVIndex(m_historyTexture[i]);
+        m_historyUav[i] = m_device->GetTextureUAVIndex(m_historyTexture[i]);
+    }
+    UZ_LOG(Renderer, Info, "CloudPass: temporal upscale enabled, quarter={}x{}, history={}x{}",
+           m_halfWidth, m_halfHeight, width, height);
+    return true;
+}
+
+void CloudPass::DestroyTemporalTextures() {
+    if (m_frontDepthTexture.IsValid()) m_device->DestroyTexture(m_frontDepthTexture);
+    m_frontDepthTexture = RHITextureHandle::Invalid();
+    m_frontDepthSrv = m_frontDepthUav = UINT32_MAX;
+    for (uint32_t i = 0; i < 2; ++i) {
+        if (m_historyTexture[i].IsValid()) m_device->DestroyTexture(m_historyTexture[i]);
+        m_historyTexture[i] = RHITextureHandle::Invalid();
+        m_historySrv[i] = m_historyUav[i] = UINT32_MAX;
+    }
+    m_historyValid = false;
+    m_historyWrite = 0;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -201,9 +272,12 @@ void CloudPass::OnResize(uint32_t width, uint32_t height) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 bool CloudPass::EnsureRaymarchPipeline() {
-    if (m_raymarchPipeline.IsValid()) return true;
+    auto& pipeline = m_temporalUpscale ? m_upscaleRaymarchPipeline : m_raymarchPipeline;
+    auto& shader = m_temporalUpscale ? m_upscaleRaymarchCS : m_raymarchCS;
+    if (pipeline.IsValid()) return true;
 
-    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::CloudRaymarchCS);
+    auto bytecode = m_shaderMgr->GetBytecode(m_temporalUpscale
+        ? EngineShader::CloudRaymarchUpscaleCS : EngineShader::CloudRaymarchCS);
     if (bytecode.empty()) {
         UZ_LOG(Renderer, Error, "CloudPass: cloud_raymarch_cs.hlsl bytecode is empty — shader compilation failed");
         return false;
@@ -218,24 +292,48 @@ bool CloudPass::EnsureRaymarchPipeline() {
     shaderDesc.entryPoint   = "main";
     shaderDesc.debugName    = "cloud_raymarch_cs";
 
-    m_raymarchCS = m_device->CreateShader(shaderDesc);
-    if (!m_raymarchCS.IsValid()) {
+    shader = m_device->CreateShader(shaderDesc);
+    if (!shader.IsValid()) {
         UZ_LOG(Renderer, Error, "CloudPass: failed to create raymarch shader");
         return false;
     }
 
     RHIComputePipelineDesc pipeDesc{};
-    pipeDesc.computeShader = m_raymarchCS;
+    pipeDesc.computeShader = shader;
     pipeDesc.debugName     = "Cloud_Raymarch";
 
-    m_raymarchPipeline = m_device->CreateComputePipeline(pipeDesc);
-    if (!m_raymarchPipeline.IsValid()) {
+    pipeline = m_device->CreateComputePipeline(pipeDesc);
+    if (!pipeline.IsValid()) {
         UZ_LOG(Renderer, Error, "CloudPass: failed to create raymarch pipeline");
         return false;
     }
 
-    UZ_LOG(Renderer, Info, "CloudPass: raymarch pipeline created (handle={})", m_raymarchPipeline.index);
+    UZ_LOG(Renderer, Info, "CloudPass: raymarch pipeline created (handle={})", pipeline.index);
     return true;
+}
+
+bool CloudPass::EnsureTemporalPipeline() {
+    if (m_temporalPipeline.IsValid()) return true;
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::CloudTemporalCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "CloudPass: temporal shader compilation failed");
+        return false;
+    }
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage = RHIShaderStage::Compute;
+    shaderDesc.entryPoint = "main";
+    shaderDesc.debugName = "cloud_temporal_cs";
+    m_temporalCS = m_device->CreateShader(shaderDesc);
+    if (!m_temporalCS.IsValid()) return false;
+    RHIComputePipelineDesc pipeDesc{};
+    pipeDesc.computeShader = m_temporalCS;
+    pipeDesc.debugName = "Cloud_Temporal";
+    m_temporalPipeline = m_device->CreateComputePipeline(pipeDesc);
+    UZ_LOG(Renderer, Info, "CloudPass: temporal shader bytecode={} bytes, pipeline={}",
+           bytecode.size(), m_temporalPipeline.index);
+    return m_temporalPipeline.IsValid();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -419,7 +517,11 @@ struct alignas(16) CloudCB {
     float powderScale;
     float powderExponent;
     uint32_t multiScatterOctaves;
-    float padding[47];
+    uint32_t temporalUpscale;
+    uint32_t fullWidth;
+    uint32_t fullHeight;
+    uint32_t frontDepthUav;
+    float padding[43];
 };
 
 static_assert(sizeof(CloudCB) == 512, "CloudCB must be 512 bytes for CBV alignment");
@@ -437,6 +539,31 @@ static_assert(offsetof(CloudCB, shapeOctaves) == 288);
 static_assert(offsetof(CloudCB, powderScale) == 312);
 static_assert(offsetof(CloudCB, powderExponent) == 316);
 static_assert(offsetof(CloudCB, multiScatterOctaves) == 320);
+static_assert(offsetof(CloudCB, temporalUpscale) == 324);
+static_assert(offsetof(CloudCB, frontDepthUav) == 336);
+
+struct alignas(16) CloudTemporalCB {
+    float invViewProj[16];
+    float previousViewProj[16];
+    float cameraPos[3];
+    uint32_t fullWidth;
+    uint32_t fullHeight;
+    uint32_t quarterWidth;
+    uint32_t quarterHeight;
+    uint32_t frameIndex;
+    uint32_t historyValid;
+    uint32_t currentSrv;
+    uint32_t historySrv;
+    uint32_t outputUav;
+    uint32_t frontDepthSrv;
+    uint32_t depthSrv;
+    uint32_t velocitySrv;
+    float varianceGamma;
+    float padding[80];
+};
+static_assert(sizeof(CloudTemporalCB) == 512);
+static_assert(offsetof(CloudTemporalCB, historyValid) == 160);
+static_assert(offsetof(CloudTemporalCB, varianceGamma) == 188);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RegisterPasses
@@ -447,7 +574,17 @@ void CloudPass::RegisterPasses(rg::RgBuilder& rgBuilder, rg::RgStateRegistry* st
     const CBAllocation& perFrameAlloc, CBRingAllocator& cbRing, PipelineLibrary* pipelines,
     bool bindless, uint32_t renderWidth, uint32_t renderHeight, const CloudPassInput& input) {
     UZ_PROFILE_SCOPE("CloudPass::RegisterPasses");
-    if (!m_initialized || !bindless || !EnsureRaymarchPipeline()) return;
+    if (!m_initialized || !bindless) return;
+    if (m_temporalUpscale != (cv_CloudTemporalUpscale->value != 0)) {
+        // Changing the opt-in mode retires resources used by earlier frames.
+        // This is not a per-frame synchronization point.
+        m_device->WaitIdle();
+        OnResize(renderWidth, renderHeight);
+    }
+    if (!EnsureRaymarchPipeline()) return;
+    if (m_temporalUpscale && (!m_frontDepthTexture.IsValid()
+        || !m_historyTexture[0].IsValid() || !m_historyTexture[1].IsValid()
+        || !EnsureTemporalPipeline())) return;
 
     // Registration occurs on the open frame list, before graph execution.
     if (!m_noiseLoadAttempted) LoadNoiseTextures(frameList, states, m_vfs);
@@ -520,6 +657,12 @@ void CloudPass::RegisterPasses(rg::RgBuilder& rgBuilder, rg::RgStateRegistry* st
     cb.powderScale = std::clamp(input.powderScale, 0.0f, 1.0f);
     cb.powderExponent = std::max(0.0f, input.powderExponent);
     cb.multiScatterOctaves = std::clamp(input.multiScatterOctaves, 1u, 8u);
+    if (m_temporalUpscale) {
+        cb.temporalUpscale = 1;
+        cb.fullWidth = renderWidth;
+        cb.fullHeight = renderHeight;
+        cb.frontDepthUav = m_frontDepthUav;
+    }
 
     auto cbAlloc = cbRing.Allocate(sizeof(CloudCB));
     std::memcpy(cbAlloc.cpuPtr, &cb, sizeof(CloudCB));
@@ -565,33 +708,90 @@ void CloudPass::RegisterPasses(rg::RgBuilder& rgBuilder, rg::RgStateRegistry* st
 
     static_assert(sizeof(rootConst) / sizeof(rootConst[0]) <= 12);
     const auto cloudOut = rgBuilder.ImportTrackedTexture("Cloud_Output", m_outputTexture);
+    const auto frontDepth = m_temporalUpscale
+        ? rgBuilder.ImportTrackedTexture("Cloud_FrontDepth", m_frontDepthTexture) : rg::RgResourceId{};
     const auto shapeRes = m_shapeNoiseTexture.IsValid()
         ? rgBuilder.ImportTrackedTexture("Cloud_ShapeNoise", m_shapeNoiseTexture) : rg::RgResourceId{};
     const auto detailRes = m_detailNoiseTexture.IsValid()
         ? rgBuilder.ImportTrackedTexture("Cloud_DetailNoise", m_detailNoiseTexture) : rg::RgResourceId{};
     const auto stbnRes = m_stbnTexture.IsValid()
         ? rgBuilder.ImportTrackedTexture("Cloud_STBN", m_stbnTexture) : rg::RgResourceId{};
+    const auto raymarchPipeline = m_temporalUpscale ? m_upscaleRaymarchPipeline : m_raymarchPipeline;
 
     rgBuilder.AddPass("Cloud_Raymarch", [=, this](rg::RgPassBuilder& pb) {
         pb.Write(cloudOut, RHIResourceState::UnorderedAccess);
+        if (frontDepth.IsValid()) pb.Write(frontDepth, RHIResourceState::UnorderedAccess);
         pb.Read(depthRes, RHIResourceState::ShaderResource);
         if (shapeRes.IsValid()) pb.Read(shapeRes, RHIResourceState::ShaderResource);
         if (detailRes.IsValid()) pb.Read(detailRes, RHIResourceState::ShaderResource);
         if (stbnRes.IsValid()) pb.Read(stbnRes, RHIResourceState::ShaderResource);
         pb.SetExecutionCallback([=, this](IRHICommandList* cmd, const rg::RgPassResources&) {
             UZ_PROFILE_SCOPE("Cloud::Raymarch");
-            cmd->SetPipeline(m_raymarchPipeline);
+            cmd->SetPipeline(raymarchPipeline);
             cmd->SetRootConstants(kSlotRootConstants, rootConst, 12);
             cmd->SetRootCBV(kSlotPerObject, cbAlloc.gpuAddr);
             cmd->Dispatch((m_halfWidth + 7) / 8, (m_halfHeight + 7) / 8, 1);
         });
     });
 
+    auto compositeInput = cloudOut;
+    uint32_t compositeSrv = m_outputSrvIndex;
+    if (m_temporalUpscale) {
+        const uint32_t write = m_historyWrite;
+        const uint32_t read = write ^ 1u;
+        const bool validHistory = m_historyValid && input.frameIndex == m_previousFrame + 1;
+        const auto historyRead = rgBuilder.ImportTrackedTexture(
+            read == 0 ? "Cloud_History0" : "Cloud_History1", m_historyTexture[read]);
+        const auto historyWrite = rgBuilder.ImportTrackedTexture(
+            write == 0 ? "Cloud_History0" : "Cloud_History1", m_historyTexture[write]);
+        CloudTemporalCB temporal{};
+        std::memcpy(temporal.invViewProj, input.invViewProj, 64);
+        std::memcpy(temporal.previousViewProj, m_previousViewProj, 64);
+        std::memcpy(temporal.cameraPos, input.cameraPos, 12);
+        temporal.fullWidth = renderWidth;
+        temporal.fullHeight = renderHeight;
+        temporal.quarterWidth = m_halfWidth;
+        temporal.quarterHeight = m_halfHeight;
+        temporal.frameIndex = input.frameIndex;
+        temporal.historyValid = validHistory;
+        temporal.currentSrv = m_outputSrvIndex;
+        temporal.historySrv = m_historySrv[read];
+        temporal.outputUav = m_historyUav[write];
+        temporal.frontDepthSrv = m_frontDepthSrv;
+        temporal.depthSrv = input.depthSrv;
+        temporal.velocitySrv = input.velocitySrv;
+        temporal.varianceGamma = 1.25f;
+        const auto temporalAlloc = cbRing.Allocate(sizeof(temporal));
+        std::memcpy(temporalAlloc.cpuPtr, &temporal, sizeof(temporal));
+        rgBuilder.AddPass("Cloud_Temporal", [=, this](rg::RgPassBuilder& pb) {
+            pb.Read(cloudOut, RHIResourceState::ShaderResource);
+            pb.Read(frontDepth, RHIResourceState::ShaderResource);
+            pb.Read(depthRes, RHIResourceState::ShaderResource);
+            pb.Read(input.velocityRes, RHIResourceState::ShaderResource);
+            if (validHistory) pb.Read(historyRead, RHIResourceState::ShaderResource);
+            pb.Write(historyWrite, RHIResourceState::UnorderedAccess);
+            pb.SetExecutionCallback([=, this](IRHICommandList* cmd, const rg::RgPassResources&) {
+                cmd->SetPipeline(m_temporalPipeline);
+                const uint32_t temporalRC[12]{};
+                cmd->SetRootConstants(kSlotRootConstants, temporalRC, 12);
+                cmd->SetRootCBV(kSlotPerObject, temporalAlloc.gpuAddr);
+                cmd->Dispatch((renderWidth + 7) / 8, (renderHeight + 7) / 8, 1);
+            });
+        });
+        compositeInput = historyWrite;
+        compositeSrv = m_historySrv[write];
+        const Mat4 currentViewProj = Mat4(input.invViewProj).Inverse();
+        std::memcpy(m_previousViewProj, &currentViewProj, 64);
+        m_previousFrame = input.frameIndex;
+        m_historyValid = true;
+        m_historyWrite ^= 1u;
+    }
+
     const auto compositePSO = pipelines->GetCloudComposite();
     if (compositePSO.IsValid()) {
         rgBuilder.AddPass("Cloud_Composite", [=, this](rg::RgPassBuilder& pb) {
             pb.Write(hdrRes, RHIResourceState::RenderTarget);
-            pb.Read(cloudOut, RHIResourceState::ShaderResource);
+            pb.Read(compositeInput, RHIResourceState::ShaderResource);
             pb.Read(depthRes, RHIResourceState::ShaderResource);
             pb.SetExecutionCallback([=, this](IRHICommandList* cmd, const rg::RgPassResources& res) {
                 UZ_PROFILE_SCOPE("Cloud::Composite");
@@ -602,7 +802,7 @@ void CloudPass::RegisterPasses(rg::RgBuilder& rgBuilder, rg::RgStateRegistry* st
                 passDesc.hasDepth = false;
                 cmd->BeginRenderPass(passDesc);
                 cmd->SetPipeline(compositePSO);
-                const uint32_t compositeRC[4] = { m_outputSrvIndex, input.depthSrv, 0, 0 };
+                const uint32_t compositeRC[4] = { compositeSrv, input.depthSrv, 0, 0 };
                 cmd->SetRootConstants(kSlotRootConstants, compositeRC, 4);
                 cmd->SetRootCBV(kSlotPerFrame, perFrameAlloc.gpuAddr);
                 RHIViewport vp{};

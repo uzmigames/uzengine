@@ -74,6 +74,8 @@ struct CloudPassInput {
     uint32_t primarySteps;
     uint32_t lightSteps;
     uint32_t depthSrv;
+    uint32_t velocitySrv = UINT32_MAX;
+    rg::RgResourceId velocityRes{};
     float    globalCoverage;
     float    minStepSize = 0.01f;
     float    maxStepSize = 0.5f;
@@ -176,6 +178,9 @@ private:
 
     /// Lazily creates the compute pipeline on first use.
     bool EnsureRaymarchPipeline();
+    bool EnsureTemporalPipeline();
+    bool CreateTemporalTextures(uint32_t width, uint32_t height);
+    void DestroyTemporalTextures();
 
     // ── Device + shader manager references ──
     IRHIDevice*    m_device    = nullptr;
@@ -188,10 +193,27 @@ private:
     uint32_t         m_outputUavIndex  = UINT32_MAX;
     uint32_t         m_halfWidth       = 0;
     uint32_t         m_halfHeight      = 0;
+    uint32_t         m_fullWidth       = 0;
+    uint32_t         m_fullHeight      = 0;
+    bool             m_temporalUpscale = false;
+    bool             m_historyValid    = false;
+    uint32_t         m_historyWrite    = 0;
+    uint32_t         m_previousFrame   = 0;
+    float            m_previousViewProj[16]{};
+    RHITextureHandle m_frontDepthTexture = RHITextureHandle::Invalid();
+    uint32_t         m_frontDepthSrv = UINT32_MAX;
+    uint32_t         m_frontDepthUav = UINT32_MAX;
+    RHITextureHandle m_historyTexture[2]{};
+    uint32_t         m_historySrv[2]{UINT32_MAX, UINT32_MAX};
+    uint32_t         m_historyUav[2]{UINT32_MAX, UINT32_MAX};
 
     // ── Compute pipeline ──
     RHIShaderHandle   m_raymarchCS       = RHIShaderHandle::Invalid();
     RHIPipelineHandle m_raymarchPipeline = RHIPipelineHandle::Invalid();
+    RHIShaderHandle   m_upscaleRaymarchCS = RHIShaderHandle::Invalid();
+    RHIPipelineHandle m_upscaleRaymarchPipeline = RHIPipelineHandle::Invalid();
+    RHIShaderHandle   m_temporalCS = RHIShaderHandle::Invalid();
+    RHIPipelineHandle m_temporalPipeline = RHIPipelineHandle::Invalid();
 
     // ── 3D noise textures ──
     RHITextureHandle m_shapeNoiseTexture  = RHITextureHandle::Invalid();

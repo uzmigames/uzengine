@@ -218,10 +218,6 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
             CloudPassInput cloudInput{};
             Mat4 unjitteredInvVP = ctx.unjitteredViewProj.Inverse();
             std::memcpy(cloudInput.invViewProj, &unjitteredInvVP, 64);
-            // Use previous frame's unjittered view-projection for temporal reprojection.
-            // On the first frame, m_prevViewProj is identity — the temporal filter
-            // converges after a few frames regardless.
-            std::memcpy(cloudInput.prevViewProj, &m_prevViewProj, 64);
 
             // Camera position: convert from cm (engine units) to km (cloud units)
             cloudInput.cameraPos[0] = ctx.perFrame.cameraPos.x * 0.00001f;
@@ -256,11 +252,20 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
             cloudInput.windVelocity[2]   = cloudComp.windVelocity.z;
             cloudInput.detailWindScale   = cloudComp.detailWindScale;
             cloudInput.ambientMultiplier = cloudComp.ambientMultiplier;
+            cloudInput.powderScale       = cloudComp.powderScale;
+            cloudInput.powderExponent    = cloudComp.powderExponent;
+            cloudInput.multiScatterOctaves = cloudComp.multiScatterOctaves;
             cloudInput.primarySteps      = cloudComp.primarySteps;
+            cloudInput.minStepSize       = cloudComp.minStepSize;
+            cloudInput.maxStepSize       = cloudComp.maxStepSize;
+            cloudInput.perspectiveStepScale = cloudComp.perspectiveStepScale;
+            cloudInput.jitterScale       = cloudComp.jitterScale;
+            cloudInput.frameIndex        = ctx.frameIndex;
             cloudInput.lightSteps        = cloudComp.lightSteps;
             cloudInput.depthSrv          = m_gbuffer.depthSRV;
+            cloudInput.velocitySrv       = m_gbuffer.velocitySRV;
+            cloudInput.velocityRes       = ctx.velocityRes;
             cloudInput.globalCoverage    = cloudComp.coverage;
-            cloudInput.temporalBlendFactor = 1.0f; // DEBUG: 100% current, skip temporal history
 
             // ── Additional tracing/quality parameters from VolumetricCloudsComponent ──
             cloudInput.cloudType = cloudComp.cloudType;
@@ -280,83 +285,10 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
             cloudInput.tracingStartMaxDistance = cloudComp.tracingStartMaxDistance;
             cloudInput.tracingStartDistanceFromCamera = cloudComp.tracingStartDistanceFromCamera;
 
-            // Store cloud input for deferred execution after render graph.
-            // CloudPass::Execute() manages its own barriers on internally-owned
-            // textures (noise, weather, cloud output). Running it inside a render
-            // graph callback conflicts with the graph's barrier tracking and causes
-            // "closed command list" errors. Instead, we execute it as a standalone
-            // compute dispatch after rgBuilder.Execute(), similar to the IBL bake.
-            m_pendingCloudInput = std::make_unique<CloudPassInput>(cloudInput);
-            m_pendingCloudDispatch = true;
-
-            // Cloud composite pass — fullscreen triangle that alpha-blends
-            // the half-res cloud output over the HDR scene color using
-            // premultiplied-alpha: final.rgb = cloud.rgb + scene.rgb * transmittance
-            if (m_cloudOutputSrv != UINT32_MAX && m_cloudOutputReady && ctx.bindless)
-            rgBuilder.AddPass("CloudComposite", [this, &ctx](rg::RgPassBuilder& pb) {
-                pb.Write(ctx.hdrRes, RHIResourceState::RenderTarget);
-
-                pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& res) {
-                    UZ_PROFILE_SCOPE("CloudPass::Composite");
-
-                    if (m_cloudOutputSrv == UINT32_MAX) {
-                        UZ_LOG(Renderer, Warning, "CloudComposite: skipped — m_cloudOutputSrv is UINT32_MAX");
-                        return;
-                    }
-
-                    static bool loggedOnce = false;
-                    if (!loggedOnce) {
-                        UZ_LOG(Renderer, Info, "CloudComposite: executing — cloudSRV={}, depthSRV={}, bindless={}",
-                               m_cloudOutputSrv, m_gbuffer.depthSRV, ctx.bindless);
-                        loggedOnce = true;
-                    }
-
-                    auto compositePSO = ctx.pipelines->GetCloudComposite();
-                    if (!compositePSO.IsValid()) return;
-
-                    // Begin render pass — blend over existing HDR scene (no clear)
-                    auto hdrTex = res.GetTexture(ctx.hdrRes);
-                    RHIRenderPassDesc passDesc{};
-                    passDesc.colorAttachmentCount = 1;
-                    passDesc.colorAttachments[0].texture = hdrTex;
-                    passDesc.colorAttachments[0].clear   = false;
-                    passDesc.hasDepth = false;
-                    cmd->BeginRenderPass(passDesc);
-
-                    cmd->SetPipeline(compositePSO);
-
-                    if (ctx.bindless) {
-                        // SM6.6 bindless: push descriptor indices via root constants.
-                        const uint32_t rootConst[4] = { m_cloudOutputSrv, m_gbuffer.depthSRV, 0, 0 };
-                        cmd->SetRootConstants(kSlotRootConstants, rootConst, 4);
-                    } else {
-                        // SM5 non-bindless: bind textures directly at register slots.
-                        // t0 = cloud output, t1 = scene depth
-                        if (m_cloudPass) {
-                            cmd->SetFragmentTexture(0, m_cloudPass->GetCloudOutputTexture());
-                        }
-                        cmd->SetFragmentTexture(1, m_gbuffer.depth);
-                    }
-                    cmd->SetRootCBV(kSlotPerFrame, ctx.perFrameAlloc.bufferHandle,
-                                    ctx.perFrameAlloc.offsetBytes, ctx.perFrameAlloc.cpuPtr,
-                                    sizeof(PerFrameCB));
-
-                    RHIViewport vp{};
-                    vp.width    = ctx.renderWidth;
-                    vp.height   = ctx.renderHeight;
-                    vp.maxDepth = 1.0f;
-                    cmd->SetViewport(vp);
-
-                    RHIScissorRect sc{};
-                    sc.right  = static_cast<int32_t>(ctx.renderWidth);
-                    sc.bottom = static_cast<int32_t>(ctx.renderHeight);
-                    cmd->SetScissor(sc);
-
-                    cmd->Draw(3);  // Fullscreen triangle
-
-                    cmd->EndRenderPass();
-                });
-            });
+            m_cloudPass->SetVFS(ctx.vfs);
+            m_cloudPass->RegisterPasses(rgBuilder, m_rgStates.get(), ctx.cmdList,
+                ctx.hdrRes, ctx.depthRes, ctx.perFrameAlloc, *m_cbRing, ctx.pipelines,
+                ctx.bindless, ctx.renderWidth, ctx.renderHeight, cloudInput);
 
             break;  // First VolumetricCloudsComponent only (singleton semantics)
         }
