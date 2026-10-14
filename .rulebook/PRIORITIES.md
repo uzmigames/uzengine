@@ -30,10 +30,7 @@ Planning gates and dependencies below are local queue constraints; they do not r
 | Order | Work and scope | Why now | Readiness |
 |---|---|---|---|
 | 90 | [Correct material graph context and glass contracts](tasks/phase0_project-stabilization-audit/tasks.md) — items 3.5, 3.6 | Real time, camera, object, vertex and viewport data precede BRDF feature expansion. | Ready for next action |
-| 100 | [Sponza flicker correction](tasks/phase0_sponza-flicker-correction/tasks.md) — 0/7 checked; pending | Directly addresses the visible instability, using current baselines and region-specific gates. | Waiting: phase0_frame-allocation-layout-dependence; gate temporal |
-| 130 | [Lighting rc probe support followups](tasks/phase0_lighting-rc-probe-support-followups/tasks.md) — 0/8 checked; pending | The shipped probe configuration lacks its acceptance coverage and visibility evidence. | Waiting: phase0_sdf-gpu-fixture-refresh |
 | 160 | [Vfx sort pipeline hardware validation](tasks/phase16_vfx-sort-pipeline-hardware-validation/tasks.md) — 0/15 checked; blocked | Validate mesh-particle sorting only after attribute reads work; requires real DX12 capture evidence. | Waiting: existing Rulebook blocker: read task evidence; phase0_vfx-mesh-bindless-attr-read-bug |
-| 170 | [Accept the corrected renderer with images and sequences](tasks/phase0_project-stabilization-audit/tasks.md) — items 4.1 | Record matched Falcor and temporal evidence before treating the renderer as the next feature baseline. | Waiting: phase0_sponza-flicker-correction; phase0_ssr-exposure-correction; gate lifecycle; gate temporal; gate materials |
 
 ## P2 — execution order (14 items)
 
@@ -43,7 +40,6 @@ Planning gates and dependencies below are local queue constraints; they do not r
 | 200 | [Falcor dlss integration](tasks/phase1_falcor-dlss-integration/tasks.md) — 10/14 checked; pending | Finish RTX validation after correct motion/history and path-agnostic capability selection. | Waiting: gate temporal; gate visual |
 | 210 | [Fsr2 full integration](tasks/phase2_fsr2-full-integration/tasks.md) — 0/23 checked; pending | SDK integration follows the P1 unavailable-backend guard and valid velocity; it is not the guard itself. | Waiting: gate temporal; gate visual |
 | 220 | [Reflection probes](tasks/phase3a-3.37.0-reflection-probes/tasks.md) — 12/20 checked; pending | Verify the partially implemented local-reflection fallback before wider reflection expansion. | Waiting: gate visual |
-| 230 | [Ssr stochastic refactor](tasks/phase2_ssr-stochastic-refactor/tasks.md) — 25/46 checked; pending | Reconcile later layered-reflection fixes first; remaining work overlaps reflection probes and denoising. | Waiting: phase0_ssr-exposure-correction; phase3a-3.37.0-reflection-probes; gate visual |
 | 250 | [Multi material multi uv](tasks/phase5-5.1.0-multi-material-multi-uv/tasks.md) — 5/47 checked; pending | Asset correctness for real multi-primitive meshes; upstream of lightmaps and advanced material authoring. | Waiting: gate materials; gate visual |
 | 260 | [Fbx skeletal animation pipeline](tasks/phase3-3.0.0-fbx-skeletal-animation-pipeline/tasks.md) — 30/84 checked; pending | Consolidate import/skinning/animation ownership before expanding the two overlapping phase4 tasks. | Waiting: gate temporal; gate visual |
 | 270 | [Lod system](tasks/phase3a-3.38.0-lod-system/tasks.md) — 5/18 checked; pending | Measure geometry cost and complete LOD behavior against a stable image baseline. | Waiting: gate visual |
@@ -126,12 +122,6 @@ Validate evidence and archive with Rulebook; this view does not archive or certi
 <details>
 <summary>Show candidates outside the execution queue</summary>
 
-- [Rulebook priority queue](tasks/phase0_rulebook-priority-queue/tasks.md) (`phase0_rulebook-priority-queue`)
-- [Stabilization build provenance](tasks/phase0_stabilization-build-provenance/tasks.md) (`phase0_stabilization-build-provenance`)
-- [Stabilization diagnostic baseline](tasks/phase0_stabilization-diagnostic-baseline/tasks.md) (`phase0_stabilization-diagnostic-baseline`)
-- [Stabilization falcor gate](tasks/phase0_stabilization-falcor-gate/tasks.md) (`phase0_stabilization-falcor-gate`)
-- [Stabilization powershell gates](tasks/phase0_stabilization-powershell-gates/tasks.md) (`phase0_stabilization-powershell-gates`)
-- [Stabilization test integrity](tasks/phase0_stabilization-test-integrity/tasks.md) (`phase0_stabilization-test-integrity`)
 
 </details>
 
