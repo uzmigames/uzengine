@@ -62,7 +62,6 @@ Planning gates and dependencies below are local queue constraints; they do not r
 | 290 | [Measure batching, VFS and maintain shared layouts](tasks/phase0_project-stabilization-audit/tasks.md) — items 5.1, 5.2, 5.3, 6.1, 6.2, 6.3 | Optimize measured costs and simplify boundaries after correctness, then close the umbrella with evidence. | Waiting: gate visual |
 | 300 | [Vscode pass inspector ui](tasks/phase5-5.2.0-vscode-pass-inspector-ui/tasks.md) — 0/20 checked; untracked | Useful diagnostic UI, but existing CLI diagnostics already unblock P0/P1 work. | Waiting: gate lifecycle |
 | 310 | [Quality scalability system](tasks/phase3a-quality-scalability-system/tasks.md) — 0/45 checked; untracked | Presets must describe working validated capabilities, not conceal correctness defects. | Waiting: gate visual |
-| 320 | [Path tracer runtime mode](tasks/phase0_path-tracer-runtime-mode/tasks.md) — 17/73 checked; in-progress | Rebaseline the old checklist and define its supported scope; Falcor remains the oracle, so this does not block current fixes. | Waiting: gate visual |
 
 ## P3 — execution order (31 items)
 

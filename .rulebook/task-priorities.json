@@ -44,7 +44,6 @@
     {"id": "phase5-5.1.0-editor-visual-tools", "priority": "P2", "order": 280, "gates": ["lifecycle", "visual"], "reason": "Finish picking/gizmo visual checks after editor/world ownership is safe."},
     {"id": "phase5-5.2.0-vscode-pass-inspector-ui", "priority": "P2", "order": 300, "gates": ["lifecycle"], "reason": "Useful diagnostic UI, but existing CLI diagnostics already unblock P0/P1 work."},
     {"id": "phase3a-quality-scalability-system", "priority": "P2", "order": 310, "gates": ["visual"], "reason": "Presets must describe working validated capabilities, not conceal correctness defects."},
-    {"id": "phase0_path-tracer-runtime-mode", "priority": "P2", "order": 320, "gates": ["visual"], "reason": "Rebaseline the old checklist and define its supported scope; Falcor remains the oracle, so this does not block current fixes."},
     {"id": "phase1_port-metal-shader-pipeline", "priority": "P3", "order": 400, "gates": ["visual"], "reason": "Preserve existing work but defer platform expansion behind the current Windows stability objective; needs macOS validation."},
     {"id": "phase2-volumetric-clouds-ue5-parity", "priority": "P3", "order": 410, "depends_on": ["phase0-3.1.0-volumetric-clouds-rewrite"], "reason": "Feature parity follows the cloud core; its historic P1 label is not today's execution priority."},
     {"id": "phase2_omni-pcss-soft-shadows", "priority": "P3", "order": 420, "gates": ["visual"], "reason": "Shadow-quality expansion after current lighting and state correctness."},
