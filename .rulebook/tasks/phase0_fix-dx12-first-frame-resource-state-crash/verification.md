@@ -286,3 +286,11 @@ unchecked with the shared Zig 0.16 build blocker. The separate main-binary
 crash acceptance items 8.1 and 8.2 are both closed. The three supplied
 VfxEditorSlate test failures and eight non-barrier initialization messages
 are recorded explicitly, not hidden or treated as regressions fixed here.
+
+
+## 5.1 / 5.4 blocker — precise root cause (2026-10-14)
+
+The vfx_viewport_app demo build failure is a TOOLCHAIN INCONSISTENCY, not a dx12-crash code issue:
+- The project pins Zig 0.15.2 (vendored at .tools/zig-x86_64-windows-0.15.2; runtime/build.zig requires 0.15.2), but the machine PATH has Zig 0.16.0. demos/common/build_common.zig:201 (std.ArrayListUnmanaged(...){}) and :439 (build API) are 0.15.2-only and FAIL to compile under 0.16.
+- Building the demo with the vendored 0.15.2 gets past build_common.zig (7/10 steps) but then fails at link: `lld-link: undefined symbol: std::__1::__hash_memory` — runtime.lib was compiled with 0.16.0's libcxx (engine built with PATH zig this session), which is ABI-incompatible with the 0.15.2 libcxx the demo links against.
+- Fix path (separate build-system task): standardize the toolchain — build BOTH the engine (runtime.lib) and the demos with the SAME zig (the pinned vendored 0.15.2), or port build_common.zig + the engine to 0.16. Out of scope for the crash fix, which is verified on the main uzengine binary (GBV 120-frame, zero barrier errors).
