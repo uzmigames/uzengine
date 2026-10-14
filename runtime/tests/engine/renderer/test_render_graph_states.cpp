@@ -441,6 +441,67 @@ TEST_F(RenderGraphStates, FreshTexturesStartInTheirCreationState) {
     EXPECT_TRUE(cmd->mismatches.empty());
 }
 
+TEST_F(RenderGraphStates, ShadowAndGBufferDepthTransitionFromActualPreviousState) {
+    const auto shadow = Texture(DepthDesc(), "ShadowAtlas");
+    const auto depth = Texture(DepthDesc(), "GBuf_Depth");
+    for (int frame = 0; frame < 2; ++frame) {
+        cmd->barriers.clear();
+        auto rg = Graph();
+        const auto s = rg.ImportTrackedTexture("ShadowAtlas", shadow);
+        const auto d = rg.ImportTrackedTexture("GBuf_Depth", depth);
+        Pass(rg, "DepthWrites", {W(s, RHIResourceState::DepthStencilWrite),
+                                 W(d, RHIResourceState::DepthStencilWrite)});
+        Pass(rg, "Lighting", {R(s, RHIResourceState::ShaderResource),
+                              R(d, RHIResourceState::ShaderResource)});
+        rg.Compile();
+        rg.Execute(cmd.get());
+        for (const auto texture : {shadow, depth}) {
+            EXPECT_FALSE(Has(cmd->barriers, texture, RHIResourceState::Common,
+                             RHIResourceState::DepthStencilWrite));
+            EXPECT_EQ(Has(cmd->barriers, texture, RHIResourceState::ShaderResource,
+                          RHIResourceState::DepthStencilWrite), frame != 0);
+            EXPECT_TRUE(Has(cmd->barriers, texture, RHIResourceState::DepthStencilWrite,
+                            RHIResourceState::ShaderResource));
+        }
+        cmd->Execute();
+    }
+    EXPECT_TRUE(cmd->mismatches.empty());
+}
+
+TEST_F(RenderGraphStates, DBufferFirstUseAfterSkippedFramesStartsInCommon) {
+    const auto a = Texture(ColorDesc(), "DBuffer_A");
+    const auto b = Texture(ColorDesc(), "DBuffer_B");
+    const auto c = Texture(ColorDesc(), "DBuffer_C");
+    // An import without a decal pass must not invent a state for an unused texture.
+    {
+        auto rg = Graph();
+        for (const auto texture : {a, b, c}) {
+            (void)rg.ImportTrackedTexture("DBuffer", texture);
+        }
+        rg.Compile();
+        rg.Execute(cmd.get());
+        cmd->Execute();
+    }
+    for (int frame = 0; frame < 2; ++frame) {
+        cmd->barriers.clear();
+        auto rg = Graph();
+        for (const auto texture : {a, b, c}) {
+            const auto id = rg.ImportTrackedTexture("DBuffer", texture);
+            Pass(rg, "DecalRender", {W(id, RHIResourceState::RenderTarget)});
+            Pass(rg, "DecalApply", {R(id, RHIResourceState::ShaderResource)});
+        }
+        rg.Compile();
+        rg.Execute(cmd.get());
+        for (const auto texture : {a, b, c}) {
+            EXPECT_TRUE(Has(cmd->barriers, texture,
+                            frame == 0 ? RHIResourceState::Common : RHIResourceState::ShaderResource,
+                            RHIResourceState::RenderTarget));
+        }
+        cmd->Execute();
+    }
+    EXPECT_TRUE(cmd->mismatches.empty());
+}
+
 /// 3. A recreated handle (same slot, new generation) starts in its creation state, with no reset hook.
 TEST_F(RenderGraphStates, RecreatedHandleStartsInItsCreationState) {
     const auto first = Texture(ColorDesc(), "hdr-v1");

@@ -152,6 +152,10 @@ public:
     /// of the last graph or raw barrier that transitioned it) or, with none, its creation state. Resolved
     /// at `Compile()`, so a registry transition recorded between this call and Compile is honoured. A
     /// handle already imported in this graph returns that import's id: one barrier chain per resource.
+    /// First use is based on creation, not frameIndex: DX12 colour/UAV textures start in Common,
+    /// depth-stencil textures in DepthStencilWrite. Later imports retain the actual last state;
+    /// the first pass's requested state (for example GBuffer depth writes) is a transition target,
+    /// not an import claim. Do not add a second Common->UAV barrier inside a tracked compute pass.
     /// Requires a registry (constructor).
     [[nodiscard]] RgResourceId ImportTrackedTexture(const char* name, RHITextureHandle handle);
 
