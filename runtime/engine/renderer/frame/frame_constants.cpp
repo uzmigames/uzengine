@@ -864,7 +864,8 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     // The previous black-screen issue was caused by FFX rebinding the
     // descriptor heap and leaving it bound — fixed by
     // `DX12CommandList::RebindBindlessHeaps()` after every FFX dispatch.
-    if (m_brixelizerGI && m_brixelizerGI->IsInitialized() && m_device->IsBindless()) {
+    if (m_brixelizerGI && m_brixelizerGI->IsInitialized() && m_device->IsBindless()
+        && CVarRegistry::Get().GetBool("r.BrixelizerGI", false)) {
         perFrame.brixelizerGIDiffuseSrv = m_brixelizerGI->GetDiffuseGISrv();
     } else {
         perFrame.brixelizerGIDiffuseSrv = UINT32_MAX;

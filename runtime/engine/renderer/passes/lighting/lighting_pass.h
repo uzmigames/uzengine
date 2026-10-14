@@ -57,6 +57,8 @@ struct LightingPassDesc {
     rg::RgResourceId depthGBuffer;      ///< Depth G-Buffer input (read as SRV, not DSV).
     rg::RgResourceId positionGBuffer;   ///< World-space position G-Buffer input (read, ShaderResource state).
     rg::RgResourceId emissiveGBuffer;  ///< Emissive G-Buffer input (read, ShaderResource state, RGBA16Float).
+    rg::RgResourceId brixDiffuseResource;
+    rg::RgResourceId brixSpecularResource;
     CBAllocation      perFrameAlloc;    ///< Per-frame CB with invViewProj filled (bound at b1).
     CBAllocation      lightingAlloc;    ///< LightingCB with point light data (bound at b2).
     RHIPipelineHandle pipeline;         ///< Lighting PSO (fullscreen triangle, no depth).

@@ -119,6 +119,8 @@ struct FrameContext {
     // ── Render graph resource IDs ───────────────────────────────────
     rg::RgResourceId bbRes{};
     rg::RgResourceId hdrRes{};
+    rg::RgResourceId brixDiffuseRes{};
+    rg::RgResourceId brixSpecularRes{};
     rg::RgResourceId depthRes{};
     rg::RgResourceId normalRes{};
     rg::RgResourceId albedoRes{};

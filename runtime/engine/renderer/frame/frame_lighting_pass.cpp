@@ -194,6 +194,8 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
         lightDesc.depthGBuffer        = ctx.depthRes;
         lightDesc.positionGBuffer     = ctx.positionRes;
         lightDesc.emissiveGBuffer     = ctx.emissiveRes;
+        lightDesc.brixDiffuseResource = ctx.brixDiffuseRes;
+        lightDesc.brixSpecularResource = ctx.brixSpecularRes;
         lightDesc.perFrameAlloc       = ctx.perFrameAlloc;
         lightDesc.lightingAlloc       = ctx.lightingAlloc;
         lightDesc.pipeline            = ctx.pipelines->GetLighting();

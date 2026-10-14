@@ -41,6 +41,10 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
         pb.Read(desc.depthGBuffer,    RHIResourceState::ShaderResource);
         pb.Read(desc.positionGBuffer, RHIResourceState::ShaderResource);
         pb.Read(desc.emissiveGBuffer, RHIResourceState::ShaderResource);
+        if (desc.brixDiffuseResource.IsValid()) {
+            pb.Read(desc.brixDiffuseResource, RHIResourceState::ShaderResource);
+            pb.Read(desc.brixSpecularResource, RHIResourceState::ShaderResource);
+        }
         // The lighting split targets are written as SV_Target1..3 below. Declaring them lets the
         // graph transition them to ShaderResource for whoever reads them next (the debug view).
         if (desc.debugDirectResource.IsValid()) {
