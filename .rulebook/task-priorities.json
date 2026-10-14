@@ -18,7 +18,6 @@
   ],
   "tasks": [
     {"id": "phase0_project-stabilization-audit", "lane": "coordination", "priority": "P0", "order": 1, "reason": "Tracking umbrella; execute the scoped milestones above, not all 28 items before any other task."},
-    {"id": "phase0_preexisting-test-failures", "priority": "P0", "order": 50, "gates": ["baseline"], "reason": "Stop carrying native failures as an unowned exception; rebaseline the current build and fix owned suites."},
     {"id": "phase16_vfx-sort-pipeline-hardware-validation", "priority": "P1", "order": 160, "depends_on": ["phase0_vfx-mesh-bindless-attr-read-bug"], "reason": "Validate mesh-particle sorting only after attribute reads work; requires real DX12 capture evidence."},
     {"id": "phase1_falcor-dlss-integration", "priority": "P2", "order": 200, "gates": ["temporal", "visual"], "reason": "Finish RTX validation after correct motion/history and path-agnostic capability selection."},
     {"id": "phase2_fsr2-full-integration", "priority": "P2", "order": 210, "gates": ["temporal", "visual"], "reason": "SDK integration follows the P1 unavailable-backend guard and valid velocity; it is not the guard itself."},

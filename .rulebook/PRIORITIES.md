@@ -23,7 +23,6 @@ Planning gates and dependencies below are local queue constraints; they do not r
 | Order | Work and scope | Why now | Readiness |
 |---|---|---|---|
 | 40 | [Fix entity lifetime, scene loading and editor ownership](tasks/phase0_project-stabilization-audit/tasks.md) — items 2.1, 2.2, 2.3, 2.4, 2.5, 2.6 | Bound ECS generations, serialize world mutation, preserve scenes on load failure, bound IPC and remove absolute discovery paths. | Ready for next action |
-| 50 | [Preexisting test failures](tasks/phase0_preexisting-test-failures/tasks.md) — 2/8 checked; pending | Stop carrying native failures as an unowned exception; rebaseline the current build and fix owned suites. | Ready for next action |
 
 ## P1 — execution order (10 items)
 
