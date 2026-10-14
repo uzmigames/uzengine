@@ -18,6 +18,14 @@
 - [x] 0c.3 **Deferred 2026-10-14**: async-compute compatibility — the render graph is single-queue (architect plan §2), so there is no async path to mark async-capable. Revisit only if/when a compute queue is added.
 - [x] 0c.4 Superseded/stale (2026-10-14): the requested 10% WaitIdle-removal gain has no applicable WaitIdle call. Noise has loaded from disk since 8332def6; current-build headful 180-frame GBV re-verification exited 0 without a TDR. M0 cost parity remains a separate verification gate, not an asserted performance gain.
 
+M0 final verification (2026-10-14): ReleaseFast build and all CB layouts pass;
+four-pose harness passes C1/C2/C3 (14/14 captures), mean sky image delta
+<0.003%, largest cloud-cost regression +3.33%. The strict symmetric +/-10%
+cost band misses only on sun/away improvements >10%. GBV has no new barrier
+errors and 0 registry mismatches/double imports; eight pre-existing id 1422
+SkyCubemap/GBuffer_Velocity initialization errors remain. Full evidence and
+exact changed-file list are in `docs/analysis/volumetric-clouds-rewrite/01-m0-execution-2026-10-14.md`.
+
 ## Phase 0 Bugs Found (must fix before Phase 1)
 - [x] 0.B1 Superseded/stale (2026-10-14): historical runtime Worley bake replaced by disk-loaded MIT three-geospatial assets in 8332def6; no runtime Worley shader remains. Current-build headful `cloud_test --frames 180 --gpu-validation` exited 0 without a TDR.
 - [x] 0.B2 Superseded/stale (2026-10-14): the historical unrolled/looped Worley bake is no longer executed (8332def6 disk-noise replacement). Current-build headful 180-frame GBV re-verification exited 0 without a TDR.
@@ -33,15 +41,15 @@ temporal resolve and aerial perspective), M3 (Bayer upscale), M4 (Beer shadow ma
 M5 (multi-layer density) and M6 (cleanup/docs/tests) are multi-session follow-on
 work; their unchecked items below remain open.
 
-- [ ] 1.1 Generate or integrate STBN 3D blue noise texture (128x128x64 R8_UNORM). Compute shader or embedded asset.
-- [ ] 1.2 Add new CB fields to `cloud_raymarch_cs.hlsl`: `minStepSize`, `maxStepSize`, `perspectiveStepScale`, `stbnSrvIndex`.
-- [ ] 1.3 Replace uniform step loop with adaptive perspective-scaled stepping: `stepT *= perspectiveStepScale` each iteration, clamped to `[minStepSize, maxStepSize]`.
-- [ ] 1.4 Add blue noise jitter: initial ray offset `t += stepT * stbn[pixel % 128, frame % 64] * 2.0`.
-- [ ] 1.5 Add empty space skipping: when `density <= 0`, enlarge step toward `maxStepSize` based on mip level.
-- [ ] 1.6 Add MIP level computation: `mipLevel = log2(max(1, startTexelsPerPixel + rayDistance * 1e-5))` for LOD on texture samples.
-- [ ] 1.7 Update `VolumetricCloudsComponent` with new parameters (minStepSize=0.01, maxStepSize=0.5, perspectiveStepScale=1.006).
-- [ ] 1.8 Update `CloudPass` C++ to create STBN texture, bind SRV, pack new CB fields.
-- [ ] 1.9 Build + visual verification: capture screenshots at multiple camera positions, verify no banding.
+- [x] 1.1 **M1 done 2026-10-14** (docs/analysis/volumetric-clouds-rewrite/02-m1-execution): runtime/content/atmosphere/stbn128.bin (128x128x64 R8, 1MB, seed 20261014, SHA bafcb1bb..; low/high power 0.062/0.025 < 0.1 gate) via scripts/rendering/generate_cloud_stbn.py.
+- [x] 1.2 **M1 done 2026-10-14** (docs/analysis/volumetric-clouds-rewrite/02-m1-execution): cloud_raymarch_cs.hlsl:80 adds minStepSize/maxStepSize/perspectiveStepScale/stbnSrvIndex in a 512-byte CB (cloud_pass.cpp:423 static_assert); root constants stay 12 DWORDs.
+- [x] 1.3 **M1 done 2026-10-14** (docs/analysis/volumetric-clouds-rewrite/02-m1-execution): cloud_raymarch_cs.hlsl:448-470 adaptive perspective-scaled stepping, COUNTED 256-iteration cap + min/max clamp (cannot reintroduce the TDR).
+- [x] 1.4 **M1 done 2026-10-14** (docs/analysis/volumetric-clouds-rewrite/02-m1-execution): cloud_raymarch_cs.hlsl:457 STBN jitter at pixel%128/frame%64 x 2*stepT x jitterScale.
+- [x] 1.5 **M1 done 2026-10-14** (docs/analysis/volumetric-clouds-rewrite/02-m1-execution): cloud_raymarch_cs.hlsl:471-474 zero-density steps grow toward max (mip-scaled) without bypassing the cap.
+- [x] 1.6 **M1 done 2026-10-14** (docs/analysis/volumetric-clouds-rewrite/02-m1-execution): cloud_raymarch_cs.hlsl:467 perspective-footprint LOD; cloud_pass.cpp:279-350 builds real filtered mip chains (8 shape, 6 detail) - the 128^3 shape volume is now SAMPLED (was uploaded-but-unused).
+- [x] 1.7 **M1 done 2026-10-14** (docs/analysis/volumetric-clouds-rewrite/02-m1-execution): volumetric_clouds_component.h:141-144 defaults (0.01/0.5/1.006/jitter 1) + JSON serialization.
+- [x] 1.8 **M1 done 2026-10-14** (docs/analysis/volumetric-clouds-rewrite/02-m1-execution): cloud_pass.cpp:357,500-518,560-568 STBN load + CB pack + tracked graph read.
+- [x] 1.9 **M1 done 2026-10-14** (docs/analysis/volumetric-clouds-rewrite/02-m1-execution): builds; 2x 180-frame headful GBV exit 0, NO TDR, no compile-fail, zero registry mismatch (8 benign id-1422 remain); frame-0 clouds non-black. NO-BANDING gate MET - the banding map (|dY|/Y) shows blue only at real cloud edges, not stepping bands (.screenshots/cloud-m1/harness/after/clouds_montage.jpg). NOTE: clouds are flatter/low-contrast pending M2 multi-scattering (expected for minimum-ship M1). gtests 7674 pass / 3 pre-existing VfxEditorSlate / 16 Cloud+STBN tests pass.
 
 ## Phase 2: Multi-Scattering Octaves
 - [ ] 2.1 Implement `EvaluateMultiScattering()` function in `cloud_raymarch_cs.hlsl`: 8-octave loop with attenuation factors a=0.5, b=0.5, c=0.5 per octave (Oz/Kulla 2017).

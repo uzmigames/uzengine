@@ -52,6 +52,10 @@ UZ_REGISTER_COMPONENT_SERIALIZER(volumetric_clouds, uz::VolumetricCloudsComponen
         c.tracingMaxDistanceKm = uz::json::Float(j, "tracing_max_distance_km", defaults.tracingMaxDistanceKm);
         c.primarySteps         = uz::json::Uint(j, "primary_steps", defaults.primarySteps);
         c.lightSteps           = uz::json::Uint(j, "light_steps", defaults.lightSteps);
+        c.minStepSize = uz::json::Float(j, "min_step_size", defaults.minStepSize);
+        c.maxStepSize = uz::json::Float(j, "max_step_size", defaults.maxStepSize);
+        c.perspectiveStepScale = uz::json::Float(j, "perspective_step_scale", defaults.perspectiveStepScale);
+        c.jitterScale = uz::json::Float(j, "jitter_scale", defaults.jitterScale);
 
         // Control
         c.enabled = uz::json::Bool(j, "enabled", defaults.enabled);
@@ -90,6 +94,10 @@ UZ_REGISTER_COMPONENT_SERIALIZER(volumetric_clouds, uz::VolumetricCloudsComponen
         j["tracing_max_distance_km"] = c->tracingMaxDistanceKm;
         j["primary_steps"]           = c->primarySteps;
         j["light_steps"]             = c->lightSteps;
+        j["min_step_size"] = c->minStepSize;
+        j["max_step_size"] = c->maxStepSize;
+        j["perspective_step_scale"] = c->perspectiveStepScale;
+        j["jitter_scale"] = c->jitterScale;
 
         // Control
         j["enabled"] = c->enabled;

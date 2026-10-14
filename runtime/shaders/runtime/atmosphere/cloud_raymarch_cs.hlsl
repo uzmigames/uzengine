@@ -6,7 +6,7 @@
 ///
 /// # Root Signature Layout (Compute)
 /// - b0 (slot 0): 4x uint32 root constants {outputUavIdx, depthSrvIdx, halfWidth, halfHeight}
-/// - b2 (slot 2): CloudCB constant buffer (256 bytes)
+/// - b2 (slot 2): CloudCB constant buffer (512 bytes)
 /// - u0 (slot 4): UAV descriptor table for output write
 ///
 /// # Output
@@ -26,19 +26,12 @@ cbuffer RootConstants : register(b0) {
     uint  g_depthSrvIdx;
     uint  g_halfWidth;
     uint  g_halfHeight;
-    // Cloud CVar params (Phase 3) — via root constants, not CloudCB
-    uint  g_noiseXYScaleBits;    // CVar r.Cloud.NoiseXYScale (asfloat, default 0.12)
-    uint  g_noiseZScaleBits;     // CVar r.Cloud.NoiseZScale (asfloat, default 3.0)
-    uint  g_shapeOctaves;        // CVar r.Cloud.ShapeOctaves (default 4)
-    uint  g_fbmDecayBits;        // CVar r.Cloud.FBMDecay (asfloat, default 0.5)
-    uint  g_fbmLacunarityBits;   // CVar r.Cloud.FBMLacunarity (asfloat, default 2.0)
-    uint  g_detailErosionBits;   // CVar r.Cloud.DetailErosion (asfloat, default 0.35)
-    uint  g_densityScaleBits;    // CVar r.Cloud.DensityScale (asfloat, default 25.0)
-    uint  _rcPad;
+    uint4 _rcReserved0;
+    uint4 _rcReserved1;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Cloud Constant Buffer (b2) — matches CloudCB in cloud_pass.cpp (256 bytes)
+// Cloud Constant Buffer (b2) — matches CloudCB in cloud_pass.cpp (512 bytes)
 // ─────────────────────────────────────────────────────────────────────────────
 
 cbuffer CloudCB : register(b2) {
@@ -84,9 +77,25 @@ cbuffer CloudCB : register(b2) {
     float   g_tracingStartMaxDistance;
     float   g_tracingStartDistanceFromCamera;
     uint    g_detailNoiseSrv;  // offset 252: detail noise 3D texture SRV (0xFFFFFFFF = none)
+    float   g_minStepSize;
+    float   g_maxStepSize;
+    float   g_perspectiveStepScale;
+    uint    g_stbnSrvIndex;
+    uint    g_frameIndex;
+    uint    g_proceduralNoise;
+    float   g_noiseXYScale;
+    float   g_noiseZScale;
+    uint    g_shapeOctaves;
+    float   g_fbmDecay;
+    float   g_fbmLacunarity;
+    float   g_detailErosion;
+    float   g_densityScale;
+    float   g_jitterScale;
+    float2  _cbPad;
+    float4  _cbReserved[12];
 };
 
-SamplerState linearSampler : register(s0);
+SamplerState linearSampler : register(s3);
 
 #ifndef UZ_BINDLESS
 Texture3D<float>    g_ShapeNoiseTex : register(t0);
@@ -98,7 +107,7 @@ static const float PLANET_RADIUS_KM = 6360.0f;
 static const float EXT_EPS = 1e-7f;
 
 /// @ref Schneider 2015 — cloud density normalization (CVar r.Cloud.DensityScale)
-#define DENSITY_SCALE asfloat(g_densityScaleBits)
+#define DENSITY_SCALE g_densityScale
 
 /// Planet surface safety offset (km).
 /// @ref Bruneton 2008 — offset to avoid surface intersection
@@ -245,10 +254,10 @@ float FBM(float3 p, uint octaves) {
     float value = 0.0f;
     float amplitude = 0.5f;
     float frequency = 1.0f;
-    for (uint oct = 0; oct < octaves; ++oct) {
+    for (uint oct = 0; oct < min(octaves, 6u); ++oct) {
         value += amplitude * ValueNoise3D(p * frequency);
-        amplitude *= asfloat(g_fbmDecayBits);
-        frequency *= asfloat(g_fbmLacunarityBits);
+        amplitude *= g_fbmDecay;
+        frequency *= g_fbmLacunarity;
     }
     return value;
 }
@@ -265,7 +274,7 @@ float FBM(float3 p, uint octaves) {
 /// Key difference from flat clouds: noise is sampled at uniform 3D coordinates
 /// relative to the planet surface, NOT (XY, normalizedH). This produces
 /// actual 3D structures instead of horizontal slabs.
-float SampleDensity(float3 samplePosKm, float innerRadius, float layerHeight) {
+float SampleDensity(float3 samplePosKm, float innerRadius, float layerHeight, float mipLevel) {
     float sampleHeight = length(samplePosKm);
     float hGrad = HeightGradient(sampleHeight, innerRadius, layerHeight);
     if (hGrad <= 0.0f) return 0.0f;
@@ -278,14 +287,25 @@ float SampleDensity(float3 samplePosKm, float innerRadius, float layerHeight) {
     /// @ref Schneider 2015 — noise coordinate mapping
     /// @constants XY_SCALE = 0.12, Z_SCALE = 3.0
     float3 noisePos = float3(
-        (samplePosKm.x + windOffset.x) * asfloat(g_noiseXYScaleBits),
-        (samplePosKm.y + windOffset.y) * asfloat(g_noiseXYScaleBits),
-        normalizedH * asfloat(g_noiseZScaleBits) + windOffset.z * 0.05f
+        (samplePosKm.x + windOffset.x) * g_noiseXYScale,
+        (samplePosKm.y + windOffset.y) * g_noiseXYScale,
+        normalizedH * g_noiseZScale + windOffset.z * 0.05f
     );
 
     // Shape noise — FBM with CVar-driven octaves
     /// @ref Schneider 2015 — multi-octave noise for cloud shapes
-    float shape = FBM(noisePos, g_shapeOctaves);
+    float shape;
+#ifdef UZ_BINDLESS
+    if (g_proceduralNoise == 0 && g_shapeNoiseSrv != 0xFFFFFFFF) {
+        Texture3D<float> shapeTex = ResourceDescriptorHeap[g_shapeNoiseSrv];
+        // shape.bin already contains combined Perlin-Worley, not four independent
+        // channels. Remapping replicated RGBA as R minus GBA would erase it.
+        shape = shapeTex.SampleLevel(linearSampler, noisePos, mipLevel);
+    } else
+#endif
+    {
+        shape = FBM(noisePos, g_shapeOctaves);
+    }
 
     // Coverage-based density: shape noise modulated by coverage and height.
     // Use a softer remap than Schneider's hard threshold — our procedural FBM
@@ -293,7 +313,9 @@ float SampleDensity(float3 samplePosKm, float innerRadius, float layerHeight) {
     // (~0.0-1.0), so a hard remap at 1-coverage cuts most of the signal.
     // Instead: bias the noise by coverage, then saturate.
     /// @ref Schneider 2015 slide 70 — adapted for procedural FBM range
-    float shapeDensity = saturate(shape + g_coverage - 0.5f);
+    float shapeDensity = g_proceduralNoise != 0 || g_shapeNoiseSrv == 0xFFFFFFFF
+        ? saturate(shape + g_coverage - 0.5f)
+        : saturate((shape - (1.0f - g_coverage)) / max(g_coverage, EXT_EPS));
     // Apply a power curve to create contrast (thick core, thin edges)
     shapeDensity = shapeDensity * shapeDensity;
 
@@ -304,12 +326,15 @@ float SampleDensity(float3 samplePosKm, float innerRadius, float layerHeight) {
     /// @constants DETAIL_FREQ_SCALE = 4.0, DETAIL_EROSION = 0.35
 #ifdef UZ_BINDLESS
     if (g_detailNoiseSrv != 0xFFFFFFFF && shapeDensity > 0.0f) {
-        Texture3D<float4> detailTex = ResourceDescriptorHeap[g_detailNoiseSrv];
-        float3 detailPos = noisePos * (asfloat(g_fbmLacunarityBits) * 2.0f) + float3(windOffset.x * g_detailWindScale,
+        Texture3D<float> detailTex = ResourceDescriptorHeap[g_detailNoiseSrv];
+        float3 detailPos = noisePos * (g_fbmLacunarity * 2.0f) + float3(windOffset.x * g_detailWindScale,
                                                       windOffset.y * g_detailWindScale,
                                                       windOffset.z * 0.1f);
-        float detailNoise = detailTex.SampleLevel(linearSampler, frac(detailPos * 0.25f), 0).r;
-        float erosionStrength = asfloat(g_detailErosionBits) * (1.0f - saturate(shapeDensity * 2.0f));
+        // 32^3 detail has one quarter the shape volume's texel density at
+        // the default lacunarity (2); keep both LOD footprints consistent.
+        float detailMip = max(0.0f, mipLevel + log2(g_fbmLacunarity * 0.125f));
+        float detailNoise = detailTex.SampleLevel(linearSampler, detailPos * 0.25f, detailMip);
+        float erosionStrength = g_detailErosion * (1.0f - saturate(shapeDensity * 2.0f));
         shapeDensity = saturate(shapeDensity - detailNoise * erosionStrength);
     }
 #endif
@@ -321,6 +346,17 @@ float SampleDensity(float3 samplePosKm, float innerRadius, float layerHeight) {
 // Light March
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// @ref Schneider & Vos 2015 - filtered noise for coarse ray segments.
+/// @constants shape resolution = 128; coordinates are per-km derivatives.
+float DensityMip(float3 direction, float stepLength, float distance) {
+    float3 texelsPerKm = 128.0f * float3(g_noiseXYScale, g_noiseXYScale,
+                                        g_noiseZScale / max(g_layerHeightKm, EXT_EPS));
+    float3 segment = abs(direction * texelsPerKm) * stepLength;
+    float segmentFootprint = max(segment.x, max(segment.y, segment.z));
+    float pixelFootprint = distance * max(texelsPerKm.x, texelsPerKm.z) / float(g_halfHeight);
+    return log2(max(1.0f, max(segmentFootprint, pixelFootprint)));
+}
+
 /// @ref Schneider 2015 — secondary light ray march toward sun
 float LightMarch(float3 samplePosKm, float3 sunDir, float innerRadius,
                  float outerRadius, float layerHeight) {
@@ -330,14 +366,15 @@ float LightMarch(float3 samplePosKm, float3 sunDir, float innerRadius,
     if (lightDist <= 0.0f) return 1.0f;
     lightDist = min(lightDist, layerHeight * 2.0f);
 
-    uint lightSteps = min(g_lightSteps, 6u);
+    uint lightSteps = clamp(g_lightSteps, 1u, 8u);
     float stepLen = lightDist / float(lightSteps);
     float totalDensity = 0.0f;
+    float mipLevel = DensityMip(sunDir, stepLen, 0.0f);
 
     for (uint i = 0; i < lightSteps; ++i) {
         float t = (float(i) + 0.5f) * stepLen;
         float3 lightPos = samplePosKm + sunDir * t;
-        totalDensity += SampleDensity(lightPos, innerRadius, layerHeight) * stepLen;
+        totalDensity += SampleDensity(lightPos, innerRadius, layerHeight, mipLevel) * stepLen;
     }
 
     return exp(-totalDensity * g_extinction * DENSITY_SCALE);
@@ -381,14 +418,23 @@ void main(uint3 DTid : SV_DispatchThreadID) {
         return;
     }
 
-    // Clamp march distance (50 km max for performance)
-    tFar = min(tFar, tNear + 50.0f);
-
-    // Keep a hard upper bound independent of component/constant-buffer input.
-    // The 64-step march is verified TDR-free; runtime noise baking is no longer used.
-    uint stepCount = min(g_primarySteps, 64u);
-    float stepLen = (tFar - tNear) / float(stepCount);
-    if (stepLen <= 0.0f) {
+    tFar = min(tFar, tNear + g_tracingMaxDistanceKm);
+#ifdef UZ_BINDLESS
+    if (g_depthSrvIdx != 0xFFFFFFFF) {
+        Texture2D<float> depthTex = ResourceDescriptorHeap[g_depthSrvIdx];
+        uint width, height;
+        depthTex.GetDimensions(width, height);
+        uint2 depthPixel = min(DTid.xy * 2, uint2(width - 1, height - 1));
+        float depth = depthTex.Load(int3(depthPixel, 0));
+        if (depth > 0.0f) {
+            float2 uv = (float2(depthPixel) + 0.5f) / float2(width, height);
+            float4 world = mul(float4(uv.x * 2 - 1, 1 - uv.y * 2, depth, 1), g_invViewProj);
+            // Engine world coordinates are centimeters; cloud distances are km.
+            tFar = min(tFar, length(world.xyz / world.w * 1e-5f - g_cameraPos));
+        }
+    }
+#endif
+    if (tFar <= tNear) {
         output[DTid.xy] = float4(0.0f, 0.0f, 0.0f, 1.0f);
         return;
     }
@@ -412,14 +458,35 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     float3 luminance    = float3(0.0f, 0.0f, 0.0f);
     float  transmittance = 1.0f;
 
-    for (uint i = 0; i < stepCount; ++i) {
-        if (transmittance < 0.01f) break;
+    /// @ref Wolfe et al. 2022 "Spatiotemporal Blue Noise Masks"
+    /// @constants kMaxIterations = 256, STBN extent = 128x128x64.
+    static const uint kMaxIterations = 256;
+    float minStep = max(g_minStepSize, 0.001f);
+    float maxStep = max(minStep, g_maxStepSize);
+    float stepT = clamp(max(tNear * (g_perspectiveStepScale - 1.0f),
+                            (tFar - tNear) / float(kMaxIterations)), minStep, maxStep);
+    float t = tNear;
+#ifdef UZ_BINDLESS
+    if (g_stbnSrvIndex != 0xFFFFFFFF) {
+        Texture3D<float> stbn = ResourceDescriptorHeap[g_stbnSrvIndex];
+        t += stepT * stbn.Load(int4(DTid.xy % 128, g_frameIndex % 64, 0)) * 2.0f * g_jitterScale;
+    }
+#endif
+    for (uint i = 0; i < kMaxIterations && t < tFar; ++i) {
+        if (transmittance < g_stopTracingTransmittanceThreshold) break;
 
-        float t = tNear + (float(i) + 0.5f) * stepLen;
+        float stepLen = min(stepT, tFar - t);
         float3 samplePos = cameraSkyKm + rayDir * t;
-
-        float density = SampleDensity(samplePos, innerRadius, g_layerHeightKm);
-        if (density <= 0.0f) continue;
+        // Footprint in the 128^3 shape volume, including perspective growth.
+        /// @ref Schneider & Vos 2015 - filtered volume sampling.
+        float mipLevel = DensityMip(rayDir, stepLen, t);
+        float density = SampleDensity(samplePos, innerRadius, g_layerHeightKm, mipLevel);
+        t += stepLen;
+        stepT = clamp(stepT * g_perspectiveStepScale, minStep, maxStep);
+        if (density <= 0.0f) {
+            stepT = min(maxStep, stepT * (2.0f + mipLevel));
+            continue;
+        }
 
         float ext = density * g_extinction * DENSITY_SCALE;
         float scat = ext * g_scatteringAlbedo;

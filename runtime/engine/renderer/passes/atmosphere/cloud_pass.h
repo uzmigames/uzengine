@@ -21,7 +21,8 @@
 ///
 /// # GPU Resources
 /// - Cloud output: half-resolution RGBA16F (SRV + UAV).
-/// - 3D shape noise: 128^3 RGBA8 (loaded from content/atmosphere/shape.bin).
+/// - Scalar shape/detail noise: 128^3 / 32^3 R8 with filtered mip chains.
+/// - Spatiotemporal blue noise: 128x128x64 R8.
 ///
 /// # Integration
 /// Created and owned by SceneRenderer. RegisterPasses declares the raymarch's
@@ -71,6 +72,11 @@ struct CloudPassInput {
     uint32_t lightSteps;
     uint32_t depthSrv;
     float    globalCoverage;
+    float    minStepSize = 0.01f;
+    float    maxStepSize = 0.5f;
+    float    perspectiveStepScale = 1.006f;
+    float    jitterScale = 1.0f;
+    uint32_t frameIndex = 0;
 
     // ── Additional tracing/quality parameters from VolumetricCloudsComponent ──
     float    cloudType;                                       ///< Cloud type [0,1]. 0=stratus, 1=cumulus.
@@ -189,6 +195,8 @@ private:
     uint32_t         m_shapeNoiseSrvIndex = UINT32_MAX;
     RHITextureHandle m_detailNoiseTexture = RHITextureHandle::Invalid();
     uint32_t         m_detailNoiseSrvIndex = UINT32_MAX;
+    RHITextureHandle m_stbnTexture = RHITextureHandle::Invalid();
+    uint32_t         m_stbnSrvIndex = UINT32_MAX;
 
     // ── Staging buffers kept alive until GPU finishes ──
     std::vector<RHIBufferHandle> m_stagingBuffers;

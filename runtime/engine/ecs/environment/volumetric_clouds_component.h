@@ -137,6 +137,12 @@ struct VolumetricCloudsComponent : public CBDirtyMixin {
     /// More steps = higher quality but more expensive. 64 is a good balance.
     uint32_t primarySteps = 48;
 
+    /// Adaptive march distances in km. The shader always caps the iteration count.
+    float minStepSize = 0.01f;
+    float maxStepSize = 0.5f;
+    float perspectiveStepScale = 1.006f;
+    float jitterScale = 1.0f;
+
     /// Number of light march steps toward the sun at each primary step.
     /// Used to compute in-scattering and shadow self-occlusion. 6 is typical.
     uint32_t lightSteps = 6;
