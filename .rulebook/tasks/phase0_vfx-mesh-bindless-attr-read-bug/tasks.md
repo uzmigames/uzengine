@@ -6,12 +6,14 @@
 
 - [x] 1.2.1 Tested cmd-list split-submit (`End() / Execute() / WaitIdle() / Begin()`) inserted by the readback diagnostic itself between sim and RG. **Same result**: `instCount=0 indirectInst=0` even with WaitIdle. The mesh CS bindless reads still see zero. CPU-side `CopyBuffer` readback (which uses the same SR-state buffer) sees the spawn-written values correctly. **The bindless SRV path through `ResourceDescriptorHeap[]` is what's broken — separate from the buffer state.**
 
-- [ ] 1.3 (BLOCKED — needs RenderDoc / PIX) Capture a RenderDoc frame of the demo running `mesh_sort_shards.uzvfx --headless --frames 80`. In RenderDoc Pipeline State viewer, inspect:
+- [ ] 1.3 (BLOCKED — RenderDoc / PIX unavailable in this automated headless environment) Capture a GPU frame of the unchanged `mesh_sort_shards.uzvfx` with `sort_mode: ViewDepth`. The later bisection isolates the remaining failure to `sortedIndices`, not general attribute reads. Inspect:
+   - Whether the sort dispatch actually executes for this emitter, its output indices, the `sortedIndicesSrvIndex` descriptor heap entry, and the sort buffer state immediately before `VFX_MeshInstanceCS`.
+   - The actual `sortedIndices[sortedSlot]` fetch in the shader debugger: recorded reads all return zero, mapping threads to unspawned particle slot zero and producing `instCount=0`.
    - Resource state of `VFX_PositionsB` / `VFX_LifespansB` immediately before the `VFX_MeshInstanceCS` dispatch (should be `ShaderResource` per our barrier; if not, the auto-tracker is overriding our manual transition).
    - The descriptor heap entries at `positionsSrvIndex` (37161) and `lifespansSrvIndex` (37167) — verify they actually point to the per-particle attribute buffers and not to some other allocation that got the same index.
    - The shader's actual fetch result via the in-shader debugger (set a breakpoint in `particle_mesh_instance_cs.hlsl:386` `if (lifespan <= 0.0f || age >= lifespan) return;` and inspect `lifespan` value).
 
-- [ ] 1.4 (DEFERRED — not needed; path 4 already ruled out by 1.1) Logging `emitter->worldPosition` was the discriminator for path 4 (spawn writes wrong values). The 1.1 readback definitively proves spawn writes correct positions, so the worldPosition source is correct.
+- [ ] 1.4 (NOT PERFORMED — redundant after 1.1; retained unchecked) Logging `emitter->worldPosition` was the discriminator for path 4 (spawn writes wrong values). Full-buffer readback already proves sane spawn writes. This additional log is not evidence needed to resolve the remaining sorted-index read; that diagnosis is blocked on the unavailable RenderDoc / PIX capture in 1.3.
 
 - [x] 1.5 **Triangulation (final, post 2026-05-03 bisection):**
    - Spawn / update CS writes are CORRECT (CopyBuffer readback). Path 4 ruled out.
@@ -33,36 +35,29 @@
 
 ## 3. Verify visually
 
-- [x] 3.1 With `sort_mode: None` on the asset: visible mesh tetrahedra render with proper depth + lighting (`.sandbox/final-unsorted-frame60.png`, 126 KB). HDR composite is no longer black-blanked, indirectInst matches alive count (4-7 instances). The unsorted path is now functionally correct.
+Historical evidence only: with `sort_mode: None`, the prior bisection recorded visible tetrahedra with depth and lighting (`.sandbox/final-unsorted-frame60.png`, 126 KB) and 4-7 indirect instances. This does not satisfy any committed-asset visual item below. With committed `ViewDepth`, it recorded `instCount=0` and a baseline-only screenshot (179 801 bytes).
 
-- [ ] 3.2 With committed `sort_mode: ViewDepth`: still produces `instCount=0`, screenshot identical to spline baseline (179 801 bytes). **Sorted path remains broken — needs separate task with RenderDoc to inspect why the sortedIndices bindless read returns 0.**
+- [ ] 3.1 (BLOCKED — sortedIndices read diagnosis needs unavailable RenderDoc / PIX) Capture `--vfx-asset vfx/tests/mesh_sort_shards.uzvfx --headless --screenshot e:/UzmiEngine/uzengine/.sandbox/visibility-fixed-v2.png --screenshot-frame 90 --frames 120`. Keep the COMMITTED asset (`scale: [3.0, 3.0, 3.0]`, `velocity: [0, 0, 200]`, `sort_mode: ViewDepth`); do not tune it to mask the bug. No screenshot run was attempted during this automated closeout: GPU rendering hangs headless here.
 
-- [ ] 3.3 (DEFERRED to follow-up task) Capture the three frame-N variants. Cannot pass while sort_mode=ViewDepth (the asset's committed value) renders nothing.
+- [ ] 3.2 (BLOCKED — ViewDepth renders nothing until the capture-backed fix) Read the new PNG. Pass only if discrete tetrahedra are identifiable against obvious sky and ground, matching the `.sandbox/spline-now.png` composition with added particles. Uniform color, engulfing geometry, fully black output, and a baseline-only scene fail.
 
-## 4. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 3.3 (BLOCKED — same sorted-path failure and unavailable GPU capture) Capture frames 30, 60, and 120. Discrete particles must remain visible in all three; no frame may engulf the camera.
 
-- [ ] 4.1 Update or create documentation covering the implementation — partial fix means the doc update should describe BOTH the sorted-path CS race fix AND the still-outstanding sortedIndices bindless read bug. Defer to follow-up task that completes the visibility.
-
-- [ ] 4.2 Write tests covering the new behavior — regression test: assert that `particle_mesh_instance_cs.hlsl` does NOT have an `if (sortedSlot == 0)` block in the post-dead-check sorted path (parsed from the .hlsl source) so the thread-0 race cannot regress silently.
-
-- [ ] 4.3 Run tests and confirm they pass.
-
-**Status: incremental fixes landed but task remains BLOCKED on sorted-path bindless read. Recommend creating phase0_vfx-mesh-sortedindices-bindless-read follow-up.**
-
-## 3. Verify visually
-
-- [ ] 3.1 Capture `--vfx-asset vfx/tests/mesh_sort_shards.uzvfx --headless --screenshot e:/UzmiEngine/uzengine/.sandbox/visibility-fixed-v2.png --screenshot-frame 90 --frames 120`. The asset must remain the COMMITTED state (`scale: [3.0, 3.0, 3.0]`, `velocity: [0, 0, 200]`, `sort_mode: ViewDepth`) — do NOT tune the asset to mask the bug.
-
-- [ ] 3.2 Read the PNG with the Read tool. Pass criterion: discrete tetrahedron mesh particles must be IDENTIFIABLE in the sky+ground scene. Pass = visible particle silhouettes against an OBVIOUS sky+ground composition (matches `.sandbox/spline-now.png` baseline composition + adds visible mesh particles). Fail = uniform color filling the viewport, OR camera-engulfed-by-geometry, OR fully black.
-
-- [ ] 3.3 Capture three additional camera-frame variants (`--screenshot-frame 30`, `60`, `120`) to confirm particles persist across the spawn arc. Discrete particles must be visible in ALL three frames; if any frame shows engulfed-camera the fix is incomplete.
-
-- [ ] 3.4 Verify the `mesh_sort_shards.uzfx` editor-schema sister-asset still loads + renders (use the demo's preset cycling or the editor harness — TBD whether a separate command line). Mesh particle path must work for both the runtime production loader (`.uzvfx`) and the editor / serializer schema (`.uzfx`).
+- [ ] 3.4 (BLOCKED — same sorted-path failure and unavailable GPU capture) Verify `mesh_sort_shards.uzfx` loads and renders through the editor-schema loader. Loading alone cannot satisfy the required rendering evidence.
 
 ## 4. Tail (mandatory — enforced by rulebook v5.3.0)
 
-- [ ] 4.1 Update or create documentation covering the implementation — overhaul `docs/engine/25-vfx/88-mesh-particle-render-path.md` section 7. Replace the "Visibility verified" claim from the predecessor with a corrected entry. Add an explicit "Failure modes investigated" subsection enumerating the four hypothesized root causes and which one matched. Embed the new `visibility-fixed-v2.png` screenshot AND keep the misleading `post-fix-final.png` for reference (annotated as "previous fix's appearance — actually broken").
+- [ ] 4.1 (DOCUMENTATION UPDATED; screenshot requirement BLOCKED) Section 7 of `docs/engine/25-vfx/88-mesh-particle-render-path.md` now corrects the predecessor's visibility claim, explains the landed count race fix and unresolved sortedIndices read, and enumerates the four hypotheses without inventing a confirmed GPU root cause. The previous `post-fix-final.png` reference is retained and embedded as "previous fix's appearance - actually broken". No `visibility-fixed-v2.png` exists from this closeout; embedding genuine fixed visibility evidence remains blocked on the RenderDoc / PIX diagnosis and sorted-path fix.
 
-- [ ] 4.2 Write tests covering the new behavior — extend `runtime/tests/engine/renderer/frame_particles_mesh_guard_test.cpp` (or a new sibling) with a regression test specific to whichever path was fixed. Examples: (path 1) verify the mesh-instance-CS RG pass declares `pb.Read` on attribute buffers when imported; (path 2) verify a `UAV -> UAV` barrier is recorded before the state transition; (path 4) verify the asset emitter's worldPosition is `(0,0,0)` after `ParticleEmitter::Initialize`.
+- [x] 4.2 Added `MeshGuard_SortedInstanceCount.PostDeadCheckSortedPathHasNoThreadZeroGate` in `runtime/tests/engine/renderer/frame_particles_mesh_guard_test.cpp`. The source-level guard strips HLSL comments, locates the dead check, parses the sorted branch, and rejects `if (sortedSlot == 0)` there while allowing pre-dead-check initialization. It guards the incremental race fix, not the unresolved sorted-index GPU read.
 
-- [ ] 4.3 Run tests and confirm they pass — `runtime/build/bin/test_runtime.exe --gtest_filter="*MeshGuard*:*MeshAssetLookup*:*ParticleMeshPSO*:*Visibility*"` 100% pass; the `phase16_vfx-sort-pipeline-hardware-validation` 1.2 visual A/B re-run produces a screenshot with discrete identifiable mesh particles. Capture the post-fix screenshot and link it from the test description / docs.
+- [x] 4.3 CPU regression verification completed 2026-10-14. The bounded `cd runtime && zig build test -Doptimize=ReleaseFast` with `GTEST_FILTER=-RuntimeViewportTest.*` compiled/installed the tests and ran 7681 tests from 754 suites in 31495 ms: 7661 passed, with the same three pre-existing user VFX-editor WIP failures (`VfxEditorSlate.WorkbenchHasTwoColumns`, `TitleBarReflectsEmitterName`, `StatusBarBindingsReflectTelemetry`). Therefore this full build/test command exited 1 (47/49 build steps succeeded), not a clean full-suite pass. No failing test was changed or suppressed. The subsequent full-path `E:/UzmiEngine/uzengine/runtime/build/bin/test_runtime.exe --gtest_filter="*MeshGuard*:*MeshAssetLookup*:*ParticleMeshPSO*:*Visibility*"` passed **37/37 tests from 9 suites, exit 0**, including `MeshGuard_SortedInstanceCount.PostDeadCheckSortedPathHasNoThreadZeroGate` (3 ms). Build/full-suite deadline: 30 minutes; filtered-run deadline: 2 minutes. The original hardware visual A/B and screenshot obligation remains explicitly blocked under 3.1-3.4 and 4.1, not satisfied by these CPU tests. Clangd diagnostics were unavailable (clangd not installed); compilation and the scoped `git diff --check` completed without errors.
+
+**Status: partial closeout only; task remains BLOCKED, not archived.** Recommended follow-up: `phase0_vfx-mesh-sortedindices-bindless-read` (recommendation only, not created).
+
+Follow-up acceptance criteria:
+
+1. Capture RenderDoc / PIX evidence of sort dispatch/gating, output indices, the sorted-index SRV descriptor and pre-mesh-dispatch resource state, and actual shader fetches. Show alive slots resolve to live particle indices rather than all reading unspawned slot zero.
+2. Fix the evidenced cause; show nonzero matching mesh/indirect instance counts with the unchanged committed `ViewDepth` asset.
+3. Read screenshots at frames 30, 60, 90, and 120 showing discrete identifiable tetrahedra against sky and ground, with no engulfment or black output. Verify the `.uzfx` sister asset loads and renders.
+4. Pass the renderer regression filters and rerun `phase16_vfx-sort-pipeline-hardware-validation` item 1.2 visual A/B. Link the genuine fixed screenshots in section 7 before closing the remaining visual/documentation items.
