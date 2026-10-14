@@ -2,7 +2,7 @@
 ///
 /// Creates half-res RGBA16F cloud output, compiles the ray-march compute shader,
 /// and dispatches GPU work each frame. The cloud output is composited over the
-/// HDR scene by the CloudComposite pass in frame_lighting.cpp.
+/// HDR scene by the Cloud_Composite render-graph pass.
 ///
 /// @ref Schneider & Vos 2015 "Real-Time Volumetric Cloudscapes of Horizon Zero Dawn"
 /// @ref Hillaire 2020 "A Scalable and Production Ready Sky and Atmosphere Rendering Technique"
@@ -11,6 +11,11 @@
 
 #include "engine/rhi/rhi.h"
 #include "cb_ring_allocator.h"
+#include "render_graph_builder.h"
+#include "render_graph_pass.h"
+#include "render_graph_states.h"
+#include "pipeline_library.h"
+#include "root_slots.h"
 #include "engine/asset/vfs.h"
 #include "shader_manager.h"
 #include "engine_shaders.h"
@@ -126,7 +131,6 @@ void CloudPass::DestroyOutputTexture() {
     m_outputUavIndex = UINT32_MAX;
     m_halfWidth  = 0;
     m_halfHeight = 0;
-    m_initialBarriersDone = false;
 }
 
 void CloudPass::Shutdown() {
@@ -258,7 +262,7 @@ static std::vector<uint8_t> ReadCloudAsset(IVFS* vfs, const std::string& relativ
     return {};
 }
 
-void CloudPass::LoadNoiseTextures(IRHICommandList* cmdList, IVFS* vfs) {
+void CloudPass::LoadNoiseTextures(IRHICommandList* cmdList, rg::RgStateRegistry* states, IVFS* vfs) {
     if (m_hasNoiseTextures || m_noiseLoadAttempted) return;
     if (!m_initialized || !cmdList) return;
     // One attempt per pass lifetime: before phase0_clouds-noise-assets a missing file was retried, with a
@@ -353,12 +357,7 @@ void CloudPass::LoadNoiseTextures(IRHICommandList* cmdList, IVFS* vfs) {
     std::memcpy(mapped, rgba8Data.data(), kStagingSize);
     m_device->UnmapBuffer(stagingBuf);
 
-    // Barrier: Common -> CopyDst
-    RHIBarrierDesc barrier{};
-    barrier.texture     = m_shapeNoiseTexture;
-    barrier.stateBefore = RHIResourceState::Common;
-    barrier.stateAfter  = RHIResourceState::CopyDst;
-    cmdList->ResourceBarrier(&barrier, 1);
+    states->Transition(cmdList, m_shapeNoiseTexture, RHIResourceState::CopyDst);
 
     // Copy buffer -> 3D texture (single copy — all depth slices are subresource 0)
     // DX12 3D textures have 1 subresource per mip level containing ALL depth slices.
@@ -366,10 +365,7 @@ void CloudPass::LoadNoiseTextures(IRHICommandList* cmdList, IVFS* vfs) {
     cmdList->CopyBufferToTexture(stagingBuf, 0, kRowPitch,
                                  m_shapeNoiseTexture, 0, 0);
 
-    // Barrier: CopyDst -> ShaderResource
-    barrier.stateBefore = RHIResourceState::CopyDst;
-    barrier.stateAfter  = RHIResourceState::ShaderResource;
-    cmdList->ResourceBarrier(&barrier, 1);
+    states->Transition(cmdList, m_shapeNoiseTexture, RHIResourceState::ShaderResource);
 
     // Keep staging buffer alive — will be destroyed in Shutdown()
     m_stagingBuffers.push_back(stagingBuf);
@@ -439,18 +435,12 @@ void CloudPass::LoadNoiseTextures(IRHICommandList* cmdList, IVFS* vfs) {
                     std::memcpy(detMapped, detailStaged.data(), kDetStagingSize);
                     m_device->UnmapBuffer(detStaging);
 
-                    RHIBarrierDesc detBarrier{};
-                    detBarrier.texture     = m_detailNoiseTexture;
-                    detBarrier.stateBefore = RHIResourceState::Common;
-                    detBarrier.stateAfter  = RHIResourceState::CopyDst;
-                    cmdList->ResourceBarrier(&detBarrier, 1);
+                    states->Transition(cmdList, m_detailNoiseTexture, RHIResourceState::CopyDst);
 
                     cmdList->CopyBufferToTexture(detStaging, 0, kDetAlignedRowPitch,
                                                  m_detailNoiseTexture, 0, 0);
 
-                    detBarrier.stateBefore = RHIResourceState::CopyDst;
-                    detBarrier.stateAfter  = RHIResourceState::ShaderResource;
-                    cmdList->ResourceBarrier(&detBarrier, 1);
+                    states->Transition(cmdList, m_detailNoiseTexture, RHIResourceState::ShaderResource);
 
                     m_stagingBuffers.push_back(detStaging);
                     UZ_LOG(Renderer, Info, "CloudPass: detail noise loaded (32^3 RGBA8, SRV={}) from {}",
@@ -520,47 +510,18 @@ static_assert(offsetof(CloudCB, windVelocity) == 152);
 static_assert(offsetof(CloudCB, detailNoiseSrv) == 252);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Execute
+// RegisterPasses
 // ─────────────────────────────────────────────────────────────────────────────
 
-void CloudPass::Execute(IRHICommandList* cmdList, CBRingAllocator& cbRing,
-                        const CloudPassInput& input) {
-    UZ_PROFILE_SCOPE("CloudPass::Execute");
+void CloudPass::RegisterPasses(rg::RgBuilder& rgBuilder, rg::RgStateRegistry* states,
+    IRHICommandList* frameList, rg::RgResourceId hdrRes, rg::RgResourceId depthRes,
+    const CBAllocation& perFrameAlloc, CBRingAllocator& cbRing, PipelineLibrary* pipelines,
+    bool bindless, uint32_t renderWidth, uint32_t renderHeight, const CloudPassInput& input) {
+    UZ_PROFILE_SCOPE("CloudPass::RegisterPasses");
+    if (!m_initialized || !bindless || !EnsureRaymarchPipeline()) return;
 
-    if (!m_initialized) {
-        UZ_LOG(Renderer, Error, "CloudPass::Execute called before Init()");
-        return;
-    }
-
-    if (m_halfWidth == 0 || m_halfHeight == 0) {
-        UZ_LOG(Renderer, Error, "CloudPass::Execute: zero-size output");
-        return;
-    }
-
-    if (!EnsureRaymarchPipeline()) return;
-
-    // ── Load noise textures on first execution (lazy init) ──
-    if (!m_hasNoiseTextures) {
-        LoadNoiseTextures(cmdList, m_vfs);
-    }
-
-    // ── Transition output texture to UAV for writing ──
-    // First frame: Common -> UAV. Subsequent frames: ShaderResource -> UAV
-    // (because Execute ends with UAV -> ShaderResource for the composite pass).
-    {
-        RHIBarrierDesc toUav{};
-        toUav.texture     = m_outputTexture;
-        toUav.stateBefore = m_initialBarriersDone
-            ? RHIResourceState::ShaderResource
-            : RHIResourceState::Common;
-        toUav.stateAfter  = RHIResourceState::UnorderedAccess;
-        cmdList->ResourceBarrier(&toUav, 1);
-
-        if (!m_initialBarriersDone) {
-            m_initialBarriersDone = true;
-            UZ_LOG(Renderer, Info, "CloudPass: initial barrier — Common -> UAV for output");
-        }
-    }
+    // Registration occurs on the open frame list, before graph execution.
+    if (!m_noiseLoadAttempted) LoadNoiseTextures(frameList, states, m_vfs);
 
     // ── Fill constant buffer ──
     CloudCB cb{};
@@ -618,8 +579,6 @@ void CloudPass::Execute(IRHICommandList* cmdList, CBRingAllocator& cbRing,
     std::memcpy(cbAlloc.cpuPtr, &cb, sizeof(CloudCB));
 
     // ── Set pipeline and root parameters ──
-    cmdList->SetPipeline(m_raymarchPipeline);
-
     // Root constants at slot 0 (b0): {outputUavIndex, depthSrvIndex, halfWidth, halfHeight}
     // Packed as uint32 to match compute root signature expectations.
     // Cloud CVar values as float bits for root constants
@@ -674,30 +633,59 @@ void CloudPass::Execute(IRHICommandList* cmdList, CBRingAllocator& cbRing,
         loggedOnce = true;
     }
 
-    cmdList->SetRootConstants(0, rootConst, 12);
+    static_assert(sizeof(rootConst) / sizeof(rootConst[0]) <= 12);
+    const auto cloudOut = rgBuilder.ImportTrackedTexture("Cloud_Output", m_outputTexture);
+    const auto shapeRes = m_shapeNoiseTexture.IsValid()
+        ? rgBuilder.ImportTrackedTexture("Cloud_ShapeNoise", m_shapeNoiseTexture) : rg::RgResourceId{};
+    const auto detailRes = m_detailNoiseTexture.IsValid()
+        ? rgBuilder.ImportTrackedTexture("Cloud_DetailNoise", m_detailNoiseTexture) : rg::RgResourceId{};
 
-    // CBV at slot 2 (b2): CloudCB
-    cmdList->SetRootCBV(2, cbAlloc.bufferHandle, cbAlloc.offsetBytes,
-                        cbAlloc.cpuPtr, sizeof(CloudCB));
+    rgBuilder.AddPass("Cloud_Raymarch", [=, this](rg::RgPassBuilder& pb) {
+        pb.Write(cloudOut, RHIResourceState::UnorderedAccess);
+        pb.Read(depthRes, RHIResourceState::ShaderResource);
+        if (shapeRes.IsValid()) pb.Read(shapeRes, RHIResourceState::ShaderResource);
+        if (detailRes.IsValid()) pb.Read(detailRes, RHIResourceState::ShaderResource);
+        pb.SetExecutionCallback([=, this](IRHICommandList* cmd, const rg::RgPassResources&) {
+            UZ_PROFILE_SCOPE("Cloud::Raymarch");
+            cmd->SetPipeline(m_raymarchPipeline);
+            cmd->SetRootConstants(kSlotRootConstants, rootConst, 12);
+            cmd->SetRootCBV(kSlotPerObject, cbAlloc.gpuAddr);
+            cmd->Dispatch((m_halfWidth + 7) / 8, (m_halfHeight + 7) / 8, 1);
+        });
+    });
 
-    // UAV descriptor table at slot 4
-    cmdList->SetDescriptorTable(4, m_outputUavIndex);
-
-    // ── Dispatch ──
-    constexpr uint32_t kThreadGroupSize = 8;
-    uint32_t groupsX = (m_halfWidth  + kThreadGroupSize - 1) / kThreadGroupSize;
-    uint32_t groupsY = (m_halfHeight + kThreadGroupSize - 1) / kThreadGroupSize;
-    cmdList->Dispatch(groupsX, groupsY, 1);
-
-    // ── Barrier: UAV -> ShaderResource for composite pass to read ──
-    RHIBarrierDesc uavToSrv{};
-    uavToSrv.texture     = m_outputTexture;
-    uavToSrv.stateBefore = RHIResourceState::UnorderedAccess;
-    uavToSrv.stateAfter  = RHIResourceState::ShaderResource;
-    cmdList->ResourceBarrier(&uavToSrv, 1);
-
-    // Next frame will need SRV -> UAV transition before writing again
-    // (handled at the start of next Execute by transitioning back)
+    const auto compositePSO = pipelines->GetCloudComposite();
+    if (compositePSO.IsValid()) {
+        rgBuilder.AddPass("Cloud_Composite", [=, this](rg::RgPassBuilder& pb) {
+            pb.Write(hdrRes, RHIResourceState::RenderTarget);
+            pb.Read(cloudOut, RHIResourceState::ShaderResource);
+            pb.Read(depthRes, RHIResourceState::ShaderResource);
+            pb.SetExecutionCallback([=, this](IRHICommandList* cmd, const rg::RgPassResources& res) {
+                UZ_PROFILE_SCOPE("Cloud::Composite");
+                RHIRenderPassDesc passDesc{};
+                passDesc.colorAttachmentCount = 1;
+                passDesc.colorAttachments[0].texture = res.GetTexture(hdrRes);
+                passDesc.colorAttachments[0].clear = false;
+                passDesc.hasDepth = false;
+                cmd->BeginRenderPass(passDesc);
+                cmd->SetPipeline(compositePSO);
+                const uint32_t compositeRC[4] = { m_outputSrvIndex, input.depthSrv, 0, 0 };
+                cmd->SetRootConstants(kSlotRootConstants, compositeRC, 4);
+                cmd->SetRootCBV(kSlotPerFrame, perFrameAlloc.gpuAddr);
+                RHIViewport vp{};
+                vp.width = static_cast<float>(renderWidth);
+                vp.height = static_cast<float>(renderHeight);
+                vp.maxDepth = 1.0f;
+                cmd->SetViewport(vp);
+                RHIScissorRect sc{};
+                sc.right = static_cast<int32_t>(renderWidth);
+                sc.bottom = static_cast<int32_t>(renderHeight);
+                cmd->SetScissor(sc);
+                cmd->Draw(3);
+                cmd->EndRenderPass();
+            });
+        });
+    }
 }
 
 } // namespace uz

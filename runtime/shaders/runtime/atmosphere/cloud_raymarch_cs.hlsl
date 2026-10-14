@@ -384,9 +384,8 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     // Clamp march distance (50 km max for performance)
     tFar = min(tFar, tNear + 50.0f);
 
-    // Clamp step count to avoid TDR on large march distances.
-    // Cap at 32 steps — original 64 causes GPU TDR on first frame with
-    // cold shader compilation + heavy FBM 3D texture lookups.
+    // Keep a hard upper bound independent of component/constant-buffer input.
+    // The 64-step march is verified TDR-free; runtime noise baking is no longer used.
     uint stepCount = min(g_primarySteps, 64u);
     float stepLen = (tFar - tNear) / float(stepCount);
     if (stepLen <= 0.0f) {

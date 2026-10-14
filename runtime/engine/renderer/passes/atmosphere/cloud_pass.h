@@ -3,7 +3,7 @@
 /// Dispatches a compute shader to ray-march through a spherical cloud shell,
 /// producing a half-resolution RGBA16F texture with premultiplied-alpha cloud
 /// color (RGB) and transmittance (A). The result is composited over the HDR
-/// scene by a fullscreen triangle pass in frame_lighting.cpp.
+/// scene by a fullscreen triangle pass registered alongside the raymarch.
 ///
 /// # Cloud Layer Model
 /// Clouds occupy a spherical shell between two altitudes above sea level:
@@ -24,12 +24,14 @@
 /// - 3D shape noise: 128^3 RGBA8 (loaded from content/atmosphere/shape.bin).
 ///
 /// # Integration
-/// Created and owned by SceneRenderer. The cloud SRV index is passed to the
-/// CloudComposite render graph pass in frame_lighting.cpp.
+/// Created and owned by SceneRenderer. RegisterPasses declares the raymarch's
+/// tracked textures and the composite's cloud/depth reads.
 
 #pragma once
 
 #include "engine/rhi/rhi_types.h"
+#include "render_graph_types.h"
+#include "cb_ring_allocator.h"
 #include <cstdint>
 #include <vector>
 
@@ -41,12 +43,13 @@ class IRHIDevice;
 class IRHICommandList;
 class ShaderManager;
 class CBRingAllocator;
+class PipelineLibrary;
+namespace rg { class RgBuilder; class RgStateRegistry; }
 
 /// Input parameters for a single cloud dispatch, filled from VolumetricCloudsComponent
-/// and per-frame scene data in frame_lighting.cpp.
+/// and current-frame scene data in frame_atmosphere_passes.cpp.
 struct CloudPassInput {
     float    invViewProj[16];
-    float    prevViewProj[16];
     float    cameraPos[3];
     float    sunDir[3];
     float    sunColor[3];
@@ -68,7 +71,6 @@ struct CloudPassInput {
     uint32_t lightSteps;
     uint32_t depthSrv;
     float    globalCoverage;
-    float    temporalBlendFactor;
 
     // ── Additional tracing/quality parameters from VolumetricCloudsComponent ──
     float    cloudType;                                       ///< Cloud type [0,1]. 0=stratus, 1=cumulus.
@@ -128,14 +130,14 @@ public:
 
     /// Loads 3D noise textures via VFS and uploads to GPU.
     /// Falls back to procedural noise if the VFS does not contain the files.
-    void LoadNoiseTextures(IRHICommandList* cmdList, IVFS* vfs = nullptr);
+    void LoadNoiseTextures(IRHICommandList* cmdList, rg::RgStateRegistry* states, IVFS* vfs = nullptr);
 
-    /// Dispatches the cloud ray-march compute shader.
-    ///
-    /// The command list must be in recording state (Begin called, End not yet).
-    /// Manages all internal barriers (UAV transitions).
-    void Execute(IRHICommandList* cmdList, CBRingAllocator& cbRing,
-                 const CloudPassInput& input);
+    /// Registers same-frame raymarch and composite passes with tracked resources.
+    void RegisterPasses(rg::RgBuilder& rgBuilder, rg::RgStateRegistry* states,
+                        IRHICommandList* frameList, rg::RgResourceId hdrRes,
+                        rg::RgResourceId depthRes, const CBAllocation& perFrameAlloc,
+                        CBRingAllocator& cbRing, PipelineLibrary* pipelines, bool bindless,
+                        uint32_t renderWidth, uint32_t renderHeight, const CloudPassInput& input);
 
     /// Returns the SRV descriptor index of the cloud output texture.
     /// UINT32_MAX if not initialized.
@@ -195,7 +197,6 @@ private:
     bool m_initialized          = false;
     bool m_hasNoiseTextures     = false;
     bool m_noiseLoadAttempted   = false;   ///< LoadNoiseTextures runs once; a missing file is not retried per frame
-    bool m_initialBarriersDone  = false;
 };
 
 } // namespace uz

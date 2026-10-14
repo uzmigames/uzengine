@@ -134,31 +134,6 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         }
     }
 
-    // ── Volumetric Cloud Compute (inline on main command list) ─────────
-    // Noise textures are loaded from disk (precomputed .bin files).
-    // Weather/raymarch/temporal run as compute dispatches directly on the
-    // main command list before the render graph. The cloud pass manages
-    // its own barriers internally (SRV→UAV→SRV on the output texture),
-    // so no external synchronization is needed.
-    if (m_pendingCloudDispatch && m_cloudPass && m_cloudPass->IsInitialized()
-        && m_pendingCloudInput) {
-
-        if (m_gpuProfileEnabled) {
-            m_device->GpuProfilerBeginTimestamp(cmdList, "CloudCompute");
-        }
-
-        m_cloudPass->SetVFS(vfs);
-        m_cloudPass->Execute(cmdList, *m_cbRing, *m_pendingCloudInput);
-
-        if (m_gpuProfileEnabled) {
-            m_device->GpuProfilerEndTimestamp(cmdList, "CloudCompute");
-        }
-
-        m_cloudOutputSrv = m_cloudPass->GetCloudOutputSrv();
-        m_pendingCloudDispatch = false;
-        m_cloudOutputReady = true;
-    }
-
     // ── VFX Emitter Sync ───────────────────────────────────────────────
     // Poll VFX hot-reload (.uzfx/.uzvfx file changes) — dev builds only.
 #if !defined(NDEBUG)
