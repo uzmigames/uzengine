@@ -47,7 +47,8 @@ bool CreateDX12Buffer(ID3D12Device* device,
     }
 
     // Constant buffers must be 256-byte aligned
-    uint64_t allocSize = desc.sizeBytes;
+    // Raw index views load whole DWORDs, including the final odd uint16 index.
+    uint64_t allocSize = (desc.sizeBytes + 3) & ~3ULL;
     if (HasFlag(desc.usage, RHIBufferUsage::ConstantBuffer)) {
         allocSize = (allocSize + 255) & ~255ULL;
     }
@@ -228,6 +229,10 @@ void DestroyDX12Buffer(DX12Buffer& buffer, DescriptorAllocator& srvUavHeap) {
     if (buffer.uavIndex != UINT32_MAX) {
         srvUavHeap.Free(buffer.uavIndex);
         buffer.uavIndex = UINT32_MAX;
+    }
+    if (buffer.rawSrvIndex != UINT32_MAX) {
+        srvUavHeap.Free(buffer.rawSrvIndex);
+        buffer.rawSrvIndex = UINT32_MAX;
     }
 
     // Release resource (must release before allocation)

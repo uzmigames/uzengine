@@ -1,10 +1,12 @@
 <!-- doc-meta -->
 title: Incremental Implementation Plan - 8 Steps
 date: 2026-04-07
-status: draft
+status: approved
 <!-- end-doc-meta -->
 
 # 4. Incremental Plan
+
+> Implementation note: the shipped tracer uses DXR-inline pixel shaders, not this compute/analytic design; [08 reconciliation](08-implementation-reconciliation.md) is authoritative.
 
 Per `.claude/rules/incremental-implementation.md`: build + screenshot after
 **every** step. Do not proceed if a step fails. If a step fails 2-3 times,

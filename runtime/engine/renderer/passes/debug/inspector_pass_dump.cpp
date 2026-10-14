@@ -11,10 +11,12 @@
 
 #include "rhi.h"
 #include "log.h"
+#include "cvar.h"
 
 // stb_image_write — implementation lives in screenshot_capture.cpp.
 // We only need the function declarations here for stbi_write_png.
 #include "stb_image_write.h"
+#include <tinyexr.h>
 
 #include <algorithm>
 #include <cmath>
@@ -33,14 +35,36 @@ namespace uz {
 
 namespace {
 
+/// Identifies formats whose decoded channels can be exported as linear floats.
+[[nodiscard]] bool IsFloatDumpFormat(RHIFormat format)
+{
+    switch (format) {
+        case RHIFormat::R16Float:
+        case RHIFormat::RG16Float:
+        case RHIFormat::RGBA16Float:
+        case RHIFormat::R32Float:
+        case RHIFormat::RG32Float:
+        case RHIFormat::RGB32Float:
+        case RHIFormat::RGBA32Float:
+        case RHIFormat::D32Float:
+        case RHIFormat::D32FloatS8Uint:
+            return true;
+        default:
+            return false;
+    }
+}
+
 /// Reads back a full texture to CPU memory.
 /// Returns an RGBA8 pixel buffer (width * height * 4 bytes) suitable for stbi_write_png.
+/// Optionally copies decoded RGBA floats before any PNG display transformations.
+/// Missing channels retain zero RGB and unit alpha; channel selectors affect PNG only.
 /// Returns empty vector on failure.
 [[nodiscard]] std::vector<uint8_t> ReadbackTextureToRGBA8(
     IRHIDevice* device, IRHICommandList* cmdList,
     const RegisteredTarget& target,
     const rg::RgStateRegistry* states,
-    RHIBufferHandle sharedReadbackBuffer, uint64_t sharedBufferSize)
+    RHIBufferHandle sharedReadbackBuffer, uint64_t sharedBufferSize,
+    std::vector<float>* linearPixels)
 {
     std::vector<uint8_t> pixels;
 
@@ -105,6 +129,9 @@ namespace {
 
     // Convert to RGBA8 for PNG output.
     pixels.resize(static_cast<size_t>(target.width) * target.height * 4u);
+    if (linearPixels) {
+        linearPixels->resize(pixels.size());
+    }
 
     for (uint32_t y = 0; y < target.height; ++y) {
         const auto* rowBase = static_cast<const uint8_t*>(mapped)
@@ -120,6 +147,14 @@ namespace {
             if (channels >= 2) g = detail::ReadChannel(texelBase, 1, format);
             if (channels >= 3) b = detail::ReadChannel(texelBase, 2, format);
             if (channels >= 4) a = detail::ReadChannel(texelBase, 3, format);
+
+            // Preserve the decoded channels before NaN handling, selectors, or tonemapping.
+            if (linearPixels) {
+                (*linearPixels)[pixelOffset + 0] = r;
+                (*linearPixels)[pixelOffset + 1] = g;
+                (*linearPixels)[pixelOffset + 2] = b;
+                (*linearPixels)[pixelOffset + 3] = a;
+            }
 
             // Handle NaN/Inf by replacing with magenta (diagnostic color).
             if (std::isnan(r) || std::isinf(r)) r = 1.0f;
@@ -272,6 +307,7 @@ void PassInspector::ExecuteDump(IRHIDevice* device, IRHICommandList* cmdList,
 
     std::vector<std::string> filenames;
     filenames.reserve(m_targets.size());
+    const bool dumpEXR = CVarRegistry::Get().GetBool("r.PassInspector.DumpEXR", false);
 
     for (uint32_t i = 0; i < static_cast<uint32_t>(m_targets.size()); ++i) {
         const auto& target = m_targets[i];
@@ -299,8 +335,25 @@ void PassInspector::ExecuteDump(IRHIDevice* device, IRHICommandList* cmdList,
                    static_cast<int>(target.lastState));
         }
 
-        // Readback the texture to RGBA8 using the shared buffer.
-        auto pixels = ReadbackTextureToRGBA8(device, cmdList, target, m_states, sharedReadback, kMaxReadbackSize);
+        // Raw floats share the PNG readback and never enlarge the GPU buffer cap.
+        bool writeEXR = false;
+        if (dumpEXR) {
+            const RHIFormat format = device->GetTextureDesc(target.texture).format;
+            const uint64_t rowPitch = (static_cast<uint64_t>(target.width) * BytesPerTexel(format) + 255u) & ~255ull;
+            if (!IsFloatDumpFormat(format)) {
+                UZ_LOG(PassInspector, Info, "PassInspector: EXR skipped '{}' (non-float format={})",
+                       target.name, static_cast<int>(format));
+            } else if (rowPitch * target.height > kMaxReadbackSize) {
+                UZ_LOG(PassInspector, Warning, "PassInspector: EXR skipped '{}' (readback exceeds {} bytes)",
+                       target.name, kMaxReadbackSize);
+            } else {
+                writeEXR = true;
+            }
+        }
+
+        std::vector<float> linearPixels;
+        auto pixels = ReadbackTextureToRGBA8(device, cmdList, target, m_states, sharedReadback,
+                                            kMaxReadbackSize, writeEXR ? &linearPixels : nullptr);
         if (pixels.empty()) {
             const RHITextureDesc td = device->GetTextureDesc(target.texture);
             UZ_LOG(PassInspector, Warning,
@@ -308,6 +361,21 @@ void PassInspector::ExecuteDump(IRHIDevice* device, IRHICommandList* cmdList,
                    target.name, static_cast<int>(td.format), target.width, target.height,
                    detail::IsDepthFormat(td.format), BytesPerTexel(td.format), detail::ChannelCount(td.format));
             continue;
+        }
+
+        // Save unmodified linear channels as FP32, using the PNG stem for the sibling.
+        if (writeEXR) {
+            const std::string exrPath = dumpDir + "/" + filename.substr(0, filename.size() - 4) + "-hdr.exr";
+            const char* err = nullptr;
+            const int result = SaveEXR(linearPixels.data(), static_cast<int>(target.width),
+                                      static_cast<int>(target.height), 4, 0, exrPath.c_str(), &err);
+            if (result == TINYEXR_SUCCESS) {
+                UZ_LOG(PassInspector, Info, "PassInspector: dumped '{}' (linear FP32 RGBA)", exrPath);
+            } else {
+                UZ_LOG(PassInspector, Warning, "PassInspector: failed to write '{}': {}",
+                       exrPath, err ? err : "unknown tinyexr error");
+            }
+            if (err) FreeEXRErrorMessage(err);
         }
 
         // Write PNG.

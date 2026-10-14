@@ -357,6 +357,10 @@ public:
     /// Returns the current render path.
     [[nodiscard]] RenderPath GetRenderPath() const { return m_renderPath; }
 
+    /// Returns the actual path tracer history counter since the last consumed
+    /// reset. A queued reset is consumed on the next path-traced frame.
+    [[nodiscard]] uint32_t GetPathTracerSamplesAccumulated() const { return m_ptAccumSamples; }
+
     /// Sets the GBuffer debug visualization mode.
     ///
     /// Pass `GBufferDebugMode::Count` to disable debug visualization and

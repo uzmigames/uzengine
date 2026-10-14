@@ -152,6 +152,9 @@
     uint32_t         m_ptAccumSamples = 0;      ///< Accumulated sample count since last reset.
     float            m_ptPrevView[16] = {0};    ///< Previous view matrix (camera-cut detection).
     bool             m_ptHistoryValid = false;  ///< False on first frame / after reset.
+    bool             m_ptEnabledLastFrame = false; ///< Tracks the PT enable edge for TAA restoration.
+    float            m_ptSavedTaa = 0.f;        ///< r.TAA value before enabling path tracing.
+    uint32_t         m_ptResetGeneration = 0;   ///< Last manual reset command consumed by this renderer.
 
     // ── IBL (Image-Based Lighting from sky cubemap) ────────────────────
 
@@ -176,6 +179,7 @@
     // ── HDRI environment override ────────────────────────────────────────
     RHITextureHandle m_hdriCubemap;            ///< Cubemap converted from HDRI equirect (owned, must destroy).
     uint32_t m_hdriCubemapSrv = UINT32_MAX;    ///< SRV for the HDRI cubemap.
+    uint32_t m_hdriEquirectSrv = UINT32_MAX;   ///< SRV of the raw equirect HDRI (path tracer samples it directly; UINT32_MAX = none, fall back to the cubemap).
     bool m_hdriActive = false;                 ///< True when using external HDRI instead of procedural sky.
     bool m_prefilteredIsPmrem = false;         ///< The bound prefiltered cubemap is a PMREM (Three.js roughness curve), not the engine's linear bake.
 

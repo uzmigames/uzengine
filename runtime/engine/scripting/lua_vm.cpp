@@ -7,6 +7,7 @@
 #include "lua_camera_api.h"
 #include "lua_input_api.h"
 #include "lua_renderer_api.h"
+#include "lua_pathtracer_api.h"
 #include "lua_cvar_api.h"
 #include "lua_asset_api.h"
 #include "lua_pass_inspector_api.h"
@@ -158,6 +159,7 @@ bool LuaVM::Init() {
     LuaRegisterCameraAPI(s_state);
     LuaRegisterInputAPI(s_state);
     LuaRegisterRendererAPI(s_state);
+    LuaRegisterPathTracerAPI(s_state);
     LuaRegisterCvarAPI(s_state);
     LuaRegisterAssetAPI(s_state);
     LuaRegisterPassInspectorAPI(s_state);

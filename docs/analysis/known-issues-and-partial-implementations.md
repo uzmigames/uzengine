@@ -342,14 +342,20 @@ mixed-validity reflection controls have max absolute error 0.000195.
 `test_sdf_reflection_energy.ps1` passes its uniform agreement check with RGB
 Karis/plain ratios (0.9965, 0.9949, 0.9949); layered history retains
 (0.8845, 0.8846, 0.8846), a measured approximately 11.55% energy loss.
-The gate remains **blocked**: `test_sdf_surface_origin.ps1` and
-`test_sdf_diffuse_gpu.ps1` cannot compile their wrappers because they supply seven
-arguments to the current eight-argument `GatherSdfDiffuse`. Their old measurements
-are not revalidated. See [fixture refresh evidence](sdf-gpu-fixture-refresh/01-fixture-refresh.md).
+The gate is **unblocked (2026-10-13)**: `test_sdf_surface_origin.ps1` and
+`test_sdf_diffuse_gpu.ps1` now compile. Their wrappers (regenerated on each run from
+the `.ps1` heredocs) supply the 8th `GatherSdfDiffuse` argument `rotationMode` as `0u`,
+the canonical hashed rotation that matches the fixtures' own embedded `GeometricCoverage`
+reference. On the current build (RTX 5080): `test_sdf_diffuse_gpu.ps1` passes every
+sub-test (world reflections max abs error <= 0.000195); `test_sdf_surface_origin.ps1`
+reproduces the carried-over diffuse-path leak below (max abs error 0.009328) and its
+`-Reflections` variant passes (max abs error 0.001984 < 0.002). See [fixture refresh evidence](sdf-gpu-fixture-refresh/01-fixture-refresh.md).
 
 Unresolved (carried over from SponzaTest's handoff and reproduced here on 2026-09-08):
 - 1 of 32 world-reflection rays leaks through the enclosed-box fixture
-  (`scripts/rendering/test_sdf_surface_origin.ps1`, max abs error 0.009328).
+  (`scripts/rendering/test_sdf_surface_origin.ps1`, max abs error 0.009328;
+  reproduced on the current build 2026-10-13 after the compile was unblocked — the
+  diffuse-gather default path only; the `-Reflections` mirror path is clean at 0.001984).
 - An extreme grazing reflection exhausts the 256-step budget
   (`scripts/rendering/test_sdf_dynamic_trace.ps1`, 14/15).
 - ~~Sponza LOD2/LOD3 decal triangles still carry the flipped normals~~ —

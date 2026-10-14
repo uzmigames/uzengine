@@ -9,6 +9,35 @@
 
 The Lua API is the complete set of functions and classes available to scripts. This reference covers the main bindings. See individual subsystem docs for detailed behavior.
 
+## Path Tracer (`uz.pathtracer.*`)
+
+Runtime bindings are registered with the other `uz.*` tables by `LuaVM`.
+Source: `runtime/engine/scripting/renderer/lua_pathtracer_api.cpp`.
+The shipped rendering contract is [Path Tracer Runtime Mode](../../specs/rendering/path-tracer.md).
+
+| Binding | Arguments / return | Behavior |
+|---|---|---|
+| `uz.pathtracer.enable(enabled)` | boolean; no return | Set `r.PathTracer.Enable`; rendering changes on the next frame. |
+| `uz.pathtracer.is_enabled()` | returns boolean | Read the enable CVar, not whether a PT frame has rendered. |
+| `uz.pathtracer.set_max_bounces(count)` | integer; no return | Set bounce limit, clamped to 1-16 by the CVar. |
+| `uz.pathtracer.set_samples_per_frame(count)` | integer; no return | Set paired-lobe budget, clamped to 1-16; each lobe gets at least one sample. |
+| `uz.pathtracer.set_env_intensity(intensity)` | number; no return | Set sky multiplier, clamped to 0-10. |
+| `uz.pathtracer.reset_accum()` | no arguments or return | Invoke the reset command; history resets on the next rendered PT frame. |
+| `uz.pathtracer.samples_accumulated()` | returns integer | Read accumulated-history frame count, not samples-per-frame times frames; returns zero without an injected renderer or before accumulation begins. |
+
+Changing bounce/sample/environment controls does not automatically invalidate
+existing history. Call `reset_accum()` after changing them for fresh convergence.
+
+```lua
+uz.pathtracer.set_max_bounces(4)
+uz.pathtracer.set_samples_per_frame(4)
+uz.pathtracer.set_env_intensity(1.0)
+uz.pathtracer.enable(true)
+uz.pathtracer.reset_accum()
+local enabled = uz.pathtracer.is_enabled()
+local history_frames = uz.pathtracer.samples_accumulated()
+```
+
 ## Core Types
 
 ### Vec3 (Vector)

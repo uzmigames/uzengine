@@ -6,8 +6,8 @@
 /// runtime-configurable engine parameters. CVars are identified by
 /// dot-separated names (e.g., "r.ScreenPercentage", "r.Shadow.MaxResolution").
 ///
-/// Simplified console variable manager: no command callbacks, no thread
-///         safety guarantees, no auto-registration macros. Render-thread only.
+/// Numeric settings and exec commands share the registry. Render-thread only;
+/// there are no thread safety guarantees.
 ///
 /// # Usage
 /// ```cpp
@@ -43,6 +43,7 @@ struct CVar {
     float       defaultValue;  ///< Value used by Reset()
     float       minValue;      ///< Minimum allowed value (inclusive)
     float       maxValue;      ///< Maximum allowed value (inclusive)
+    void (*execute)() = nullptr; ///< Exec command callback; null for numeric CVars.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -51,11 +52,10 @@ struct CVar {
 
 /// Global CVar registry — singleton accessed via CVarRegistry::Get().
 ///
-/// Simplified console variable manager: no command callbacks, no thread
-///         safety, no auto-registration macros. Just a name-to-value map.
+/// Numeric settings and exec commands share a name-to-CVar map.
 ///
 /// NOT thread-safe. All access must occur on the render/game thread.
-/// Callers poll values each frame; there is no callback/notification system.
+/// Callers poll numeric values each frame; exec callbacks run synchronously on Set().
 class CVarRegistry {
 public:
     /// Returns the process-wide singleton instance.
@@ -78,6 +78,11 @@ public:
     CVar* Register(const std::string& name, float defaultValue,
                    const std::string& description = "",
                    float minValue = -FLT_MAX, float maxValue = FLT_MAX);
+
+    /// Registers a command invoked by Set(), ignoring its numeric argument.
+    /// Duplicate registration returns the existing CVar without replacing its callback.
+    CVar* RegisterExec(const std::string& name, void (*execute)(),
+                       const std::string& description);
 
     /// Finds a CVar by exact name match.
     ///
@@ -105,6 +110,7 @@ public:
     [[nodiscard]] bool GetBool(const std::string& name, bool defaultIfMissing = false) const;
 
     /// Sets a CVar's value, clamping to its [minValue, maxValue] range.
+    /// Exec CVars invoke their callback instead of storing a value.
     ///
     /// No-op if no CVar with the given name is registered.
     void Set(const std::string& name, float value);
@@ -166,3 +172,7 @@ private:
 #define UZ_CVAR_INT(name, defaultVal, desc, minVal, maxVal) \
     uz::CVarRegistry::Get().Register(name, static_cast<float>(defaultVal), desc, \
                                      static_cast<float>(minVal), static_cast<float>(maxVal))
+
+/// Registers a synchronous exec command, callable through CVarRegistry::Set().
+#define UZ_CVAR_EXEC(name, callback, desc) \
+    uz::CVarRegistry::Get().RegisterExec(name, callback, desc)

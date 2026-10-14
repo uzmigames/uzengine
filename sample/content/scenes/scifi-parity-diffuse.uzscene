@@ -1,0 +1,69 @@
+{
+  "name": "SciFi Helmet — Falcor Parity (IBL-only)",
+  "version": "1.0",
+  "entities": [
+    {
+      "name": "SciFiHelmet",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "mesh": {
+          "asset": "meshes/SciFiHelmet.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0.5,
+          "baseColorG": 0.5,
+          "baseColorB": 0.5,
+          "metallicMultiplier": 0,
+          "roughnessMultiplier": 1
+        }
+      }
+    },
+    {
+      "name": "MainCamera",
+      "components": {
+        "transform": {
+          "position": [
+            -300,
+            0,
+            30
+          ]
+        },
+        "camera": {
+          "fov": 45,
+          "near": 1,
+          "far": 100000,
+          "active": true,
+          "look_at": [
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "HDRILoader",
+      "components": {
+        "script": {
+          "path": "scripts/load_hdri.lua"
+        }
+      }
+    }
+  ]
+}

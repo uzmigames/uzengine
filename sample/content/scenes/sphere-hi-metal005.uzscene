@@ -1,0 +1,69 @@
+{
+  "name": "Metal005 shared-geo",
+  "version": "1.0",
+  "entities": [
+    {
+      "name": "Sphere",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "mesh": {
+          "asset": "meshes/sphere_hi.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0.9,
+          "baseColorG": 0.9,
+          "baseColorB": 0.9,
+          "metallicMultiplier": 1,
+          "roughnessMultiplier": 0.05
+        }
+      }
+    },
+    {
+      "name": "MainCamera",
+      "components": {
+        "transform": {
+          "position": [
+            -300,
+            0,
+            30
+          ]
+        },
+        "camera": {
+          "fov": 45,
+          "near": 1,
+          "far": 100000,
+          "active": true,
+          "look_at": [
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "HDRILoader",
+      "components": {
+        "script": {
+          "path": "scripts/load_hdri.lua"
+        }
+      }
+    }
+  ]
+}

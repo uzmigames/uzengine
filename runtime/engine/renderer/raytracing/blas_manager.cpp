@@ -32,7 +32,7 @@ RHIBLASHandle BLASManager::GetOrBuildBLAS(uint32_t meshId, const GPUMesh& mesh,
     RHIRTGeometryDesc geom = {};
     geom.vertexBuffer = mesh.vertexBuffer;
     geom.vertexCount  = mesh.vertexCount;
-    geom.vertexStride = 48; // sizeof(Vertex): position(12) + normal(12) + texcoord(8) + tangent(16)
+    geom.vertexStride = mesh.vertexStride;
     geom.vertexFormat = RHIFormat::RGB32Float;
     geom.isOpaque     = true;
 

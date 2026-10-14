@@ -1,10 +1,12 @@
 <!-- doc-meta -->
 title: Architecture - Runtime Toggle, Replaces GI/Lighting/Shadows
 date: 2026-04-07
-status: draft
+status: approved
 <!-- end-doc-meta -->
 
 # 2. Architecture
+
+> Implementation note: the shipped tracer uses DXR-inline pixel shaders, not this compute/analytic design; [08 reconciliation](08-implementation-reconciliation.md) is authoritative.
 
 ## 2.1 Core principle
 

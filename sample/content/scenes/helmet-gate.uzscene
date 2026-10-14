@@ -1,0 +1,73 @@
+{
+  "name": "SciFiHelmet bounce-fidelity gate",
+  "version": "1.0",
+  "entities": [
+    {
+      "name": "SciFiHelmet",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "mesh": {
+          "asset": "meshes/SciFiHelmet.uzmesh"
+        },
+        "material": {
+          "albedo": "textures/scifi_helmet/SciFiHelmet_BaseColor.png",
+          "normal": "textures/scifi_helmet/SciFiHelmet_Normal.png",
+          "roughness": "textures/scifi_helmet/SciFiHelmet_Roughness.png",
+          "metallic": "textures/scifi_helmet/SciFiHelmet_Metallic.png",
+          "ao": "textures/scifi_helmet/SciFiHelmet_AmbientOcclusion.png",
+          "isORM": false,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 1,
+          "normalIntensity": 1
+        }
+      }
+    },
+    {
+      "name": "MainCamera",
+      "components": {
+        "transform": {
+          "position": [
+            -300,
+            0,
+            30
+          ]
+        },
+        "camera": {
+          "fov": 45,
+          "near": 1,
+          "far": 100000,
+          "active": true,
+          "look_at": [
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "HDRILoader",
+      "components": {
+        "script": {
+          "path": "scripts/load_hdri.lua"
+        }
+      }
+    }
+  ]
+}

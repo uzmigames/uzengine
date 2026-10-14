@@ -1436,7 +1436,11 @@ int main(int argc, char** argv) {
 
     // Resolve RHI settings from config
     const uz::RHIConfig rhiCfg = uz::ResolveRHIConfig(config);
-    const uz::RHIDeviceDesc deviceDesc = uz::ToDeviceDesc(rhiCfg);
+    uz::RHIDeviceDesc deviceDesc = uz::ToDeviceDesc(rhiCfg);
+    // --poison-allocations <byte>: fill every fresh GPU allocation with this byte for the
+    // frame-allocation determinism gate (0 = off). strtoul base 0 accepts 0x3F / 0xBF.
+    deviceDesc.debugPoisonByte = static_cast<uint8_t>(
+        std::strtoul(config.GetString("poison-allocations", "0").c_str(), nullptr, 0));
 
     const bool headless = config.GetBool("headless", false);
     const std::string projectPath = config.GetString("project");

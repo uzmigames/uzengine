@@ -459,4 +459,29 @@ TEST(CVarRegistry, GetFloat_WithoutSet_ReturnsDefault) {
     EXPECT_FLOAT_EQ(CVarRegistry::Get().GetFloat("test.CVarTest.GetDefault"), 17.0f);
 }
 
+static int s_execCalls = 0;
+static auto* s_macroExec = UZ_CVAR_EXEC("test.CVarTest.Exec",
+    [] { ++s_execCalls; }, "test exec command");
+
+TEST(CVarRegistry, Exec_SetInvokesCallbackWithoutStoringValue) {
+    const int before = s_execCalls;
+    auto& registry = CVarRegistry::Get();
+    EXPECT_EQ(registry.Find("test.CVarTest.Exec"), s_macroExec);
+    registry.Set("test.CVarTest.Exec", 1.f);
+    registry.Set("test.CVarTest.Exec", 0.f);
+    EXPECT_EQ(s_execCalls, before + 2);
+    EXPECT_FLOAT_EQ(s_macroExec->value, 0.f);
+    registry.Reset("test.CVarTest.Exec");
+    EXPECT_EQ(s_execCalls, before + 2);
+}
+
+TEST(CVarRegistry, Exec_DuplicateRegistrationPreservesCallback) {
+    const int before = s_execCalls;
+    auto& registry = CVarRegistry::Get();
+    EXPECT_EQ(registry.RegisterExec("test.CVarTest.Exec", [] { s_execCalls += 100; },
+                                  "duplicate"), s_macroExec);
+    registry.Set("test.CVarTest.Exec", 1.f);
+    EXPECT_EQ(s_execCalls, before + 1);
+}
+
 } // namespace uz::test

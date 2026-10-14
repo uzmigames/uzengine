@@ -1,10 +1,12 @@
 <!-- doc-meta -->
 title: CVars and Runtime Controls
 date: 2026-04-07
-status: draft
+status: approved
 <!-- end-doc-meta -->
 
 # 5. CVars and Controls
+
+> Implementation note: the shipped tracer uses DXR-inline pixel shaders, not this compute/analytic design; [08 reconciliation](08-implementation-reconciliation.md) is authoritative.
 
 Registered in `path_tracer_pass.cpp` as static locals, following the existing
 pattern used by `rt_manager.cpp:14-40` and `gtao_pass.cpp`.

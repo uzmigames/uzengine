@@ -22,6 +22,7 @@
 #include "engine/paths/paths.h"
 
 #include <cstring>
+#include <cstdlib>
 #include <windows.h>
 #include <dxgidebug.h>
 #include <d3d12sdklayers.h>
@@ -55,6 +56,15 @@ static const char* FeatureLevelToString(D3D_FEATURE_LEVEL level) {
     }
 }
 
+/// A poison failure invalidates the determinism experiment; never continue with unfilled resources.
+static void CheckPoisonResult(HRESULT hr) {
+    if (FAILED(hr)) {
+        UZ_LOG(RHI, Error, "D3D12 allocation poison failed, hr=0x{:08X}", static_cast<uint32_t>(hr));
+        LogFlushAll();
+        std::abort();
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Lifecycle
 // ─────────────────────────────────────────────────────────────────────────────
@@ -73,6 +83,17 @@ DX12Device::~DX12Device() {
     }
 
     WaitIdle();
+
+    m_poisonCommandList.Reset();
+    m_poisonAllocator.Reset();
+    if (m_poisonPattern) {
+        m_poisonPattern->Unmap(0, nullptr);
+        m_poisonPattern.Reset();
+    }
+    if (m_poisonPatternAllocation) {
+        m_poisonPatternAllocation->Release();
+        m_poisonPatternAllocation = nullptr;
+    }
 
     // Close the fence event handle
     if (m_idleFenceEvent) {
@@ -199,6 +220,10 @@ DX12Device::~DX12Device() {
 bool DX12Device::Init(const RHIDeviceDesc& desc) {
     UZ_PROFILE_FUNCTION();
     m_validationEnabled = desc.enableValidation;
+    m_poisonByte = desc.debugPoisonByte;
+    if (m_poisonByte) {
+        UZ_LOG(RHI, Info, "D3D12 allocation poison active: 0x{:02X}", m_poisonByte);
+    }
 
     // Try to load Agility SDK programmatically (DLL-hosted mode on Win10).
     // Must happen BEFORE any D3D12 device/factory creation so the runtime
@@ -1017,6 +1042,13 @@ RHIBufferHandle DX12Device::CreateBuffer(const RHIBufferDesc& desc) {
         return RHIBufferHandle::Invalid();
     }
 
+    if (m_poisonByte && slot->resource && slot->allocation) {
+        if (slot->mappedPtr) {
+            std::memset(slot->mappedPtr, m_poisonByte, slot->desc.sizeBytes);
+        } else {
+            PoisonBuffer(*slot);
+        }
+    }
     slot->generation = generation;
     return {index, generation};
 }
@@ -1053,6 +1085,30 @@ uint32_t DX12Device::GetBufferUAVIndex(RHIBufferHandle handle) const {
     const DX12Buffer* buf = m_bufferPool.Get(handle.index, handle.generation);
     if (!buf) return UINT32_MAX;
     return buf->uavIndex;
+}
+
+uint32_t DX12Device::GetBufferRawSRVIndex(RHIBufferHandle handle) {
+    DX12Buffer* buf = m_bufferPool.Get(handle.index, handle.generation);
+    if (!buf || !buf->resource) return UINT32_MAX;
+    if (buf->rawSrvIndex != UINT32_MAX) return buf->rawSrvIndex;
+
+    D3D12_RESOURCE_DESC resDesc = {};
+    buf->resource->GetDesc(&resDesc);  // DirectX-Headers on Clang/zig: GetDesc takes an out-param.
+    const uint64_t numElements = resDesc.Width / 4;
+    if (numElements == 0 || numElements > UINT32_MAX) return UINT32_MAX;
+    const uint32_t srvIndex = m_srvUavAllocator.Allocate();
+    if (srvIndex == DescriptorAllocator::kInvalidIndex) return UINT32_MAX;
+
+    D3D12_SHADER_RESOURCE_VIEW_DESC desc{};
+    desc.Format = DXGI_FORMAT_R32_TYPELESS;
+    desc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+    desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    desc.Buffer.NumElements = static_cast<UINT>(numElements);
+    desc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_RAW;
+    m_device->CreateShaderResourceView(buf->resource, &desc,
+                                     m_srvUavAllocator.CpuHandle(srvIndex));
+    buf->rawSrvIndex = srvIndex;
+    return srvIndex;
 }
 
 uint64_t DX12Device::GetBufferGPUAddress(RHIBufferHandle handle) const {
@@ -1098,8 +1154,105 @@ RHITextureHandle DX12Device::CreateTexture(const RHITextureDesc& desc) {
         return RHITextureHandle::Invalid();
     }
 
+    if (m_poisonByte) PoisonTexture(*slot);
     slot->generation = generation;
     return {index, generation};
+}
+
+void DX12Device::EnsurePoisonResources(uint64_t sizeBytes) {
+    if (!m_poisonAllocator) {
+        CheckPoisonResult(m_device->CreateCommandAllocator(
+            D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_poisonAllocator)));
+        CheckPoisonResult(m_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
+            m_poisonAllocator.Get(), nullptr, IID_PPV_ARGS(&m_poisonCommandList)));
+        CheckPoisonResult(m_poisonCommandList->Close());
+    }
+    if (sizeBytes <= m_poisonCapacity) return;
+
+    WaitIdle();
+    if (m_poisonPattern) {
+        m_poisonPattern->Unmap(0, nullptr);
+        m_poisonPattern.Reset();
+        m_poisonPatternAllocation->Release();
+        m_poisonPatternAllocation = nullptr;
+        m_poisonMappedPtr = nullptr;
+    }
+    D3D12MA::ALLOCATION_DESC allocationDesc{};
+    allocationDesc.HeapType = D3D12_HEAP_TYPE_UPLOAD;
+    auto resourceDesc = CD3DX12_RESOURCE_DESC::Buffer(sizeBytes);
+    CheckPoisonResult(m_allocator->CreateResource(&allocationDesc, &resourceDesc,
+        D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, &m_poisonPatternAllocation,
+        IID_PPV_ARGS(&m_poisonPattern)));
+    D3D12_RANGE readRange{0, 0};
+    CheckPoisonResult(m_poisonPattern->Map(0, &readRange, &m_poisonMappedPtr));
+    std::memset(m_poisonMappedPtr, m_poisonByte, sizeBytes);
+    m_poisonCapacity = sizeBytes;
+}
+
+void DX12Device::BeginPoison() {
+    CheckPoisonResult(m_poisonAllocator->Reset());
+    CheckPoisonResult(m_poisonCommandList->Reset(m_poisonAllocator.Get(), nullptr));
+}
+
+void DX12Device::EndPoison() {
+    CheckPoisonResult(m_poisonCommandList->Close());
+    ID3D12CommandList* lists[] = {m_poisonCommandList.Get()};
+    m_directQueue->ExecuteCommandLists(1, lists);
+    WaitIdle();
+}
+
+void DX12Device::PoisonBuffer(const DX12Buffer& buffer) {
+    if (!buffer.resource || !buffer.allocation) return;
+    std::lock_guard<std::mutex> lock(m_poisonMutex);
+    EnsurePoisonResources(buffer.desc.sizeBytes);
+    BeginPoison();
+    m_poisonCommandList->CopyBufferRegion(buffer.resource, 0, m_poisonPattern.Get(),
+                                          0, buffer.desc.sizeBytes);
+    EndPoison();
+}
+
+void DX12Device::PoisonTexture(const DX12Texture& texture) {
+    if (!texture.resource || !texture.allocation) return;
+    std::lock_guard<std::mutex> lock(m_poisonMutex);
+    D3D12_RESOURCE_DESC desc{};
+    texture.resource->GetDesc(&desc);
+    if (desc.Flags & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL) {
+        if (texture.dsvIndex == UINT32_MAX) {
+            UZ_LOG(RHI, Debug, "D3D12 allocation poison: skipping depth texture without DSV");
+            return;
+        }
+        EnsurePoisonResources(0);
+        BeginPoison();
+        m_poisonCommandList->ClearDepthStencilView(m_dsvAllocator.CpuHandle(texture.dsvIndex),
+            D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL,
+            m_poisonByte / 255.0f, m_poisonByte, 0, nullptr);
+    } else {
+        const uint32_t subresources = desc.MipLevels *
+            (desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D ? 1 : desc.DepthOrArraySize);
+        uint64_t capacity = 0;
+        for (uint32_t i = 0; i < subresources; ++i) {
+            uint64_t totalBytes = 0;
+            m_device->GetCopyableFootprints(&desc, i, 1, 0, nullptr, nullptr, nullptr, &totalBytes);
+            if (totalBytes > capacity) capacity = totalBytes;
+        }
+        // Grow before recording so earlier copies cannot reference a released upload buffer.
+        EnsurePoisonResources(capacity);
+        BeginPoison();
+        auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(texture.resource,
+            D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST);
+        m_poisonCommandList->ResourceBarrier(1, &barrier);
+        for (uint32_t i = 0; i < subresources; ++i) {
+            D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
+            m_device->GetCopyableFootprints(&desc, i, 1, 0, &footprint, nullptr, nullptr, nullptr);
+            auto dst = CD3DX12_TEXTURE_COPY_LOCATION(texture.resource, i);
+            auto src = CD3DX12_TEXTURE_COPY_LOCATION(m_poisonPattern.Get(), footprint);
+            m_poisonCommandList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+        }
+        barrier = CD3DX12_RESOURCE_BARRIER::Transition(texture.resource,
+            D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON);
+        m_poisonCommandList->ResourceBarrier(1, &barrier);
+    }
+    EndPoison();
 }
 
 void DX12Device::DestroyTexture(RHITextureHandle handle) {

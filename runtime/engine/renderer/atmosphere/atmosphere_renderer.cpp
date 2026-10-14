@@ -312,6 +312,11 @@ void AddAtmospherePasses(
                     pb.SetExecutionCallback([](IRHICommandList*, const rg::RgPassResources&) {});
                 });
             }
+            // The capture registered above runs in this frame's render graph; the path
+            // tracer is registered before the atmosphere passes, so it reads the cubemap from
+            // the next frame on. Marking it filled here (registration time) keeps frame 0 on
+            // the flat-skylight sentinel and never admits an uncaptured cubemap.
+            if (ctx.skyCubemapFilled != nullptr) *ctx.skyCubemapFilled = true;
         }
 
         // ── Build SkyAtmosphereCB ─────────────────────────────────────────

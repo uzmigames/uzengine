@@ -1,10 +1,12 @@
 <!-- doc-meta -->
 title: Current State - What UzEngine Already Provides
 date: 2026-04-07
-status: draft
+status: approved
 <!-- end-doc-meta -->
 
 # 1. Current State
+
+> Implementation note: the shipped tracer uses DXR-inline pixel shaders, not this compute/analytic design; [08 reconciliation](08-implementation-reconciliation.md) is authoritative.
 
 Scope note: this is a **pure path tracer** (Shadertoy-style Monte Carlo in a
 compute shader with analytic scene primitives), NOT a DXR ray-tracing

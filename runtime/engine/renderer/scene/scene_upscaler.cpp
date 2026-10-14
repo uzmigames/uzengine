@@ -106,6 +106,7 @@ bool SceneRenderer::SetHDRIEnvironment(uint32_t equirectSrvIndex, uint32_t cubem
 
     m_hdriCubemap = equirectResult.cubemap;
     m_hdriCubemapSrv = equirectResult.srvIndex;
+    m_hdriEquirectSrv = equirectSrvIndex;  // keep the raw equirect SRV so the path tracer can sample it directly (higher-res than the cube capture).
 
     // Destroy previous IBL textures before re-baking (caller-owned since baker
     // no longer auto-destroys — fixes reflection probe bake invalidating HDRI IBL).
@@ -206,6 +207,7 @@ bool SceneRenderer::SetPMREMEnvironment(const TextureLoadResult& result) {
 
     m_hdriCubemap = pmremResult.cubemap;
     m_hdriCubemapSrv = pmremResult.srvIndex;
+    m_hdriEquirectSrv = UINT32_MAX;  // PMREM path has no raw equirect; the PT falls back to the cubemap.
 
     // Step 3: Destroy previous IBL textures before re-baking
     if (m_iblResult.irradianceTexture.IsValid()) {

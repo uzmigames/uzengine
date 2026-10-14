@@ -183,7 +183,7 @@ ID3D12RootSignature* CreateBindlessRootSignature(
     rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
     rootParams[0].Constants.ShaderRegister = 0;   // b0
     rootParams[0].Constants.RegisterSpace = 0;
-    rootParams[0].Constants.Num32BitValues = 16; // 16 x uint32 — supports root indices + algorithm params
+    rootParams[0].Constants.Num32BitValues = 24; // Path tracer root indices + algorithm params; budget 24+2+2+2+1+2=33 of 64.
     rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
     // Root parameter 1: root CBV for per-frame data at b1
@@ -364,7 +364,7 @@ ID3D12RootSignature* CreateBindlessRootSignature(
             // even though the layout itself is valid — the root signature is
             // declaring "no IA in/out" which contradicts the PSO desc.
             "RootFlags(CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED | SAMPLER_HEAP_DIRECTLY_INDEXED | ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT),"
-            "RootConstants(num32BitConstants=16, b0, visibility=SHADER_VISIBILITY_ALL),"
+            "RootConstants(num32BitConstants=24, b0, visibility=SHADER_VISIBILITY_ALL),"
             "CBV(b1, flags=DATA_STATIC_WHILE_SET_AT_EXECUTE, visibility=SHADER_VISIBILITY_ALL),"
             "CBV(b2, flags=DATA_STATIC_WHILE_SET_AT_EXECUTE, visibility=SHADER_VISIBILITY_ALL),"
             "CBV(b4, flags=DATA_STATIC_WHILE_SET_AT_EXECUTE, visibility=SHADER_VISIBILITY_ALL),"

@@ -30,6 +30,7 @@
 #include "dx12_guids.h"
 #include <tracy/TracyD3D12.hpp>
 #include <string>
+#include <mutex>
 #include <unordered_map>
 #include <vector>
 
@@ -102,6 +103,9 @@ public:
 
     /// Returns the SRV index in the global CBV_SRV_UAV descriptor heap for a buffer.
     uint32_t GetBufferSRVIndex(RHIBufferHandle handle) const override;
+
+    /// Returns a cached raw SRV for triangle vertex and index byte fetches.
+    uint32_t GetBufferRawSRVIndex(RHIBufferHandle handle) override;
 
     /// Returns the UAV index in the global CBV_SRV_UAV descriptor heap for a buffer.
     uint32_t GetBufferUAVIndex(RHIBufferHandle handle) const override;
@@ -388,6 +392,18 @@ private:
                               bool shaderVisible, ComPtr<ID3D12DescriptorHeap>& outHeap);
     void InitDescriptorAllocators();
 
+    /// Lazily creates the poison command objects and grows the mapped byte-pattern buffer.
+    /// Called with m_poisonMutex held, before recording any copies.
+    void EnsurePoisonResources(uint64_t sizeBytes);
+    /// Resets the idle poison allocator and opens its command list for recording.
+    void BeginPoison();
+    /// Submits the poison command list and waits before reusing its resources.
+    void EndPoison();
+    /// Fills a newly created DEFAULT buffer with the configured raw-byte pattern.
+    void PoisonBuffer(const DX12Buffer& buffer);
+    /// Fills every non-depth subresource, or clears a newly created depth-stencil view.
+    void PoisonTexture(const DX12Texture& texture);
+
     // ── State ────────────────────────────────────────────────────────────
 
     ComPtr<IDXGIFactory6>          m_factory;
@@ -396,6 +412,15 @@ private:
     ComPtr<ID3D12DeviceFactory>    m_deviceFactory;  ///< Agility SDK device factory (DLL mode).
     HMODULE                        m_agilityCoreModule = nullptr;  ///< D3D12Core.dll handle (Agility SDK).
     D3D12MA::Allocator*            m_allocator = nullptr;
+
+    uint8_t                        m_poisonByte = 0;
+    std::mutex                     m_poisonMutex;
+    ComPtr<ID3D12CommandAllocator> m_poisonAllocator;
+    ComPtr<ID3D12GraphicsCommandList> m_poisonCommandList;
+    ComPtr<ID3D12Resource>         m_poisonPattern;
+    D3D12MA::Allocation*            m_poisonPatternAllocation = nullptr;
+    void*                          m_poisonMappedPtr = nullptr;
+    uint64_t                       m_poisonCapacity = 0;
 
     ComPtr<ID3D12CommandQueue>     m_directQueue;
     ComPtr<ID3D12CommandQueue>     m_copyQueue;

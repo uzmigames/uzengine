@@ -1012,6 +1012,10 @@ void SceneRenderer::RegisterCVars() {
     cvars.Register("r.PassInspector.DumpFrame", 0.f,
                    "Dump all targets at frame N (0=off)", 0.f, 1e6f);
 
+    /// Optionally save raw float targets alongside the display PNGs.
+    cvars.Register("r.PassInspector.DumpEXR", 0.f,
+                   "Also dump linear float targets as FP32 EXR (0=off, 1=on)", 0.f, 1.f);
+
     /// pass.grid: 0=off, 1=4x4 grid, 2=6x4 extended grid
     cvars.Register("r.PassInspector.Grid", 0.f,
                    "Show pass grid overlay (0=off, 1=4x4, 2=6x4 extended)", 0.f, 2.f);
@@ -1106,6 +1110,22 @@ void SceneRenderer::ApplyCVars() {
     m_passInspector.SetGridConfig(gridCfg);
 
     // ── Render Pass Toggles ─────────────────────────────────────────────
+    // Apply PT's TAA override before frame setup computes jitter or schedules AA.
+    const bool ptEnabled = m_renderPath == RenderPath::Deferred
+                        && cvars.GetBool("r.PathTracer.Enable", false);
+    if (ptEnabled && !m_ptEnabledLastFrame) {
+        m_ptSavedTaa = cvars.GetFloat("r.TAA", 0.f);
+        m_ptAccumSamples = 0;
+        m_ptHistoryValid = false;
+        UZ_LOG(Renderer, Info,
+               "PathTracer enabled: forcing r.TAA=0 - TAA jitter and the temporal "
+               "upscaler dispatch (DLSS/TSR/FSR2) are disabled for the PT reference path");
+    } else if (!ptEnabled && m_ptEnabledLastFrame) {
+        cvars.Set("r.TAA", m_ptSavedTaa);
+    }
+    if (ptEnabled) cvars.Set("r.TAA", 0.f);
+    m_ptEnabledLastFrame = ptEnabled;
+
     m_taaEnabled        = cvars.GetBool("r.TAA", false);
     m_ssrEnabled        = cvars.GetBool("r.SSR", false);
     m_motionBlurEnabled = cvars.GetBool("r.MotionBlur", true);
@@ -1550,6 +1570,7 @@ void SceneRenderer::Shutdown() {
         m_device->DestroyTexture(m_hdriCubemap);
         m_hdriCubemap = RHITextureHandle{};
         m_hdriCubemapSrv = UINT32_MAX;
+        m_hdriEquirectSrv = UINT32_MAX;
         m_hdriActive = false;
     }
     if (m_skyCubemap.IsValid()) {

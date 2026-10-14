@@ -213,6 +213,7 @@ DeferredMeshUpload UploadMeshDeferred(IRHIDevice* device, IRHICommandList* cmdLi
 
     // -- Populate metadata (no GPU completion needed) --
     result.mesh.vertexCount = mesh.GetVertexCount();
+    result.mesh.vertexStride = mesh.header.vertexStride;
     result.mesh.indexCount  = mesh.GetIndexCount();
     result.mesh.indexFormat  = (mesh.header.indexFormat == MeshIndexFormat::UInt16)
                                   ? RHIIndexFormat::Uint16
