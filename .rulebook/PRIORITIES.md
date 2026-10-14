@@ -105,17 +105,13 @@ These are scope/status reviews, not new implementation assignments. Do not repea
 
 | Task | Metadata / checklist | Required reconciliation |
 |---|---|---|
-| [Lighting block b 02 gdf incremental](tasks/phase0_lighting-block-b-02-gdf-incremental/tasks.md) | completed; 12/14 | Completed metadata but items 4.2/4.3 remain open, including a failing moving-object transient gate. Assign successors before archive. |
-| [Lighting block b 05 layered reflections](tasks/phase0_lighting-block-b-05-layered-reflections/tasks.md) | completed; 10/12 | Completed metadata with remaining graph/coverage items; reconcile against state-registry and SSR tasks before archive. |
 | [Brixelizer gi integration](tasks/phase0_brixelizer-gi-integration/tasks.md) | completed; 42/48 | Explicitly closed as superseded, not implemented. Archive only with that resolution and preserved follow-up ownership. |
 | [Material graph pipeline](tasks/phase2_material-graph-pipeline/tasks.md) | pending; 0/34 | 0/34 conflicts with the active generated-material path and completed parity-02. Audit F-004 owns the known remaining context defect. |
 | [Froxel volumetric fog](tasks/phase2_froxel-volumetric-fog/tasks.md) | pending; 0/31 | Proposal says no froxel fog, but block-b-04 already implemented and validated it. Reconcile residual scope instead of rebuilding. |
 | [Clustered forward plus](tasks/phase3a-3.32.0-clustered-forward-plus/tasks.md) | pending; 3/22 | Later block-b-07 and cluster-spot-cone tasks supersede much of the old checklist; preserve only real uncovered acceptance. |
 | [3.4b scene loader](tasks/phase3b-3.4b-scene-loader/tasks.md) | pending; 1/17 | A live scene loader exists; 1/17 is stale. Audit F-011/F-012 track concrete remaining failure and hierarchy gaps. |
 | [3.5b render bridge](tasks/phase3b-3.5b-render-bridge/tasks.md) | pending; 8/21 | Scenes already flow through ECS draw-list synchronization. Reconcile the old RenderProxy architecture with the current implementation. |
-| [Lumen lite gi core](tasks/phase0_lumen-lite-gi-core/tasks.md) | in-progress; 17/26 | July in-progress context predates September/October GI work. Map remaining energy/composition scope to current focused tasks first. |
 | [Fix sponza intel lighting parity](tasks/phase1_fix-sponza-intel-lighting-parity/tasks.md) | in-progress; 15/21 | Old active calibration/Metal blocker predates neutral-port and recalibration tasks. Do not restart artistic calibration from stale instructions. |
-| [Indoor lighting system](tasks/phase0_indoor-lighting-system/tasks.md) | pending; 40/43 | 40/43 with only the mandatory tail unchecked; verify current docs/tests and overlap before deciding closure. |
 | [Point spot light shadows](tasks/phase3a-3.30.0-point-spot-light-shadows/tasks.md) | pending; 24/27 | 24/27 with only the mandatory tail open; reconcile later local-shadow validation rather than implement shadows again. |
 | [Skylight fog ambient fix](tasks/phase3a-3.51.0-skylight-fog-ambient-fix/tasks.md) | untracked; 13/28 | Predates sky-capture intensity, froxel correctness and recalibration; establish residual failures on the current build. |
 | [Aces hill specular occlusion](tasks/phase2_aces-hill-specular-occlusion/tasks.md) | pending; 6/19 | Partial implementation and historical defaults need current-source acceptance reconciliation before changing the tone/occlusion model. |
