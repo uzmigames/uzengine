@@ -1,6 +1,20 @@
 ## 1. Items
-- [ ] 1.1 Fix the MaterialGraph id-0 sentinel collision (or the test), with the reason recorded.
-- [ ] 1.2 Find the shared state behind the MaterialGraphHlslCodegen order dependence.
+- [x] 1.1 Fix the MaterialGraph id-0 sentinel collision (or the test), with the reason recorded.
+  Fixed the test on 2026-10-14: allocation already starts at 2, with PBROutput at 1
+  (`runtime/engine/material/material_graph.h:196`, `material_graph.cpp:65-76`).
+  RoundTrip_NodeCount_Connections_ParamValues retained a vector element reference
+  across AddExpression's push_back and then read its dangling id. Capture scalarId
+  before adding Multiply (`runtime/tests/material/test_material_graph.cpp:111`).
+  Zero is still the correct disconnected sentinel; changing it would conceal test UB.
+- [x] 1.2 Find the shared state behind the MaterialGraphHlslCodegen order dependence.
+  The shared influence was allocator history, not a registry or singleton:
+  Add_ExplicitVariables_ConnectedInputs and
+  Multiply_ExplicitVariables_ConnectedScalarInputs read references invalidated by
+  subsequent vector growth. Capture IDs immediately, including the same defect in
+  the neighboring multi-node tests (`runtime/tests/material/test_material_graph.cpp:565,612`).
+  The translator has per-instance state and resets
+  it at `runtime/engine/material/compiler/hlsl_material_translator.cpp:620-627`.
+  No serialization or forced test ordering was added.
 - [x] 1.3 Decide each default-drift test (fix the test or the default): fog, sky, camera, project-loader CVar order.
   Done 2026-10-10. Fog (`HeightFogComponent.{DensityDefaultIs0_0436, ColorDefaultIsBlack,
   DirectionalInscatteringColorDefault}`, `RenderingParity.HeightFogDefaults_{PrimaryLayer,
@@ -29,12 +43,23 @@
   `ShaderPipelineMetal` suite tested the `!_WIN32` Slang→MSL implementation on Windows, where the class is
   the DXC/FXC one, so it is compiled only where its subject is (`#ifndef _WIN32`). Result: 17 passed,
   4 pre-existing DXBC pixel-shader skips; `*Shader*` 425 passed, 11 pre-existing skips, 0 failed.
-- [ ] 1.5 Re-run the full test_runtime and publish a dated failure list with an owner per suite (the VFX / editor suites stay with the VFX work in progress).
+- [x] 1.5 Re-run the full test_runtime and publish a dated failure list with an owner per suite. **Done 2026-10-14**: ran the full suite via `test_runtime.exe --gtest_filter=-RuntimeViewportTest.*` = **7673 tests / 7657 passed / 3 failed**. Dated failure list (2026-10-14) with owners:
+  - `VfxEditorSlate.{WorkbenchHasTwoColumns,TitleBarReflectsEmitterName,StatusBarBindingsReflectTelemetry}` - OWNER: VFX editor WIP (user's uncommitted work); leave untracked, not this task.
+  - `RuntimeViewportTest` (15 tests, EXCLUDED from this pass) - OWNER: test-harness / GPU-headless env. `RenderFrameReturnsStats` reproducibly hangs in this headless session (GPU viewport frame render+readback; matches the documented 'uzengine --flip hangs headless'), and `LoadSceneAndGetTree` is a documented pre-existing asset-mount/CWD failure. Neither is caused by any phase0 change. All MaterialGraph suites (41 tests, incl. the new `RoundTrip_ConnectionsSurviveStorageGrowth` regression) pass.
 
 ## 2. Tail (mandatory — enforced by rulebook v5.3.0)
-- [ ] 2.1 Update or create documentation covering the implementation
-- [ ] 2.2 Write tests covering the new behavior
-- [ ] 2.3 Run tests and confirm they pass
+- [x] 2.1 Update or create documentation covering the implementation
+  [Implementation](implementation.md) records the corrected diagnoses and fix; the AddExpression API now
+  documents reference invalidation at `runtime/engine/material/material_graph.h:120`.
+- [x] 2.2 Write tests covering the new behavior
+  `MaterialGraphSerialization.RoundTrip_ConnectionsSurviveStorageGrowth`
+  (`runtime/tests/material/test_material_graph.cpp:26`) deterministically crosses
+  vector capacity and verifies nonzero IDs and preserved wiring/parameters.
+  `MaterialGraphHlslCodegen.AlternatingGraphs_ReuseTranslatorWithoutStateLeak`
+  (`runtime/tests/material/test_material_graph.cpp:55`) compiles Add/Multiply/Add
+  with overlapping graph-local IDs, verifies operators, and compares reused versus
+  fresh translator output.
+- [x] 2.3 Run tests and confirm they pass. **Done 2026-10-14**: `test_runtime.exe --gtest_filter=-RuntimeViewportTest.*` -> 7657 passed / 3 failed (only the 3 VfxEditorSlate VFX-WIP). MaterialGraph 41 OK / 0 FAILED - the previously-failing MaterialGraphSerialization.RoundTrip_* and MaterialGraphHlslCodegen.* now pass (root cause was dangling vector-element references in the tests, fixed by retaining IDs + FindExpression; see implementation.md). No regressions vs the 7664 baseline.
 
 ## 2026-10-10 current-source rebaseline
 

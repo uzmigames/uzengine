@@ -23,6 +23,58 @@
 
 using namespace uz;
 
+TEST(MaterialGraphSerialization, RoundTrip_ConnectionsSurviveStorageGrowth) {
+    MaterialGraph original;
+    const uint32_t scalarId = original.AddExpression(MatExprType::ScalarConstant).id;
+    original.FindExpression(scalarId)->scalarParams["value"] = 0.75f;
+    const uint32_t multiplyId = original.AddExpression(MatExprType::Multiply).id;
+    // Exceed the previous capacity without retaining vector element references.
+    const size_t oldCapacity = original.GetExpressions().capacity();
+    for (size_t i = original.GetExpressions().size(); i <= oldCapacity; ++i) {
+        const uint32_t id = original.AddExpression(MatExprType::ScalarConstant).id;
+        EXPECT_NE(id, 0u);
+    }
+    ASSERT_GT(original.GetExpressions().capacity(), oldCapacity);
+    ASSERT_EQ(scalarId, 2u);
+    ASSERT_EQ(multiplyId, 3u);
+    std::string error;
+    ASSERT_TRUE(original.Connect(scalarId, 0, multiplyId, 0, &error)) << error;
+    ASSERT_TRUE(original.Connect(multiplyId, 0, 1u, 0, &error)) << error;
+
+    MaterialGraph loaded;
+    ASSERT_TRUE(loaded.FromJson(original.ToJson(), &error)) << error;
+    const auto* multiply = loaded.FindExpression(multiplyId);
+    ASSERT_NE(multiply, nullptr);
+    EXPECT_TRUE(multiply->inputs[0].IsConnected());
+    EXPECT_EQ(multiply->inputs[0].connectedExprId, scalarId);
+    EXPECT_TRUE(loaded.GetPBROutput().inputs[0].IsConnected());
+    EXPECT_EQ(loaded.GetPBROutput().inputs[0].connectedExprId, multiplyId);
+    EXPECT_FLOAT_EQ(loaded.FindExpression(scalarId)->scalarParams.at("value"), 0.75f);
+}
+
+TEST(MaterialGraphHlslCodegen, AlternatingGraphs_ReuseTranslatorWithoutStateLeak) {
+    HlslMaterialTranslator translator;
+    for (const auto type : {MatExprType::Add, MatExprType::Multiply, MatExprType::Add}) {
+        MaterialGraph graph;
+        const uint32_t aId = graph.AddExpression(MatExprType::ScalarConstant).id;
+        graph.FindExpression(aId)->scalarParams["value"] = 0.3f;
+        const uint32_t bId = graph.AddExpression(MatExprType::ScalarConstant).id;
+        graph.FindExpression(bId)->scalarParams["value"] = 0.7f;
+        const uint32_t mathId = graph.AddExpression(type).id;
+        std::string error;
+        ASSERT_TRUE(graph.Connect(aId, 0, mathId, 0, &error)) << error;
+        ASSERT_TRUE(graph.Connect(bId, 0, mathId, 1, &error)) << error;
+        ASSERT_TRUE(graph.Connect(mathId, 0, 1u, 0, &error)) << error;
+        const auto result = translator.Compile(graph);
+        ASSERT_TRUE(result.success) << result.errorMessage;
+        const std::string operation = type == MatExprType::Add ? " + " : " * ";
+        EXPECT_NE(result.hlslSource.find("_node2_out0" + operation + "_node3_out0"),
+                  std::string::npos);
+        HlslMaterialTranslator fresh;
+        EXPECT_EQ(result.hlslSource, fresh.Compile(graph).hlslSource);
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -56,18 +108,20 @@ TEST(MaterialGraphSerialization, RoundTrip_NodeCount_Connections_ParamValues) {
 
     // id=2: ScalarConstant with value=0.75
     MaterialExpression& scalar = original.AddExpression(MatExprType::ScalarConstant);
+    const uint32_t scalarId = scalar.id;
     scalar.scalarParams["value"] = 0.75f;
 
     // id=3: Multiply
     MaterialExpression& multiply = original.AddExpression(MatExprType::Multiply);
+    const uint32_t multiplyId = multiply.id;
 
     // Connect scalar(out:0) → multiply(in:0/"A")
     std::string err;
-    ASSERT_TRUE(original.Connect(scalar.id, 0, multiply.id, 0, &err))
+    ASSERT_TRUE(original.Connect(scalarId, 0, multiplyId, 0, &err))
         << "Connect scalar→multiply A: " << err;
 
     // Connect multiply(out:0) → PBROutput(in:0/"BaseColor")
-    ASSERT_TRUE(original.Connect(multiply.id, 0, /*PBROutput id=*/1, 0, &err))
+    ASSERT_TRUE(original.Connect(multiplyId, 0, /*PBROutput id=*/1, 0, &err))
         << "Connect multiply→PBROutput BaseColor: " << err;
 
     // Verify graph is valid before serialising.
@@ -90,8 +144,8 @@ TEST(MaterialGraphSerialization, RoundTrip_NodeCount_Connections_ParamValues) {
     EXPECT_EQ(loaded.GetPBROutput().type, MatExprType::PBROutput);
 
     // ── ScalarConstant survives with the correct value ──
-    const MaterialExpression* loadedScalar = loaded.FindExpression(scalar.id);
-    ASSERT_NE(loadedScalar, nullptr) << "ScalarConstant id=" << scalar.id << " not found after round-trip";
+    const MaterialExpression* loadedScalar = loaded.FindExpression(scalarId);
+    ASSERT_NE(loadedScalar, nullptr) << "ScalarConstant id=" << scalarId << " not found after round-trip";
     EXPECT_EQ(loadedScalar->type, MatExprType::ScalarConstant);
     auto scalarValIt = loadedScalar->scalarParams.find("value");
     ASSERT_NE(scalarValIt, loadedScalar->scalarParams.end())
@@ -100,17 +154,17 @@ TEST(MaterialGraphSerialization, RoundTrip_NodeCount_Connections_ParamValues) {
         << "ScalarConstant 'value' must survive serialization";
 
     // ── Multiply node survives ──
-    const MaterialExpression* loadedMul = loaded.FindExpression(multiply.id);
-    ASSERT_NE(loadedMul, nullptr) << "Multiply id=" << multiply.id << " not found after round-trip";
+    const MaterialExpression* loadedMul = loaded.FindExpression(multiplyId);
+    ASSERT_NE(loadedMul, nullptr) << "Multiply id=" << multiplyId << " not found after round-trip";
     EXPECT_EQ(loadedMul->type, MatExprType::Multiply);
 
-    // ── Connection: multiply.inputs[0] must point back to scalar.id, pin 0 ──
+    // ── Connection: multiply.inputs[0] must point back to scalarId, pin 0 ──
     ASSERT_FALSE(loadedMul->inputs.empty());
     const MatPin& mulInputA = loadedMul->inputs[0];  // pin "A"
     EXPECT_TRUE(mulInputA.IsConnected())
         << "Multiply input A must be connected after round-trip";
-    EXPECT_EQ(mulInputA.connectedExprId, scalar.id)
-        << "Multiply A must connect to ScalarConstant id=" << scalar.id;
+    EXPECT_EQ(mulInputA.connectedExprId, scalarId)
+        << "Multiply A must connect to ScalarConstant id=" << scalarId;
     EXPECT_EQ(mulInputA.connectedPinId,  0u)
         << "Multiply A must connect to output pin 0 of ScalarConstant";
 
@@ -118,8 +172,8 @@ TEST(MaterialGraphSerialization, RoundTrip_NodeCount_Connections_ParamValues) {
     const MatPin& pbrBaseColor = loaded.GetPBROutput().inputs[0];
     EXPECT_TRUE(pbrBaseColor.IsConnected())
         << "PBROutput BaseColor must be connected after round-trip";
-    EXPECT_EQ(pbrBaseColor.connectedExprId, multiply.id)
-        << "PBROutput BaseColor must connect to Multiply id=" << multiply.id;
+    EXPECT_EQ(pbrBaseColor.connectedExprId, multiplyId)
+        << "PBROutput BaseColor must connect to Multiply id=" << multiplyId;
     EXPECT_EQ(pbrBaseColor.connectedPinId,  0u);
 
     // ── Validate loaded graph ──
@@ -199,32 +253,36 @@ TEST(MaterialGraphTopologicalSort, Diamond_ABCD_CorrectOrdering) {
 
     // A: ScalarConstant (value=0.5)
     MaterialExpression& A = g.AddExpression(MatExprType::ScalarConstant);
+    const uint32_t AId = A.id;
     A.scalarParams["value"] = 0.5f;
 
     // B: Multiply — A feeds input A, unconnected input B uses default
     MaterialExpression& B = g.AddExpression(MatExprType::Multiply);
+    const uint32_t BId = B.id;
 
     // C: Add — A feeds input A, unconnected input B uses default
     MaterialExpression& C = g.AddExpression(MatExprType::Add);
+    const uint32_t CId = C.id;
 
     // D: Lerp — B feeds input A, C feeds input B, Alpha unconnected
     MaterialExpression& D = g.AddExpression(MatExprType::Lerp);
+    const uint32_t DId = D.id;
 
     // Connect A → B.inputA (pin 0)
     std::string err;
-    ASSERT_TRUE(g.Connect(A.id, 0, B.id, 0, &err)) << "A→B: " << err;
+    ASSERT_TRUE(g.Connect(AId, 0, BId, 0, &err)) << "A→B: " << err;
 
     // Connect A → C.inputA (pin 0)
-    ASSERT_TRUE(g.Connect(A.id, 0, C.id, 0, &err)) << "A→C: " << err;
+    ASSERT_TRUE(g.Connect(AId, 0, CId, 0, &err)) << "A→C: " << err;
 
     // Connect B → D.inputA (pin 0)
-    ASSERT_TRUE(g.Connect(B.id, 0, D.id, 0, &err)) << "B→D: " << err;
+    ASSERT_TRUE(g.Connect(BId, 0, DId, 0, &err)) << "B→D: " << err;
 
     // Connect C → D.inputB (pin 1)
-    ASSERT_TRUE(g.Connect(C.id, 0, D.id, 1, &err)) << "C→D: " << err;
+    ASSERT_TRUE(g.Connect(CId, 0, DId, 1, &err)) << "C→D: " << err;
 
     // Connect D → PBROutput BaseColor (pin 0)
-    ASSERT_TRUE(g.Connect(D.id, 0, 1u, 0, &err)) << "D→PBR: " << err;
+    ASSERT_TRUE(g.Connect(DId, 0, 1u, 0, &err)) << "D→PBR: " << err;
 
     // Validate graph before sorting.
     ASSERT_TRUE(g.Validate(err)) << "Validate: " << err;
@@ -236,10 +294,10 @@ TEST(MaterialGraphTopologicalSort, Diamond_ABCD_CorrectOrdering) {
     // All 5 IDs must be present: A, B, C, D, PBROutput(1).
     EXPECT_EQ(order.size(), 5u) << "Order must contain all 5 reachable nodes";
 
-    const size_t posA   = IndexOf(order, A.id);
-    const size_t posB   = IndexOf(order, B.id);
-    const size_t posC   = IndexOf(order, C.id);
-    const size_t posD   = IndexOf(order, D.id);
+    const size_t posA   = IndexOf(order, AId);
+    const size_t posB   = IndexOf(order, BId);
+    const size_t posC   = IndexOf(order, CId);
+    const size_t posD   = IndexOf(order, DId);
     const size_t posPBR = IndexOf(order, 1u);
 
     EXPECT_NE(posA,   SIZE_MAX) << "A must be in sort result";
@@ -283,12 +341,14 @@ TEST(MaterialGraphDeadCode, DisconnectedNode_NotInSortResult) {
 
     // Connected subgraph: ScalarConstant(id=2) → PBROutput BaseColor.
     MaterialExpression& connected = g.AddExpression(MatExprType::ScalarConstant);
+    const uint32_t connectedId = connected.id;
     connected.scalarParams["value"] = 1.0f;
     std::string err;
-    ASSERT_TRUE(g.Connect(connected.id, 0, 1u, 0, &err)) << err;
+    ASSERT_TRUE(g.Connect(connectedId, 0, 1u, 0, &err)) << err;
 
     // Disconnected ScalarConstant — never wired to anything.
     MaterialExpression& dead = g.AddExpression(MatExprType::ScalarConstant);
+    const uint32_t deadId = dead.id;
     dead.scalarParams["value"] = 99.0f;
 
     // Confirm graph is valid.
@@ -297,14 +357,14 @@ TEST(MaterialGraphDeadCode, DisconnectedNode_NotInSortResult) {
     const std::vector<uint32_t> order = g.TopologicalSort();
 
     // connected and PBROutput(1) must be present.
-    EXPECT_NE(IndexOf(order, connected.id), SIZE_MAX)
+    EXPECT_NE(IndexOf(order, connectedId), SIZE_MAX)
         << "Connected node must appear in sort result";
     EXPECT_NE(IndexOf(order, 1u), SIZE_MAX)
         << "PBROutput must appear in sort result";
 
     // Dead node must NOT appear.
-    EXPECT_EQ(IndexOf(order, dead.id), SIZE_MAX)
-        << "Disconnected node id=" << dead.id << " must NOT appear in sort result";
+    EXPECT_EQ(IndexOf(order, deadId), SIZE_MAX)
+        << "Disconnected node id=" << deadId << " must NOT appear in sort result";
 }
 
 /// A more complex dead-code case: two fully connected subgraphs (A→B→PBR,
@@ -314,25 +374,29 @@ TEST(MaterialGraphDeadCode, PartiallyConnectedChain_OnlyReachableNodes) {
 
     // Live path: ScalarConstant → Add → PBROutput BaseColor
     MaterialExpression& liveConst = g.AddExpression(MatExprType::ScalarConstant);
+    const uint32_t liveConstId = liveConst.id;
     MaterialExpression& liveAdd   = g.AddExpression(MatExprType::Add);
+    const uint32_t liveAddId = liveAdd.id;
     std::string err;
-    ASSERT_TRUE(g.Connect(liveConst.id, 0, liveAdd.id, 0, &err)) << err;
-    ASSERT_TRUE(g.Connect(liveAdd.id, 0, 1u, 0, &err)) << err;
+    ASSERT_TRUE(g.Connect(liveConstId, 0, liveAddId, 0, &err)) << err;
+    ASSERT_TRUE(g.Connect(liveAddId, 0, 1u, 0, &err)) << err;
 
     // Dead path: ScalarConstant → Multiply (never wired to PBR)
     MaterialExpression& deadConst = g.AddExpression(MatExprType::ScalarConstant);
+    const uint32_t deadConstId = deadConst.id;
     MaterialExpression& deadMul   = g.AddExpression(MatExprType::Multiply);
-    ASSERT_TRUE(g.Connect(deadConst.id, 0, deadMul.id, 0, &err)) << err;
+    const uint32_t deadMulId = deadMul.id;
+    ASSERT_TRUE(g.Connect(deadConstId, 0, deadMulId, 0, &err)) << err;
     // deadMul is NOT connected to PBROutput.
 
     const auto order = g.TopologicalSort();
 
-    EXPECT_NE(IndexOf(order, liveConst.id), SIZE_MAX) << "Live const must be in order";
-    EXPECT_NE(IndexOf(order, liveAdd.id),   SIZE_MAX) << "Live add must be in order";
+    EXPECT_NE(IndexOf(order, liveConstId), SIZE_MAX) << "Live const must be in order";
+    EXPECT_NE(IndexOf(order, liveAddId),   SIZE_MAX) << "Live add must be in order";
     EXPECT_NE(IndexOf(order, 1u),           SIZE_MAX) << "PBROutput must be in order";
 
-    EXPECT_EQ(IndexOf(order, deadConst.id), SIZE_MAX) << "Dead const must NOT be in order";
-    EXPECT_EQ(IndexOf(order, deadMul.id),   SIZE_MAX) << "Dead mul must NOT be in order";
+    EXPECT_EQ(IndexOf(order, deadConstId), SIZE_MAX) << "Dead const must NOT be in order";
+    EXPECT_EQ(IndexOf(order, deadMulId),   SIZE_MAX) << "Dead mul must NOT be in order";
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -498,26 +562,29 @@ TEST(MaterialGraphHlslCodegen, Add_ExplicitVariables_ConnectedInputs) {
 
     // Two ScalarConstants feed the Add node.
     MaterialExpression& ca = g.AddExpression(MatExprType::ScalarConstant);
+    const uint32_t caId = ca.id;
     ca.scalarParams["value"] = 0.3f;
 
     MaterialExpression& cb = g.AddExpression(MatExprType::ScalarConstant);
+    const uint32_t cbId = cb.id;
     cb.scalarParams["value"] = 0.7f;
 
     MaterialExpression& addNode = g.AddExpression(MatExprType::Add);
+    const uint32_t addNodeId = addNode.id;
 
     std::string err;
-    ASSERT_TRUE(g.Connect(ca.id, 0, addNode.id, 0, &err)) << "ca→add A: " << err;
-    ASSERT_TRUE(g.Connect(cb.id, 0, addNode.id, 1, &err)) << "cb→add B: " << err;
-    ASSERT_TRUE(g.Connect(addNode.id, 0, 1u, 0, &err))    << "add→PBR: " << err;
+    ASSERT_TRUE(g.Connect(caId, 0, addNodeId, 0, &err)) << "ca→add A: " << err;
+    ASSERT_TRUE(g.Connect(cbId, 0, addNodeId, 1, &err)) << "cb→add B: " << err;
+    ASSERT_TRUE(g.Connect(addNodeId, 0, 1u, 0, &err))    << "add→PBR: " << err;
 
     HlslMaterialTranslator translator;
     const MaterialCompileResult result = translator.Compile(g);
     ASSERT_TRUE(result.success) << result.errorMessage;
 
-    // Variable for ca output: _node<ca.id>_out0
-    const std::string varCA  = "_node" + std::to_string(ca.id)      + "_out0";
-    const std::string varCB  = "_node" + std::to_string(cb.id)      + "_out0";
-    const std::string varAdd = "_node" + std::to_string(addNode.id)  + "_out0";
+    // Variable for ca output: _node<caId>_out0
+    const std::string varCA  = "_node" + std::to_string(caId)      + "_out0";
+    const std::string varCB  = "_node" + std::to_string(cbId)      + "_out0";
+    const std::string varAdd = "_node" + std::to_string(addNodeId)  + "_out0";
 
     EXPECT_TRUE(Contains(result.hlslSource, varCA))
         << "ScalarConstant A variable '" << varCA << "' must appear in HLSL";
@@ -542,25 +609,28 @@ TEST(MaterialGraphHlslCodegen, Multiply_ExplicitVariables_ConnectedScalarInputs)
     // Two ScalarConstants (Float output) feed Multiply (Float inputs).
     // No promotion or truncation — variable names appear verbatim.
     MaterialExpression& sa = g.AddExpression(MatExprType::ScalarConstant);
+    const uint32_t saId = sa.id;
     sa.scalarParams["value"] = 0.3f;
 
     MaterialExpression& sb = g.AddExpression(MatExprType::ScalarConstant);
+    const uint32_t sbId = sb.id;
     sb.scalarParams["value"] = 0.7f;
 
     MaterialExpression& mul = g.AddExpression(MatExprType::Multiply);
+    const uint32_t mulId = mul.id;
 
     std::string err;
-    ASSERT_TRUE(g.Connect(sa.id, 0, mul.id, 0, &err)) << "sa→mul A: " << err;
-    ASSERT_TRUE(g.Connect(sb.id, 0, mul.id, 1, &err)) << "sb→mul B: " << err;
-    ASSERT_TRUE(g.Connect(mul.id, 0, 1u, 0, &err))    << "mul→PBR: " << err;
+    ASSERT_TRUE(g.Connect(saId, 0, mulId, 0, &err)) << "sa→mul A: " << err;
+    ASSERT_TRUE(g.Connect(sbId, 0, mulId, 1, &err)) << "sb→mul B: " << err;
+    ASSERT_TRUE(g.Connect(mulId, 0, 1u, 0, &err))    << "mul→PBR: " << err;
 
     HlslMaterialTranslator translator;
     const MaterialCompileResult result = translator.Compile(g);
     ASSERT_TRUE(result.success) << result.errorMessage;
 
-    const std::string varSA  = "_node" + std::to_string(sa.id)  + "_out0";
-    const std::string varSB  = "_node" + std::to_string(sb.id)  + "_out0";
-    const std::string varMul = "_node" + std::to_string(mul.id) + "_out0";
+    const std::string varSA  = "_node" + std::to_string(saId)  + "_out0";
+    const std::string varSB  = "_node" + std::to_string(sbId)  + "_out0";
+    const std::string varMul = "_node" + std::to_string(mulId) + "_out0";
 
     // Both scalars must be declared.
     EXPECT_TRUE(Contains(result.hlslSource, varSA))
@@ -612,15 +682,17 @@ TEST(MaterialGraphHlslCodegen, CheckerPattern_ContainsFloorAndFmod) {
 TEST(MaterialGraphHlslCodegen, CheckerPattern_CustomScale_ScaleAppearsInHlsl) {
     MaterialGraph g;
     MaterialExpression& checker = g.AddExpression(MatExprType::CheckerPattern);
+    const uint32_t checkerId = checker.id;
 
     // Wire a ScalarConstant(4.0) into the Scale input.
     MaterialExpression& scaleConst = g.AddExpression(MatExprType::ScalarConstant);
+    const uint32_t scaleConstId = scaleConst.id;
     scaleConst.scalarParams["value"] = 4.0f;
 
     std::string err;
-    ASSERT_TRUE(g.Connect(scaleConst.id, 0, checker.id, 1, &err))
+    ASSERT_TRUE(g.Connect(scaleConstId, 0, checkerId, 1, &err))
         << "Connect scaleConst→checker Scale: " << err;
-    ASSERT_TRUE(g.Connect(checker.id, 0, 1u, 0, &err))
+    ASSERT_TRUE(g.Connect(checkerId, 0, 1u, 0, &err))
         << "Connect checker→PBROutput: " << err;
 
     HlslMaterialTranslator translator;
@@ -786,14 +858,17 @@ TEST(MaterialShaderCacheTest, ContentHash_Deterministic_SameGraphDifferentInsert
     // Build graph A: add Multiply first, then two ScalarConstants.
     MaterialGraph gA;
     MaterialExpression& mulA = gA.AddExpression(MatExprType::Multiply);
+    const uint32_t mulAId = mulA.id;
     MaterialExpression& scA1 = gA.AddExpression(MatExprType::ScalarConstant);
+    const uint32_t scA1Id = scA1.id;
     scA1.scalarParams["value"] = 0.4f;
     MaterialExpression& scA2 = gA.AddExpression(MatExprType::ScalarConstant);
+    const uint32_t scA2Id = scA2.id;
     scA2.scalarParams["value"] = 0.6f;
     std::string err;
-    ASSERT_TRUE(gA.Connect(scA1.id, 0, mulA.id, 0, &err)) << err;
-    ASSERT_TRUE(gA.Connect(scA2.id, 0, mulA.id, 1, &err)) << err;
-    ASSERT_TRUE(gA.Connect(mulA.id, 0, 1u, 0, &err)) << err;
+    ASSERT_TRUE(gA.Connect(scA1Id, 0, mulAId, 0, &err)) << err;
+    ASSERT_TRUE(gA.Connect(scA2Id, 0, mulAId, 1, &err)) << err;
+    ASSERT_TRUE(gA.Connect(mulAId, 0, 1u, 0, &err)) << err;
 
     // Build graph B: add ScalarConstants first, then Multiply.
     // Because expression IDs are assigned sequentially starting at 2, the IDs
@@ -922,16 +997,18 @@ TEST(MaterialGraphParameterBinding, Mixed_ScalarAndVector_ContiguousIndices) {
 
     // ScalarParameter → Metallic (pin 1)
     MaterialExpression& scalarP = g.AddExpression(MatExprType::ScalarParameter);
+    const uint32_t scalarPId = scalarP.id;
     scalarP.stringParams["paramName"] = "ScalarA";
     scalarP.scalarParams["default"]   = 0.5f;
 
     // VectorParameter → BaseColor (pin 0)
     MaterialExpression& vectorP = g.AddExpression(MatExprType::VectorParameter);
+    const uint32_t vectorPId = vectorP.id;
     vectorP.stringParams["paramName"] = "VectorB";
 
     std::string err;
-    ASSERT_TRUE(g.Connect(vectorP.id, 0, 1u, 0, &err)) << "VectorP→BaseColor: " << err;
-    ASSERT_TRUE(g.Connect(scalarP.id, 0, 1u, 1, &err)) << "ScalarP→Metallic: " << err;
+    ASSERT_TRUE(g.Connect(vectorPId, 0, 1u, 0, &err)) << "VectorP→BaseColor: " << err;
+    ASSERT_TRUE(g.Connect(scalarPId, 0, 1u, 1, &err)) << "ScalarP→Metallic: " << err;
 
     HlslMaterialTranslator translator;
     const MaterialCompileResult result = translator.Compile(g);
