@@ -391,7 +391,7 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
 // The SRV indices are written to PerFrameCB in frame_constants.cpp.
 
 void SceneRenderer::RegisterBrixelizerGIPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
-    return; // DISABLED: BrixelizerGI crashing render — re-enable after fix
+    if (!CVarRegistry::Get().GetBool("r.BrixelizerGI", false)) return;
     if (!m_brixelizerGI || !m_brixelizerGI->IsInitialized()) return;
     if (!m_passInspector.IsPassEnabled("brixelizer_gi")) return;
     // Diagnostic gate — file-scope `cv_BrixDispatch` lives in
@@ -400,9 +400,14 @@ void SceneRenderer::RegisterBrixelizerGIPasses(rg::RgBuilder& rgBuilder, FrameCo
     // honoured here even though the C++ pointer lives in another TU.
     if (!uz::CVarRegistry::Get().GetBool("r.BrixelizerGI.Dispatch", true)) return;
 
+    ctx.brixDiffuseRes = rgBuilder.ImportTrackedTexture("Brixelizer_Diffuse", m_brixelizerGI->GetDiffuseGITexture());
+    ctx.brixSpecularRes = rgBuilder.ImportTrackedTexture("Brixelizer_Specular", m_brixelizerGI->GetSpecularGITexture());
     rgBuilder.AddPass("BrixelizerGI", [&](rg::RgPassBuilder& pb) {
         pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);
         pb.Read(ctx.normalRes, RHIResourceState::ShaderResource);
+        pb.Read(ctx.velocityRes, RHIResourceState::ShaderResource);
+        pb.Write(ctx.brixDiffuseRes, RHIResourceState::UnorderedAccess);
+        pb.Write(ctx.brixSpecularRes, RHIResourceState::UnorderedAccess);
         // HDR scene color is read by the BrixelizerGI dispatch as
         // `prevLitOutput` (temporal GI history). Without declaring this
         // dependency, the render graph leaves the HDR target in whatever
@@ -425,12 +430,13 @@ void SceneRenderer::RegisterBrixelizerGIPasses(rg::RgBuilder& rgBuilder, FrameCo
                 static_cast<uint32_t>(m_meshes.size()));
 
             // Execute SDF bake + GI dispatch
+            const auto& camera = m_cameraManager->GetActiveCamera();
             m_brixelizerGI->Execute(
                 cmd,
-                ctx.perFrame.viewProj.data(),    // view matrix
-                ctx.perFrame.viewProj.data(),    // proj matrix (combined viewProj for now)
-                ctx.perFrame.viewProj.data(),    // prev view
-                ctx.perFrame.viewProj.data(),    // prev proj
+                camera.GetView().data(),
+                camera.GetProjection().data(),
+                camera.GetView().data(),
+                camera.GetProjection().data(),
                 ctx.perFrame.cameraPos.x,
                 ctx.perFrame.cameraPos.y,
                 ctx.perFrame.cameraPos.z,

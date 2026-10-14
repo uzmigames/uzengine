@@ -270,11 +270,15 @@ not run since 2026-04-07 (entry below).
 
 ---
 
-### `r.BrixelizerGI` — `DORMANT` (never constructed since 2026-04-10; task closed as superseded 2026-10-08)
+### `r.BrixelizerGI` — `OFF` by default, functional opt-in on RTX 5080 (verified 2026-10-14)
 **File**: [brixelizer_gi_pass.cpp:50](../../runtime/engine/renderer/passes/gi/brixelizer_gi_pass.cpp)
 **Task**: `.rulebook/tasks/phase0_brixelizer-gi-integration/tasks.md` (reconciliation note: which ticks hold, defects found)
 
-AMD FidelityFX Brixelizer GI (sparse SDF voxel GI + screen-space probes), integrated in source only.
+AMD FidelityFX Brixelizer GI now builds, loads its wrapper, creates both real contexts, and
+contributes diffuse GI in Sponza when opted in. Final 1080p A/B PSNR is 6.904351404 dB;
+measured RTX 5080 frame overhead is 1.259197 ms. See
+[enablement evidence](brixelizer-gi-integration/01-enablement-2026-10-14.md) for commands,
+SRV/target proof, all 12 passing Brixelizer tests, and the remaining numerical-coverage gap.
 
 **Wrong when written (2026-04-07).** This entry read "`OFF` → `ON (via scene CVars)`" and
 "Implementation is **functional** — produces diffuse GI visible in Sponza", and listed three gaps:
@@ -288,7 +292,7 @@ screen or in a dump after that commit, which predates the saturated dump; no com
 dispatched it. The gaps described code that was not running, and the delete-all + re-create-all
 path had already been removed by `29c83ba5`.
 
-**State today:**
+**Historical state verified 2026-10-08 (superseded by the enablement above):**
 - **Not compiled.** `runtime/build.zig:903-912` defines `UZ_BRIXELIZER_ENABLED` (`:929-931`) only
   when the MSVC-built `runtime/thirdparty/amd-fidelityfx-1.1/wrapper/build/bin/uz_brixelizer.dll`
   exists. Nothing in the repo produces it (`scripts/setup.ps1:543-549` only clones SDK v1.1.4), so
@@ -305,9 +309,8 @@ path had already been removed by `29c83ba5`.
   the wrapper only re-exports the function (`wrapper/uz_brixelizer_dll.cpp:112-116`, resolved by
   `brixelizer_loader.cpp:118`).
 
-The GI in use is the SDF radiance cache with the final gather and SDF reflections (next entry), with
-DDGI as the DXR option. The dormant source is kept; removing it is the user's decision (a separate
-task, not opened).
+The default GI remains the SDF radiance cache with final gather and SDF reflections (next entry),
+with DDGI as the DXR option. Brixelizer is opt-in; its default was not changed.
 
 ---
 
@@ -1848,16 +1851,35 @@ retrace only its probes at a decaying blend) was tried 2026-10-06 and made G3e W
 transport readback on the arrival frames (measure which probes actually received transport the
 frame the object arrives, and retrace only those) rather than a geometric change-box blend.
 
-## Brixelizer GI is a dormant no-op (2026-10-14, phase0_brixelizer-gi-integration)
+## Brixelizer GI enabled; numerical coverage unverified (2026-10-14)
 
-The AMD FidelityFX Brixelizer GI integration (pass, loader, CVar `r.BrixelizerGI`, debug viz) is
-present and compiles, but is **inert**: the FFX Brixelizer wrapper DLL and SDK libraries are not
-built/linked, so the loader selects the NO-OP implementation - context construction is commented
-out and the GI dispatch returns immediately. The deferred-lighting adopt path therefore sees
-`brixGIDiffuseSrv == UINT32_MAX` (sentinel) every frame and Brixelizer contributes nothing.
-Evidence (2026-10-14): Sponza A with vs without `r.BrixelizerGI` = 85.6 dB PSNR, max diff 1/255
-(no visible change); frame-time delta +0.15 ms (no real bake/dispatch). The test items 8.1-8.5 of
-the task are BLOCKED on this (unit tests cover only public-API safety, in
-`runtime/tests/engine/renderer/test_brixelizer_gi_pass.cpp`, 9 passing). Enabling the feature needs
-the FFX DLL/SDK build + uncommenting construction + SRV wiring - a build-system + engine change,
-out of scope for the test task. Owner: phase0_brixelizer-gi-integration (cannot archive while inert).
+The formerly dormant opt-in path is now built and running. SDK DX12 Release libraries exist at
+`runtime/thirdparty/amd-fidelityfx-1.1/sdk/bin/ffx_sdk/`, and the MSVC wrapper exists at
+`wrapper/build/bin/uz_brixelizer.dll` and is deployed to `runtime/build/bin/uz_brixelizer.dll`.
+The loader binds all 18 exports. Both real contexts create on NVIDIA GeForce RTX 5080.
+
+The context-creation error was diagnosed: `ffxBrixelizerContextCreate` returned
+`-2147483635` (`FFX_ERROR_BACKEND_API_ERROR`), while the actual failed operation was system
+`D3D12SerializeRootSignature`, HRESULT `0x887E0003` (`D3D12_ERROR_INVALID_REDIST`).
+The executable exports `D3D12SDKPath = ".\\D3D12\\"`, but DLL deployment only populated
+the executable directory's root. Deploying the Agility DLLs into `build/bin/D3D12/`
+resolved it; this deployment is now automatic when the Brixelizer build gate is enabled.
+No AMD-only restriction or scratch/ABI mismatch was established.
+
+Final 1920x1080 Sponza captures each exit 0 after 282 frames, screenshot frame 240,
+with no shader compile failure or device-removal error. Actual bake/GI submission
+uses diffuse SRV 36955 and specular SRV 36957 for 138 instances. `brixelizer.diffuse`
+is measured nonzero (min 0.836426, max 63.968750, average 16.763229).
+NumPy/PIL A/B PSNR is 6.904351404 dB, with visibly added interior indirect light.
+Mean GPU frame time is 6.859859 ms on versus 5.600662 ms off, overhead +1.259197 ms;
+the GI pass averages 1.435603 ms over 82 samples. These are RTX 5080 measurements,
+not RTX 4090 claims. An earlier TDR capture was discarded and its condition retried successfully.
+
+Task items 8.1-8.5 are verified. All nine retained API-safety tests and three new real GPU
+tests pass in one final suite run: 7,664 passed, 19 skipped, exactly the three pre-existing
+`VfxEditorSlate.*` failures. Item 8.6 remains unticked: the requested enumerated-test
+coverage argument is recorded, but no native instrumented percentage certifies >=95%;
+allocation/upload failure injection and initialized resizing are not covered.
+`r.BrixelizerGI` remains OFF by default. No commit or archive was made.
+Full commands, artifacts, test names, and limitations:
+[enablement report](brixelizer-gi-integration/01-enablement-2026-10-14.md).

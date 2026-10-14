@@ -891,7 +891,7 @@ pub fn build(b: *std.Build) void {
     // Include paths for Brixelizer + BrixelizerGI + DX12 backend.
     // The FFX SDK 1.1 must be built separately with CMake/MSVC to produce
     // ffx_backend_dx12_x64.lib. Define UZ_BRIXELIZER_ENABLED=1 when present.
-    // Build: cd thirdparty/amd-fidelityfx-1.1/sdk && cmake -B build -DFFX_API_BACKEND=DX12_X64 -DFFX_ALL=ON && cmake --build build --config Release
+    // Build: cd thirdparty/amd-fidelityfx-1.1/sdk && cmake -B build -G "Visual Studio 17 2022" -A x64 -DFFX_API_BACKEND=DX12_X64 -DFFX_ALL=ON -DUZ_BRIXELIZER_OCT_NORMALS=ON && cmake --build build --config Release
     // FFX SDK 1.1.4 include paths are always added when headers are present.
     // UZ_BRIXELIZER_ENABLED is only defined when the pre-built .lib also exists.
     const has_brixelizer_headers = blk: {
@@ -948,6 +948,7 @@ pub fn build(b: *std.Build) void {
         // ABI incompatibility between the FFX libs and Zig/mingw.
         if (has_brixelizer_libs) {
             runtime_mod.addCMacro("UZ_BRIXELIZER_ENABLED", "1");
+            std.debug.print("Brixelizer GI: UZ_BRIXELIZER_ENABLED=1 (wrapper DLL found)\n", .{});
         }
     }
 
@@ -1319,6 +1320,11 @@ pub fn build(b: *std.Build) void {
     for (thirdparty_include_dirs) |dir| addThirdPartyInclude(test_mod, b, dir);
     test_mod.addIncludePath(b.path("build/generated/shaders"));
     test_mod.addIncludePath(b.path("tests/engine/vfx")); // mock_rhi_device.h
+    if (has_brixelizer_libs) {
+        test_mod.addIncludePath(b.path(tp ++ "amd-fidelityfx-1.1/sdk/include"));
+        test_mod.addIncludePath(b.path(tp ++ "amd-fidelityfx-1.1/sdk/include/FidelityFX/gpu"));
+        test_mod.addCMacro("UZ_BRIXELIZER_ENABLED", "1");
+    }
 
     if (is_windows) {
         test_mod.addIncludePath(b.path("engine/rhi/dx12"));
@@ -1487,6 +1493,22 @@ pub fn build(b: *std.Build) void {
         b.getInstallStep().dependOn(&b.addInstallBinFile(
             b.path(b.fmt("{s}bin/x64/d3d12SDKLayers.dll", .{agility})), "d3d12SDKLayers.dll",
         ).step);
+        if (has_brixelizer_libs) {
+            // FFX uses the system serializer, which follows D3D12SDKPath
+            // exported by dx12_agility.cpp rather than our device factory path.
+            b.getInstallStep().dependOn(&b.addInstallBinFile(
+                b.path(b.fmt("{s}bin/x64/D3D12Core.dll", .{agility})), "D3D12/D3D12Core.dll",
+            ).step);
+            b.getInstallStep().dependOn(&b.addInstallBinFile(
+                b.path(b.fmt("{s}bin/x64/d3d12SDKLayers.dll", .{agility})), "D3D12/d3d12SDKLayers.dll",
+            ).step);
+            b.getInstallStep().dependOn(&b.addInstallBinFile(
+                b.path(tp ++ "amd-fidelityfx-1.1/wrapper/build/bin/uz_brixelizer.dll"), "uz_brixelizer.dll",
+            ).step);
+            b.getInstallStep().dependOn(&b.addInstallBinFile(
+                b.path(tp ++ "amd-fidelityfx-1.1/sdk/libs/pix/bin/x64/WinPixEventRuntime.dll"), "WinPixEventRuntime.dll",
+            ).step);
+        }
 
         // DXC
         b.getInstallStep().dependOn(&b.addInstallBinFile(

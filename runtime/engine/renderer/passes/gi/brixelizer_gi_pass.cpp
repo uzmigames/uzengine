@@ -23,6 +23,7 @@
 #include "engine/renderer/core/gbuffer/draw_list.h"
 #include "engine/renderer/mesh/gpu_mesh.h"
 #include "profiler.h"
+#include "engine/renderer/upload/upload_context.h"
 
 // FFX SDK 1.1.4: Brixelizer + BrixelizerGI context APIs.
 //
@@ -38,6 +39,8 @@
 
 #include <cstring>
 #include <cstdlib>
+#include <cfloat>
+#include <algorithm>
 #include <unordered_map>
 
 UZ_DECLARE_LOG_CATEGORY(Renderer);
@@ -148,6 +151,7 @@ struct BrixelizerGIPass::Impl {
 
     // ── FFX Backend ──
     void* scratchBuffer = nullptr;
+    void* giScratchBuffer = nullptr;
     size_t scratchBufferSize = 0;
     FfxInterface brixelizerBackend{};
     FfxInterface giBackend{};
@@ -195,7 +199,8 @@ struct BrixelizerGIPass::Impl {
 
     // ── Geometry tracking ──
     std::vector<BrixelizerMeshInstance> registeredInstances;
-    std::unordered_map<uint64_t, uint32_t> meshIdToBufferIndex;
+    std::vector<DrawCommand> registeredDraws;
+    std::unordered_map<uint64_t, std::pair<uint32_t, uint32_t>> meshIdToBufferIndex;
     uint32_t nextBufferIndex = 0;
 
     // ── Previous frame matrices ──
@@ -219,7 +224,7 @@ struct BrixelizerGIPass::Impl {
 
     /// Wraps an RHI texture into an FfxResource for the FFX SDK.
     FfxResource WrapTexture(RHITextureHandle texture, const wchar_t* name,
-                            FfxResourceStates state = FFX_RESOURCE_STATE_COMPUTE_READ);
+                            FfxResourceStates state = FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
 
     /// Wraps an RHI buffer into an FfxResource for the FFX SDK.
     FfxResource WrapBuffer(RHIBufferHandle buffer, uint32_t sizeBytes, const wchar_t* name,
@@ -266,7 +271,7 @@ bool BrixelizerGIPass::Impl::CreateBlueNoise() {
     desc.width  = 64;
     desc.height = 64;
     desc.format = RHIFormat::R8Unorm;
-    desc.usage  = RHITextureUsage::ShaderResource;
+    desc.usage  = RHITextureUsage::ShaderResource | RHITextureUsage::CopyDst;
     desc.debugName = "BrixelizerGI.BlueNoise64";
 
     // Generate R2 blue noise pattern
@@ -282,6 +287,22 @@ bool BrixelizerGIPass::Impl::CreateBlueNoise() {
 
     blueNoiseTexture = device->CreateTexture(desc);
     if (!blueNoiseTexture.IsValid()) return false;
+    auto cmd = device->CreateCommandList(RHIQueueType::Graphics);
+    UploadContext upload(device);
+    cmd->Begin();
+    RHIBarrierDesc toCopy{blueNoiseTexture, {}, RHIResourceState::Common, RHIResourceState::CopyDst};
+    cmd->ResourceBarrier(&toCopy, 1);
+    if (!upload.UploadTexture(cmd, blueNoiseTexture, noiseData.data(), noiseData.size())) {
+        device->DestroyCommandList(cmd);
+        return false;
+    }
+    RHIBarrierDesc toRead{blueNoiseTexture, {}, RHIResourceState::CopyDst, RHIResourceState::ShaderResource};
+    cmd->ResourceBarrier(&toRead, 1);
+    cmd->End();
+    cmd->Execute();
+    device->WaitIdle();
+    upload.ReleaseStaging();
+    device->DestroyCommandList(cmd);
     blueNoiseSrv = device->GetTextureSRVIndex(blueNoiseTexture);
     return blueNoiseSrv != UINT32_MAX;
 }
@@ -290,7 +311,7 @@ bool BrixelizerGIPass::Impl::CreateHistoryTextures() {
     RHITextureDesc desc{};
     desc.width  = displayWidth;
     desc.height = displayHeight;
-    desc.usage  = RHITextureUsage::ShaderResource;
+    desc.usage  = RHITextureUsage::ShaderResource | RHITextureUsage::CopyDst;
 
     // Previous frame depth (R32F)
     desc.format = RHIFormat::R32Float;
@@ -300,7 +321,7 @@ bool BrixelizerGIPass::Impl::CreateHistoryTextures() {
     prevDepthSrv = device->GetTextureSRVIndex(prevDepth);
 
     // Previous frame normals (RG16F oct-encoded)
-    desc.format = RHIFormat::RG16Float;
+    desc.format = RHIFormat::RGBA16Float;
     desc.debugName = "BrixelizerGI.PrevNormals";
     prevNormals = device->CreateTexture(desc);
     if (!prevNormals.IsValid()) return false;
@@ -371,7 +392,7 @@ bool BrixelizerGIPass::Impl::CreateBrixSdfResources() {
     constexpr uint32_t kCascadeBrickMapSize =
         64u * 64u * 64u * sizeof(uint32_t);
 
-    for (uint32_t i = 0; i < numCascades && i < 24; ++i) {
+    for (uint32_t i = 0; i < 3 * numCascades && i < 24; ++i) {
         {
             RHIBufferDesc desc{};
             desc.sizeBytes = kCascadeAabbTreeSize;
@@ -396,7 +417,7 @@ bool BrixelizerGIPass::Impl::CreateBrixSdfResources() {
 
     UZ_LOG(Renderer, Info,
            "BrixelizerGI: allocated SDF resources (atlas 512^3 R8 + brickAABBs {} KB + {} cascade pairs)",
-           kBrickAABBsSize / 1024u, numCascades);
+           kBrickAABBsSize / 1024u, 3 * numCascades);
     return true;
 }
 
@@ -424,19 +445,23 @@ FfxResource BrixelizerGIPass::Impl::WrapTexture(
     if (dx12Tex->desc.is3D) {
         desc.type  = FFX_RESOURCE_TYPE_TEXTURE3D;
         desc.depth = dx12Tex->desc.depthOrArraySize;
+    } else if (dx12Tex->desc.depthOrArraySize == 6) {
+        desc.type = FFX_RESOURCE_TYPE_TEXTURE_CUBE;
+        desc.depth = 6;
     } else {
         desc.type  = FFX_RESOURCE_TYPE_TEXTURE2D;
         desc.depth = 1;
     }
     desc.width  = dx12Tex->desc.width;
     desc.height = dx12Tex->desc.height;
-    desc.mipCount = 1;
+    desc.mipCount = dx12Tex->desc.mipLevels;
     desc.flags  = FFX_RESOURCE_FLAGS_NONE;
 
     // Map RHI format to FFX format
     switch (dx12Tex->desc.format) {
         case RHIFormat::RGBA16Float: desc.format = FFX_SURFACE_FORMAT_R16G16B16A16_FLOAT; break;
         case RHIFormat::R32Float:    desc.format = FFX_SURFACE_FORMAT_R32_FLOAT; break;
+        case RHIFormat::D32Float:    desc.format = FFX_SURFACE_FORMAT_R32_FLOAT; break;
         case RHIFormat::RG16Float:   desc.format = FFX_SURFACE_FORMAT_R16G16_FLOAT; break;
         case RHIFormat::R8Unorm:     desc.format = FFX_SURFACE_FORMAT_R8_UNORM; break;
         case RHIFormat::RGBA8Unorm:  desc.format = FFX_SURFACE_FORMAT_R8G8B8A8_UNORM; break;
@@ -455,10 +480,9 @@ FfxResource BrixelizerGIPass::Impl::WrapBuffer(
 
     FfxResourceDescription desc{};
     desc.type   = FFX_RESOURCE_TYPE_BUFFER;
-    desc.width  = sizeBytes;
-    desc.height = 1;
-    desc.depth  = 1;
-    desc.mipCount = 1;
+    desc.size = sizeBytes;
+    desc.stride = sizeof(uint32_t);
+    desc.alignment = 0;
     desc.format = FFX_SURFACE_FORMAT_UNKNOWN;
     desc.flags  = FFX_RESOURCE_FLAGS_NONE;
 
@@ -472,7 +496,13 @@ FfxResource BrixelizerGIPass::Impl::WrapBuffer(
 BrixelizerGIPass::BrixelizerGIPass()  = default;
 BrixelizerGIPass::~BrixelizerGIPass() { Shutdown(); }
 BrixelizerGIPass::BrixelizerGIPass(BrixelizerGIPass&&) noexcept = default;
-BrixelizerGIPass& BrixelizerGIPass::operator=(BrixelizerGIPass&&) noexcept = default;
+BrixelizerGIPass& BrixelizerGIPass::operator=(BrixelizerGIPass&& other) noexcept {
+    if (this != &other) {
+        Shutdown();
+        m_impl = std::move(other.m_impl);
+    }
+    return *this;
+}
 
 bool BrixelizerGIPass::Init(IRHIDevice* device, uint32_t displayWidth, uint32_t displayHeight) {
     if (!device || displayWidth == 0 || displayHeight == 0) return false;
@@ -492,6 +522,7 @@ bool BrixelizerGIPass::Init(IRHIDevice* device, uint32_t displayWidth, uint32_t 
         return false;
     }
 
+    Shutdown();
     m_impl = std::make_unique<Impl>();
     m_impl->device = device;
     m_impl->displayWidth  = displayWidth;
@@ -527,11 +558,11 @@ bool BrixelizerGIPass::Init(IRHIDevice* device, uint32_t displayWidth, uint32_t 
 
     // ── Create second backend for BrixelizerGI ──
     size_t giScratchSize = ffxGetScratchMemorySizeDX12(kMaxFfxContexts);
-    void* giScratch = std::malloc(giScratchSize);
-    err = ffxGetInterfaceDX12(&m_impl->giBackend, ffxDevice, giScratch, giScratchSize, kMaxFfxContexts);
+    m_impl->giScratchBuffer = std::malloc(giScratchSize);
+    if (!m_impl->giScratchBuffer) return false;
+    err = ffxGetInterfaceDX12(&m_impl->giBackend, ffxDevice, m_impl->giScratchBuffer, giScratchSize, kMaxFfxContexts);
     if (err != FFX_OK) {
         UZ_LOG(Renderer, Error, "BrixelizerGI: ffxGetInterfaceDX12 failed for GI (err={})", err);
-        std::free(giScratch);
         return false;
     }
 
@@ -659,6 +690,8 @@ void BrixelizerGIPass::Shutdown() {
         std::free(m_impl->scratchBuffer);
         m_impl->scratchBuffer = nullptr;
     }
+    std::free(m_impl->giScratchBuffer);
+    m_impl->giScratchBuffer = nullptr;
 
     m_impl->registeredInstances.clear();
     m_impl->meshIdToBufferIndex.clear();
@@ -682,14 +715,22 @@ void BrixelizerGIPass::RegisterGeometry(const std::vector<DrawCommand>& drawList
     if (!meshes || meshCount == 0) return;
     UZ_PROFILE_SCOPE("BrixelizerGI::RegisterGeometry");
 
-    // ── Step 1: static scene — register once, skip subsequent frames ──
-    // Sponza (and all current scenes) are fully static. Once instances are
-    // registered, re-registering every frame is pure waste and floods the
-    // log. Skip if we already have instances registered and the draw count
-    // matches the cached registration.
-    if (!m_impl->registeredInstances.empty() &&
-        m_impl->registeredInstances.size() == drawList.size()) {
-        return;
+    bool unchanged = m_impl->registeredDraws.size() == drawList.size();
+    for (size_t i = 0; unchanged && i < drawList.size(); ++i) {
+        unchanged = m_impl->registeredDraws[i].meshId == drawList[i].meshId
+            && std::memcmp(m_impl->registeredDraws[i].worldMatrix.data(),
+                           drawList[i].worldMatrix.data(), sizeof(float) * 16) == 0;
+    }
+    if (unchanged) return;
+    if (!m_impl->registeredInstances.empty()) {
+        std::vector<FfxBrixelizerInstanceID> ids;
+        for (const auto& instance : m_impl->registeredInstances) ids.push_back(instance.instanceId);
+        const auto err = ffxBrixelizerDeleteInstances(&m_impl->brixelizerCtx, ids.data(), static_cast<uint32_t>(ids.size()));
+        if (err != FFX_OK) {
+            UZ_LOG(Renderer, Warning, "BrixelizerGI: instance deletion failed (err={})", err);
+            return;
+        }
+        m_impl->registeredInstances.clear();
     }
 
     // ── Step 2: register vertex/index buffers (cached per meshId) ────
@@ -700,10 +741,7 @@ void BrixelizerGIPass::RegisterGeometry(const std::vector<DrawCommand>& drawList
     // shares that buffer. We cache the index in `m_impl->meshIdToBufferIndex`
     // so subsequent frames just reuse the existing registration.
     //
-    // Each mesh contributes TWO buffer registrations (vertex + index). We
-    // pack them so:
-    //   bufferIndex(meshId)     → vertex SRV slot
-    //   bufferIndex(meshId) + 1 → index SRV slot
+    // Each mesh contributes TWO independently assigned buffer registrations.
 
     // Pre-pass: walk the draw list once and collect every unique meshId
     // that has not yet been registered with Brixelizer. We allocate a
@@ -775,20 +813,18 @@ void BrixelizerGIPass::RegisterGeometry(const std::vector<DrawCommand>& drawList
             return;
         }
 
-        // Persist the mapping for future frames. We only need the vertex
-        // slot — the index slot is always vbSlot+1 because we register the
-        // pair contiguously above (FFX guarantees consecutive indices on
-        // batched RegisterBuffers calls).
+        // Keep both returned slots; the backend allocates them independently.
         for (const auto& pm : pendingMeshes) {
-            m_impl->meshIdToBufferIndex[pm.meshId] = pm.vbSlot;
+            m_impl->meshIdToBufferIndex[pm.meshId] = {pm.vbSlot, pm.ibSlot};
         }
     }
 
     // Helper that resolves a meshId → vbSlot for instance description fill.
     // Pendings are guaranteed to be in `meshIdToBufferIndex` at this point.
-    auto bufferSlotForMesh = [&](uint32_t meshId) -> uint32_t {
+    auto bufferSlotForMesh = [&](uint32_t meshId) -> std::pair<uint32_t, uint32_t> {
         auto it = m_impl->meshIdToBufferIndex.find(meshId);
-        return it != m_impl->meshIdToBufferIndex.end() ? it->second : UINT32_MAX;
+        return it != m_impl->meshIdToBufferIndex.end()
+            ? it->second : std::pair<uint32_t, uint32_t>{UINT32_MAX, UINT32_MAX};
     };
 
     // ── Step 3: build instance descriptions ──────────────────────────
@@ -805,18 +841,32 @@ void BrixelizerGIPass::RegisterGeometry(const std::vector<DrawCommand>& drawList
         if (!mesh.IsValid() || !mesh.IsIndexed()) continue;
         if (mesh.vertexCount == 0 || mesh.indexCount == 0) continue;
 
-        const uint32_t bufferBase = bufferSlotForMesh(cmd.meshId);
-        if (bufferBase == UINT32_MAX) continue;
+        const auto bufferSlots = bufferSlotForMesh(cmd.meshId);
+        if (bufferSlots.first == UINT32_MAX) continue;
 
         FfxBrixelizerInstanceDescription desc{};
 
-        // Local-space AABB from the source mesh bounds.
-        desc.aabb.min[0] = mesh.boundsMin.x;
-        desc.aabb.min[1] = mesh.boundsMin.y;
-        desc.aabb.min[2] = mesh.boundsMin.z;
-        desc.aabb.max[0] = mesh.boundsMax.x;
-        desc.aabb.max[1] = mesh.boundsMax.y;
-        desc.aabb.max[2] = mesh.boundsMax.z;
+        // FFX overlaps these bounds with world-space cascades.
+        Vec3 boundsMin(FLT_MAX, FLT_MAX, FLT_MAX);
+        Vec3 boundsMax(-FLT_MAX, -FLT_MAX, -FLT_MAX);
+        for (uint32_t corner = 0; corner < 8; ++corner) {
+            const Vec3 point = cmd.worldMatrix.TransformPoint(Vec3(
+                (corner & 1) ? mesh.boundsMax.x : mesh.boundsMin.x,
+                (corner & 2) ? mesh.boundsMax.y : mesh.boundsMin.y,
+                (corner & 4) ? mesh.boundsMax.z : mesh.boundsMin.z));
+            boundsMin.x = std::min(boundsMin.x, point.x);
+            boundsMin.y = std::min(boundsMin.y, point.y);
+            boundsMin.z = std::min(boundsMin.z, point.z);
+            boundsMax.x = std::max(boundsMax.x, point.x);
+            boundsMax.y = std::max(boundsMax.y, point.y);
+            boundsMax.z = std::max(boundsMax.z, point.z);
+        }
+        desc.aabb.min[0] = boundsMin.x;
+        desc.aabb.min[1] = boundsMin.y;
+        desc.aabb.min[2] = boundsMin.z;
+        desc.aabb.max[0] = boundsMax.x;
+        desc.aabb.max[1] = boundsMax.y;
+        desc.aabb.max[2] = boundsMax.z;
 
         // World transform — FFX uses 3x4 row-major (3 rows × 4 cols),
         // a flat `float[12]`. UzEngine's `Mat4` stores 16 floats in
@@ -834,11 +884,11 @@ void BrixelizerGIPass::RegisterGeometry(const std::vector<DrawCommand>& drawList
         desc.indexFormat   = (mesh.indexFormat == RHIIndexFormat::Uint32)
                                  ? FFX_INDEX_TYPE_UINT32
                                  : FFX_INDEX_TYPE_UINT16;
-        desc.indexBuffer       = bufferBase + 1;  // index slot
+        desc.indexBuffer       = bufferSlots.second;
         desc.indexBufferOffset = 0;
         desc.triangleCount     = mesh.indexCount / 3;
 
-        desc.vertexBuffer       = bufferBase;     // vertex slot
+        desc.vertexBuffer       = bufferSlots.first;
         desc.vertexBufferOffset = 0;
         desc.vertexCount        = mesh.vertexCount;
         desc.vertexStride       = mesh.vertexStride;
@@ -851,6 +901,7 @@ void BrixelizerGIPass::RegisterGeometry(const std::vector<DrawCommand>& drawList
     }
 
     if (instanceDescs.empty()) {
+        m_impl->registeredDraws = drawList;
         return;
     }
 
@@ -865,6 +916,7 @@ void BrixelizerGIPass::RegisterGeometry(const std::vector<DrawCommand>& drawList
                err);
         return;
     }
+    m_impl->registeredDraws = drawList;
 
     // Track instance IDs so we can delete them next frame.
     m_impl->registeredInstances.reserve(instanceDescs.size());
@@ -933,13 +985,13 @@ void BrixelizerGIPass::Execute(
     // `ffxBrixelizerRawContextBegin(...)` inside `ffxBrixelizerUpdate`.
     updateDesc.resources.sdfAtlas = m_impl->WrapTexture(
         m_impl->sdfAtlasTexture, L"BrixSdfAtlas",
-        FFX_RESOURCE_STATE_UNORDERED_ACCESS);
+        FFX_RESOURCE_STATE_COMMON);
     updateDesc.resources.brickAABBs = m_impl->WrapBuffer(
         m_impl->brickAABBsBuffer,
         (1u << 18) * sizeof(uint32_t),
         L"BrixBrickAABBs",
-        FFX_RESOURCE_STATE_UNORDERED_ACCESS);
-    for (uint32_t i = 0; i < m_impl->numCascades && i < 24; ++i) {
+        FFX_RESOURCE_STATE_COMMON);
+    for (uint32_t i = 0; i < 3 * m_impl->numCascades && i < 24; ++i) {
         constexpr uint32_t kAabbTreeBytes =
             (16u * 16u * 16u) * sizeof(uint32_t)
             + (4u * 4u * 4u + 1u) * sizeof(float[3]) * 2u;
@@ -947,10 +999,10 @@ void BrixelizerGIPass::Execute(
             64u * 64u * 64u * sizeof(uint32_t);
         updateDesc.resources.cascadeResources[i].aabbTree = m_impl->WrapBuffer(
             m_impl->cascadeAabbTrees[i], kAabbTreeBytes,
-            L"BrixCascadeAabbTree", FFX_RESOURCE_STATE_UNORDERED_ACCESS);
+            L"BrixCascadeAabbTree", FFX_RESOURCE_STATE_COMMON);
         updateDesc.resources.cascadeResources[i].brickMap = m_impl->WrapBuffer(
             m_impl->cascadeBrickMaps[i], kBrickMapBytes,
-            L"BrixCascadeBrickMap", FFX_RESOURCE_STATE_UNORDERED_ACCESS);
+            L"BrixCascadeBrickMap", FFX_RESOURCE_STATE_COMMON);
     }
 
     size_t requiredScratch = 0;
@@ -969,7 +1021,7 @@ void BrixelizerGIPass::Execute(
         // Execute update on GPU
         FfxResource scratchRes = m_impl->WrapBuffer(
             m_impl->scratchGpuBuffer, kDefaultScratchSize,
-            L"BrixelizerGI.Scratch", FFX_RESOURCE_STATE_UNORDERED_ACCESS);
+            L"BrixelizerGI.Scratch", FFX_RESOURCE_STATE_COMMON);
 
         err = ffxBrixelizerUpdate(&m_impl->brixelizerCtx, &bakedUpdate, scratchRes, ffxCmdList);
         if (err != FFX_OK) {
@@ -1002,14 +1054,14 @@ void BrixelizerGIPass::Execute(
     // View/projection matrices (row-major as required by FFX)
     std::memcpy(&giDispatch.view, viewMatrix, sizeof(float) * 16);
     std::memcpy(&giDispatch.projection, projMatrix, sizeof(float) * 16);
-    std::memcpy(&giDispatch.prevView, prevView, sizeof(float) * 16);
-    std::memcpy(&giDispatch.prevProjection, prevProj, sizeof(float) * 16);
+    std::memcpy(&giDispatch.prevView, m_impl->hasPrevMatrices ? m_impl->prevViewMatrix : prevView, sizeof(float) * 16);
+    std::memcpy(&giDispatch.prevProjection, m_impl->hasPrevMatrices ? m_impl->prevProjMatrix : prevProj, sizeof(float) * 16);
 
     giDispatch.cameraPosition[0] = cameraPosX;
     giDispatch.cameraPosition[1] = cameraPosY;
     giDispatch.cameraPosition[2] = cameraPosZ;
-    giDispatch.startCascade   = 0;
-    giDispatch.endCascade     = m_impl->numCascades - 1;
+    giDispatch.startCascade   = 2 * m_impl->numCascades;
+    giDispatch.endCascade     = 3 * m_impl->numCascades - 1;
     giDispatch.rayPushoff     = cv_BrixRayPushoff->value;
     giDispatch.sdfSolveEps    = cv_BrixSdfSolveEps->value;
     giDispatch.specularRayPushoff  = cv_BrixRayPushoff->value * 0.5f;
@@ -1021,16 +1073,20 @@ void BrixelizerGIPass::Execute(
     giDispatch.normalsUnpackMul      = 2.0f;
     giDispatch.normalsUnpackAdd      = -1.0f;
     giDispatch.isRoughnessPerceptual = true;
-    giDispatch.roughnessChannel      = 0; // R channel
+    giDispatch.roughnessChannel      = 3; // GBuffer normal.a
     giDispatch.roughnessThreshold    = 0.8f;
     giDispatch.environmentMapIntensity = 1.0f;
     giDispatch.motionVectorScale = {1.0f, 1.0f};
 
     // Wrap GBuffer textures as FfxResource for the FFX SDK.
     giDispatch.depth         = m_impl->WrapTexture(depthTexture,    L"GBuffer.Depth");
-    giDispatch.historyDepth  = m_impl->WrapTexture(m_impl->prevDepth, L"PrevDepth");
+    giDispatch.historyDepth  = m_impl->hasPrevMatrices
+        ? m_impl->WrapTexture(m_impl->prevDepth, L"PrevDepth", FFX_RESOURCE_STATE_COMMON)
+        : giDispatch.depth;
     giDispatch.normal        = m_impl->WrapTexture(normalTexture,   L"GBuffer.Normal");
-    giDispatch.historyNormal = m_impl->WrapTexture(m_impl->prevNormals, L"PrevNormal");
+    giDispatch.historyNormal = m_impl->hasPrevMatrices
+        ? m_impl->WrapTexture(m_impl->prevNormals, L"PrevNormal", FFX_RESOURCE_STATE_COMMON)
+        : giDispatch.normal;
     giDispatch.roughness     = m_impl->WrapTexture(normalTexture,   L"GBuffer.Roughness"); // roughness packed in normal.a
     giDispatch.motionVectors = m_impl->WrapTexture(velocityTexture, L"MotionVectors");
     giDispatch.noiseTexture  = m_impl->WrapTexture(m_impl->blueNoiseTexture, L"BlueNoise");
@@ -1054,13 +1110,13 @@ void BrixelizerGIPass::Execute(
     // so the GI shader reads the data the SDF bake just wrote.
     giDispatch.sdfAtlas = m_impl->WrapTexture(
         m_impl->sdfAtlasTexture, L"BrixSdfAtlas_GI",
-        FFX_RESOURCE_STATE_COMPUTE_READ);
+        FFX_RESOURCE_STATE_COMMON);
     giDispatch.bricksAABBs = m_impl->WrapBuffer(
         m_impl->brickAABBsBuffer,
         (1u << 18) * sizeof(uint32_t),
         L"BrixBrickAABBs_GI",
-        FFX_RESOURCE_STATE_COMPUTE_READ);
-    for (uint32_t i = 0; i < m_impl->numCascades && i < 24; ++i) {
+        FFX_RESOURCE_STATE_COMMON);
+    for (uint32_t i = 0; i < 3 * m_impl->numCascades && i < 24; ++i) {
         constexpr uint32_t kAabbTreeBytesGi =
             (16u * 16u * 16u) * sizeof(uint32_t)
             + (4u * 4u * 4u + 1u) * sizeof(float[3]) * 2u;
@@ -1068,10 +1124,10 @@ void BrixelizerGIPass::Execute(
             64u * 64u * 64u * sizeof(uint32_t);
         giDispatch.cascadeAABBTrees[i] = m_impl->WrapBuffer(
             m_impl->cascadeAabbTrees[i], kAabbTreeBytesGi,
-            L"BrixCascadeAabbTree_GI", FFX_RESOURCE_STATE_COMPUTE_READ);
+            L"BrixCascadeAabbTree_GI", FFX_RESOURCE_STATE_COMMON);
         giDispatch.cascadeBrickMaps[i] = m_impl->WrapBuffer(
             m_impl->cascadeBrickMaps[i], kBrickMapBytesGi,
-            L"BrixCascadeBrickMap_GI", FFX_RESOURCE_STATE_COMPUTE_READ);
+            L"BrixCascadeBrickMap_GI", FFX_RESOURCE_STATE_COMMON);
     }
 
     // Dispatch GI
@@ -1080,10 +1136,27 @@ void BrixelizerGIPass::Execute(
         UZ_LOG(Renderer, Warning, "BrixelizerGI: ffxBrixelizerGIContextDispatch failed (err={})", err);
         return;
     }
+    if (!m_impl->hasPrevMatrices || frameIndex == 240) {
+        UZ_LOG(Renderer, Info, "BrixelizerGI: bake and GI dispatch submitted (frame={}, instances={}, diffuseSrv={}, specularSrv={}, scratchBytes={})",
+               frameIndex, m_impl->registeredInstances.size(), m_impl->diffuseGISrv,
+               m_impl->specularGISrv, requiredScratch);
+    }
 
     // Restore the engine's bindless descriptor heaps after the FFX
     // dispatch (FFX swaps in its own heaps for its internal pipelines).
     dx12CmdList->RebindBindlessHeaps();
+
+    RHIBarrierDesc historyToCopy[] = {
+        {depthTexture, {}, RHIResourceState::ShaderResource, RHIResourceState::CopySrc},
+        {normalTexture, {}, RHIResourceState::ShaderResource, RHIResourceState::CopySrc},
+        {m_impl->prevDepth, {}, RHIResourceState::Common, RHIResourceState::CopyDst},
+        {m_impl->prevNormals, {}, RHIResourceState::Common, RHIResourceState::CopyDst},
+    };
+    cmdList->ResourceBarrier(historyToCopy, 4);
+    cmdList->CopyTexture(depthTexture, m_impl->prevDepth);
+    cmdList->CopyTexture(normalTexture, m_impl->prevNormals);
+    for (auto& barrier : historyToCopy) std::swap(barrier.stateBefore, barrier.stateAfter);
+    cmdList->ResourceBarrier(historyToCopy, 4);
 
     // Store current matrices as prev for next frame
     std::memcpy(m_impl->prevViewMatrix, viewMatrix, sizeof(float) * 16);
