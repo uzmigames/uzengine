@@ -82,6 +82,9 @@ struct CloudPassInput {
     float    perspectiveStepScale = 1.006f;
     float    jitterScale = 1.0f;
     uint32_t frameIndex = 0;
+    uint32_t shadowCascadeCount = 2;
+    uint32_t shadowResolution = 512;
+    float shadowDistance = 50.0f;
 
     // ── Additional tracing/quality parameters from VolumetricCloudsComponent ──
     float    cloudType;                                       ///< Cloud type [0,1]. 0=stratus, 1=cumulus.
@@ -150,6 +153,17 @@ public:
                         CBRingAllocator& cbRing, PipelineLibrary* pipelines, bool bindless,
                         uint32_t renderWidth, uint32_t renderHeight, const CloudPassInput& input);
 
+    /// Called before deferred lighting; only the opt-in ground-shadow path allocates resources.
+    void RegisterShadowPasses(rg::RgBuilder& builder, rg::RgStateRegistry* states,
+                              IRHICommandList* frameList, CBRingAllocator& cbRing,
+                              const CloudPassInput& input);
+    void ResetShadowFrame();
+    static bool GroundShadowsEnabled();
+    uint32_t GetShadowBufferSrv() const { return m_shadowBufferSrv; }
+    uint32_t GetShadowCascadeCount() const { return m_shadowFrameCount; }
+    rg::RgResourceId GetShadowResource(uint32_t cascade) const { return m_shadowResources[cascade]; }
+    RHIPipelineHandle GetShadowLightingPipeline() const { return m_shadowLightingPipeline; }
+
     /// Returns the SRV descriptor index of the cloud output texture.
     /// UINT32_MAX if not initialized.
     [[nodiscard]] uint32_t GetCloudOutputSrv() const noexcept { return m_outputSrvIndex; }
@@ -181,6 +195,8 @@ private:
     bool EnsureTemporalPipeline();
     bool CreateTemporalTextures(uint32_t width, uint32_t height);
     void DestroyTemporalTextures();
+    bool EnsureShadowPipelines();
+    void DestroyShadowTextures();
 
     // ── Device + shader manager references ──
     IRHIDevice*    m_device    = nullptr;
@@ -214,6 +230,37 @@ private:
     RHIPipelineHandle m_upscaleRaymarchPipeline = RHIPipelineHandle::Invalid();
     RHIShaderHandle   m_temporalCS = RHIShaderHandle::Invalid();
     RHIPipelineHandle m_temporalPipeline = RHIPipelineHandle::Invalid();
+
+    struct ShadowCascade {
+        RHITextureHandle raw{};
+        RHITextureHandle history[2]{};
+        uint32_t rawSrv = UINT32_MAX;
+        uint32_t rawUav = UINT32_MAX;
+        uint32_t historySrv[2]{UINT32_MAX, UINT32_MAX};
+        uint32_t historyUav[2]{UINT32_MAX, UINT32_MAX};
+        float previousViewProj[16]{};
+        float previousDepthRange = 0;
+    };
+    ShadowCascade m_shadowCascades[3]{};
+    RHIBufferHandle m_shadowBuffers[4]{};
+    rg::RgResourceId m_shadowResources[3]{};
+    uint32_t m_shadowBufferSrv = UINT32_MAX;
+    uint32_t m_shadowFrameCount = 0;
+    uint32_t m_shadowCount = 0;
+    uint32_t m_shadowResolution = 0;
+    uint32_t m_shadowWrite = 0;
+    uint32_t m_shadowPreviousFrame = 0;
+    bool m_shadowHistoryValid = false;
+    float m_shadowPreviousSun[3]{};
+    RHIShaderHandle m_shadowCS{};
+    RHIShaderHandle m_shadowResolveCS{};
+    RHIShaderHandle m_shadowLightingPS{};
+    RHIShaderHandle m_shadowFullscreenVS{};
+    RHIShaderHandle m_shadowRaymarchCS[2]{};
+    RHIPipelineHandle m_shadowPipeline{};
+    RHIPipelineHandle m_shadowResolvePipeline{};
+    RHIPipelineHandle m_shadowLightingPipeline{};
+    RHIPipelineHandle m_shadowRaymarchPipeline[2]{};
 
     // ── 3D noise textures ──
     RHITextureHandle m_shapeNoiseTexture  = RHITextureHandle::Invalid();

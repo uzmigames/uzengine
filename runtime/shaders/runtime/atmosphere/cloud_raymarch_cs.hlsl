@@ -16,6 +16,9 @@
 
 #include "../common/constants.hlsli"
 #include "../common/bindless.hlsli"
+#ifdef UZ_CLOUD_BSM
+#include "cloud_shadow.hlsli"
+#endif
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Root Constants (b0)
@@ -94,8 +97,19 @@ cbuffer CloudCB : register(b2) {
     float   g_powderScale;
     float   g_powderExponent;
     uint    g_multiScatterOctaves;
+#ifdef UZ_CLOUD_BSM
+    uint    _temporalUpscale;
+    uint    _fullWidth;
+    uint    _fullHeight;
+    uint    _frontDepthUav;
+    uint    g_cloudShadowBufferSrv;
+    uint    g_cloudShadowCascadeCount;
+    float   _shadowPad;
+    float4  _cbReserved[10];
+#else
     float3  _cbPad;
     float4  _cbReserved[11];
+#endif
 };
 
 SamplerState linearSampler : register(s3);
@@ -531,7 +545,13 @@ void main(uint3 DTid : SV_DispatchThreadID) {
         float T_step = exp(-ext * stepLen);
 
         // Light march toward sun for self-shadowing
-        float opticalDepthToSun = LightMarch(samplePos, sunDir, innerRadius, outerRadius, g_layerHeightKm);
+        float opticalDepthToSun;
+#ifdef UZ_CLOUD_BSM
+        opticalDepthToSun = CloudShadowOpticalDepth(samplePos - float3(0, 0, PLANET_RADIUS_KM), sunDir,
+            g_cloudShadowBufferSrv, g_cloudShadowCascadeCount);
+#else
+        opticalDepthToSun = LightMarch(samplePos, sunDir, innerRadius, outerRadius, g_layerHeightKm);
+#endif
         float3 radiance = EvaluateMultiScattering(opticalDepthToSun, cosTheta);
 
         /// @ref Oz & Kulla 2017 "Production Volume Rendering" — isotropic sky source.

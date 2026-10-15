@@ -36,6 +36,51 @@ static auto* cv_VolFogSunShadow = UZ_CVAR_BOOL("r.VolumetricFog.SunShadow", true
 
 namespace uz {
 
+void SceneRenderer::RegisterCloudShadowPasses(rg::RgBuilder& builder, FrameContext& ctx) {
+    if (!m_cloudPass) return;
+    m_cloudPass->ResetShadowFrame();
+    if (!CloudPass::GroundShadowsEnabled() || !ctx.bindless || !ctx.world
+        || !m_showFlags.Get(ShowFlag::Clouds) || !m_cloudPass->IsInitialized()
+        || !m_passInspector.IsPassEnabled("clouds")) return;
+    auto clouds = ctx.world->GetRegistry().view<VolumetricCloudsComponent>();
+    for (auto entity : clouds) {
+        const auto& component = clouds.get<VolumetricCloudsComponent>(entity);
+        if (!component.enabled) continue;
+        CloudPassInput input{};
+        const Mat4 inverse = ctx.unjitteredViewProj.Inverse();
+        std::memcpy(input.invViewProj, inverse.data(), 64);
+        input.cameraPos[0] = ctx.perFrame.cameraPos.x * 0.00001f;
+        input.cameraPos[1] = ctx.perFrame.cameraPos.y * 0.00001f;
+        input.cameraPos[2] = ctx.perFrame.cameraPos.z * 0.00001f;
+        input.sunDir[0] = ctx.sunDir.x;
+        input.sunDir[1] = ctx.sunDir.y;
+        input.sunDir[2] = ctx.sunDir.z;
+        input.time = m_totalTime;
+        input.coverage = component.coverage;
+        input.globalCoverage = component.coverage;
+        input.density = component.density;
+        input.extinction = component.extinction;
+        input.layerBottomKm = component.layerBottomAltitudeKm;
+        input.layerHeightKm = component.layerHeightKm;
+        input.windVelocity[0] = component.windVelocity.x;
+        input.windVelocity[1] = component.windVelocity.y;
+        input.windVelocity[2] = component.windVelocity.z;
+        input.detailWindScale = component.detailWindScale;
+        input.primarySteps = component.primarySteps;
+        input.shadowViewSampleCountScale = component.shadowViewSampleCountScale;
+        input.minStepSize = component.minStepSize;
+        input.maxStepSize = component.maxStepSize;
+        input.jitterScale = component.jitterScale;
+        input.frameIndex = ctx.frameIndex;
+        input.shadowCascadeCount = component.shadowCascadeCount;
+        input.shadowResolution = component.shadowResolution;
+        input.shadowDistance = component.shadowDistance;
+        m_cloudPass->SetVFS(ctx.vfs);
+        m_cloudPass->RegisterShadowPasses(builder, m_rgStates.get(), ctx.cmdList, *m_cbRing, input);
+        break;
+    }
+}
+
 void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
     // ── Sky Atmosphere + Height Fog (HDR, before postprocess/tonemap) ────
     // Must run after deferred lighting but before bloom/TAA/tonemap so the

@@ -31,6 +31,7 @@
 #include <filesystem>
 #include <fstream>
 #include <algorithm>
+#include <cmath>
 
 UZ_DECLARE_LOG_CATEGORY(Renderer);
 
@@ -46,6 +47,8 @@ static auto* cv_CloudAerialDens  = UZ_CVAR_FLOAT("r.Cloud.AerialPerspectiveDensi
 static auto* cv_CloudDensScale   = UZ_CVAR_FLOAT("r.Cloud.DensityScale", 25.0f, "Cloud density normalization scale", 1.0f, 100.0f);
 static auto* cv_CloudProcedural = UZ_CVAR_BOOL("r.Cloud.ProceduralNoise", false, "Compare legacy procedural cloud shape");
 static auto* cv_CloudTemporalUpscale = UZ_CVAR_BOOL("r.Clouds.TemporalUpscale", false, "Opt-in quarter-resolution Bayer cloud temporal upscale");
+static auto* cv_CloudGroundShadows = UZ_CVAR_BOOL("r.Clouds.GroundShadows", false, "Opt-in Beer cloud ground and self shadows");
+static auto* cv_CloudShadowSplitLambda = UZ_CVAR_FLOAT("r.Clouds.ShadowSplitLambda", 0.5f, "Practical cloud shadow cascade split blend", 0.0f, 1.0f);
 
 namespace uz {
 
@@ -145,6 +148,20 @@ void CloudPass::Shutdown() {
 
     DestroyOutputTexture();
     DestroyTemporalTextures();
+    DestroyShadowTextures();
+    for (auto buffer : m_shadowBuffers)
+        if (buffer.IsValid()) m_device->DestroyBuffer(buffer);
+    for (auto pipeline : {m_shadowPipeline, m_shadowResolvePipeline, m_shadowLightingPipeline,
+                          m_shadowRaymarchPipeline[0], m_shadowRaymarchPipeline[1]})
+        if (pipeline.IsValid()) m_device->DestroyPipeline(pipeline);
+    for (auto shader : {m_shadowCS, m_shadowResolveCS, m_shadowLightingPS, m_shadowFullscreenVS,
+                       m_shadowRaymarchCS[0], m_shadowRaymarchCS[1]})
+        if (shader.IsValid()) m_device->DestroyShader(shader);
+    for (auto& buffer : m_shadowBuffers) buffer = {};
+    m_shadowCS = m_shadowResolveCS = m_shadowLightingPS = m_shadowFullscreenVS = {};
+    m_shadowPipeline = m_shadowResolvePipeline = m_shadowLightingPipeline = {};
+    for (auto& shader : m_shadowRaymarchCS) shader = {};
+    for (auto& pipeline : m_shadowRaymarchPipeline) pipeline = {};
 
     // Destroy noise texture
     if (m_shapeNoiseTexture.IsValid()) {
@@ -521,7 +538,9 @@ struct alignas(16) CloudCB {
     uint32_t fullWidth;
     uint32_t fullHeight;
     uint32_t frontDepthUav;
-    float padding[43];
+    uint32_t shadowBufferSrv;
+    uint32_t shadowCascadeCount;
+    float padding[41];
 };
 
 static_assert(sizeof(CloudCB) == 512, "CloudCB must be 512 bytes for CBV alignment");
@@ -541,6 +560,8 @@ static_assert(offsetof(CloudCB, powderExponent) == 316);
 static_assert(offsetof(CloudCB, multiScatterOctaves) == 320);
 static_assert(offsetof(CloudCB, temporalUpscale) == 324);
 static_assert(offsetof(CloudCB, frontDepthUav) == 336);
+static_assert(offsetof(CloudCB, shadowBufferSrv) == 340);
+static_assert(offsetof(CloudCB, shadowCascadeCount) == 344);
 
 struct alignas(16) CloudTemporalCB {
     float invViewProj[16];
@@ -564,32 +585,8 @@ struct alignas(16) CloudTemporalCB {
 static_assert(sizeof(CloudTemporalCB) == 512);
 static_assert(offsetof(CloudTemporalCB, historyValid) == 160);
 static_assert(offsetof(CloudTemporalCB, varianceGamma) == 188);
-
-// ─────────────────────────────────────────────────────────────────────────────
-// RegisterPasses
-// ─────────────────────────────────────────────────────────────────────────────
-
-void CloudPass::RegisterPasses(rg::RgBuilder& rgBuilder, rg::RgStateRegistry* states,
-    IRHICommandList* frameList, rg::RgResourceId hdrRes, rg::RgResourceId depthRes,
-    const CBAllocation& perFrameAlloc, CBRingAllocator& cbRing, PipelineLibrary* pipelines,
-    bool bindless, uint32_t renderWidth, uint32_t renderHeight, const CloudPassInput& input) {
-    UZ_PROFILE_SCOPE("CloudPass::RegisterPasses");
-    if (!m_initialized || !bindless) return;
-    if (m_temporalUpscale != (cv_CloudTemporalUpscale->value != 0)) {
-        // Changing the opt-in mode retires resources used by earlier frames.
-        // This is not a per-frame synchronization point.
-        m_device->WaitIdle();
-        OnResize(renderWidth, renderHeight);
-    }
-    if (!EnsureRaymarchPipeline()) return;
-    if (m_temporalUpscale && (!m_frontDepthTexture.IsValid()
-        || !m_historyTexture[0].IsValid() || !m_historyTexture[1].IsValid()
-        || !EnsureTemporalPipeline())) return;
-
-    // Registration occurs on the open frame list, before graph execution.
-    if (!m_noiseLoadAttempted) LoadNoiseTextures(frameList, states, m_vfs);
-
-    // ── Fill constant buffer ──
+static CloudCB MakeCloudCB(const CloudPassInput& input, uint32_t shapeSrv,
+                           uint32_t detailSrv, uint32_t stbnSrv) {
     CloudCB cb{};
     std::memcpy(cb.invViewProj, input.invViewProj, 64);
     cb.cameraPos[0]    = input.cameraPos[0];
@@ -621,7 +618,7 @@ void CloudPass::RegisterPasses(rg::RgBuilder& rgBuilder, rg::RgStateRegistry* st
     cb.ambientMultiplier = input.ambientMultiplier;
     cb.primarySteps    = input.primarySteps;
     cb.lightSteps      = input.lightSteps;
-    cb.shapeNoiseSrv   = m_shapeNoiseSrvIndex;
+    cb.shapeNoiseSrv   = shapeSrv;
     cb.globalCoverage  = input.globalCoverage;
     cb.cloudType       = input.cloudType;
     cb.tracingMaxDistanceKm = input.tracingMaxDistanceKm;
@@ -639,11 +636,11 @@ void CloudPass::RegisterPasses(rg::RgBuilder& rgBuilder, rg::RgStateRegistry* st
     cb.tracingMaxDistanceMode = input.tracingMaxDistanceMode;
     cb.tracingStartMaxDistance = input.tracingStartMaxDistance;
     cb.tracingStartDistanceFromCamera = input.tracingStartDistanceFromCamera;
-    cb.detailNoiseSrv  = m_detailNoiseSrvIndex;
+    cb.detailNoiseSrv  = detailSrv;
     cb.minStepSize = std::max(0.001f, input.minStepSize);
     cb.maxStepSize = std::max(cb.minStepSize, input.maxStepSize);
     cb.perspectiveStepScale = std::max(1.0f, input.perspectiveStepScale);
-    cb.stbnSrvIndex = m_stbnSrvIndex;
+    cb.stbnSrvIndex = stbnSrv;
     cb.frameIndex = input.frameIndex;
     cb.proceduralNoise = cv_CloudProcedural->value != 0;
     cb.noiseXYScale = cv_CloudNoiseXY->value;
@@ -657,6 +654,299 @@ void CloudPass::RegisterPasses(rg::RgBuilder& rgBuilder, rg::RgStateRegistry* st
     cb.powderScale = std::clamp(input.powderScale, 0.0f, 1.0f);
     cb.powderExponent = std::max(0.0f, input.powderExponent);
     cb.multiScatterOctaves = std::clamp(input.multiScatterOctaves, 1u, 8u);
+    return cb;
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RegisterPasses
+// ─────────────────────────────────────────────────────────────────────────────
+
+struct CloudShadowCascadeData {
+    float viewProj[16];
+    float invViewProj[16];
+    float params[4]; // split near/far, depth range, world-space texel size (km)
+    uint32_t srvIndex;
+    uint32_t resolution;
+    uint32_t padding[2];
+};
+static_assert(sizeof(CloudShadowCascadeData) == 160);
+
+struct alignas(16) CloudShadowCB {
+    float invViewProj[16];
+    float previousViewProj[16];
+    uint32_t outputUav;
+    uint32_t currentSrv;
+    uint32_t historySrv;
+    uint32_t resolution;
+    uint32_t historyValid;
+    float depthRange;
+    float previousDepthRange;
+    float varianceGamma;
+    float reserved[24];
+};
+static_assert(sizeof(CloudShadowCB) == 256);
+static_assert(offsetof(CloudShadowCB, outputUav) == 128);
+static_assert(offsetof(CloudShadowCB, varianceGamma) == 156);
+
+bool CloudPass::GroundShadowsEnabled() { return cv_CloudGroundShadows->value != 0 && cv_Clouds->value != 0; }
+
+void CloudPass::ResetShadowFrame() {
+    m_shadowBufferSrv = UINT32_MAX;
+    m_shadowFrameCount = 0;
+    for (auto& resource : m_shadowResources) resource = {};
+    if (!GroundShadowsEnabled()) m_shadowHistoryValid = false;
+}
+
+void CloudPass::DestroyShadowTextures() {
+    for (auto& cascade : m_shadowCascades) {
+        if (cascade.raw.IsValid()) m_device->DestroyTexture(cascade.raw);
+        for (auto history : cascade.history)
+            if (history.IsValid()) m_device->DestroyTexture(history);
+        cascade = {};
+    }
+    m_shadowCount = m_shadowResolution = m_shadowWrite = 0;
+    m_shadowHistoryValid = false;
+    ResetShadowFrame();
+}
+
+bool CloudPass::EnsureShadowPipelines() {
+    auto compute = [&](RHIShaderHandle& shader, RHIPipelineHandle& pipeline,
+                       EngineShader source, const char* name, const char* defines) {
+        if (pipeline.IsValid()) return true;
+        shader = defines ? m_shaderMgr->CreateShaderWithDefines(source, RHIShaderStage::Compute, defines)
+                         : m_shaderMgr->CreateShader(source, RHIShaderStage::Compute);
+        if (!shader.IsValid()) return false;
+        RHIComputePipelineDesc desc{};
+        desc.computeShader = shader;
+        desc.debugName = name;
+        pipeline = m_device->CreateComputePipeline(desc);
+        return pipeline.IsValid();
+    };
+    if (!compute(m_shadowCS, m_shadowPipeline, EngineShader::CloudShadowCS, "Cloud_Shadow", nullptr)
+        || !compute(m_shadowResolveCS, m_shadowResolvePipeline, EngineShader::CloudShadowResolveCS,
+                    "Cloud_ShadowResolve", nullptr)
+        || !compute(m_shadowRaymarchCS[0], m_shadowRaymarchPipeline[0], EngineShader::CloudRaymarchCS,
+                    "Cloud_RaymarchBSM", "UZ_CLOUD_BSM=1")
+        || !compute(m_shadowRaymarchCS[1], m_shadowRaymarchPipeline[1], EngineShader::CloudRaymarchUpscaleCS,
+                    "Cloud_RaymarchUpscaleBSM", "UZ_CLOUD_BSM=1")) return false;
+    if (!m_shadowLightingPipeline.IsValid()) {
+        m_shadowFullscreenVS = m_shaderMgr->CreateShader(EngineShader::FullscreenVS, RHIShaderStage::Vertex);
+        m_shadowLightingPS = m_shaderMgr->CreateShaderWithDefines(EngineShader::DeferredLightingPS,
+            RHIShaderStage::Pixel, "UZ_CLOUD_GROUND_SHADOWS=1");
+        if (!m_shadowFullscreenVS.IsValid() || !m_shadowLightingPS.IsValid()) return false;
+        RHIGraphicsPipelineDesc desc{};
+        desc.vertexShader = m_shadowFullscreenVS;
+        desc.pixelShader = m_shadowLightingPS;
+        desc.topology = RHIPrimitiveTopology::TriangleList;
+        desc.rasterizer.cullMode = RHICullMode::None;
+        desc.depthStencil.depthEnable = false;
+        desc.depthStencil.depthWrite = false;
+        desc.renderTargetCount = 4;
+        for (uint32_t i = 0; i < 4; ++i) desc.renderTargetFormats[i] = RHIFormat::RGBA16Float;
+        desc.debugName = "DeferredLighting_CloudShadows";
+        m_shadowLightingPipeline = m_device->CreateGraphicsPipeline(desc);
+    }
+    return m_shadowLightingPipeline.IsValid();
+}
+
+void CloudPass::RegisterShadowPasses(rg::RgBuilder& builder, rg::RgStateRegistry* states,
+    IRHICommandList* frameList, CBRingAllocator& cbRing, const CloudPassInput& input) {
+    ResetShadowFrame();
+    if (!m_initialized || !GroundShadowsEnabled() || input.sunDir[2] <= 0.05f
+        || !EnsureShadowPipelines()) return;
+    if (!m_noiseLoadAttempted) LoadNoiseTextures(frameList, states, m_vfs);
+    if (!m_hasNoiseTextures) return;
+    const uint32_t count = std::clamp(input.shadowCascadeCount, 1u, 3u);
+    const uint32_t resolution = std::clamp(input.shadowResolution, 64u, 2048u);
+    if (count != m_shadowCount || resolution != m_shadowResolution) {
+        // Configuration changes retire GPU resources once, never on the steady-state path.
+        if (m_shadowCount != 0) m_device->WaitIdle();
+        DestroyShadowTextures();
+        RHITextureDesc desc{};
+        desc.width = desc.height = resolution;
+        desc.format = RHIFormat::RGBA16Float;
+        desc.usage = RHITextureUsage::ShaderResource | RHITextureUsage::UnorderedAccess;
+        for (uint32_t i = 0; i < count; ++i) {
+            auto& cascade = m_shadowCascades[i];
+            desc.debugName = "Cloud_ShadowRaw";
+            cascade.raw = m_device->CreateTexture(desc);
+            if (!cascade.raw.IsValid()) { DestroyShadowTextures(); return; }
+            cascade.rawSrv = m_device->GetTextureSRVIndex(cascade.raw);
+            cascade.rawUav = m_device->GetTextureUAVIndex(cascade.raw);
+            for (uint32_t j = 0; j < 2; ++j) {
+                desc.debugName = "Cloud_ShadowHistory";
+                cascade.history[j] = m_device->CreateTexture(desc);
+                if (!cascade.history[j].IsValid()) { DestroyShadowTextures(); return; }
+                cascade.historySrv[j] = m_device->GetTextureSRVIndex(cascade.history[j]);
+                cascade.historyUav[j] = m_device->GetTextureUAVIndex(cascade.history[j]);
+            }
+        }
+        m_shadowCount = count;
+        m_shadowResolution = resolution;
+        UZ_LOG(Renderer, Info, "CloudPass: Beer shadow maps enabled, cascades={}, resolution={}, distanceKm={}",
+               count, resolution, input.shadowDistance);
+    }
+    const uint32_t bufferSlot = input.frameIndex % 4u;
+    if (!m_shadowBuffers[bufferSlot].IsValid()) {
+        RHIBufferDesc desc{};
+        desc.sizeBytes = sizeof(CloudShadowCascadeData) * 3;
+        desc.stride = sizeof(CloudShadowCascadeData);
+        desc.usage = RHIBufferUsage::StructuredBuffer;
+        desc.memory = RHIMemoryType::Upload;
+        desc.debugName = "Cloud_ShadowCascadeData";
+        m_shadowBuffers[bufferSlot] = m_device->CreateBuffer(desc);
+        if (!m_shadowBuffers[bufferSlot].IsValid()) return;
+    }
+    auto* mapped = m_device->MapBuffer(m_shadowBuffers[bufferSlot]);
+    if (!mapped) return;
+    CloudShadowCascadeData cascadeData[3]{};
+    const Mat4 inverse(input.invViewProj); // engine world centimeters
+    const Vec3 camera(input.cameraPos[0], input.cameraPos[1], input.cameraPos[2]);
+    const Vec3 sun = Vec3(input.sunDir[0], input.sunDir[1], input.sunDir[2]).Normalized();
+    const auto unproject = [&](float x, float y) {
+        const Vec4 point = inverse * Vec4(x, y, 0.5f, 1.0f);
+        return Vec3(point.x, point.y, point.z) * (0.00001f / point.w);
+    };
+    const Vec3 forward = (unproject(0, 0) - camera).Normalized();
+    Vec3 cornerRays[4];
+    for (uint32_t i = 0; i < 4; ++i) {
+        const Vec3 ray = (unproject((i & 1u) ? 1.0f : -1.0f,
+            (i & 2u) ? 1.0f : -1.0f) - camera).Normalized();
+        cornerRays[i] = ray / std::max(0.01f, forward.Dot(ray));
+    }
+    const Vec3 up = std::abs(sun.z) > 0.99f ? Vec3(0, 1, 0) : Vec3(0, 0, 1);
+    const Vec3 right = up.Cross(-sun).Normalized();
+    const Vec3 lightUp = (-sun).Cross(right).Normalized();
+    const float nearKm = 0.01f;
+    const float farKm = std::clamp(input.shadowDistance, 1.0f, 200.0f);
+    float previousSplit = nearKm;
+    const bool validHistory = m_shadowHistoryValid && input.frameIndex == m_shadowPreviousFrame + 1
+        && sun.Dot(Vec3(m_shadowPreviousSun[0], m_shadowPreviousSun[1], m_shadowPreviousSun[2])) > 0.99995f;
+    const uint32_t write = m_shadowWrite;
+    const uint32_t read = write ^ 1u;
+    const CloudCB cloud = MakeCloudCB(input, m_shapeNoiseSrvIndex, m_detailNoiseSrvIndex, m_stbnSrvIndex);
+    const auto cloudAlloc = cbRing.Allocate(sizeof(cloud));
+    std::memcpy(cloudAlloc.cpuPtr, &cloud, sizeof(cloud));
+    const auto shape = builder.ImportTrackedTexture("Cloud_ShapeNoise", m_shapeNoiseTexture);
+    const auto detail = builder.ImportTrackedTexture("Cloud_DetailNoise", m_detailNoiseTexture);
+    const auto stbn = builder.ImportTrackedTexture("Cloud_STBN", m_stbnTexture);
+    for (uint32_t i = 0; i < count; ++i) {
+        const float fraction = float(i + 1) / count;
+        const float logarithmic = nearKm * std::pow(farKm / nearKm, fraction);
+        const float uniform = nearKm + (farKm - nearKm) * fraction;
+        const float split = uniform + cv_CloudShadowSplitLambda->value * (logarithmic - uniform);
+        Vec3 corners[8];
+        Vec3 center{};
+        for (uint32_t j = 0; j < 8; ++j) {
+            corners[j] = camera + cornerRays[j % 4] * (j < 4 ? previousSplit : split);
+            center += corners[j] / 8.0f;
+        }
+        float radius = 0;
+        for (auto corner : corners) radius = std::max(radius, (corner - center).Length());
+        radius = std::ceil(radius * 10.0f) * 0.1f;
+        const float texel = (radius * 2) / resolution;
+        center += right * (std::round(center.Dot(right) / texel) * texel - center.Dot(right));
+        center += lightUp * (std::round(center.Dot(lightUp) / texel) * texel - center.Dot(lightUp));
+        const float depthRange = radius * 2 + 2 * (input.layerBottomKm + input.layerHeightKm
+            + std::abs(camera.z)) / std::max(sun.z, 0.05f);
+        const Mat4 vp = Mat4::LookAt(center + sun * (depthRange * 0.5f), center, up)
+            * Mat4::Orthographic(radius * 2, radius * 2, 0, depthRange);
+        const Mat4 inv = vp.Inverse();
+        auto& data = cascadeData[i];
+        std::memcpy(data.viewProj, vp.data(), 64);
+        std::memcpy(data.invViewProj, inv.data(), 64);
+        data.params[0] = previousSplit;
+        data.params[1] = split;
+        data.params[2] = depthRange;
+        data.params[3] = texel;
+        auto& cascade = m_shadowCascades[i];
+        data.srvIndex = cascade.historySrv[write];
+        data.resolution = resolution;
+        const auto raw = builder.ImportTrackedTexture("Cloud_ShadowRaw", cascade.raw);
+        const auto historyRead = builder.ImportTrackedTexture("Cloud_ShadowHistoryRead", cascade.history[read]);
+        const auto historyWrite = builder.ImportTrackedTexture("Cloud_ShadowHistoryWrite", cascade.history[write]);
+        CloudShadowCB cb{};
+        std::memcpy(cb.invViewProj, inv.data(), 64);
+        std::memcpy(cb.previousViewProj, cascade.previousViewProj, 64);
+        cb.outputUav = cascade.rawUav;
+        cb.resolution = resolution;
+        cb.depthRange = depthRange;
+        const auto generationAlloc = cbRing.Allocate(sizeof(cb));
+        std::memcpy(generationAlloc.cpuPtr, &cb, sizeof(cb));
+        static constexpr const char* generationNames[] = {
+            "Cloud_Shadow_Cascade0", "Cloud_Shadow_Cascade1", "Cloud_Shadow_Cascade2"};
+        builder.AddPass(generationNames[i], [=, this](rg::RgPassBuilder& pb) {
+            pb.Write(raw, RHIResourceState::UnorderedAccess);
+            pb.Read(shape, RHIResourceState::ShaderResource);
+            pb.Read(detail, RHIResourceState::ShaderResource);
+            pb.Read(stbn, RHIResourceState::ShaderResource);
+            pb.SetExecutionCallback([=, this](IRHICommandList* cmd, const rg::RgPassResources&) {
+                cmd->SetPipeline(m_shadowPipeline);
+                cmd->SetRootCBV(kSlotPerFrame, generationAlloc.gpuAddr);
+                cmd->SetRootCBV(kSlotPerObject, cloudAlloc.gpuAddr);
+                cmd->Dispatch((resolution + 7) / 8, (resolution + 7) / 8, 1);
+            });
+        });
+        cb.currentSrv = cascade.rawSrv;
+        cb.historySrv = cascade.historySrv[read];
+        cb.outputUav = cascade.historyUav[write];
+        cb.historyValid = validHistory;
+        cb.previousDepthRange = cascade.previousDepthRange;
+        cb.varianceGamma = 1.25f;
+        const auto resolveAlloc = cbRing.Allocate(sizeof(cb));
+        std::memcpy(resolveAlloc.cpuPtr, &cb, sizeof(cb));
+        static constexpr const char* resolveNames[] = {
+            "Cloud_Shadow_Resolve0", "Cloud_Shadow_Resolve1", "Cloud_Shadow_Resolve2"};
+        builder.AddPass(resolveNames[i], [=, this](rg::RgPassBuilder& pb) {
+            pb.Read(raw, RHIResourceState::ShaderResource);
+            if (validHistory) pb.Read(historyRead, RHIResourceState::ShaderResource);
+            pb.Write(historyWrite, RHIResourceState::UnorderedAccess);
+            pb.SetExecutionCallback([=, this](IRHICommandList* cmd, const rg::RgPassResources&) {
+                cmd->SetPipeline(m_shadowResolvePipeline);
+                cmd->SetRootCBV(kSlotPerFrame, resolveAlloc.gpuAddr);
+                cmd->Dispatch((resolution + 7) / 8, (resolution + 7) / 8, 1);
+            });
+        });
+        m_shadowResources[i] = historyWrite;
+        std::memcpy(cascade.previousViewProj, vp.data(), 64);
+        cascade.previousDepthRange = depthRange;
+        previousSplit = split;
+    }
+    std::memcpy(mapped, cascadeData, sizeof(cascadeData));
+    m_device->UnmapBuffer(m_shadowBuffers[bufferSlot]);
+    m_shadowBufferSrv = m_device->GetBufferSRVIndex(m_shadowBuffers[bufferSlot]);
+    m_shadowFrameCount = count;
+    m_shadowPreviousFrame = input.frameIndex;
+    std::memcpy(m_shadowPreviousSun, input.sunDir, 12);
+    m_shadowHistoryValid = true;
+    m_shadowWrite ^= 1u;
+}
+
+void CloudPass::RegisterPasses(rg::RgBuilder& rgBuilder, rg::RgStateRegistry* states,
+    IRHICommandList* frameList, rg::RgResourceId hdrRes, rg::RgResourceId depthRes,
+    const CBAllocation& perFrameAlloc, CBRingAllocator& cbRing, PipelineLibrary* pipelines,
+    bool bindless, uint32_t renderWidth, uint32_t renderHeight, const CloudPassInput& input) {
+    UZ_PROFILE_SCOPE("CloudPass::RegisterPasses");
+    if (!m_initialized || !bindless) return;
+    if (m_temporalUpscale != (cv_CloudTemporalUpscale->value != 0)) {
+        // Changing the opt-in mode retires resources used by earlier frames.
+        // This is not a per-frame synchronization point.
+        m_device->WaitIdle();
+        OnResize(renderWidth, renderHeight);
+    }
+    if (!EnsureRaymarchPipeline()) return;
+    if (m_temporalUpscale && (!m_frontDepthTexture.IsValid()
+        || !m_historyTexture[0].IsValid() || !m_historyTexture[1].IsValid()
+        || !EnsureTemporalPipeline())) return;
+
+    // Registration occurs on the open frame list, before graph execution.
+    if (!m_noiseLoadAttempted) LoadNoiseTextures(frameList, states, m_vfs);
+
+    // ── Fill constant buffer ──
+    CloudCB cb = MakeCloudCB(input, m_shapeNoiseSrvIndex, m_detailNoiseSrvIndex, m_stbnSrvIndex);
+    cb.shadowBufferSrv = m_shadowBufferSrv;
+    cb.shadowCascadeCount = m_shadowFrameCount;
     if (m_temporalUpscale) {
         cb.temporalUpscale = 1;
         cb.fullWidth = renderWidth;
@@ -716,7 +1006,9 @@ void CloudPass::RegisterPasses(rg::RgBuilder& rgBuilder, rg::RgStateRegistry* st
         ? rgBuilder.ImportTrackedTexture("Cloud_DetailNoise", m_detailNoiseTexture) : rg::RgResourceId{};
     const auto stbnRes = m_stbnTexture.IsValid()
         ? rgBuilder.ImportTrackedTexture("Cloud_STBN", m_stbnTexture) : rg::RgResourceId{};
-    const auto raymarchPipeline = m_temporalUpscale ? m_upscaleRaymarchPipeline : m_raymarchPipeline;
+    const auto raymarchPipeline = m_shadowFrameCount != 0
+        ? m_shadowRaymarchPipeline[m_temporalUpscale ? 1 : 0]
+        : (m_temporalUpscale ? m_upscaleRaymarchPipeline : m_raymarchPipeline);
 
     rgBuilder.AddPass("Cloud_Raymarch", [=, this](rg::RgPassBuilder& pb) {
         pb.Write(cloudOut, RHIResourceState::UnorderedAccess);
@@ -725,6 +1017,8 @@ void CloudPass::RegisterPasses(rg::RgBuilder& rgBuilder, rg::RgStateRegistry* st
         if (shapeRes.IsValid()) pb.Read(shapeRes, RHIResourceState::ShaderResource);
         if (detailRes.IsValid()) pb.Read(detailRes, RHIResourceState::ShaderResource);
         if (stbnRes.IsValid()) pb.Read(stbnRes, RHIResourceState::ShaderResource);
+        for (uint32_t i = 0; i < m_shadowFrameCount; ++i)
+            pb.Read(m_shadowResources[i], RHIResourceState::ShaderResource);
         pb.SetExecutionCallback([=, this](IRHICommandList* cmd, const rg::RgPassResources&) {
             UZ_PROFILE_SCOPE("Cloud::Raymarch");
             cmd->SetPipeline(raymarchPipeline);

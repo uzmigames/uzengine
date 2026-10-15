@@ -59,6 +59,9 @@ UZ_REGISTER_COMPONENT_SERIALIZER(volumetric_clouds, uz::VolumetricCloudsComponen
         c.maxStepSize = uz::json::Float(j, "max_step_size", defaults.maxStepSize);
         c.perspectiveStepScale = uz::json::Float(j, "perspective_step_scale", defaults.perspectiveStepScale);
         c.jitterScale = uz::json::Float(j, "jitter_scale", defaults.jitterScale);
+        c.shadowCascadeCount = uz::json::Uint(j, "shadow_cascade_count", defaults.shadowCascadeCount);
+        c.shadowResolution = uz::json::Uint(j, "shadow_resolution", defaults.shadowResolution);
+        c.shadowDistance = uz::json::Float(j, "shadow_distance", defaults.shadowDistance);
 
         // Control
         c.enabled = uz::json::Bool(j, "enabled", defaults.enabled);
@@ -104,6 +107,9 @@ UZ_REGISTER_COMPONENT_SERIALIZER(volumetric_clouds, uz::VolumetricCloudsComponen
         j["max_step_size"] = c->maxStepSize;
         j["perspective_step_scale"] = c->perspectiveStepScale;
         j["jitter_scale"] = c->jitterScale;
+        j["shadow_cascade_count"] = c->shadowCascadeCount;
+        j["shadow_resolution"] = c->shadowResolution;
+        j["shadow_distance"] = c->shadowDistance;
 
         // Control
         j["enabled"] = c->enabled;

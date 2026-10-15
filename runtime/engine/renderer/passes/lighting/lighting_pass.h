@@ -74,6 +74,9 @@ struct LightingPassDesc {
     /// deferred_lighting_ps.hlsl for the modes). A root constant because the
     /// PerFrameCB has no free bytes left; SM6.6 bindless path only.
     uint32_t          lightingDebugMode = 0;
+    uint32_t          cloudShadowBufferSrv = UINT32_MAX;
+    uint32_t          cloudShadowCascadeCount = 0;
+    rg::RgResourceId  cloudShadowResources[3]{};
     RHITextureHandle  albedoTexture;    ///< Physical albedo texture handle (SM5 fallback binding).
     RHITextureHandle  normalTexture;     ///< Physical normal texture handle (SM5 fallback binding).
     RHITextureHandle  depthTextureForSrv;///< Physical depth texture handle (SM5 fallback binding, read as SRV).

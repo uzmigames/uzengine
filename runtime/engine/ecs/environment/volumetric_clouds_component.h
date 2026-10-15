@@ -153,6 +153,11 @@ struct VolumetricCloudsComponent : public CBDirtyMixin {
     /// Used to compute in-scattering and shadow self-occlusion. 6 is typical.
     uint32_t lightSteps = 6;
 
+    // Beer shadow map configuration. Distances use cloud-space kilometers.
+    uint32_t shadowCascadeCount = 2;
+    uint32_t shadowResolution = 512;
+    float shadowDistance = 50.0f;
+
     // ── Tracing Quality ────────────────────────────────────────────────────
 
     /// @ref Schneider & Vos 2015 — view ray sample count scale

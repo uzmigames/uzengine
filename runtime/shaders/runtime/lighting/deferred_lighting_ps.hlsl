@@ -46,6 +46,10 @@ struct GBufferIndices {
     uint iblPrefilteredSrvIdx; ///< IBL prefiltered specular cubemap (via root constants, bypasses CB ring).
     uint iblIrradianceSrvIdx;  ///< IBL irradiance cubemap (via root constants, bypasses CB ring).
     uint lightingDebugMode;    ///< CVar r.Lighting.DebugMode (0 = off). A root constant: PerFrameCB has no free bytes.
+#ifdef UZ_CLOUD_GROUND_SHADOWS
+    uint cloudShadowBufferSrv;
+    uint cloudShadowCascadeCount;
+#endif
 };
 ConstantBuffer<GBufferIndices> gBufIndices : register(b0);
 #else
@@ -206,6 +210,10 @@ cbuffer PerFrameCB : register(b1) {
 
 SamplerState      linearSampler : register(s0);
 SamplerState      clampSampler  : register(s2);
+#ifdef UZ_CLOUD_GROUND_SHADOWS
+#define UZ_CLOUD_SHADOW_USE_EXISTING_SAMPLER
+#include "../atmosphere/cloud_shadow.hlsli"
+#endif
 
 #ifdef UZ_BINDLESS
 #define UZ_SDF_REFLECTION_SAMPLER clampSampler
@@ -595,6 +603,11 @@ LightingOutput main(FSInput input) {
     // filtering entirely. Saves 16-tap PCF work on every back-facing fragment
     // in enclosed interiors. @ref UE5 ShadowProjectionPixelShader — N·L cull.
     float  shadow = (sunNoL > 0.0) ? CascadeShadow(worldPos, viewDepth, N, sunNoL) : 0.0;
+#if defined(UZ_BINDLESS) && defined(UZ_CLOUD_GROUND_SHADOWS)
+    if (gBufIndices.cloudShadowCascadeCount != 0 && gBufIndices.cloudShadowBufferSrv != 0xFFFFFFFF)
+        shadow *= SampleCloudShadow(worldPos * 0.00001f, sunL,
+            gBufIndices.cloudShadowBufferSrv, gBufIndices.cloudShadowCascadeCount);
+#endif
 
     // Screen-space contact shadows: fine detail shadows from small features
     // (column edges, window frames, floor contact). Gated by CVar r.ContactShadows.

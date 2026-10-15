@@ -199,6 +199,13 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
         lightDesc.perFrameAlloc       = ctx.perFrameAlloc;
         lightDesc.lightingAlloc       = ctx.lightingAlloc;
         lightDesc.pipeline            = ctx.pipelines->GetLighting();
+        if (ctx.bindless && m_cloudPass && m_cloudPass->GetShadowCascadeCount() != 0) {
+            lightDesc.pipeline = m_cloudPass->GetShadowLightingPipeline();
+            lightDesc.cloudShadowBufferSrv = m_cloudPass->GetShadowBufferSrv();
+            lightDesc.cloudShadowCascadeCount = m_cloudPass->GetShadowCascadeCount();
+            for (uint32_t i = 0; i < lightDesc.cloudShadowCascadeCount; ++i)
+                lightDesc.cloudShadowResources[i] = m_cloudPass->GetShadowResource(i);
+        }
         lightDesc.albedoSrvIndex      = m_gbuffer.albedoSRV;
         lightDesc.normalSrvIndex      = m_gbuffer.normalSRV;
         lightDesc.depthSrvIndex       = m_gbuffer.depthSRV;

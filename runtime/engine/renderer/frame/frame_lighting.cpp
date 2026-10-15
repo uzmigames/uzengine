@@ -255,6 +255,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         ctx.apVolumeRes = rgBuilder.ImportTrackedTexture("APVolume", m_apVolume);
     }
 
+    RegisterCloudShadowPasses(rgBuilder, ctx);
     RegisterDeferredLightingPass(rgBuilder, ctx);
     RegisterAtmosphereFogCloudPasses(rgBuilder, ctx);
     RegisterSSGIPrevColorCopy(rgBuilder, ctx);
@@ -600,18 +601,11 @@ void SceneRenderer::RegisterPassInspectorTargets(FrameContext& ctx) {
                                         VisDisplayMode::HDR, 160, 90);
     }
 
-    // Cloud output (half-res RGBA16F) — register both ping-pong buffers for debugging
-    if (m_cloudPass && m_cloudPass->IsInitialized() && m_cloudOutputSrv != UINT32_MAX) {
+    // Cloud output (half-res RGBA16F).
+    if (m_cloudPass && m_cloudPass->IsInitialized() && m_cloudPass->GetCloudOutputSrv() != UINT32_MAX) {
         m_passInspector.RegisterTarget("cloud.output", m_cloudPass->GetCloudOutputTexture(),
-                                        m_cloudOutputSrv, VisDisplayMode::HDR,
-                                        rw / 2, rh / 2);
-        // DEBUG: also register both raw ping-pong textures
-        m_passInspector.RegisterTarget("cloud.raw0", m_cloudPass->GetDebugRaymarchOutput(0),
-                                        m_cloudPass->GetDebugRaymarchOutputSrv(0), VisDisplayMode::HDR,
-                                        rw / 2, rh / 2);
-        m_passInspector.RegisterTarget("cloud.raw1", m_cloudPass->GetDebugRaymarchOutput(1),
-                                        m_cloudPass->GetDebugRaymarchOutputSrv(1), VisDisplayMode::HDR,
-                                        rw / 2, rh / 2);
+                                        m_cloudPass->GetCloudOutputSrv(), VisDisplayMode::HDR,
+                                        (rw + 1) / 2, (rh + 1) / 2);
     }
 
     // HiZ pyramid mip 0 (half-res R32F depth min)
