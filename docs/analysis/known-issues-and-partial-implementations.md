@@ -18,6 +18,48 @@ of these, read this doc and the linked code locations.
 - `PARTIAL` — builds and runs but known incorrect / incomplete
 - `STUB` — scaffolding only, never integrated / tested
 - `BUG` — enabled but produces wrong output
+- `LANDED` — implemented, enabled (or opt-in) and verified
+
+---
+
+## Capability matrix
+
+Single source of truth for what the renderer actually supports, versus what is
+partial, stub or a known bug. Established 2026-10-15 (audit item 5.3 / F-022 part b).
+`Evidence` names the revision or design doc; `untested` is a legal value, blank is not.
+The per-feature sections below this matrix are the notes behind each row. Update the
+relevant row in the same change as any rendering task from now on.
+
+| Feature | Status | Backend | Integration (file:line) | Evidence | Known limits | Owner |
+|---|---|---|---|---|---|---|
+| TAA | OFF (default) | DX12 SM6 | frame_setup.cpp:47 | flicker-programme region dumps | camera-only velocity until 3.4 | audit 3.2/3.4 |
+| TSR | STUB | DX12 | tsr_upscaler.cpp | `tsr_resolve_cs.hlsl` empty since bd4db199 | PSOs compile but write nothing; F-005 declares unavailable | audit 3.3 |
+| FSR2 | STUB (no SDK); SDK path untested | DX12 | fsr2_upscaler.cpp | `UZ_FSR2_ENABLED` default 0 | selectable-but-inert without F-005 | phase2_fsr2-full-integration |
+| DLSS | PARTIAL (SDK builds) | DX12 / NVIDIA | dlss_upscaler.cpp | discovery fixed 2026-10-14 (0f2c2de4) | RR/FG not integrated; MV coverage partial | audit 3.4 |
+| XeSS | not implemented | — | temporal_upscaler.cpp:38 | factory substituted TSR | F-005 returns null | audit 3.3 |
+| Object velocity | PARTIAL (camera-only) | DX12 | velocity_ps.hlsl | F-002 design (doc 12) | no object/skinned/WPO motion; particle MVs in UV units (~1000x too small) | audit 3.4 |
+| Material-graph context | PARTIAL (dummy inputs) | DX12 | gbuffer_ps.hlsl:124 | F-004 design (doc 12) | white vertexColor, zero camera/objectPos, 1920x1080 screenUV, time 0 | audit 3.5 |
+| Glass (shading model 9) | PARTIAL (sphere-only) | DX12 | translucent_ps.hlsl:160 | F-007 design (doc 12) | IBL-only 'refraction'; scene-behind copy made every frame + never read (dead) | audit 3.6 |
+| POM | OFF on binder path | DX12 | gbuffer_per_object_params.h | binder uploads zeros at 224-251 | `displacementScale` 0 keeps POM off | audit (F-022 note) |
+| Mesh decals | LANDED | DX12 | materialFlags bit 4 | 513e2983 | — | — |
+| GPU instancing | OFF (VS unimplemented) | DX12 | frame_sync.cpp:45 | no `UZ_INSTANCED` VS exists | wrong push constants + mis-keyed batcher | audit 5.1 (F-018) |
+| GPU occlusion culling (`r.GpuCull`) | OFF (no consumer) | DX12 | frame_geometry.cpp:128 | dispatch writes buffers nothing reads | F-018 stage 2 note | audit 5.1 |
+| Depth prepass (`r.DepthPrepass`) | OFF (per-draw only) | DX12 | frame_setup.cpp:55 | — | mutually exclusive with instancing | — |
+| Post-process chain | PARTIAL | DX12 | frame_postprocess.cpp | [postprocess-chain-status](post-process/postprocess-chain-status.md) | active: Bloom+Tonemap(+TAA,SSR); inert: CAS/FXAA/motion-blur/DOF/lens-flare/LUT/chromatic-aberration | audit 3.8 (F-008) |
+| Path tracer | PARTIAL (diagnostic, not oracle) | DX12 DXR | path_tracer_ps.hlsl | F-006; doc 10; closed 3.7 e933550a | not a parity oracle | — |
+| Shadow cache static/movable | LANDED (per-draw) | DX12 | frame_shadows.cpp | — | instanced loop (F-018 s2) must filter per batch | — |
+| SM5 / non-bindless | PARTIAL | DX12 SM5 | frame_setup.cpp:436 | — | TAA off, instancing n/a, vertex colour white | — |
+| Vulkan / Metal | untested in this programme | — | vulkan_command_list.cpp / metal_command_list.cpp | — | sources exist, unverified here | — |
+| ECS handle validity | BUG (gen table keyed by packed id) | n/a | world.cpp:16 | F-009 design (doc 11) | 4 MiB/slot on first reuse; stale-rejection via EnTT's 12-bit version only; 4 Lua handle sites break after recycle | audit 2.1 |
+| Owner-thread world mutation | BUG (unsynchronized) | n/a | render_thread.cpp / napi_*.cpp | F-010 design (doc 11) | Node thread mutates RuntimeState while render thread reads + shutdown use-after-free | audit 2.2 |
+| Transactional scene load | BUG (non-atomic) | n/a | scene_loader.cpp:1073 | F-011 design (doc 11) | clears materials/CVars before parsing -> a failed load corrupts the live scene | audit 2.3 |
+| IPC / H.264 streaming | BUG + PARTIAL | n/a | render_thread.cpp / runtime-client.ts / webview | F-020 design (doc 11) | unbounded queues, no deadlines; webview never converts base64 -> bytes so H.264 never decodes | audit 2.5 |
+| Lighting block B (froxel fog, contact shadows, layered SSR, DDGI dedup, clustered lights, env-MIS, sky capture) | LANDED | DX12 | — | block-B index under docs/analysis/lighting | — | — |
+| Brixelizer GI (`r.BrixelizerGI`) | LANDED (opt-in, default OFF) | DX12 | brixelizer_gi_pass.cpp | enabled 2026-10-14 (A/B 6.90 dB, +1.26 ms) | requires `uz_brixelizer.dll` + FFX SDK libs at build | — |
+| Volumetric clouds | PARTIAL (M0-M4) | DX12 | cloud_raymarch_cs.hlsl | M0-M4 committed; `r.Cloud.ProceduralNoise` default restores the broken-cloud look (8efdbf4d) | M4 ground-shadow visual deferred (4.10); M5 multi-layer / M6 remain | phase0 clouds-rewrite |
+
+The March 2026 `rendering-arch/overview/uzengine-audit.md` "production-ready" claim
+is historical and is not evidence for the current tree; this matrix supersedes it.
 
 ---
 

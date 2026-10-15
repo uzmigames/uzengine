@@ -29,11 +29,17 @@ not all reproduced runtime failures or proven causes of the user's rendering bug
 | [08 — Native bootstrap](08-native-bootstrap.md) | Locked dependency provisioning and isolated native build evidence |
 | [09 — Coverage and first frames](09-test-coverage-and-first-frames.md) | Current test results, startup captures and scoped baseline closure |
 | [10 — Backlog reconciliation](10-backlog-reconciliation.md) | 2026-10-14 source assessment, graph residuals, capability limits and hierarchy rejection |
+| [11 — Runtime/editor lifecycle design](11-runtime-and-editor-lifecycle-design.md) | F-009/F-010/F-011/F-020 turnkey implementation specs (2026-10-15) |
+| [12 — Rendering correctness design](12-rendering-correctness-design.md) | F-001/F-002/F-004/F-007 turnkey implementation specs (2026-10-15) |
+| [13 — Remaining stabilization design](13-remaining-stabilization-design.md) | F-005/F-018/F-022 turnkey implementation specs (2026-10-15) |
+| [14 — Closed-findings ledger](14-closed-findings-ledger.md) | Each finding -> revision/evidence or design doc (living, item 6.1) |
 
 ## Finding register
 
 Every finding has source locations, impact, confidence and acceptance criteria
-in its thematic file. IDs are global and stable within this analysis.
+in its thematic file. IDs are global and stable within this analysis. Current
+per-feature support status: the [capability matrix](../known-issues-and-partial-implementations.md#capability-matrix)
+(2026-10-15). Closure state per finding: [14 — closed-findings ledger](14-closed-findings-ledger.md).
 
 | ID | Priority | Finding | Evidence class |
 |---|---|---|---|
