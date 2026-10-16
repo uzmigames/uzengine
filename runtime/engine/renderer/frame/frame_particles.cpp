@@ -459,7 +459,9 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
         bbCBData.globalColorTintA = 1.0f;
 
         // Previous frame viewProj for TAA motion vectors.
-        std::memcpy(bbCBData.prevViewProj, &m_prevViewProj, sizeof(float) * 16);
+        const Mat4& particlePrevViewProj = ctx.temporal.matrixValid
+            ? ctx.temporal.prevViewProj : ctx.unjitteredViewProj;
+        std::memcpy(bbCBData.prevViewProj, &particlePrevViewProj, sizeof(float) * 16);
 
         // ── PS rendering parameters ─────────────────────────────────────
         bbCBData.softFadeDistance      = emitter->softParticleFadeRange;

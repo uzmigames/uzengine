@@ -512,9 +512,9 @@ void DlssUpscaler::OnResize(uint32_t displayWidth, uint32_t displayHeight) {
 // Execution
 // ─────────────────────────────────────────────────────────────────────────────
 
-void DlssUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
+bool DlssUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     UZ_PROFILE_SCOPE("DLSS::Execute");
-    if (!m_impl || !m_impl->dx12Device || !m_impl->dlssSupported) return;
+    if (!m_impl || !m_impl->dx12Device || !m_impl->dlssSupported) return false;
 
     const auto outputW = static_cast<uint32_t>(input.outputWidth);
     const auto outputH = static_cast<uint32_t>(input.outputHeight);
@@ -530,13 +530,13 @@ void DlssUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
 
     auto* dx12Cmd = static_cast<DX12CommandList*>(cmd);
     ID3D12GraphicsCommandList* nativeCmdList = dx12Cmd->GetNative();
-    if (!nativeCmdList) return;
+    if (!nativeCmdList) return false;
 
     // Lazily create or recreate feature.
     if (!m_impl->dlssFeature || m_impl->displayWidth != outputW ||
         m_impl->displayHeight != outputH || m_impl->currentQuality != quality) {
-        if (outputW == 0 || outputH == 0) return;
-        if (!m_impl->CreateFeature(nativeCmdList, outputW, outputH, quality)) return;
+        if (outputW == 0 || outputH == 0) return false;
+        if (!m_impl->CreateFeature(nativeCmdList, outputW, outputH, quality)) return false;
     }
 
     // Resolve RHI textures to native DX12 resources.
@@ -548,7 +548,7 @@ void DlssUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     if (!colorRes || !depthRes || !velocityRes || !outputRes) {
         UZ_LOG(Renderer, Error, "DLSS: null textures — color={} depth={} vel={} out={}",
                (void*)colorRes, (void*)depthRes, (void*)velocityRes, (void*)outputRes);
-        return;
+        return false;
     }
 
     // Debug: log resource details on first evaluate only
@@ -662,7 +662,9 @@ void DlssUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     if (NVSDK_NGX_FAILED(result)) {
         UZ_LOG(Renderer, Error, "DLSS: evaluate failed (result=0x{:08X})",
                static_cast<uint32_t>(result));
+        return false;
     }
+    return true;
 }
 
 } // namespace uz
@@ -692,7 +694,7 @@ void DlssUpscaler::Init(IRHIDevice*, PipelineLibrary*, CBRingAllocator*) {
 }
 void DlssUpscaler::Shutdown() {}
 void DlssUpscaler::OnResize(uint32_t, uint32_t) {}
-void DlssUpscaler::Execute(IRHICommandList*, const UpscalerInput&) {}
+bool DlssUpscaler::Execute(IRHICommandList*, const UpscalerInput&) { return false; }
 
 } // namespace uz
 

@@ -26,6 +26,7 @@ void SceneRenderer::SetUpscalerType(UpscalerType type) {
     }
 
     m_upscalerType = type;
+    m_temporal.Invalidate(TemporalReset::UpscalerChanged);
 
     // Sync CVar so ApplyCVars() doesn't overwrite this value next frame
     CVarRegistry::Get().Set("r.AntiAliasingMethod", static_cast<float>(type));

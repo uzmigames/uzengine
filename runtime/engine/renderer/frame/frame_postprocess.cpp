@@ -266,7 +266,7 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
             const uint32_t readIdx  = ctx.taaReadIdx;
             const float jitterX = ctx.jitterX;
             const float jitterY = ctx.jitterY;
-            const bool firstFrame = !m_prevViewProjValid || !m_taaHistoryWritten[readIdx];
+            const bool firstFrame = ctx.temporal.firstFrame();
 
             rgBuilder.AddPass(m_upscaler->GetName(), [&, writeIdx, readIdx, jitterX, jitterY, firstFrame](rg::RgPassBuilder& pb) {
                 pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
@@ -345,8 +345,17 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                         cmd->ResourceBarrier(&uav, 1);
                     }
 
-                    m_upscaler->Execute(cmd, input);
-                    m_taaHistoryWritten[writeIdx] = true;
+                    if (m_upscaler->Execute(cmd, input)) {
+                        m_temporal.MarkWritten(writeIdx);
+                    } else {
+                        m_temporal.MarkFailed(writeIdx);
+                        const uint32_t warningBit = 1u << static_cast<uint32_t>(m_upscalerType);
+                        if ((m_temporalFailureWarnings & warningBit) == 0) {
+                            m_temporalFailureWarnings |= warningBit;
+                            UZ_LOG(Renderer, Warning, "Temporal history: {} recorded no history write (ExecuteFailed)",
+                                   m_upscaler->GetName());
+                        }
+                    }
 
 
                     // Write target → SRV for tonemap to read
@@ -363,16 +372,8 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
             m_taaHistoryIndex = 1 - m_taaHistoryIndex;
         }
 
-        // Region dump (diagnostics): the previous frame's matrix, taken before it is
-        // overwritten just below, so a capture can reproject a world point into the frame
-        // that came before it.
-        const Mat4 regionPrevViewProj = m_prevViewProj;
-
-        // Store unjittered viewProj for next frame's reprojection.
-        // MUST be inside the simplified block — the original code after `return`
-        // is never reached, so prevViewProj would never be set.
-        m_prevViewProj = ctx.unjitteredViewProj;
-        m_prevViewProjValid = true;
+        // The previous matrix was snapshotted before SetupFrameData advanced history.
+        const Mat4 regionPrevViewProj = ctx.temporal.prevViewProj;
 
         // ── SSR Post-TAA Composite ──────────────────────────────────────
         // Apply SSR AFTER TAA to prevent TAA neighborhood contamination.

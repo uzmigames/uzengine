@@ -48,6 +48,7 @@
 #include "postprocess/bloom_pass.h"
 #include "postprocess/lens_flare_pass.h"
 #include "postprocess/temporal_upscaler.h"
+#include "temporal_history_state.h"
 #include "postprocess/gtao_pass.h"
 #include "postprocess/hiz_pyramid_pass.h"
 #include "shadows/distance_field_shadow_config.h"
@@ -173,6 +174,8 @@ public:
 
     /// Forwards to AutoExposure::ResetHistory (no-op when auto exposure is off).
     void ResetExposureHistory(IRHICommandList* cmdList);
+
+    void InvalidateTemporalHistory(TemporalReset why) { m_temporal.Invalidate(why); }
 
     /// Returns true if there are async texture decodes still in flight,
     /// decoded textures awaiting GPU upload, or copy-queue uploads pending

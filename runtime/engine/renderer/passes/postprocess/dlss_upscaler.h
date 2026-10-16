@@ -121,7 +121,7 @@ public:
     ///
     /// @param cmd   Command list to record DLSS dispatches on.
     /// @param input Per-frame textures, jitter, and resolution data.
-    void Execute(IRHICommandList* cmd, const UpscalerInput& input) override;
+    bool Execute(IRHICommandList* cmd, const UpscalerInput& input) override;
 
     // --- Non-copyable, movable ---
 

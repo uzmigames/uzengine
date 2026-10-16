@@ -47,6 +47,12 @@
 // TAA disabled (jitter trembling bug). No anti-aliasing until fixed.
 static auto* cv_TAA                = UZ_CVAR_BOOL("r.TAA", false, "TAA anti-aliasing");
 static auto* cv_TAAJitterSeqLen    = UZ_CVAR_INT("r.TAA.JitterSequenceLength", 8, "TAA Halton jitter sequence length", 1, 16);
+static auto* cv_TAACutDistance = UZ_CVAR_FLOAT("r.TAA.CameraCut.Distance", 300.f,
+    "Camera cut distance per frame (cm)", 0.f, 1000000.f);
+static auto* cv_TAACutAngle = UZ_CVAR_FLOAT("r.TAA.CameraCut.Angle", 30.f,
+    "Camera cut angle per frame (degrees)", 0.f, 180.f);
+static auto* cv_TAALogDecisions = UZ_CVAR_BOOL("r.TAA.LogDecisions", false,
+    "Log temporal matrix and history content validity each frame");
 static auto* cv_TAAJitterScale     = UZ_CVAR_FLOAT("r.TAA.JitterScale", 1.f,
     "Diagnostic: scales the Halton jitter offsets (1 = production). 0 gives TAA accumulation with NO "
     "sub-pixel offset, which is not the same as JitterSequenceLength=1 (that is a constant "
@@ -482,6 +488,31 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     ctx.renderHeight = static_cast<float>(m_renderHeight);
     ctx.pipelines = m_pipelines.get();
 
+    // Advance matrix history on every frame, including frames without TAA.
+    // Do this before any activation gate consumes matrix validity.
+    ctx.taaWriteIdx = m_taaHistoryIndex;
+    ctx.taaReadIdx = 1 - m_taaHistoryIndex;
+    TemporalFrameKey temporalKey{};
+    temporalKey.frameIndex = ctx.frameIndex;
+    temporalKey.upscalerType = static_cast<uint32_t>(m_upscalerType);
+    temporalKey.outputW = static_cast<uint32_t>(ctx.vpWidth);
+    temporalKey.outputH = static_cast<uint32_t>(ctx.vpHeight);
+    temporalKey.cameraId = m_cameraManager->GetActiveCameraId();
+    temporalKey.cameraPos = {ctx.perFrame.cameraPos.x, ctx.perFrame.cameraPos.y, ctx.perFrame.cameraPos.z};
+    temporalKey.cameraFwd = camera.GetForward();
+    temporalKey.unjitteredViewProj = ctx.unjitteredViewProj;
+    TemporalThresholds thresholds{};
+    thresholds.cutDistanceCm = cv_TAACutDistance->value;
+    thresholds.cutCosAngle = std::cos(cv_TAACutAngle->value * (3.14159265358979323846f / 180.f));
+    ctx.temporal = m_temporal.Advance(temporalKey, ctx.taaReadIdx, thresholds);
+    if (cv_TAALogDecisions->value > 0.5f) {
+        UZ_LOG(Renderer, Info,
+               "TemporalDecision: frame={} matrixValid={} matrixReason={} contentValid={} contentReason={} read={} write={}",
+               ctx.frameIndex, ctx.temporal.matrixValid, TemporalResetName(ctx.temporal.matrixReason),
+               ctx.temporal.contentValid, TemporalResetName(ctx.temporal.contentReason),
+               ctx.taaReadIdx, ctx.taaWriteIdx);
+    }
+
     // ── Import render graph resources ──────────────────────────────────
     RHITextureHandle backBuffer = ctx.swapChain->GetCurrentBackBuffer();
     ctx.bbRes       = rgBuilder.ImportTexture("Backbuffer", backBuffer, RHIResourceState::Present);
@@ -525,9 +556,9 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
                   && m_shadowDebugMode != 1
                   && m_passInspector.IsPassEnabled("ssr");
 
-    // Gate motion blur on m_prevViewProjValid to avoid reading uninitialized velocity on frame 0.
+    // Gate motion blur on a continuous previous matrix, including camera cuts.
     // The velocity pass is skipped on the first frame (no prevViewProj yet), so velocity data is garbage.
-    ctx.motionBlurActive = m_motionBlurEnabled && m_prevViewProjValid
+    ctx.motionBlurActive = m_motionBlurEnabled && ctx.temporal.matrixValid
                          && m_motionBlurOutput.IsValid()
                          && m_motionBlurTileMax.IsValid() && m_motionBlurNeighborMax.IsValid()
                          && m_gbuffer.velocity.IsValid() && ctx.bindless && m_shadowDebugMode != 1
@@ -557,9 +588,6 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     ctx.motionBlurSrvForTonemap = ctx.taaSrvForTonemap;
     ctx.postDofSrvForTonemap = ctx.motionBlurSrvForTonemap;
 
-    // TAA ping-pong indices
-    ctx.taaWriteIdx = m_taaHistoryIndex;
-    ctx.taaReadIdx  = 1 - m_taaHistoryIndex;
 }
 
 } // namespace uz

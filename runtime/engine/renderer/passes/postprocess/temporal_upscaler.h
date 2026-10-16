@@ -179,7 +179,8 @@ public:
     ///
     /// @param cmd   The command list to record dispatches on.
     /// @param input Per-frame input data (textures, jitter, resolution).
-    virtual void Execute(IRHICommandList* cmd, const UpscalerInput& input) = 0;
+    /// Returns true iff a history write was recorded.
+    virtual bool Execute(IRHICommandList* cmd, const UpscalerInput& input) = 0;
 
     // --- Non-copyable (prevent slicing) ---
 

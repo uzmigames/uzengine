@@ -397,12 +397,12 @@ void FSR2Upscaler::OnResize(uint32_t displayWidth, uint32_t displayHeight) {
 // Execution
 // -------------------------------------------------------------------------
 
-void FSR2Upscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
+bool FSR2Upscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     UZ_PROFILE_SCOPE("FSR2::Execute");
 
     if (!m_impl || !m_impl->dx12Device) {
         UZ_LOG(Renderer, Error, "FSR2: Execute called before Init");
-        return;
+        return false;
     }
 
     const auto outputW = static_cast<uint32_t>(input.outputWidth);
@@ -416,11 +416,11 @@ void FSR2Upscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
         if (outputW == 0 || outputH == 0) {
             UZ_LOG(Renderer, Warning, "FSR2: invalid output resolution {}x{}",
                    outputW, outputH);
-            return;
+            return false;
         }
 
         if (!m_impl->CreateContext(outputW, outputH)) {
-            return;
+            return false;
         }
     }
 
@@ -436,7 +436,7 @@ void FSR2Upscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
                "(color={}, depth={}, velocity={}, output={})",
                sceneColorRes != nullptr, depthRes != nullptr,
                velocityRes != nullptr, outputRes != nullptr);
-        return;
+        return false;
     }
 
     // Get the native DX12 command list for the FFX dispatch.
@@ -444,7 +444,7 @@ void FSR2Upscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     ID3D12GraphicsCommandList* nativeCmdList = dx12Cmd->GetNative();
     if (!nativeCmdList) {
         UZ_LOG(Renderer, Error, "FSR2: failed to get native command list");
-        return;
+        return false;
     }
 
     FfxCommandList ffxCmdList = ffxGetCommandListDX12(nativeCmdList);
@@ -530,10 +530,11 @@ void FSR2Upscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     if (err != FFX_OK) {
         UZ_LOG(Renderer, Error, "FSR2: ffxFsr2ContextDispatch failed with error {}",
                static_cast<int32_t>(err));
-        return;
+        return false;
     }
 
     m_impl->frameIndex++;
+    return true;
 }
 
 } // namespace uz
@@ -560,7 +561,7 @@ void FSR2Upscaler::Init(IRHIDevice*, PipelineLibrary*, CBRingAllocator*) {
 }
 void FSR2Upscaler::Shutdown() {}
 void FSR2Upscaler::OnResize(uint32_t, uint32_t) {}
-void FSR2Upscaler::Execute(IRHICommandList*, const UpscalerInput&) {}
+bool FSR2Upscaler::Execute(IRHICommandList*, const UpscalerInput&) { return false; }
 
 #endif // UZ_FSR2_ENABLED
 

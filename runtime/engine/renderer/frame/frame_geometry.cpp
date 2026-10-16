@@ -392,9 +392,9 @@ void SceneRenderer::RegisterGeometryPasses(rg::RgBuilder& rgBuilder, FrameContex
         // Generates per-pixel screen-space motion vectors by reprojecting
         // depth-reconstructed world positions through prevViewProj.
         // @ref camera-only velocity pass
-        if (m_prevViewProjValid && m_gbuffer.velocity.IsValid()) {
+        if (ctx.temporal.matrixValid && m_gbuffer.velocity.IsValid()) {
             VelocityCB velCB{};
-            velCB.prevViewProj          = m_prevViewProj;
+            velCB.prevViewProj          = ctx.temporal.prevViewProj;
             velCB.unjitteredInvViewProj = ctx.unjitteredViewProj.Inverse();
             velCB.screenWidth           = vpWidth;
             velCB.screenHeight          = vpHeight;

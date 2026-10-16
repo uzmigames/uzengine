@@ -200,6 +200,7 @@ void Application::FlushPendingSceneLoad() {
     // Pass the VFS so "prefab" entities resolve their referenced assets —
     // the VFS-less overload silently skips prefab instantiation.
     const size_t count = uz::LoadScene(*m_world, bytes, path, m_vfs.get());
+    if (m_renderer) m_renderer->InvalidateTemporalHistory(TemporalReset::SceneChanged);
     UZ_LOG(App, Info, "Application: scene '{}' loaded ({} entities)", path, count);
 }
 

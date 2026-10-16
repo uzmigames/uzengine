@@ -68,7 +68,7 @@ public:
     ///
     /// @param cmd   Command list to record the compute dispatch on.
     /// @param input Per-frame textures, jitter, and resolution data.
-    void Execute(IRHICommandList* cmd, const UpscalerInput& input) override;
+    bool Execute(IRHICommandList* cmd, const UpscalerInput& input) override;
 
 private:
     IRHIDevice*      m_device    = nullptr;

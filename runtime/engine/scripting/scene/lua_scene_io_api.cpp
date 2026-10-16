@@ -5,6 +5,7 @@
 #include "log.h"
 #include "world.h"
 #include "scene_loader.h"
+#include "scene_renderer.h"
 #include "vfs.h"
 
 extern "C" {
@@ -101,6 +102,10 @@ static int SceneLoadScene(lua_State* L) {
     world->Clear();
 
     const size_t count = uz::LoadScene(*world, data, path);
+    lua_getfield(L, LUA_REGISTRYINDEX, "uz_scene_renderer");
+    auto* renderer = static_cast<SceneRenderer*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    if (renderer) renderer->InvalidateTemporalHistory(TemporalReset::SceneChanged);
     if (count == 0) {
         UZ_LOG(Scripting, Warning,
             "uz.scene.load_scene: no entities loaded from '{}'", path);

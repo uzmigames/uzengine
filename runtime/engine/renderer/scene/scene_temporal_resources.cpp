@@ -32,8 +32,7 @@ void SceneRenderer::CreateTaaResources(uint32_t width, uint32_t height) {
     }
 
     m_taaHistoryIndex = 0;
-    m_taaHistoryWritten[0] = m_taaHistoryWritten[1] = false;
-    m_prevViewProjValid = false;
+    m_temporal.ResetAll(TemporalReset::ResourcesRecreated);
 
     UZ_LOG(Renderer, Info, "SceneRenderer: TAA history textures created ({}x{}, RGBA16F)", width, height);
 }
@@ -155,7 +154,7 @@ void SceneRenderer::DestroyTaaResources() {
         }
     }
     m_taaHistoryIndex = 0;
-    m_prevViewProjValid = false;
+    m_temporal.ResetAll(TemporalReset::ResourcesRecreated);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

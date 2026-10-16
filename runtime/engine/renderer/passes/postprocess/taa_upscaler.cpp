@@ -114,11 +114,11 @@ void TaaUpscaler::OnResize(uint32_t /*displayWidth*/, uint32_t /*displayHeight*/
 // Execution
 // ─────────────────────────────────────────────────────────────────────────────
 
-void TaaUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
+bool TaaUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     UZ_PROFILE_SCOPE("TAA::Resolve");
 
     auto taaPSO = m_pipelines->GetTaaResolve();
-    if (!taaPSO.IsValid()) return;
+    if (!taaPSO.IsValid()) return false;
 
     cmd->SetPipeline(taaPSO);
 
@@ -245,6 +245,7 @@ void TaaUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     const uint32_t groupsX = (static_cast<uint32_t>(input.outputWidth)  + 7) / 8;
     const uint32_t groupsY = (static_cast<uint32_t>(input.outputHeight) + 7) / 8;
     cmd->Dispatch(groupsX, groupsY, 1);
+    return true;
 }
 
 } // namespace uz

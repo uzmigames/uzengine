@@ -861,6 +861,7 @@ int uz_load_scene(const char* path) {
     // Pass the VFS so "prefab" entities resolve their referenced assets —
     // the VFS-less overload silently skips prefab instantiation.
     const size_t count = uz::LoadScene(state->world, sceneBytes, path, state->vfs.get());
+    state->sceneRenderer.InvalidateTemporalHistory(uz::TemporalReset::SceneChanged);
     UZ_LOG(RuntimeAPI, Info, "uz_load_scene: loaded {} entities from '{}'", count, path);
 
     // If Lua is ready, re-scan scripts in the newly loaded scene.

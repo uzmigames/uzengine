@@ -6,6 +6,7 @@
 #pragma once
 
 #include "per_frame_params.h"
+#include "temporal_history_state.h"
 #include "scene_update_flags.h"
 #include "post_process_volume.h"
 #include "shadow_data_params.h"
@@ -140,6 +141,7 @@ struct FrameContext {
     rg::RgResourceId dbufferCRes{};
 
     // ── TAA state ───────────────────────────────────────────────────
+    TemporalDecision temporal{};
     bool     taaActive = false;
     uint32_t jitterIndex = 0;   ///< Halton index used this frame ((frame % r.TAA.JitterSequenceLength) + 1); 0 = no jitter.
     float    jitterX = 0.f;

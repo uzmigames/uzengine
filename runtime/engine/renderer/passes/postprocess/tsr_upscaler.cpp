@@ -139,7 +139,7 @@ void TsrUpscaler::DestroyIntermediateResources() {
 // Execution
 // ─────────────────────────────────────────────────────────────────────────────
 
-void TsrUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
+bool TsrUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     UZ_PROFILE_SCOPE("TSR::Resolve");
 
     // Lazily recreate intermediates if render resolution changed.
@@ -182,7 +182,7 @@ void TsrUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
         auto pso = m_pipelines->GetTsrDilateVelocity();
         if (!pso.IsValid()) {
             UZ_LOG(Renderer, Error, "TSR: DilateVelocity pipeline not available, skipping TSR");
-            return;
+            return false;
         }
 
         // Transition both intermediate textures to UAV for writing.
@@ -252,7 +252,7 @@ void TsrUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
         auto pso = m_pipelines->GetTsrRejectShading();
         if (!pso.IsValid()) {
             UZ_LOG(Renderer, Error, "TSR: RejectShading pipeline not available, skipping TSR");
-            return;
+            return false;
         }
 
         // Transition dilatedVelocity: UAV → SRV (pass 2 reads it).
@@ -330,7 +330,7 @@ void TsrUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
         auto pso = m_pipelines->GetTsrUpdateHistory();
         if (!pso.IsValid()) {
             UZ_LOG(Renderer, Error, "TSR: UpdateHistory pipeline not available, skipping TSR");
-            return;
+            return false;
         }
 
         // Transition rejectionMask: UAV → SRV (pass 3 reads it).
@@ -401,6 +401,7 @@ void TsrUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     // Both are now in SRV state after pass 3 barriers, so no extra transition needed here.
 
     m_firstDispatch = false;
+    return true;
 }
 
 } // namespace uz

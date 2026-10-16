@@ -131,7 +131,7 @@ void SceneRenderer::RegisterSSGIPasses(rg::RgBuilder& rgBuilder, FrameContext& c
                                        ? static_cast<uint32_t>(ctx.perFrame.timeParams.w)
                                        : ctx.frameIndex;
             ssgiParams.worldGather = ctx.perFrame.sdfDiffuseSamples != 0;
-            ssgiParams.resetHistory = !m_prevViewProjValid;
+            ssgiParams.resetHistory = !ctx.temporal.matrixValid;
             ssgiParams.sceneRevision = m_globalDistanceField.GetSceneRevision();
             ssgiParams.changedRegions = &m_globalDistanceField.GetChangedRegions();   // read at execution (block B.2)
             ssgiParams.renderWidth     = static_cast<uint32_t>(ctx.renderWidth);
@@ -668,7 +668,7 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
     {
         const uint32_t ssrWriteIdx = m_ssrHistoryIndex;
         const uint32_t ssrReadIdx  = 1 - m_ssrHistoryIndex;
-        const bool ssrFirstFrame = !m_prevViewProjValid
+        const bool ssrFirstFrame = !ctx.temporal.matrixValid
                                  || !m_ssrHistory[ssrReadIdx].IsValid();
 
         rgBuilder.AddPass("SSR_Temporal", [&, ssrWriteIdx, ssrReadIdx, ssrFirstFrame](rg::RgPassBuilder& pb) {
@@ -721,7 +721,7 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
                 auto prevVPAlloc = m_cbRing->Allocate(sizeof(SsrTemporalPrevVP));
                 if (prevVPAlloc.cpuPtr) {
                     auto* pvp = reinterpret_cast<SsrTemporalPrevVP*>(prevVPAlloc.cpuPtr);
-                    pvp->prevViewProj = m_prevViewProj;
+                    pvp->prevViewProj = ctx.temporal.prevViewProj;
                     cmd->SetRootCBV(kSlotPerObject, prevVPAlloc.bufferHandle,
                                     prevVPAlloc.offsetBytes, prevVPAlloc.cpuPtr,
                                     sizeof(SsrTemporalPrevVP));
