@@ -8,7 +8,10 @@
 /// PerFrameCB layout (matching per_frame_params.h) for IBL access.
 /// Outputs to a single HDR render target (RGBA16F) with alpha blending.
 ///
-/// ThinTranslucent (smID 9): any mesh, front faces only, treated as a thin slab.
+/// ThinTranslucent (smID 9) defaults to legacy sphere/IBL glass.
+/// r.Glass.ThinTransmission=1 opts into the thin-slab contract below.
+/// Negative glassThickness selects legacy glass; nonnegative selects thin glass.
+/// Thin glass: any mesh, front faces only, treated as a thin slab.
 /// Authored local thickness is scaled per model axis along the refracted ray.
 /// Transmission samples the opaque scene copy; Fresnel reflection uses the IBL.
 /// Unsupported: translucent-through-translucent refraction, true volumes, image
@@ -150,6 +153,59 @@ float4 main(PSInput input) : SV_Target {
         emission *= emissiveTexture.Sample(linearSampler, input.texcoord * uvScale + uvOffset).rgb;
     }
 #endif
+
+    // Legacy sphere/IBL glass, preserved from before F-007 for shipped content.
+    // Only the branch condition differs; scene_sync also preserves old specular.
+    if (smID == 9 && glassThickness < 0.0) {
+        float f0_scalar = max(specularVal * 0.08, 0.001);
+        float sqrtF0 = sqrt(f0_scalar);
+        float ior = (1.0 + sqrtF0) / max(1.0 - sqrtF0, 0.001);
+        ior = clamp(ior, 1.0, 2.5);
+        float F0_glass = pow((ior - 1.0) / (ior + 1.0), 2.0);
+        float fresnel = F0_glass + (1.0 - F0_glass) * pow(1.0 - NoV, 5.0);
+        float3 R = reflect(-V, N);
+        float3 surfaceReflection = float3(0, 0, 0);
+#ifdef UZ_BINDLESS
+        if (prefilteredSrvIndex != kSentinelSrvIndex) {
+            TextureCube<float4> prefTex = ResourceDescriptorHeap[prefilteredSrvIndex];
+            float3 skyTint = float3(skyLightColorR, skyLightColorG, skyLightColorB);
+            surfaceReflection = prefTex.SampleLevel(linearSampler, WorldToCubemap(R), 0.0).rgb
+                              * skyLightIntensity * skyTint;
+        }
+#endif
+        surfaceReflection *= fresnel * 0.5;
+        float3 entryRay = refract(-V, N, 1.0 / ior);
+        float3 refractionColor = float3(0, 0, 0);
+        if (dot(entryRay, entryRay) > 0.001) {
+            float3 sphereCenter = float3(obj_model[3][0], obj_model[3][1], obj_model[3][2]);
+            float sphereRadius = length(float3(obj_model[0][0], obj_model[0][1], obj_model[0][2]));
+            float3 oc = input.positionWS - sphereCenter;
+            float b = dot(oc, entryRay);
+            float c = dot(oc, oc) - sphereRadius * sphereRadius;
+            float disc = b * b - c;
+            float exitDist = -b + sqrt(max(disc, 0.0));
+            float3 exitPoint = input.positionWS + entryRay * exitDist;
+            float3 exitNormal = normalize(exitPoint - sphereCenter);
+            float3 exitRay = refract(entryRay, -exitNormal, ior);
+            if (dot(exitRay, exitRay) < 0.001) {
+                exitRay = reflect(entryRay, -exitNormal);
+            }
+#ifdef UZ_BINDLESS
+            if (prefilteredSrvIndex != kSentinelSrvIndex) {
+                TextureCube<float4> prefTex = ResourceDescriptorHeap[prefilteredSrvIndex];
+                float3 skyTint = float3(skyLightColorR, skyLightColorG, skyLightColorB);
+                float translucentMip = 1.0 + roughnessMultiplier * float((prefilteredMipLevels & 0xFFu) - 1u);
+                refractionColor = prefTex.SampleLevel(linearSampler, WorldToCubemap(exitRay), translucentMip).rgb
+                                * skyLightIntensity * skyTint;
+            }
+#endif
+        }
+        float3 color = refractionColor + surfaceReflection + emission;
+        WriteRegionDumpTranslucent(uint2(input.positionCS.xy), input.positionCS.z, color, 1.0, float3(0, 0, 0), 0u,
+                                   refractionColor, prefilteredSrvIndex, N, smID, emission,
+                                   max(dot(N, normalize(lightDir.xyz)), 0.0));
+        return float4(color, 1.0);
+    }
 
     // ── Standard translucent (non-glass) ────────────────────────────────
     // Forward lighting for semi-transparent materials.

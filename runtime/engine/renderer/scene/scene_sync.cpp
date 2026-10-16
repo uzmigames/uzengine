@@ -36,6 +36,9 @@
 // Read by runtime.cpp to report in uz_frame_stats.
 std::atomic<uint32_t> g_lastSyncMeshEntityCount{0};
 
+static auto* cv_ThinTransmission = UZ_CVAR_BOOL("r.Glass.ThinTransmission", false,
+    "Opt in to thin-surface scene-color glass; off preserves legacy sphere/IBL glass");
+
 /// Reads a PBR output input that resolves to a compile-time constant.
 ///
 /// Returns the pin's default when the input is absent or unconnected, and
@@ -496,11 +499,15 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
             // @ref Lagarde 2014 "Moving Frostbite to Physically Based Rendering" — F0 = 0.08 * specular
             float specular = mat->GetSpecular();
             if (mat->GetShadingModel() == EShadingModel::ThinTranslucent) {
-                const float ior = std::max(1.0f, mat->GetScalarParam("IOR", 1.5f));
-                const float ratio = (ior - 1.0f) / (ior + 1.0f);
-                specular = ratio * ratio / 0.08f;
-                // ThinTranslucent reuses the POM thickness slot; no CB growth.
-                cmd.displacementScale = mat->GetScalarParam("ThicknessScale", 0.5f);
+                // Negative thickness selects the exact pre-F-007 sphere/IBL path.
+                // Reuse the POM slot; the CB and 24-DWORD root block do not grow.
+                cmd.displacementScale = -1.0f;
+                if (cv_ThinTransmission->value >= 0.5f) {
+                    const float ior = std::max(1.0f, mat->GetScalarParam("IOR", 1.5f));
+                    const float ratio = (ior - 1.0f) / (ior + 1.0f);
+                    specular = ratio * ratio / 0.08f;
+                    cmd.displacementScale = std::max(0.0f, mat->GetScalarParam("ThicknessScale", 0.5f));
+                }
             }
             const uint32_t specU8 = std::min(255u, static_cast<uint32_t>(specular * 255.0f));
             const uint32_t envU8  = std::min(255u, static_cast<uint32_t>(mat->GetEnvMultiplier() * 127.5f));
