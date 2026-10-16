@@ -1,6 +1,7 @@
 /// Tests for GPUMesh struct defaults, validity predicates, and null-safe destroy/upload.
 ///
-/// All tests are CPU-only — no GPU device is created. They verify:
+/// Struct tests are CPU-only; color upload regressions use a real DX12 device.
+/// CPU tests verify:
 /// - Default field values for a zero-initialized GPUMesh
 /// - IsValid() and IsIndexed() logic branches
 /// - DestroyGPUMesh(nullptr, mesh) is a safe no-op
@@ -414,3 +415,131 @@ TEST(FlushDeferredMeshUploads, NullDevice_CalledMultipleTimes_DoesNotCrash) {
         }
     });
 }
+
+#ifdef _WIN32
+#include "rhi.h"
+#include "rhi_backend.h"
+
+#include <cstring>
+#include <memory>
+
+namespace {
+
+class GPUMeshColorUpload : public ::testing::Test {
+protected:
+    std::unique_ptr<IRHIDevice> device;
+    IRHICommandList* cmd = nullptr;
+    std::vector<GPUMesh> meshes;
+    std::vector<RHIBufferHandle> readbacks;
+
+    void SetUp() override {
+        RHIDeviceDesc desc{};
+        desc.backend = RHIBackend::DX12;
+        desc.enableValidation = true;
+        device = CreateRHIDevice(desc);
+        if (!device) GTEST_SKIP() << "DX12 device unavailable";
+        cmd = device->CreateCommandList(RHIQueueType::Graphics);
+        ASSERT_NE(cmd, nullptr);
+    }
+
+    void TearDown() override {
+        if (!device) return;
+        device->WaitIdle();
+        if (cmd) device->DestroyCommandList(cmd);
+        for (auto& mesh : meshes) DestroyGPUMesh(device.get(), mesh);
+        for (auto buffer : readbacks) device->DestroyBuffer(buffer);
+    }
+
+    void VerifyColors(const GPUMesh& gpu, const std::vector<uint32_t>& expected) {
+        ASSERT_TRUE(gpu.IsValid());
+        EXPECT_EQ(gpu.vertexStride, sizeof(Vertex));
+        if (expected.empty() || !device->IsBindless()) {
+            EXPECT_FALSE(gpu.colorBuffer.IsValid());
+            EXPECT_EQ(gpu.colorSrvIndex, 0u);
+            return;
+        }
+        ASSERT_TRUE(gpu.colorBuffer.IsValid());
+        EXPECT_NE(gpu.colorSrvIndex, 0u);
+        EXPECT_NE(gpu.colorSrvIndex, UINT32_MAX);
+        EXPECT_EQ(gpu.colorSrvIndex, device->GetBufferSRVIndex(gpu.colorBuffer));
+        RHIBufferDesc desc{};
+        desc.sizeBytes = expected.size() * sizeof(uint32_t);
+        desc.usage = RHIBufferUsage::CopyDst;
+        desc.memory = RHIMemoryType::Readback;
+        const auto readback = device->CreateBuffer(desc);
+        ASSERT_TRUE(readback.IsValid());
+        readbacks.push_back(readback);
+        // Upload submission completed: DX12 buffers have decayed to COMMON.
+        // CopyBuffer promotes the color buffer to COPY_SOURCE for this readback.
+        cmd->CopyBuffer(gpu.colorBuffer, 0, readback, 0, desc.sizeBytes);
+        cmd->End();
+        cmd->Execute();
+        device->WaitIdle();
+        const auto* actual = static_cast<const uint32_t*>(device->MapBuffer(readback));
+        ASSERT_NE(actual, nullptr);
+        for (size_t i = 0; i < expected.size(); ++i)
+            EXPECT_EQ(actual[i], expected[i]) << "color vertex " << i;
+        cmd->Begin();
+    }
+};
+
+TEST_F(GPUMeshColorUpload, ColorStream_UploadedOnlyWhenPresent) {
+    Mesh source{};
+    source.header.magic = kMeshMagic;
+    source.header.version = kMeshVersion;
+    source.header.vertexFormat = MeshVertexFormat::Standard;
+    source.header.vertexStride = sizeof(Vertex);
+    source.header.vertexCount = 3;
+    source.header.lodCount = 1;
+    source.vertexData.resize(3 * sizeof(Vertex), 0);
+    const std::vector<uint32_t> colors = {0x12345678u, 0x90ABCDEFu, 0xFF008040u};
+
+    // Both entry points must upload identical bytes, allocate nothing for an
+    // absent stream, and reject a partial stream rather than reading past it.
+    for (bool deferred : {false, true}) {
+        for (bool present : {false, true}) {
+            SCOPED_TRACE(::testing::Message() << "deferred=" << deferred << ", colors=" << present);
+            source.vertexColors = present ? colors : std::vector<uint32_t>{};
+            cmd->Begin();
+            GPUMesh gpu;
+            if (deferred) {
+                std::vector<DeferredMeshUpload> uploads;
+                uploads.push_back(UploadMeshDeferred(device.get(), cmd, source));
+                gpu = uploads[0].mesh;
+                FlushDeferredMeshUploads(device.get(), cmd, uploads);
+            } else {
+                gpu = UploadMesh(device.get(), cmd, source);
+            }
+            meshes.push_back(gpu);
+            ASSERT_NO_FATAL_FAILURE(VerifyColors(gpu, source.vertexColors));
+            cmd->End();
+            cmd->Execute();
+            device->WaitIdle();
+        }
+        source.vertexColors = {colors[0]};
+        cmd->Begin();
+        if (deferred) {
+            auto upload = UploadMeshDeferred(device.get(), cmd, source);
+            EXPECT_FALSE(upload.mesh.IsValid());
+            EXPECT_FALSE(upload.mesh.colorBuffer.IsValid());
+            EXPECT_EQ(upload.mesh.colorSrvIndex, 0u);
+        } else {
+            auto gpu = UploadMesh(device.get(), cmd, source);
+            EXPECT_FALSE(gpu.IsValid());
+            EXPECT_FALSE(gpu.colorBuffer.IsValid());
+            EXPECT_EQ(gpu.colorSrvIndex, 0u);
+            meshes.push_back(gpu);
+        }
+        cmd->End();
+        cmd->Execute();
+        device->WaitIdle();
+    }
+    for (auto& gpu : meshes) {
+        DestroyGPUMesh(device.get(), gpu);
+        EXPECT_FALSE(gpu.colorBuffer.IsValid());
+        EXPECT_EQ(gpu.colorSrvIndex, 0u);
+    }
+}
+
+} // namespace
+#endif

@@ -672,7 +672,11 @@ void ReflectionProbeRenderer::RenderProbeCubemap(
                 // Rebind mesh buffers only when the mesh changes
                 if (drawCmd.meshId != lastBoundMeshId) {
                     if (sceneDesc.bindless) {
-                        cmd->SetDescriptorIndex(kSlotRootConstants, mesh.vbSrvIndex);
+                        const uint32_t pushData[4] = {
+                            mesh.vbSrvIndex, (mesh.vertexStride == 32) ? 1u : 0u,
+                            mesh.colorSrvIndex, 0u
+                        };
+                        cmd->SetRootConstants(kSlotRootConstants, pushData, 4);
                     } else {
                         cmd->SetVertexBuffer(0, mesh.vertexBuffer, 0);
                     }

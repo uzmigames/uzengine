@@ -112,7 +112,11 @@ void AddPBRPass(rg::RgBuilder& builder, const PBRPassDesc& desc)
                 // The DrawList is sorted so same-mesh commands are consecutive.
                 if (drawCmd.meshId != lastBoundMeshId) {
                     if (desc.bindless) {
-                        cmd->SetDescriptorIndex(kSlotRootConstants, mesh.vbSrvIndex);
+                        const uint32_t pushData[4] = {
+                            mesh.vbSrvIndex, (mesh.vertexStride == 32) ? 1u : 0u,
+                            mesh.colorSrvIndex, 0u
+                        };
+                        cmd->SetRootConstants(kSlotRootConstants, pushData, 4);
                     } else {
                         cmd->SetVertexBuffer(0, mesh.vertexBuffer, 0);
                     }

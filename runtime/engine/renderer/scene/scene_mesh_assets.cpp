@@ -303,7 +303,8 @@ void SceneRenderer::QueueBufferDestroy(RHIBufferHandle buffer) {
 }
 
 uint32_t SceneRenderer::RegisterProceduralMesh(Mesh&& mesh, const std::string& key) {
-    if (key.empty() || !mesh.IsValid()) return UINT32_MAX;
+    if (key.empty() || !mesh.IsValid() ||
+        (!mesh.vertexColors.empty() && mesh.vertexColors.size() != mesh.GetVertexCount())) return UINT32_MAX;
 
     // Return cached ID if this procedural mesh was already registered.
     auto it = m_meshMap.find(key);

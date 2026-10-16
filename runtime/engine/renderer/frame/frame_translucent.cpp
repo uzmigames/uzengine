@@ -179,11 +179,12 @@ void SceneRenderer::RegisterTranslucentPasses(rg::RgBuilder& rgBuilder, FrameCon
                 // Rebind vertex/index buffers only when mesh changes.
                 if (drawCmd.meshId != lastBoundMeshId) {
                     if (bindless) {
-                        const uint32_t pushData[2] = {
+                        const uint32_t pushData[4] = {
                             mesh.vbSrvIndex,
-                            (mesh.vertexStride == 32) ? 1u : 0u
+                            (mesh.vertexStride == 32) ? 1u : 0u,
+                            mesh.colorSrvIndex, 0u
                         };
-                        cmd->SetRootConstants(kSlotRootConstants, pushData, 2);
+                        cmd->SetRootConstants(kSlotRootConstants, pushData, 4);
                     } else {
                         cmd->SetVertexBuffer(0, mesh.vertexBuffer, 0);
                     }

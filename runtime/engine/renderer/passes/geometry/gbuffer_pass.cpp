@@ -139,11 +139,12 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                 cmd->SetPipeline(desc.instancedPipeline);
 
                 // Push both vertexBufferIndex and instanceBufferIndex as root constants.
-                const uint32_t rootConstants[2] = {
+                const uint32_t rootConstants[4] = {
                     mesh0.vbSrvIndex,
-                    desc.instanceBufferSrvIndex
+                    desc.instanceBufferSrvIndex,
+                    mesh0.colorSrvIndex, 0u
                 };
-                cmd->SetRootConstants(kSlotRootConstants, rootConstants, 2);
+                cmd->SetRootConstants(kSlotRootConstants, rootConstants, 4);
                 cmd->SetIndexBuffer(mesh0.indexBuffer, mesh0.indexFormat, 0);
 
                 // Select allocator: prefer cbRingAllocator (binder path), fall back to cbAllocator.
@@ -255,12 +256,14 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                     // The DrawList is sorted so same-mesh commands are consecutive.
                     if (drawCmd.meshId != lastBoundMeshId) {
                         if (desc.bindless) {
-                            // Push vertexBufferIndex + usePackedNormals (2 DWORDs)
-                            const uint32_t pushData[2] = {
+                            // Shared mesh root layout: vb, packed, color, previous vb.
+                            const uint32_t pushData[4] = {
                                 mesh.vbSrvIndex,
-                                (mesh.vertexStride == 32) ? 1u : 0u
+                                (mesh.vertexStride == 32) ? 1u : 0u,
+                                mesh.colorSrvIndex,
+                                0u
                             };
-                            cmd->SetRootConstants(kSlotRootConstants, pushData, 2);
+                            cmd->SetRootConstants(kSlotRootConstants, pushData, 4);
                         } else {
                             cmd->SetVertexBuffer(0, mesh.vertexBuffer, 0);
                         }
