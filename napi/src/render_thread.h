@@ -11,9 +11,9 @@
 /// Host communication. The async thread eliminates this bottleneck.
 ///
 /// # Thread Safety Contract
-/// - uz_render_frame() and uz_encode_frame() are called ONLY from ThreadMain().
-/// - Input forwarding (uz_on_mouse_move, etc.) stores state atomically; no
-///   mutex contention with the render path.
+/// - While started, RuntimeState access and input execute only on ThreadMain(),
+///   between frames. Synchronous requests use bounded owner rendezvous.
+/// - Without a loop, requests and input run inline on the Node main thread.
 /// - Resize is queued from the main thread and applied at frame start under
 ///   the render thread's control, avoiding mid-frame swapchain mutation.
 /// - Start() and Stop() must be called from the Node.js main thread.
@@ -21,6 +21,8 @@
 #pragma once
 
 #include <napi.h>
+#include "../../runtime/engine/app/owner_command_queue.h"
+#include "../../runtime/engine/containers/ring_buffer.h"
 
 #include <atomic>
 #include <chrono>
@@ -31,6 +33,13 @@
 
 // Forward declaration -- full definition lives in runtime.h.
 struct uz_frame_stats;
+
+struct InputEvent {
+    enum class Type { MouseMove, MouseButton, Key, KeyEx, Scroll };
+    Type type = Type::MouseMove;
+    float x = 0, y = 0;
+    int code = 0, pressed = 0, modifiers = 0;
+};
 
 /// Dedicated render thread that drives uz_render_frame() + uz_encode_frame()
 /// off the Node.js event loop, delivering results via ThreadSafeFunctions.
@@ -63,6 +72,11 @@ public:
     /// Thread-safe -- can be called from the Node.js main thread at any time.
     void RequestResize(int width, int height);
 
+    uz::OwnerStatus RunOnOwner(std::function<void()> fn,
+                              std::chrono::milliseconds completionBudget);
+    void PushInput(const InputEvent& event);
+    [[nodiscard]] uint64_t DroppedInputCount() const noexcept { return m_droppedInput.load(); }
+
     /// Returns true if the render thread is actively looping.
     [[nodiscard]] bool IsRunning() const noexcept { return m_running.load(std::memory_order_acquire); }
 
@@ -72,6 +86,9 @@ private:
     void ThreadMain();
 
     std::thread m_thread;
+    uz::OwnerCommandQueue m_commands;
+    uz::RingBuffer<InputEvent, 256> m_input;
+    std::atomic<uint64_t> m_droppedInput{0};
     std::atomic<bool> m_running{false};
     std::atomic<bool> m_stopRequested{false};
     int m_targetFps = 60;

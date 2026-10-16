@@ -11,7 +11,10 @@ static Napi::Value LoadScene(const Napi::CallbackInfo& info) {
         return env.Undefined();
     }
     std::string path = info[0].As<Napi::String>().Utf8Value();
-    if (!uz_load_scene(path.c_str())) {
+    auto ok = UzNapiOnOwner(env, "loadScene", [path] { return uz_load_scene(path.c_str()); },
+                            std::chrono::seconds(30));
+    if (!ok) return env.Undefined();
+    if (!*ok) {
         Napi::Error::New(env, std::string("Failed to load scene: ") + path).ThrowAsJavaScriptException();
     }
     return env.Undefined();
@@ -24,16 +27,22 @@ static Napi::Value SaveScene(const Napi::CallbackInfo& info) {
         return env.Undefined();
     }
     std::string path = info[0].As<Napi::String>().Utf8Value();
-    if (!uz_save_scene(path.c_str())) {
+    auto ok = UzNapiOnOwner(env, "saveScene", [path] { return uz_save_scene(path.c_str()); },
+                            std::chrono::seconds(30));
+    if (!ok) return env.Undefined();
+    if (!*ok) {
         Napi::Error::New(env, std::string("Failed to save scene: ") + path).ThrowAsJavaScriptException();
     }
     return env.Undefined();
 }
 
 static Napi::Value GetSceneTree(const Napi::CallbackInfo& info) {
-    const char* json = uz_get_scene_tree();
-    if (!json) return info.Env().Null();
-    return Napi::String::New(info.Env(), json);
+    auto json = UzNapiOnOwner(info.Env(), "getSceneTree", [] {
+        return UzNapiCopyString(uz_get_scene_tree());
+    });
+    if (!json) return info.Env().Undefined();
+    if (!*json) return info.Env().Null();
+    return Napi::String::New(info.Env(), **json);
 }
 
 // ── Entity ──────────────────────────────────────────────────────────────────
@@ -45,7 +54,9 @@ static Napi::Value CreateEntity(const Napi::CallbackInfo& info) {
         return env.Undefined();
     }
     std::string name = info[0].As<Napi::String>().Utf8Value();
-    uint32_t id = uz_create_entity(name.c_str());
+    auto result = UzNapiOnOwner(env, "createEntity", [name] { return uz_create_entity(name.c_str()); });
+    if (!result) return env.Undefined();
+    uint32_t id = *result;
     if (id == 0) {
         Napi::Error::New(env, std::string("Failed to create entity: ") + name).ThrowAsJavaScriptException();
         return env.Undefined();
@@ -59,7 +70,8 @@ static Napi::Value DestroyEntity(const Napi::CallbackInfo& info) {
         Napi::TypeError::New(env, "destroyEntity(entityId: number) expected").ThrowAsJavaScriptException();
         return env.Undefined();
     }
-    uz_destroy_entity(static_cast<uint32_t>(info[0].As<Napi::Number>().Uint32Value()));
+    const uint32_t id = info[0].As<Napi::Number>().Uint32Value();
+    UzNapiOnOwner(env, "destroyEntity", [id] { uz_destroy_entity(id); });
     return env.Undefined();
 }
 
@@ -74,9 +86,12 @@ static Napi::Value GetComponentJson(const Napi::CallbackInfo& info) {
     }
     uint32_t entityId         = static_cast<uint32_t>(info[0].As<Napi::Number>().Uint32Value());
     std::string componentType = info[1].As<Napi::String>().Utf8Value();
-    const char* json = uz_get_component_json(entityId, componentType.c_str());
-    if (!json) return env.Null();
-    return Napi::String::New(env, json);
+    auto json = UzNapiOnOwner(env, "getComponentJson", [entityId, componentType] {
+        return UzNapiCopyString(uz_get_component_json(entityId, componentType.c_str()));
+    });
+    if (!json) return env.Undefined();
+    if (!*json) return env.Null();
+    return Napi::String::New(env, **json);
 }
 
 static Napi::Value SetComponentProperty(const Napi::CallbackInfo& info) {
@@ -94,9 +109,12 @@ static Napi::Value SetComponentProperty(const Napi::CallbackInfo& info) {
     std::string property      = info[2].As<Napi::String>().Utf8Value();
     std::string valueJson     = info[3].As<Napi::String>().Utf8Value();
 
-    int ok = uz_set_component_property(entityId, componentType.c_str(),
-                                       property.c_str(), valueJson.c_str());
-    return Napi::Boolean::New(env, ok != 0);
+    auto ok = UzNapiOnOwner(env, "setComponentProperty", [entityId, componentType, property, valueJson] {
+        return uz_set_component_property(entityId, componentType.c_str(),
+                                         property.c_str(), valueJson.c_str());
+    });
+    if (!ok) return env.Undefined();
+    return Napi::Boolean::New(env, *ok != 0);
 }
 
 static Napi::Value GetEntityComponents(const Napi::CallbackInfo& info) {
@@ -107,9 +125,12 @@ static Napi::Value GetEntityComponents(const Napi::CallbackInfo& info) {
         return env.Undefined();
     }
     uint32_t entityId = static_cast<uint32_t>(info[0].As<Napi::Number>().Uint32Value());
-    const char* json = uz_get_entity_components(entityId);
-    if (!json) return env.Null();
-    return Napi::String::New(env, json);
+    auto json = UzNapiOnOwner(env, "getEntityComponents", [entityId] {
+        return UzNapiCopyString(uz_get_entity_components(entityId));
+    });
+    if (!json) return env.Undefined();
+    if (!*json) return env.Null();
+    return Napi::String::New(env, **json);
 }
 
 // ── Selection ──────────────────────────────────────────────────────────────
@@ -121,30 +142,35 @@ static Napi::Value SelectEntity(const Napi::CallbackInfo& info) {
             .ThrowAsJavaScriptException();
         return env.Undefined();
     }
-    uz_select_entity(static_cast<uint32_t>(info[0].As<Napi::Number>().Uint32Value()));
+    const uint32_t id = info[0].As<Napi::Number>().Uint32Value();
+    UzNapiOnOwner(env, "selectEntity", [id] { uz_select_entity(id); });
     return env.Undefined();
 }
 
 static Napi::Value GetSelectedEntity(const Napi::CallbackInfo& info) {
-    uint32_t id = uz_get_selected_entity();
-    return Napi::Number::New(info.Env(), id);
+    auto id = UzNapiOnOwner(info.Env(), "getSelectedEntity", [] { return uz_get_selected_entity(); });
+    if (!id) return info.Env().Undefined();
+    return Napi::Number::New(info.Env(), *id);
 }
 
 // ── Play Mode ──────────────────────────────────────────────────────────────
 
 static Napi::Value Play(const Napi::CallbackInfo& info) {
-    int ok = uz_play();
-    return Napi::Boolean::New(info.Env(), ok != 0);
+    auto ok = UzNapiOnOwner(info.Env(), "play", [] { return uz_play(); });
+    if (!ok) return info.Env().Undefined();
+    return Napi::Boolean::New(info.Env(), *ok != 0);
 }
 
 static Napi::Value Stop(const Napi::CallbackInfo& info) {
-    int ok = uz_stop();
-    return Napi::Boolean::New(info.Env(), ok != 0);
+    auto ok = UzNapiOnOwner(info.Env(), "stop", [] { return uz_stop(); });
+    if (!ok) return info.Env().Undefined();
+    return Napi::Boolean::New(info.Env(), *ok != 0);
 }
 
 static Napi::Value IsPlaying(const Napi::CallbackInfo& info) {
-    int playing = uz_is_playing();
-    return Napi::Boolean::New(info.Env(), playing != 0);
+    auto playing = UzNapiOnOwner(info.Env(), "isPlaying", [] { return uz_is_playing(); });
+    if (!playing) return info.Env().Undefined();
+    return Napi::Boolean::New(info.Env(), *playing != 0);
 }
 
 // ── Registration ────────────────────────────────────────────────────────────

@@ -12,6 +12,7 @@
 #pragma once
 
 #include "runtime.h"
+#include "render_thread.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -26,6 +27,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <string>
+#include <optional>
+#include <type_traits>
 
 /// SEH-safe wrapper for calling engine C API functions.
 ///
@@ -125,6 +128,38 @@ inline DWORD uz_seh_get_codec_extradata(const uint8_t** out_data, uint32_t* out_
 }
 
 #endif // _WIN32
+
+RenderThread& UzNapiRenderThread();
+
+// Arguments and results belong to the command, never the binding's stack:
+// completion may outlive a timeout. No Napi objects are used on the owner.
+template <typename Fn>
+auto UzNapiOnOwner(Napi::Env env, const char* command, Fn fn,
+                  std::chrono::milliseconds budget = std::chrono::seconds(5)) {
+    using Value = std::invoke_result_t<Fn>;
+    using Result = std::conditional_t<std::is_void_v<Value>, bool, Value>;
+    auto result = std::make_shared<Result>();
+    const auto status = UzNapiRenderThread().RunOnOwner([fn = std::move(fn), result]() mutable {
+        if constexpr (std::is_void_v<Value>) {
+            fn();
+            *result = true;
+        } else {
+            *result = fn();
+        }
+    }, budget);
+    if (status != uz::OwnerStatus::Ok) {
+        const char* reason = status == uz::OwnerStatus::Timeout ? "timeout" :
+                             status == uz::OwnerStatus::Stopped ? "stopped" : "busy";
+        Napi::Error::New(env, std::string("owner thread ") + reason + " (" + command + ")")
+            .ThrowAsJavaScriptException();
+        result.reset();
+    }
+    return result;
+}
+
+inline std::optional<std::string> UzNapiCopyString(const char* value) {
+    return value ? std::optional<std::string>(value) : std::nullopt;
+}
 
 // ── Module registration (called from addon.cpp) ─────────────────────────────
 

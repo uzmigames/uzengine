@@ -13,6 +13,16 @@
 
 namespace {
 
+void ApplyInput(const InputEvent& event) {
+    switch (event.type) {
+    case InputEvent::Type::MouseMove: uz_on_mouse_move(event.x, event.y); break;
+    case InputEvent::Type::MouseButton: uz_on_mouse_button(event.code, event.pressed); break;
+    case InputEvent::Type::Key: uz_on_key(event.code, event.pressed); break;
+    case InputEvent::Type::KeyEx: uz_on_key_ex(event.code, event.pressed, event.modifiers); break;
+    case InputEvent::Type::Scroll: uz_on_scroll(event.x); break;
+    }
+}
+
 /// Callback invoked by Napi::ThreadSafeFunction on the Node.js main thread
 /// to deliver frame stats. The `data` pointer is a heap-allocated uz_frame_stats
 /// that we own and must delete.
@@ -93,6 +103,7 @@ bool RenderThread::Start(Napi::Env env, int targetFps,
     );
 
     m_running.store(true, std::memory_order_release);
+    m_commands.AttachOwner();
     m_thread = std::thread(&RenderThread::ThreadMain, this);
     return true;
 }
@@ -107,6 +118,7 @@ void RenderThread::Stop() {
     if (m_thread.joinable()) {
         m_thread.join();
     }
+    m_input.Clear();
 
     // Release the TSFNs so Node.js can shut down cleanly. Calling Release()
     // decrements the ref count; once it reaches zero the release callback fires
@@ -124,9 +136,23 @@ void RenderThread::RequestResize(int width, int height) {
     m_resizePending = true;
 }
 
+uz::OwnerStatus RenderThread::RunOnOwner(std::function<void()> fn,
+                                       std::chrono::milliseconds completionBudget) {
+    return m_commands.Submit(std::move(fn), std::chrono::milliseconds(2000), completionBudget);
+}
+
+void RenderThread::PushInput(const InputEvent& event) {
+    if (!m_commands.IsOwnerAttached()) {
+        ApplyInput(event);
+    } else if (!m_input.TryPush(event)) {
+        m_droppedInput.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
 // ── Render Loop ──────────────────────────────────────────────────────────────
 
 void RenderThread::ThreadMain() {
+    m_commands.BindOwnerThread();
     // Initialize COM for this thread. uz_render_frame() uses Win32 message
     // pumping internally (PeekMessage/DispatchMessage), and DX12 device
     // creation may call into COM. MTA is appropriate for a worker thread.
@@ -147,6 +173,10 @@ void RenderThread::ThreadMain() {
                 m_resizePending = false;
             }
         }
+
+        InputEvent input;
+        while (m_input.TryPop(input)) ApplyInput(input);
+        m_commands.DrainOne();
 
         // ── Render ───────────────────────────────────────────────────────
         // Call the raw C API directly (no SEH wrapper). The SEH wrappers in
@@ -198,6 +228,9 @@ void RenderThread::ThreadMain() {
             std::this_thread::sleep_for(frameDuration - elapsed);
         }
     }
+
+    m_commands.FailPending();
+    m_commands.DetachOwner();
 
     if (comInitialized) {
         CoUninitialize();

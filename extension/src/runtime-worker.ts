@@ -304,6 +304,11 @@ export function runWorker(
         }
         case 'shutdown': {
           if (addon) {
+            try {
+              addon.stopRenderLoop();
+            } catch {
+              /* ignore */
+            }
             // Unregister the log callback first so the addon stops
             // calling back into the JS function after it is freed.
             try {

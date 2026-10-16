@@ -7,6 +7,8 @@
 
 static RenderThread g_renderThread;
 
+RenderThread& UzNapiRenderThread() { return g_renderThread; }
+
 // ── Viewport Lifecycle ──────────────────────────────────────────────────────
 
 static Napi::Value CreateViewport(const Napi::CallbackInfo& info) {
@@ -20,19 +22,23 @@ static Napi::Value CreateViewport(const Napi::CallbackInfo& info) {
     int width         = info[1].As<Napi::Number>().Int32Value();
     int height        = info[2].As<Napi::Number>().Int32Value();
 
-    int result = 0;
-    DWORD sehCode = uz_seh_create_viewport(
-        reinterpret_cast<void*>(static_cast<uintptr_t>(parentHwnd)),
-        width, height, &result);
-    if (UzNapiCheckSeh(env, sehCode)) return env.Undefined();
+    struct Result { int ok = 0; DWORD seh = 0; };
+    auto result = UzNapiOnOwner(env, "createViewport", [parentHwnd, width, height] {
+        Result value;
+        value.seh = uz_seh_create_viewport(
+            reinterpret_cast<void*>(static_cast<uintptr_t>(parentHwnd)), width, height, &value.ok);
+        return value;
+    });
+    if (!result || UzNapiCheckSeh(env, result->seh)) return env.Undefined();
 
-    if (!result) {
+    if (!result->ok) {
         Napi::Error::New(env, "Failed to create viewport").ThrowAsJavaScriptException();
     }
     return env.Undefined();
 }
 
 static Napi::Value DestroyViewport(const Napi::CallbackInfo& info) {
+    g_renderThread.Stop();
     uz_destroy_viewport();
     return info.Env().Undefined();
 }
@@ -47,12 +53,7 @@ static Napi::Value ResizeViewport(const Napi::CallbackInfo& info) {
     int w = info[0].As<Napi::Number>().Int32Value();
     int h = info[1].As<Napi::Number>().Int32Value();
 
-    // Always defer resize to the render thread (BUG-3 fix). Calling
-    // uz_resize_viewport() directly from the IPC thread causes concurrent
-    // access to frameReadback/h264Encoder with the render thread.
-    // If the render loop isn't running yet, the resize will be applied
-    // when the loop starts (first frame checks m_resizePending).
-    g_renderThread.RequestResize(w, h);
+    UzNapiOnOwner(env, "resizeViewport", [w, h] { uz_resize_viewport(w, h); });
     return env.Undefined();
 }
 
@@ -65,11 +66,11 @@ static Napi::Value SetViewportPosition(const Napi::CallbackInfo& info) {
             .ThrowAsJavaScriptException();
         return env.Undefined();
     }
-    uz_set_viewport_position(
-        info[0].As<Napi::Number>().Int32Value(),
-        info[1].As<Napi::Number>().Int32Value(),
-        info[2].As<Napi::Number>().Int32Value(),
-        info[3].As<Napi::Number>().Int32Value());
+    const int x = info[0].As<Napi::Number>().Int32Value();
+    const int y = info[1].As<Napi::Number>().Int32Value();
+    const int w = info[2].As<Napi::Number>().Int32Value();
+    const int h = info[3].As<Napi::Number>().Int32Value();
+    UzNapiOnOwner(env, "setViewportPosition", [x, y, w, h] { uz_set_viewport_position(x, y, w, h); });
     return env.Undefined();
 }
 
@@ -78,9 +79,18 @@ static Napi::Value SetViewportPosition(const Napi::CallbackInfo& info) {
 static Napi::Value RenderFrame(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
 
-    uz_frame_stats stats = {};
-    DWORD sehCode = uz_seh_render_frame(&stats);
-    if (UzNapiCheckSeh(env, sehCode)) return env.Undefined();
+    if (g_renderThread.IsRunning()) {
+        Napi::Error::New(env, "renderFrame unavailable while render loop runs").ThrowAsJavaScriptException();
+        return env.Undefined();
+    }
+    struct Result { uz_frame_stats stats{}; DWORD seh = 0; };
+    auto result = UzNapiOnOwner(env, "renderFrame", [] {
+        Result value;
+        value.seh = uz_seh_render_frame(&value.stats);
+        return value;
+    });
+    if (!result || UzNapiCheckSeh(env, result->seh)) return env.Undefined();
+    const auto& stats = result->stats;
 
     Napi::Object obj = Napi::Object::New(env);
     obj.Set("fps",        Napi::Number::New(env, stats.fps));
@@ -97,18 +107,20 @@ static Napi::Value RenderFrame(const Napi::CallbackInfo& info) {
 static Napi::Value CaptureScreenshot(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
 
-    uint8_t* data  = nullptr;
-    uint32_t size  = 0;
-    int result     = 0;
-    DWORD sehCode = uz_seh_capture_screenshot(&data, &size, &result);
-    if (UzNapiCheckSeh(env, sehCode)) return env.Undefined();
-
-    if (!result || !data || size == 0) {
-        return env.Null();
-    }
-    Napi::Buffer<uint8_t> buf = Napi::Buffer<uint8_t>::Copy(env, data, size);
-    uz_free_buffer(data);
-    return buf;
+    struct Result { std::vector<uint8_t> bytes; DWORD seh = 0; };
+    auto result = UzNapiOnOwner(env, "captureScreenshot", [] {
+        Result value;
+        uint8_t* data = nullptr;
+        uint32_t size = 0;
+        int ok = 0;
+        value.seh = uz_seh_capture_screenshot(&data, &size, &ok);
+        if (ok && data && size) value.bytes.assign(data, data + size);
+        uz_free_buffer(data);
+        return value;
+    });
+    if (!result || UzNapiCheckSeh(env, result->seh)) return env.Undefined();
+    if (result->bytes.empty()) return env.Null();
+    return Napi::Buffer<uint8_t>::Copy(env, result->bytes.data(), result->bytes.size());
 }
 
 static Napi::Value FreeBuffer(const Napi::CallbackInfo& info) {
@@ -122,16 +134,19 @@ static Napi::Value FreeBuffer(const Napi::CallbackInfo& info) {
 static Napi::Value EncodeFrame(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
 
-    const uint8_t* data = nullptr;
-    uint32_t size       = 0;
-    int result          = 0;
-    DWORD sehCode = uz_seh_encode_frame(&data, &size, &result);
-    if (UzNapiCheckSeh(env, sehCode)) return env.Undefined();
-
-    if (!result || !data || size == 0) {
-        return env.Null();
-    }
-    return Napi::Buffer<uint8_t>::Copy(env, data, size);
+    struct Result { std::vector<uint8_t> bytes; DWORD seh = 0; };
+    auto result = UzNapiOnOwner(env, "encodeFrame", [] {
+        Result value;
+        const uint8_t* data = nullptr;
+        uint32_t size = 0;
+        int ok = 0;
+        value.seh = uz_seh_encode_frame(&data, &size, &ok);
+        if (ok && data && size) value.bytes.assign(data, data + size);
+        return value;
+    });
+    if (!result || UzNapiCheckSeh(env, result->seh)) return env.Undefined();
+    if (result->bytes.empty()) return env.Null();
+    return Napi::Buffer<uint8_t>::Copy(env, result->bytes.data(), result->bytes.size());
 }
 
 static Napi::Value RequestKeyframe(const Napi::CallbackInfo& info) {

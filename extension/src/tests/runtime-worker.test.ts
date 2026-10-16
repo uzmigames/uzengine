@@ -278,6 +278,18 @@ describe('runtime worker at the native addon boundary', () => {
     expect(host.exit).not.toHaveBeenCalled();
   });
 
+  it('shutdown stops the render loop before destroying the viewport and the runtime', () => {
+    start();
+    send({ id: 8, cmd: 'shutdown' });
+    expect(addon.stopRenderLoop).toHaveBeenCalledExactlyOnceWith();
+    expect(addon.stopRenderLoop.mock.invocationCallOrder[0]).toBeLessThan(
+      addon.destroyViewport.mock.invocationCallOrder[0],
+    );
+    expect(addon.destroyViewport.mock.invocationCallOrder[0]).toBeLessThan(
+      addon.shutdown.mock.invocationCallOrder[0],
+    );
+  });
+
   it.each([true, false])(
     'flushes shutdown replies even when addon cleanup fails (loaded=%s)',
     async (loaded) => {
@@ -285,7 +297,7 @@ describe('runtime worker at the native addon boundary', () => {
         loader.mockImplementation(() => {
           throw new Error('missing addon');
         });
-      for (const method of ['setLogCallback', 'destroyViewport', 'shutdown']) {
+      for (const method of ['stopRenderLoop', 'setLogCallback', 'destroyViewport', 'shutdown']) {
         addon[method].mockImplementation(() => {
           throw new Error('already stopped');
         });
