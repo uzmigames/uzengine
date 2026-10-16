@@ -132,6 +132,80 @@ Two shader variants capture the procedural sky into a 6-face RGBA16F cubemap for
 
 The captured cubemap is passed to `IBLBaker::BakeEnvironment()` after graph execution.
 
+### Volumetric Clouds (M0-M5)
+
+`VolumetricCloudsComponent` supplies the first cloud entity's settings to
+`CloudPass`. All cloud producers and consumers are tracked render-graph passes
+using the current frame's camera; there is no deferred previous-frame dispatch.
+The default path registers `Cloud_Raymarch` after lighting, reads scene depth
+and disk-loaded shape/detail/STBN resources, writes half-resolution RGBA16F
+(premultiplied radiance, transmittance), then `Cloud_Composite` blends it into
+HDR scene color. Depth clips cloud rays against opaque geometry.
+
+The march intersects spherical cloud shells in kilometers, clamps distance by
+`tracingMaxDistanceKm`, and uses a counted **256-iteration** upper bound.
+Perspective-scaled steps respect component min/max step sizes, grow faster in
+empty space, and use footprint-derived mip levels. A 128x128x64 R8 offline
+spatiotemporal blue-noise volume jitters the initial sample by pixel and frame.
+Noise is never baked on the GPU. `r.Cloud.ProceduralNoise=true` preserves the
+current broken-cloud FBM default; false samples the loaded 128-cubed
+Perlin-Worley shape volume. Both use the 32-cubed detail volume.
+
+Lighting integrates Beer-Lambert extinction analytically per segment.
+Self-shadow light marches have at most eight samples. Up to eight Oz/Kulla
+scattering orders attenuate scattering/extinction/eccentricity by 0.5, with
+height-dependent sky illumination and optional powder (default scale zero).
+Dual-lobe HG is the default phase; HG/Draine is a compile-time option.
+Cloud aerial perspective remains exponential sky-color haze, not the planned
+camera-to-cloud atmosphere LUT integration. Silver-lining acceptance remains
+open; brighter multi-scatter interiors are shipped.
+
+`r.Clouds.TemporalUpscale=false` keeps the default half-resolution path.
+Enabling it selects the quarter-resolution raymarch and a rotating 4x4 Bayer
+sample, writes cloud-weighted distance, and registers `Cloud_Temporal`
+to produce full-resolution ping-pong history before compositing. The resolve
+uses cloud-point reprojection for sky, closest reversed-Z depth and velocity
+for geometry, 3x3 YCoCg/transmittance variance clipping, and invalid-history
+rejection. It never reads uninitialized history.
+
+An optional `layers` array contains one to four shells with altitude, height,
+density scale, shape/detail amount, weather RGBA channel/exponent, bias and
+`exp * exp(exp_exponent * h) + linear * h + constant` profiles.
+Empty weather paths mean uniform coverage; authored images load as linear
+RGBA8 through VFS. Overlapping layers add density, gaps are skipped, and all
+layers share one 256-iteration budget. Omitted layers and a neutral single
+layer retain the original path. Global `cloudType=0.5` retains its original
+height gradient; other types interpolate flatter stratus and taller cumulus.
+CloudCB remains **1024 bytes**, with layer arrays at offsets 368/432/496.
+
+`r.Clouds.GroundShadows=false` is opt-in. When enabled with an eligible sun,
+`Cloud_Shadow_Cascade0..2` and `Cloud_Shadow_Resolve0..2` run before
+deferred lighting, generating and temporally resolving one to three Beer
+shadow cascades. Defaults are two 512-square maps over 50 km. An alternate
+deferred-lighting pipeline attenuates direct sunlight, and alternate cloud
+raymarch pipelines sample BSM optical depth instead of local light marches.
+These passes declare noise/weather/history dependencies and use initialized
+history gating. Readable cloud-shaped ground silhouettes remain opt-in visual
+polish, not a completed default feature.
+
+Remaining artistic literals are controlled by `r.Cloud.*` CVars. Their shipped
+defaults exactly match the former shader constants:
+
+| CVar suffix | Default |
+|---|---|
+| `SkyBottomVisibility` | 0.8 (also legacy sky normalization divisor) |
+| `WindZScale`, `DetailWindZScale` | 0.05, 0.1 |
+| `DetailFrequencyScale`, `DetailUVScale`, `DetailMipScale` | 2, 0.25, 0.125 |
+| `WeatherUVScale` | 0.002 |
+| `HeightBottomStart`, `HeightBottomEnd` | 0, 0.07 |
+| `HeightTopEnd`, `HeightTopStart` | 1, 0.3 |
+| `HeightStratusEnd`, `HeightStratusStart`, `HeightCumulusStart` | 0.35, 0.1, 0.8 |
+| `LightMarchHeightScale` | 2 (maximum self-shadow distance in layer heights) |
+| `AerialPerspectiveDensity` | 0.04 |
+
+Keep height-ramp endpoints distinct when authoring overrides. Noise/weather
+retain the existing s3 wrap sampler; shadow sampling retains s2, never s0.
+
 ## Key Files
 
 | File | Purpose |

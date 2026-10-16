@@ -128,7 +128,23 @@ cbuffer CloudCB : register(b2) {
     float4 g_layerGeometry[4];
     float4 g_layerShape[4];
     float4 g_layerProfile[4];
-    float4 _layerReserved[29];
+    float g_skyBottomVisibility;
+    float g_windZScale;
+    float g_detailWindZScale;
+    float g_detailFrequencyScale;
+    float g_detailUVScale;
+    float g_detailMipScale;
+    float g_weatherUVScale;
+    float g_heightBottomStart;
+    float g_heightBottomEnd;
+    float g_heightTopEnd;
+    float g_heightTopStart;
+    float g_heightStratusEnd;
+    float g_heightStratusStart;
+    float g_heightCumulusStart;
+    float g_lightMarchHeightScale;
+    float g_aerialPerspectiveDensity;
+    float4 _layerReserved[25];
 };
 
 SamplerState linearSampler : register(s3);
@@ -301,14 +317,14 @@ float3 EvaluateMultiScattering(float opticalDepthToSun, float cosTheta) {
 float HeightGradient(float sampleHeight, float innerRadius, float layerHeight) {
     float h = saturate((sampleHeight - innerRadius) / layerHeight);
     // Sharp bottom ramp (flat cloud base)
-    float bottom = smoothstep(0.0f, 0.07f, h);
+    float bottom = smoothstep(g_heightBottomStart, g_heightBottomEnd, h);
     // Rounded top fade — peak density around 20-40%, gradual falloff to top
-    float top = smoothstep(1.0f, 0.3f, h);
+    float top = smoothstep(g_heightTopEnd, g_heightTopStart, h);
     if (g_cloudType != 0.5f) {
         float type = saturate(g_cloudType);
-        float fadeEnd = lerp(0.35f, 1.0f, saturate(type * 2.0f));
-        float fadeStart = type < 0.5f ? lerp(0.1f, 0.3f, type * 2.0f)
-            : lerp(0.3f, 0.8f, (type - 0.5f) * 2.0f);
+        float fadeEnd = lerp(g_heightStratusEnd, g_heightTopEnd, saturate(type * 2.0f));
+        float fadeStart = type < 0.5f ? lerp(g_heightStratusStart, g_heightTopStart, type * 2.0f)
+            : lerp(g_heightTopStart, g_heightCumulusStart, (type - 0.5f) * 2.0f);
         top = smoothstep(fadeEnd, fadeStart, h);
     }
     return bottom * top;
@@ -381,7 +397,7 @@ float SampleDensity(float3 samplePosKm, float innerRadius, float layerHeight, fl
     float3 noisePos = float3(
         (samplePosKm.x + windOffset.x) * g_noiseXYScale,
         (samplePosKm.y + windOffset.y) * g_noiseXYScale,
-        normalizedH * g_noiseZScale + windOffset.z * 0.05f
+        normalizedH * g_noiseZScale + windOffset.z * g_windZScale
     );
 
     // Shape noise — FBM with CVar-driven octaves
@@ -419,13 +435,13 @@ float SampleDensity(float3 samplePosKm, float innerRadius, float layerHeight, fl
 #ifdef UZ_BINDLESS
     if (g_detailNoiseSrv != 0xFFFFFFFF && shapeDensity > 0.0f) {
         Texture3D<float> detailTex = ResourceDescriptorHeap[g_detailNoiseSrv];
-        float3 detailPos = noisePos * (g_fbmLacunarity * 2.0f) + float3(windOffset.x * g_detailWindScale,
+        float3 detailPos = noisePos * (g_fbmLacunarity * g_detailFrequencyScale) + float3(windOffset.x * g_detailWindScale,
                                                       windOffset.y * g_detailWindScale,
-                                                      windOffset.z * 0.1f);
+                                                      windOffset.z * g_detailWindZScale);
         // 32^3 detail has one quarter the shape volume's texel density at
         // the default lacunarity (2); keep both LOD footprints consistent.
-        float detailMip = max(0.0f, mipLevel + log2(g_fbmLacunarity * 0.125f));
-        float detailNoise = detailTex.SampleLevel(linearSampler, detailPos * 0.25f, detailMip);
+        float detailMip = max(0.0f, mipLevel + log2(g_fbmLacunarity * g_detailMipScale));
+        float detailNoise = detailTex.SampleLevel(linearSampler, detailPos * g_detailUVScale, detailMip);
         float erosionStrength = g_detailErosion * (1.0f - saturate(shapeDensity * 2.0f));
         shapeDensity = saturate(shapeDensity - detailNoise * erosionStrength);
     }
@@ -458,7 +474,7 @@ float LightMarch(float3 samplePosKm, float3 sunDir, float innerRadius,
                                           float3(0, 0, 0), outerRadius);
     float lightDist = max(outerHit.y, 0.0f);
     if (lightDist <= 0.0f) return 0.0f;
-    lightDist = min(lightDist, layerHeight * 2.0f);
+    lightDist = min(lightDist, layerHeight * g_lightMarchHeightScale);
 
     uint lightSteps = clamp(g_lightSteps, 1u, 8u);
     float stepLen = lightDist / float(lightSteps);
@@ -613,8 +629,8 @@ void main(uint3 DTid : SV_DispatchThreadID) {
         /// @constants bottom visibility=0.8, normalized to the legacy base fill.
         float heightFraction = saturate((length(samplePos) - innerRadius) / g_layerHeightKm);
         float3 skyIrradiance = g_ambientColor * (4.0f * PI);
-        float skyGradient = lerp(0.8f, 1.0f, heightFraction);
-        float skyLightScale = g_ambientMultiplier / 0.8f;
+        float skyGradient = lerp(g_skyBottomVisibility, 1.0f, heightFraction);
+        float skyLightScale = g_ambientMultiplier / g_skyBottomVisibility;
         radiance += skyIrradiance * (1.0f / (4.0f * PI)) * skyGradient * skyLightScale;
 
         /// @ref Schneider & Vos 2015 "Real-Time Volumetric Cloudscapes of Horizon Zero Dawn"
@@ -636,7 +652,7 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     // Approximates atmospheric scattering between camera and cloud.
     /// @ref Hillaire 2020 — aerial perspective on volumetric clouds
     float cloudDist = tNear; // distance to first cloud sample (km)
-    float apFactor = 1.0f - exp(-cloudDist * 0.04f);
+    float apFactor = 1.0f - exp(-cloudDist * g_aerialPerspectiveDensity);
     float3 skyColor = g_ambientColor;
     if (dot(skyColor, skyColor) < 0.001f) {
         skyColor = float3(0.4f, 0.55f, 0.8f); // fallback blue sky

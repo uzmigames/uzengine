@@ -22,13 +22,13 @@ float LayerDensity(float3 pos, uint layer, float mip) {
     if (gradient <= 0.0f) return 0.0f;
     float3 wind = float3(g_windVelocityX, g_windVelocityY, g_windVelocityZ) * g_time;
     float3 noisePos = float3((pos.xy + wind.xy) * g_noiseXYScale,
-                            h * g_noiseZScale + wind.z * 0.05f);
+                            h * g_noiseZScale + wind.z * g_windZScale);
     float4 controls = g_layerShape[layer];
     float coverage = g_coverage;
 #ifdef UZ_BINDLESS
     if (g_weatherSrv != 0xFFFFFFFF) {
         Texture2D<float4> weather = ResourceDescriptorHeap[g_weatherSrv];
-        float4 channels = weather.SampleLevel(linearSampler, (pos.xy + wind.xy) * 0.002f, 0);
+        float4 channels = weather.SampleLevel(linearSampler, (pos.xy + wind.xy) * g_weatherUVScale, 0);
         coverage *= pow(max(channels[min(uint(geometry.w), 3u)], 0.0f), controls.z);
     }
 #endif
@@ -48,10 +48,10 @@ float LayerDensity(float3 pos, uint layer, float mip) {
 #ifdef UZ_BINDLESS
     if (g_detailNoiseSrv != 0xFFFFFFFF && density > 0.0f && controls.y > 0.0f) {
         Texture3D<float> detail = ResourceDescriptorHeap[g_detailNoiseSrv];
-        float3 detailPos = noisePos * (g_fbmLacunarity * 2.0f)
-            + float3(wind.xy * g_detailWindScale, wind.z * 0.1f);
-        float detailMip = max(0.0f, mip + log2(g_fbmLacunarity * 0.125f));
-        float erosion = detail.SampleLevel(linearSampler, detailPos * 0.25f, detailMip);
+        float3 detailPos = noisePos * (g_fbmLacunarity * g_detailFrequencyScale)
+            + float3(wind.xy * g_detailWindScale, wind.z * g_detailWindZScale);
+        float detailMip = max(0.0f, mip + log2(g_fbmLacunarity * g_detailMipScale));
+        float erosion = detail.SampleLevel(linearSampler, detailPos * g_detailUVScale, detailMip);
         density = saturate(density - erosion * g_detailErosion * controls.y
             * (1.0f - saturate(density * 2.0f)));
     }
@@ -63,7 +63,7 @@ float LayerLightDepth(float3 pos, float3 sunDir, uint layer) {
     float4 geometry = g_layerGeometry[layer];
     float2 outer = RaySphereIntersect(pos, sunDir, 0.0f,
         PLANET_RADIUS_KM + geometry.x + geometry.y);
-    float distance = min(max(outer.y, 0.0f), geometry.y * 2.0f);
+    float distance = min(max(outer.y, 0.0f), geometry.y * g_lightMarchHeightScale);
     uint steps = clamp(g_lightSteps, 1u, 8u);
     float stepLength = distance / float(steps);
     float mip = LayerMip(layer, sunDir, stepLength, 0.0f);
@@ -177,7 +177,7 @@ float4 MarchCloudLayers(float3 origin, float3 direction, uint2 pixel, out float 
         float3 radiance = EvaluateMultiScattering(lightDepth, cosTheta);
         float3 skyIrradiance = g_ambientColor * (4.0f * PI);
         radiance += skyIrradiance * (1.0f / (4.0f * PI))
-            * lerp(0.8f, 1.0f, height / density) * (g_ambientMultiplier / 0.8f);
+            * lerp(g_skyBottomVisibility, 1.0f, height / density) * (g_ambientMultiplier / g_skyBottomVisibility);
         radiance *= 1.0f - g_powderScale * exp(-extinction * g_powderExponent);
         float3 scatter = extinction * g_scatteringAlbedo * radiance;
         luminance += transmittance * (scatter - scatter * stepTransmittance) / max(extinction, EXT_EPS);
@@ -187,7 +187,7 @@ float4 MarchCloudLayers(float3 origin, float3 direction, uint2 pixel, out float 
     frontDepth = weightedDepth / max(1.0f - transmittance, EXT_EPS);
     float3 skyColor = dot(g_ambientColor, g_ambientColor) < 0.001f
         ? float3(0.4f, 0.55f, 0.8f) : g_ambientColor;
-    luminance = lerp(luminance, skyColor * (1.0f - transmittance), 1.0f - exp(-first * 0.04f));
+    luminance = lerp(luminance, skyColor * (1.0f - transmittance), 1.0f - exp(-first * g_aerialPerspectiveDensity));
     return float4(luminance, transmittance);
 }
 #endif

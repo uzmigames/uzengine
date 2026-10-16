@@ -50,6 +50,22 @@ static auto* cv_CloudProcedural = UZ_CVAR_BOOL("r.Cloud.ProceduralNoise", true, 
 static auto* cv_CloudTemporalUpscale = UZ_CVAR_BOOL("r.Clouds.TemporalUpscale", false, "Opt-in quarter-resolution Bayer cloud temporal upscale");
 static auto* cv_CloudGroundShadows = UZ_CVAR_BOOL("r.Clouds.GroundShadows", false, "Opt-in Beer cloud ground and self shadows");
 static auto* cv_CloudShadowSplitLambda = UZ_CVAR_FLOAT("r.Clouds.ShadowSplitLambda", 0.5f, "Practical cloud shadow cascade split blend", 0.0f, 1.0f);
+// M6 defaults match the former shader literals exactly, including legacy sky normalization.
+static auto* cv_CloudSkyBottom = UZ_CVAR_FLOAT("r.Cloud.SkyBottomVisibility", 0.8f, "Cloud sky-light bottom visibility and normalization", 0.01f, 1.0f);
+static auto* cv_CloudWindZ = UZ_CVAR_FLOAT("r.Cloud.WindZScale", 0.05f, "Shape vertical wind UV scale", 0.0f, 1.0f);
+static auto* cv_CloudDetailWindZ = UZ_CVAR_FLOAT("r.Cloud.DetailWindZScale", 0.1f, "Detail vertical wind UV scale", 0.0f, 1.0f);
+static auto* cv_CloudDetailFrequency = UZ_CVAR_FLOAT("r.Cloud.DetailFrequencyScale", 2.0f, "Detail frequency multiplier on FBM lacunarity", 0.01f, 8.0f);
+static auto* cv_CloudDetailUV = UZ_CVAR_FLOAT("r.Cloud.DetailUVScale", 0.25f, "Detail texture UV scale", 0.01f, 4.0f);
+static auto* cv_CloudDetailMip = UZ_CVAR_FLOAT("r.Cloud.DetailMipScale", 0.125f, "Detail mip footprint multiplier on lacunarity", 0.001f, 4.0f);
+static auto* cv_CloudWeatherUV = UZ_CVAR_FLOAT("r.Cloud.WeatherUVScale", 0.002f, "Weather map world-km UV scale", 0.00001f, 1.0f);
+static auto* cv_CloudBottomStart = UZ_CVAR_FLOAT("r.Cloud.HeightBottomStart", 0.0f, "Height gradient bottom ramp start", 0.0f, 1.0f);
+static auto* cv_CloudBottomEnd = UZ_CVAR_FLOAT("r.Cloud.HeightBottomEnd", 0.07f, "Height gradient bottom ramp end", 0.0f, 1.0f);
+static auto* cv_CloudTopEnd = UZ_CVAR_FLOAT("r.Cloud.HeightTopEnd", 1.0f, "Height gradient top fade end", 0.0f, 1.0f);
+static auto* cv_CloudTopStart = UZ_CVAR_FLOAT("r.Cloud.HeightTopStart", 0.3f, "Height gradient top fade start at type 0.5", 0.0f, 1.0f);
+static auto* cv_CloudStratusEnd = UZ_CVAR_FLOAT("r.Cloud.HeightStratusEnd", 0.35f, "Height gradient top fade end at type zero", 0.0f, 1.0f);
+static auto* cv_CloudStratusStart = UZ_CVAR_FLOAT("r.Cloud.HeightStratusStart", 0.1f, "Height gradient top fade start at type zero", 0.0f, 1.0f);
+static auto* cv_CloudCumulusStart = UZ_CVAR_FLOAT("r.Cloud.HeightCumulusStart", 0.8f, "Height gradient top fade start at type one", 0.0f, 1.0f);
+static auto* cv_CloudLightDistance = UZ_CVAR_FLOAT("r.Cloud.LightMarchHeightScale", 2.0f, "Self-shadow march maximum in layer heights", 0.01f, 16.0f);
 
 namespace uz {
 
@@ -611,7 +627,23 @@ struct alignas(16) CloudCB {
     float layerGeometry[4][4]; // altitude, height, density scale, weather channel
     float layerShape[4][4]; // shape amount, detail amount, weather exponent, bias
     float layerProfile[4][4]; // exp term, exponent, linear term, constant
-    float padding[116];
+    float skyBottomVisibility;
+    float windZScale;
+    float detailWindZScale;
+    float detailFrequencyScale;
+    float detailUVScale;
+    float detailMipScale;
+    float weatherUVScale;
+    float heightBottomStart;
+    float heightBottomEnd;
+    float heightTopEnd;
+    float heightTopStart;
+    float heightStratusEnd;
+    float heightStratusStart;
+    float heightCumulusStart;
+    float lightMarchHeightScale;
+    float aerialPerspectiveDensity;
+    float padding[100];
 };
 
 static_assert(sizeof(CloudCB) == 1024, "CloudCB must be 1024 bytes for CBV alignment");
@@ -621,6 +653,8 @@ static_assert(offsetof(CloudCB, explicitLayers) == 356);
 static_assert(offsetof(CloudCB, layerGeometry) == 368);
 static_assert(offsetof(CloudCB, layerShape) == 432);
 static_assert(offsetof(CloudCB, layerProfile) == 496);
+static_assert(offsetof(CloudCB, skyBottomVisibility) == 560);
+static_assert(offsetof(CloudCB, aerialPerspectiveDensity) == 620);
 // The HLSL copy declares g_windVelocity as three scalars: a float3 at 152 would move to 160 and
 // shift the tail by 8 bytes (block B.4).
 static_assert(offsetof(CloudCB, windVelocity) == 152);
@@ -731,6 +765,22 @@ static CloudCB MakeCloudCB(const CloudPassInput& input, uint32_t shapeSrv,
     cb.powderScale = std::clamp(input.powderScale, 0.0f, 1.0f);
     cb.powderExponent = std::max(0.0f, input.powderExponent);
     cb.multiScatterOctaves = std::clamp(input.multiScatterOctaves, 1u, 8u);
+    cb.skyBottomVisibility = cv_CloudSkyBottom->value;
+    cb.windZScale = cv_CloudWindZ->value;
+    cb.detailWindZScale = cv_CloudDetailWindZ->value;
+    cb.detailFrequencyScale = cv_CloudDetailFrequency->value;
+    cb.detailUVScale = cv_CloudDetailUV->value;
+    cb.detailMipScale = cv_CloudDetailMip->value;
+    cb.weatherUVScale = cv_CloudWeatherUV->value;
+    cb.heightBottomStart = cv_CloudBottomStart->value;
+    cb.heightBottomEnd = cv_CloudBottomEnd->value;
+    cb.heightTopEnd = cv_CloudTopEnd->value;
+    cb.heightTopStart = cv_CloudTopStart->value;
+    cb.heightStratusEnd = cv_CloudStratusEnd->value;
+    cb.heightStratusStart = cv_CloudStratusStart->value;
+    cb.heightCumulusStart = cv_CloudCumulusStart->value;
+    cb.lightMarchHeightScale = cv_CloudLightDistance->value;
+    cb.aerialPerspectiveDensity = cv_CloudAerialDens->value;
     cb.layerCount = input.useExplicitLayers ? std::clamp(input.layerCount, 1u, 4u) : 1u;
     cb.weatherSrv = UINT32_MAX;
     cb.explicitLayers = input.useExplicitLayers || !input.weatherTexturePath.empty();

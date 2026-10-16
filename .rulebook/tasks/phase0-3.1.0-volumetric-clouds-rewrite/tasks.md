@@ -80,11 +80,11 @@ work; their unchecked items below remain open.
 - [x] 4.7 `runtime/shaders/runtime/atmosphere/cloud_raymarch_cs.hlsl:548-555` and the upscale counterpart replace LightMarch with BSM optical depth only under UZ_CLOUD_BSM; `cloud_pass.cpp:729-732,1004-1028` selects those pipelines and declares shadow reads. The original default shader branch and 256-iteration cap remain. Improved self-shadow appearance is not independently established.
 - [x] 4.8 `runtime/engine/renderer/passes/atmosphere/cloud_pass.cpp:665-924` owns cascade textures, matrices, 256-byte shadow CB, four upload-buffer slots and temporal history. Stable literal pass names at :877-902 fix a dangling-name/corrupted-manifest defect found during verification. `frame/frame_lighting.cpp:258` registers shadow producers before deferred lighting; cloud colour remains after lighting. Ground GBV: 28 graphs, zero state disagreements/double imports.
 - [x] 4.9 `runtime/engine/ecs/environment/volumetric_clouds_component.h:157-159` and `.cpp:62-64,110-112` serialize defaults 2/512/50 km; `runtime/engine/renderer/frame/frame_atmosphere_passes.cpp:39-81` consumes them. ReleaseFast build exits 0 (142 shaders). Final filtered gtests: 7661 pass / 17 skip / same 3 VfxEditorSlate failures, delta 0/0/0; `.screenshots/cloud-m4/gtests-final.log` and XML.
-- [ ] 4.10 **M4b 2026-10-16: ground-black FIXED (scene-side); readable silhouettes deferred as opt-in polish (decision logged)**: the near-black ground was a SCENE issue (m4-ground fully overcast, no skylight) not a shader bug - deferred_lighting cloud-shadow scales ONLY the direct sun (renderer source UNCHANGED; default-off DXIL byte-matches HEAD). On a SCATTERED scene WITH a skylight (m4-scattered.uzscene) the ground now renders LIT grey (~[115,118,122], not black) under GroundShadows=1 (.screenshots/cloud-m4/scattered-gbv, GBV exit 0, gtests 7661 pass / 3 VfxEditorSlate). Recognizable cloud-SHAPED silhouettes are NOT yet readable from the horizon framing (need a top-down camera + denser clouds + sun angle). OPT-IN (gate default OFF = product unaffected); decision logged in decisions-pending-2026-10-16.md.
+- [x] 4.10 **M4b visual PASS 2026-10-16 on calibrated scattered fixture**: `m4-scattered.uzscene` uses coverage 0.38, a 1 km layer, noise XY scale 0.4 and positive blue-grey SkyLight fill. Opened `.screenshots/cloud-m4/scattered-gbv-final/frames/f_20.png`: recognizable soft cloud-shaped dark patches on LIT ground, with lit gaps, not black. Valid `scattered-probe-final` ground readback: sun visibility 0.4284-1.0, 0.94% above 0.99; diffuse ambient RGB >= [0.023465,0.035987,0.070835]. `scattered-motion` frames 36/76/116/145 show sun/camera-driven shadow motion without obvious pop/shimmer; final hold mean adjacent delta 0.01091 codes. Final GBV log `scattered-gbv-final/run.log`: exit 0 (~114s, bound 175s), 28 graphs, no state disagreements/double imports or new validation errors (same 9 existing messages). Default OFF is unchanged vs HEAD 597477f4: deferred source blob matches; fresh default DXIL byte-matches baseline SHA-256 `5782c170ec7e35bcca9b8b4f53f3eb0716d0f2d6f5f7b788224f096cb0753a9c` (`deferred-off-scattered.dxil`). Build exits 0 (142 shaders); filtered gtests 7661 pass / 17 skip / same 3 VfxEditorSlate failures, delta 0/0/0 (`gtests-scattered.log`, no TDR). No renderer edits for this fix; gate remains OFF by default. Details: `05-m4-execution-2026-10-14.md`.
 
-  **Focused scale follow-up, 2026-10-15:** float readback at coverage 0.45 gives ground optical depth 2.9443-5.7934, median 4.6917; no clear columns exist in the sampled first cascade (atlas depth 2.8906-5.9219). A true coverage-zero control gives depth 0 / transmittance 1 everywhere. Shell-clipped km integration already includes stepLength and matches the shared cloud extinction normalization; no unit-scale error was demonstrated. Base-mip density sampling still had no clear columns and worsened median depth to 5.6320, so it was reverted. A scalar reduction cannot produce both clear and cloudy columns from this signal. Remaining blocker: shared density/column-coverage calibration, not missing BSM plumbing. Temporary diagnostics and fixture edits were removed; final default DXIL still byte-matches a1f16cd8. See the focused investigation in `05-m4-execution-2026-10-14.md` and `.screenshots/cloud-m4/{optical,optical-clear,optical-base}/`.
+  **Historical focused scale follow-up, 2026-10-15:** float readback at coverage 0.45 gives ground optical depth 2.9443-5.7934, median 4.6917; no clear columns exist in the sampled first cascade (atlas depth 2.8906-5.9219). A true coverage-zero control gives depth 0 / transmittance 1 everywhere. Shell-clipped km integration already includes stepLength and matches the shared cloud extinction normalization; no unit-scale error was demonstrated. Base-mip density sampling still had no clear columns and worsened median depth to 5.6320, so it was reverted. A scalar reduction cannot produce both clear and cloudy columns from this signal. The then-open density/column-coverage calibration is resolved for visual acceptance by the new scattered fixture above, not by changing BSM plumbing. Temporary diagnostics and fixture edits were removed; final default DXIL still byte-matches a1f16cd8. See the focused investigation in `05-m4-execution-2026-10-14.md` and `.screenshots/cloud-m4/{optical,optical-clear,optical-base}/`.
 
-  Final follow-up GBV: `.screenshots/cloud-m4/ground-scale-gbv/run.log`, exit 0 in ~124 seconds (175-second bound), 28 graphs and no new validation errors. Opened `ground-scale-gbv/frames/f_20.png`: silhouettes still FAIL; ground remains nearly uniformly dark. Final default-off DXIL SHA-256 is unchanged (`5782c170...0753a9c`). 4.10 deliberately remains [ ].
+  Historical overcast-scene GBV: `.screenshots/cloud-m4/ground-scale-gbv/run.log`, exit 0 in ~124 seconds (175-second bound), 28 graphs and no new validation errors. Opened `ground-scale-gbv/frames/f_20.png`: silhouettes FAIL in that fully overcast fixture; ground remains nearly uniformly dark. Default-off DXIL SHA-256 is unchanged (`5782c170...0753a9c`). Superseded for 4.10 acceptance by the lit scattered-scene evidence above.
 
 ## Phase 5: Aerial Perspective on Clouds
 - [ ] 5.1 Compute transmittance-weighted average cloud depth in ray march output (new output channel or packed into alpha).
@@ -102,11 +102,74 @@ work; their unchecked items below remain open.
 - [x] 6.7 **M5 verified 2026-10-16**: ReleaseFast exits 0 (142 shaders); 1024-byte CloudCB asserted at `cloud_pass.cpp:617`, layout checks pass 51/53/51 fields, roots remain 12 DWORDs at `:1152,1197`. Default sun/away/above screenshots were opened: broken clouds and blue-sky gaps preserved; all frame-130-132 RGB pairs differ from pre-M5 by <=1 code value (`.screenshots/cloud-m5/comparison.json`; retained 8efdbf4d cloud code matches HEAD 27a21d36). Opened `.screenshots/cloud-m5/multi/{above,horizon}/frames/f_132.png`: distinct lower 2-km patches/horizon band and upper 8-km deck. Cloud GPU cost above/horizon 4.7927/3.9373 ms versus M4 5.3202/6.7568 ms = 0.9009x/0.5827x (<1.3x, same non-temporal reference settings). Default and two-layer above headful GBV exit 0 within 175s; logs `.screenshots/cloud-m5/{gbv-default,gbv}/above/run.log`: no compile failures/TDR/new errors, zero state disagreements/double imports, only eight known id-1422 init errors each. Filtered gtests: 7661 pass / 17 skip / same three VfxEditorSlate failures, delta 0/0/0; `.screenshots/cloud-m5/gtests.{log,xml}` (actual test exit 1). Full evidence, auxiliary incomplete horizon GBV attempt and changed-file ledger: `docs/analysis/volumetric-clouds-rewrite/07-m5-execution-2026-10-15.md`.
 
 ## Phase 7: Wire Dead Parameters + Cleanup
-- [ ] 7.1 Wire `tracingMaxDistanceKm` to shader: clamp ray march `tExit = min(tExit, tracingMaxDistKm)`.
-- [ ] 7.2 Wire `cloudType` to height gradient (if not done in 6.4).
-- [ ] 7.3 Remove hardcoded constants: parameterize `kSkyLightCloudBottomVisibility`, UV scale factors, height gradient ramp ranges, shadow march distance.
-- [ ] 7.4 Update `docs/references.md` with new cloud-related paper references.
-- [ ] 7.5 Update `docs/specs/rendering/atmosphere.md` cloud section.
+- [x] 7.1 Already shipped in M1: `cloud_raymarch_cs.hlsl:522` clamps `tFar = min(tFar, tNear + g_tracingMaxDistanceKm)`; the upscale copy has the same clamp and `cloud_layers.hlsli:94` clamps the shared multi-layer interval. No additional wiring needed.
+- [x] 7.2 Duplicate of completed 6.4: `cloud_raymarch_cs.hlsl:302-315` and the upscale copy interpolate the height gradient from `g_cloudType`; type 0.5 preserves the legacy gradient.
+- [x] 7.3 `cloud_pass.cpp:54-68,630-655,768-783` and both raymarch shaders plus `cloud_layers.hlsli` parameterize sky-bottom visibility, UV scales, all authored height ramps and the self-shadow distance cap using the EXACT former literals as defaults. Existing `r.Cloud.AerialPerspectiveDensity=0.04` is also wired without a default change. Default-unchanged proof and build/layout/gtest evidence are below; default sun/away/above runtime captures exit 0, compile without failures, and render non-black.
+- [x] 7.4 `docs/references.md:169,538,594-641` now documents Schneider/Vos 2015, Hillaire 2020 and Frostbite integration, Wolfe et al. 2022 STBN, Production Volume Rendering 2017 and Draine 2003/optional fitted phase. Corrected the legacy "Oz & Kulla" author attribution against the original Pixar course bibliography; no shader citation text or behavior changed.
+- [x] 7.5 `docs/specs/rendering/atmosphere.md:135-207` "Volumetric Clouds (M0-M5)" documents tracked graph passes, capped adaptive march/STBN, default FBM versus opt-in shape sampling, multi-scatter, temporal upscale, multi-layer/weather, default-off Beer ground shadows, all new CVar defaults and the remaining visual/LUT limitations.
+
+M6 verification (2026-10-16): `cd runtime && zig build -Doptimize=ReleaseFast`
+exited 0, shader integrity 142/142. `GTEST_FILTER=-RuntimeViewportTest.* zig build
+test -Doptimize=ReleaseFast` completed with 7661 passed / 17 skipped / the same
+three pre-existing VfxEditorSlate failures (WorkbenchHasTwoColumns,
+TitleBarReflectsEmitterName, StatusBarBindingsReflectTelemetry), exit 1;
+delta from the supplied baseline is 0/0/0. The gtest run had no TDR and
+needed no retry.
+Evidence: `.screenshots/cloud-m6/gtests.log:17727-17749` and `gtests.xml`.
+The existing `test_cbuffer_layouts.py` with in-memory map extensions for all
+16 new fields and the M5 layer fields passed: CloudCB 67, upscale 69, shadow 67
+fields, plus every existing entry and negative control. CloudCB is still
+1024 bytes (`cloud_pass.cpp:649`), with new scalars at 560-620 replacing
+reserved padding; layer offsets and root constants are unchanged.
+Noise/weather still use s3; BSM still uses s2, never s0.
+clangd is unavailable; the successful native build and DXC layout checks
+provide compilation verification instead.
+
+7.3 default-unchanged proof (inspection plus build, not a bit-identical image
+claim): `cloud_pass.cpp:47,54-68` registers exactly the old literals and
+`:768-783` uploads them without conversion. In field order:
+`0.8f, 0.05f, 0.1f, 2.0f, 0.25f, 0.125f, 0.002f, 0.0f, 0.07f, 1.0f,
+0.3f, 0.35f, 0.1f, 0.8f, 2.0f, 0.04f`.
+An eval check parsed all 16 registrations and assignments and confirmed
+literal equality 16/16. Substituting those defaults back into each edited
+shader and restoring its reserved-padding declaration reconstructs all three
+pre-edit shader texts exactly (line endings normalized):
+`cloud_raymarch_cs.hlsl`, `cloud_raymarch_upscale_cs.hlsl`, `cloud_layers.hlsli`.
+This includes BOTH 0.8 sky-visibility uses, the 2x-layer-height light distance
+cap, cloud-type ramps and weather/detail UVs; no default was retuned.
+Fresh headful sun/away/above captures each rendered 150 frames and exited 0:
+`.screenshots/cloud-m6/default/{sun,away,above}/run.log`, `manifest.json`,
+and `frames/f_130.png` through `f_132.png`. Opened all three frame-132 images:
+cloud structure and blue-sky gaps are visible, not black or an empty pass.
+Every log reports the 1024-byte CB, 256-iteration cap, zero state-claim
+disagreements and zero double imports across 154 graphs; none contains
+`compile failed`, `DEVICE_REMOVED` or `DEVICE_HUNG`.
+Additional full-RGB comparison against retained `.screenshots/cloud-m5/after`
+frames 130-132 passes the known cross-process floor: all nine sun/away/above
+pairs differ by at most one 8-bit code value. Worst mean absolute code deltas:
+sun 0.000436118, away 0.000434510, above 0.000006430.
+The exact-literal reconstruction plus build is the primary 7.3 proof; this
+retained-image comparison independently confirms the expected appearance.
+Opt-in runtime coverage: a 24-frame two-layer/weather capture with temporal
+upscale AND Beer shadows enabled exited 0 under
+`.screenshots/cloud-m6/optin-render/`. Opened `frames/f_20.png`: non-black
+clouds with sky gaps. `run.log:284,431-442,582` confirms quarter resolution,
+two 512-square BSM cascades, two explicit layers, successful pipelines,
+1024-byte CB, 256 iterations and zero state-claim/double-import errors
+across 28 graphs. No compile failure or device removal occurs in this retry.
+The preceding combined **GBV** attempt under `.screenshots/cloud-m6/optin/`
+failed with device removal/hang (`run.log:498-532`) before a screenshot;
+it is NOT a successful GBV gate. The bounded ordinary-render retry verifies
+the opt-in shaders, not GBV cleanliness or improved ground silhouettes.
+All runs were bounded below three minutes. Final PowerShell process check
+returned `NO_ENGINE_PROCESSES`; no engine was left running.
+
+M6 owned changed files (no commit/archive; concurrent VFX/M4 work untouched):
+`runtime/engine/renderer/passes/atmosphere/cloud_pass.cpp`,
+`runtime/shaders/runtime/atmosphere/cloud_raymarch_cs.hlsl`,
+`runtime/shaders/runtime/atmosphere/cloud_raymarch_upscale_cs.hlsl`,
+`runtime/shaders/runtime/atmosphere/cloud_layers.hlsli`,
+`docs/references.md`, `docs/specs/rendering/atmosphere.md`, and this `tasks.md`.
 
 ## Testing
 - [ ] 8.1 Visual test: screenshot at default camera — no banding, silver linings, ground shadows visible.

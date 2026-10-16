@@ -171,7 +171,7 @@ publication, authors, where it is used in the engine, and a URL when available.
 - **Authors**: Sébastien Hillaire
 - **Venue**: EGSR 2020
 - **URL**: https://sebh.github.io/publications/egsr2020.pdf
-- **Used in**: `multi_scatter_lut_cs.hlsl` (geometric series multi-scatter), `aerial_perspective_volume_cs.hlsl`, `sky_atmosphere_ps.hlsl`
+- **Used in**: `multi_scatter_lut_cs.hlsl` (geometric series multi-scatter), `aerial_perspective_volume_cs.hlsl`, `sky_atmosphere_ps.hlsl`; cloud raymarch atmosphere/aerial-perspective reference (the shipped cloud haze remains an approximation, not LUT integration).
 - **Key contribution**: Multi-scatter LUT (geometric series, 64 dirs × 20 steps), aerial perspective 3D volume texture, ozone tent distribution.
 
 ### Hillaire 2016 — Frostbite Volumetric Rendering
@@ -179,7 +179,7 @@ publication, authors, where it is used in the engine, and a URL when available.
 - **Authors**: Sébastien Hillaire
 - **Venue**: SIGGRAPH 2016 Course
 - **URL**: https://www.ea.com/frostbite/news/physically-based-unified-volumetric-rendering-in-frostbite
-- **Used in**: `height_fog_ps.hlsl` (IntegrateExponentialFogRay), `fog_renderer.cpp`, `fog_renderer.h`
+- **Used in**: `height_fog_ps.hlsl` (IntegrateExponentialFogRay), `fog_renderer.cpp`, `fog_renderer.h`, `cloud_raymarch_cs.hlsl`, `cloud_raymarch_upscale_cs.hlsl`, `cloud_layers.hlsli` (analytical segment integration).
 - **Key contribution**: Analytical exponential height fog integration with directional inscattering, sky-to-fog color injection.
 
 ### Rayleigh 1871 — Rayleigh Scattering Phase Function
@@ -540,8 +540,8 @@ See [Ramamoorthi & Hanrahan 2001](#ramamoorthi--hanrahan-2001--sh-irradiance) in
 - **Authors**: Andrew Schneider, Nathan Vos
 - **Venue**: SIGGRAPH 2015 Advances in Real-Time Rendering
 - **URL**: https://advances.realtimerendering.com/s2015/
-- **Used in**: `cloud_raymarch_cs.hlsl`, `cloud_noise_shape_cs.hlsl`, `cloud_noise_detail_cs.hlsl`, `cloud_temporal_cs.hlsl`
-- **Key contribution**: Worley+Perlin 3D noise for cloud shape, ray-march with Beer-Lambert extinction, temporal reprojection.
+- **Used in**: `cloud_raymarch_cs.hlsl`, `cloud_raymarch_upscale_cs.hlsl`, `cloud_layers.hlsli`, `cloud_temporal_cs.hlsl`
+- **Key contribution**: Noise-based cloud density, height gradients, Beer-Lambert ray integration and temporal reconstruction. Noise volumes are loaded from disk; procedural FBM is the current default, with Perlin-Worley shape sampling opt-in.
 
 ---
 
@@ -591,12 +591,14 @@ See [Ramamoorthi & Hanrahan 2001](#ramamoorthi--hanrahan-2001--sh-irradiance) in
 
 ## 25. Volumetric Clouds (Advanced)
 
-### Oz & Kulla 2017 — Multi-Scattering Octaves
+### Production Volume Rendering 2017 — Multi-Scattering Octaves
 - **Title**: "Production Volume Rendering"
-- **Authors**: Frank Oz, Christopher Kulla (Pixar)
+- **Authors**: Julian Fong, Magnus Wrenninge, Christopher Kulla, Ralf Habel
 - **Venue**: SIGGRAPH 2017 Course: Production Volume Rendering
-- **Used in**: `cloud_raymarch_cs.hlsl` (multi-scattering octave loop — planned Phase 2)
-- **Key contribution**: Iterative multi-scattering approximation: each octave attenuates scattering (0.5x), extinction (0.5x), and phase eccentricity (0.5x). Produces bright silver linings and luminous cloud interiors.
+- **URL**: https://graphics.pixar.com/library/ProductionVolumeRendering/paper.pdf
+- **Legacy code citation**: Cloud shader comments call this "Oz & Kulla 2017"; Oz is not an author of the course.
+- **Used in**: `cloud_raymarch_cs.hlsl`, `cloud_raymarch_upscale_cs.hlsl`, `cloud_layers.hlsli` (shipped multi-scattering octave approximation).
+- **Key contribution**: Each order attenuates scattering, extinction and phase eccentricity by 0.5. Eight capped orders brighten cloud interiors; measurable sun-facing silver linings remain a separate visual acceptance item.
 
 ### Bowles 2017 — Structured Volume Sampling
 - **Title**: "Structured Volume Sampling" (volsample)
@@ -613,18 +615,26 @@ See [Ramamoorthi & Hanrahan 2001](#ramamoorthi--hanrahan-2001--sh-irradiance) in
 - **Used in**: `cloud_shadow_cs.hlsl` (planned Phase 4 — BSM encoding)
 - **Key contribution**: 4-channel shadow map encoding (frontDepth, meanExtinction, maxOpticalDepth, tailOpticalDepth) for efficient cloud shadow lookup.
 
-### Peters 2019 — Spatio-Temporal Blue Noise
-- **Title**: "Spatio-Temporal Blue Noise"
-- **Authors**: Christoph Peters
-- **Venue**: 2019
-- **URL**: https://christophpeters.de/stbn
-- **Used in**: `cloud_raymarch_cs.hlsl` (planned Phase 1 — jitter), STBN 3D texture (128x128x64 R8)
-- **Key contribution**: Blue noise 3D textures providing better perceptual noise distribution than white noise for temporal accumulation. Indexed by `pixel.xy % 128, frame % 64`.
+### Wolfe et al. 2022 — Spatiotemporal Blue Noise Masks
+- **Title**: "Spatiotemporal Blue Noise Masks"
+- **Authors**: Alan Wolfe, Nathan Morrical, Tomas Akenine-Moller, Ravi Ramamoorthi
+- **Venue**: Eurographics Symposium on Rendering, 2022
+- **URL**: https://research.nvidia.com/publication/2022-07_spatiotemporal-blue-noise-masks
+- **Used in**: `cloud_raymarch_cs.hlsl`, `cloud_raymarch_upscale_cs.hlsl`, `cloud_layers.hlsli`; offline `generate_cloud_stbn.py`.
+- **Key contribution**: Spatial/temporal blue-noise sampling motivates cloud jitter indexed by `pixel.xy % 128, frame % 64`. The shipped 128x128x64 R8 asset is generated offline by the engine script.
+
+### Draine 2003 — Dust Scattering Phase Function
+- **Title**: "Scattering by Interstellar Dust Grains. I. Optical and Ultraviolet"
+- **Authors**: B. T. Draine
+- **Venue**: The Astrophysical Journal, 598, 2003
+- **URL**: https://doi.org/10.1086/379118
+- **Used in**: `CloudPhase` in both cloud raymarch shaders, under `ACCURATE_PHASE_FUNCTION=1`.
+- **Key contribution**: Normalized angular scattering model used by the optional HG/Draine mixture; the default remains component-controlled dual-lobe Henyey-Greenstein.
 
 ### NVIDIA 2018 — Draine Approximate Mie Phase Function
 - **Title**: "Approximate Mie Scattering for Large Particles"
 - **Authors**: NVIDIA (based on Draine 2003)
-- **Used in**: `cloud_raymarch_cs.hlsl` (planned Phase 2 — optional Draine phase function)
+- **Used in**: `cloud_raymarch_cs.hlsl`, `cloud_raymarch_upscale_cs.hlsl` (implemented compile-time opt-in Draine phase function).
 - **Key contribution**: Numerically fitted Mie phase function for cloud droplets (d=10 large particles): gHG=0.988, gD=0.556, alpha=22.0, weight=0.482. More physically accurate than dual-lobe Henyey-Greenstein.
 
 ---
