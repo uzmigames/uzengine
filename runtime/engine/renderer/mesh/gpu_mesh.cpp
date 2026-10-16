@@ -332,6 +332,9 @@ void DestroyGPUMesh(IRHIDevice* device, GPUMesh& gpuMesh) {
     }
 
     SafeDestroyBuffer(device, gpuMesh.vertexBuffer);
+    SafeDestroyBuffer(device, gpuMesh.prevVertexBuffer);
+    gpuMesh.prevVbSrvIndex = 0;
+    gpuMesh.prevPoseValid = false;
     SafeDestroyBuffer(device, gpuMesh.indexBuffer);
     SafeDestroyBuffer(device, gpuMesh.colorBuffer);
     gpuMesh.colorSrvIndex = 0;

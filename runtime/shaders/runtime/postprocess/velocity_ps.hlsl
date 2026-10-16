@@ -18,6 +18,8 @@
 // Input Structure
 // ─────────────────────────────────────────────────────────────────────────────
 
+#include "../common/velocity_common.hlsli"
+
 struct FSInput {
     float4 positionCS : SV_Position;
     float2 texcoord   : TEXCOORD0;
@@ -119,14 +121,9 @@ float2 main(FSInput input) : SV_Target0 {
     // ── 5. Convert NDC to screen-pixel coordinates ──────────────────────────
     // NDC [-1,1] -> screen pixels [0, width/height]
     // Y flipped back (NDC Y-up -> screen Y-down)
-    float2 currScreen = float2(
-        ( ndc.x * 0.5f + 0.5f) * screenWidth,
-        (-ndc.y * 0.5f + 0.5f) * screenHeight
-    );
-    float2 prevScreen = float2(
-        ( prevNdc.x * 0.5f + 0.5f) * screenWidth,
-        (-prevNdc.y * 0.5f + 0.5f) * screenHeight
-    );
+    float2 renderSize = float2(screenWidth, screenHeight);
+    float2 currScreen = NdcToRenderPixels(ndc, renderSize);
+    float2 prevScreen = NdcToRenderPixels(prevNdc, renderSize);
 
     // ── 6. Pixel-space velocity (current - previous) ────────────────────────
     return currScreen - prevScreen;

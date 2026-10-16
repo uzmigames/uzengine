@@ -11,6 +11,11 @@
 #include "render_graph_pass.h"
 #include "root_slots.h"
 #include "engine/rhi/rhi.h"
+#include "draw_list.h"
+#include "gpu_mesh.h"
+#include "cb_ring_allocator.h"
+
+#include <cstring>
 
 #include "engine_assert.h"
 #include "log.h"
@@ -19,6 +24,76 @@
 UZ_DECLARE_LOG_CATEGORY(Renderer);
 
 namespace uz {
+
+void AddVelocityObjectPass(rg::RgBuilder& builder, const VelocityObjectPassDesc& desc)
+{
+    builder.AddPass("VelocityObjects", [desc](rg::RgPassBuilder& pb) {
+        pb.Write(desc.velocityTarget, RHIResourceState::RenderTarget);
+        pb.Read(desc.depthBuffer, RHIResourceState::DepthStencilRead);
+        pb.SetExecutionCallback([desc](IRHICommandList* cmd, const rg::RgPassResources& res) {
+            RHIRenderPassDesc pass{};
+            pass.colorAttachmentCount = 1;
+            pass.colorAttachments[0].texture = res.GetTexture(desc.velocityTarget);
+            pass.hasDepth = true;
+            pass.depthAttachment.texture = res.GetTexture(desc.depthBuffer);
+            cmd->BeginRenderPass(pass);
+            cmd->SetRootCBV(kSlotPerFrame, desc.perFrameAlloc.bufferHandle,
+                desc.perFrameAlloc.offsetBytes, desc.perFrameAlloc.cpuPtr,
+                desc.perFrameAlloc.sizeBytes);
+            RHIViewport viewport{};
+            viewport.width = desc.viewportWidth;
+            viewport.height = desc.viewportHeight;
+            viewport.maxDepth = 1.f;
+            cmd->SetViewport(viewport);
+            RHIScissorRect scissor{};
+            scissor.right = static_cast<int32_t>(desc.viewportWidth);
+            scissor.bottom = static_cast<int32_t>(desc.viewportHeight);
+            cmd->SetScissor(scissor);
+
+            for (const auto& draw : desc.drawList->GetCommands()) {
+                // Translucent/additive and mesh decals do not own the G-buffer depth.
+                if (!draw.hasObjectMotion || !IsGIOccluder(draw)
+                    || draw.meshId >= desc.meshCount) continue;
+                const auto& mesh = desc.meshes[draw.meshId];
+                if (!mesh.IsValid()) continue;
+                const bool twoSided = draw.twoSided != 0 || (draw.materialFlags & 0x8u) != 0
+                    || (!draw.materialGraphPipeline.IsValid() && (draw.materialFlags & 3u) == 1u);
+                const auto pipeline = twoSided ? desc.twoSidedPipeline : desc.pipeline;
+                if (!pipeline.IsValid()) continue;
+                cmd->SetPipeline(pipeline);
+                if (desc.bindless) {
+                    const uint32_t push[4] = {mesh.vbSrvIndex,
+                        mesh.vertexStride == 32 ? 1u : 0u, mesh.colorSrvIndex,
+                        draw.prevVertexBufferSrvIndex};
+                    cmd->SetRootConstants(kSlotRootConstants, push, 4);
+                } else {
+                    cmd->SetVertexBuffer(0, mesh.vertexBuffer, 0);
+                }
+                VelocityObjectCB constants{};
+                constants.model = draw.worldMatrix;
+                constants.prevModel = draw.prevWorldMatrix;
+                constants.unjitteredViewProj = desc.unjitteredViewProj;
+                constants.prevViewProj = desc.prevViewProj;
+                constants.screenSize[0] = desc.viewportWidth;
+                constants.screenSize[1] = desc.viewportHeight;
+                const auto allocation = desc.cbAllocator->Allocate(sizeof(constants));
+                if (!allocation.cpuPtr) break;
+                std::memcpy(allocation.cpuPtr, &constants, sizeof(constants));
+                cmd->SetRootCBV(kSlotPerObject, allocation.bufferHandle,
+                    allocation.offsetBytes, allocation.cpuPtr, allocation.sizeBytes);
+                if (mesh.IsIndexed()) {
+                    cmd->SetIndexBuffer(mesh.indexBuffer, mesh.indexFormat,
+                        draw.lodIndexByteOffset);
+                    cmd->DrawIndexed(draw.lodIndexCount ? draw.lodIndexCount : mesh.indexCount,
+                        1, 0, 0, 0);
+                } else {
+                    cmd->Draw(mesh.vertexCount);
+                }
+            }
+            cmd->EndRenderPass();
+        });
+    });
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AddVelocityPass — registers the pass in the render graph

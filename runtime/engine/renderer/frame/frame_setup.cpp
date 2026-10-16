@@ -162,7 +162,7 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     // compile failure, etc.).
     if (m_pipelines && m_pipelines->GetGpuSkinning().IsValid()) {
         uz::SkeletalMeshSubsystem::Get().DispatchSkinningGpu(
-            m_device, ctx.cmdList, *this, *m_pipelines);
+            m_device, ctx.cmdList, *this, *m_pipelines, *m_rgStates);
     } else {
         uz::SkeletalMeshSubsystem::Get().UploadAll(m_device, ctx.cmdList, *this);
     }

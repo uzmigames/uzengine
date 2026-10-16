@@ -498,10 +498,11 @@ bool FSR2Upscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     // Motion vector scale.
     // UzEngine's velocity buffer stores screen-space pixel displacement.
     // FSR2 internally computes: pixelOffset = MV * motionVectorScale.
-    // Since our MVs are already in pixel units, we set scale to (1, 1).
+    // Our MVs are curr - prev pixels; FSR2 expects prev - curr pixels.
+    // Negate both axes. SDK-enabled runtime verification is deferred.
     // @ref AMD 2022 "FidelityFX Super Resolution 2" -- motion vector setup.
-    dispatchDesc.motionVectorScale.x = 1.0f;
-    dispatchDesc.motionVectorScale.y = 1.0f;
+    dispatchDesc.motionVectorScale.x = -1.0f;
+    dispatchDesc.motionVectorScale.y = -1.0f;
 
     // Render resolution for this frame.
     dispatchDesc.renderSize.width  = static_cast<uint32_t>(input.renderWidth);

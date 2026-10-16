@@ -434,11 +434,10 @@ TEST(VFXRenderGraph_Simulation, ParticleUpdateConstants_FlipbookTotalFrames_Defa
     EXPECT_EQ(c.flipbookTotalFrames, 1u);
 }
 
-/// VFXBillboardCB must be 320 bytes (20 x float4) to match HLSL layout — the
-/// last float4 carries flipbookFPS / spriteChannelMask / vfxTotalTime.
-TEST(VFXRenderGraph_Billboard, VFXBillboardCB_Size_Is320Bytes) {
-    EXPECT_EQ(sizeof(VFXBillboardCB), 320u)
-        << "VFXBillboardCB must be 320 bytes to match the HLSL VFXBillboardCB layout";
+/// The final row carries render size and pixel jitter for velocity encoding.
+TEST(VFXRenderGraph_Billboard, VFXBillboardCB_Size_Is336Bytes) {
+    EXPECT_EQ(sizeof(VFXBillboardCB), 336u)
+        << "VFXBillboardCB must be 336 bytes to match the HLSL VFXBillboardCB layout";
 }
 
 TEST(VFXRenderGraph_Billboard, VFXBillboardCB_Default_SoftFadeDistance_Is50) {

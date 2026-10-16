@@ -121,6 +121,9 @@
     RHIShaderHandle m_hdriSkyboxPS         = RHIShaderHandle::Invalid();
     RHIShaderHandle m_tonemapPS            = RHIShaderHandle::Invalid();
     RHIShaderHandle m_velocityPS           = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_velocityObjectVS     = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_velocityObjectPS     = RHIShaderHandle::Invalid();
+    RHIPipelineHandle m_velocityObject[2];
     RHIShaderHandle m_heightFogPS          = RHIShaderHandle::Invalid();
     RHIShaderHandle m_cloudCompositePS     = RHIShaderHandle::Invalid();
     RHIShaderHandle m_transmittanceLutCS      = RHIShaderHandle::Invalid();

@@ -416,6 +416,27 @@ void SceneRenderer::RegisterGeometryPasses(rg::RgBuilder& rgBuilder, FrameContex
             velDesc.bindless        = bindless;
 
             AddVelocityPass(rgBuilder, velDesc);
+
+            const auto& draws = ctx.drawList.GetCommands();
+            if (std::any_of(draws.begin(), draws.end(),
+                [](const DrawCommand& draw) { return draw.hasObjectMotion && IsGIOccluder(draw); })) {
+                VelocityObjectPassDesc objectDesc{};
+                objectDesc.velocityTarget = ctx.velocityRes;
+                objectDesc.depthBuffer = ctx.depthRes;
+                objectDesc.perFrameAlloc = ctx.perFrameAlloc;
+                objectDesc.cbAllocator = m_cbRing.get();
+                objectDesc.drawList = &ctx.drawList;
+                objectDesc.meshes = m_meshes.data();
+                objectDesc.meshCount = static_cast<uint32_t>(m_meshes.size());
+                objectDesc.pipeline = pipelines->GetVelocityObject(false);
+                objectDesc.twoSidedPipeline = pipelines->GetVelocityObject(true);
+                objectDesc.unjitteredViewProj = ctx.unjitteredViewProj;
+                objectDesc.prevViewProj = ctx.temporal.prevViewProj;
+                objectDesc.viewportWidth = vpWidth;
+                objectDesc.viewportHeight = vpHeight;
+                objectDesc.bindless = bindless;
+                AddVelocityObjectPass(rgBuilder, objectDesc);
+            }
         }
     } else {
         // ── Forward: single-pass PBR ────────────────────────────────────

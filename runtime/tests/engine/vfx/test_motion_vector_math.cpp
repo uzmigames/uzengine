@@ -3,7 +3,7 @@
 /// The HLSL helper `ComputeMotionVector` in shaders/runtime/vfx/vfx_motion_vectors.hlsli
 /// is tested here via a C++ mirror of the math so we get CPU-only coverage of:
 ///   - Perspective divide on current / previous clip-space positions.
-///   - NDC → UV transform with Y flip (DirectX convention).
+///   - NDC to render pixels with Y flip (DirectX convention).
 ///   - Degenerate prev.w → zero output (no NaN / Inf leakage).
 ///   - Stationary particle → zero motion.
 ///   - Pure rightward motion → positive X, zero Y.
@@ -28,9 +28,9 @@ namespace {
 struct Float2 { float x = 0.0f, y = 0.0f; };
 struct Float4 { float x = 0.0f, y = 0.0f, z = 0.0f, w = 0.0f; };
 
-Float2 ComputeMotionVectorCPU(Float4 currentCS, Float4 prevCS) {
+Float2 ComputeMotionVectorCPU(Float4 currentCS, Float4 prevCS, Float2 renderSize = {640.f, 360.f}) {
     // Guard against degenerate previous-frame projection (w near zero).
-    if (std::fabs(prevCS.w) < 1e-6f) {
+    if (prevCS.w <= 1e-6f) {
         return {0.0f, 0.0f};
     }
 
@@ -41,7 +41,8 @@ Float2 ComputeMotionVectorCPU(Float4 currentCS, Float4 prevCS) {
     const Float2 currentUV{ currentNDC.x * 0.5f + 0.5f, currentNDC.y * -0.5f + 0.5f };
     const Float2 prevUV   { prevNDC.x    * 0.5f + 0.5f, prevNDC.y    * -0.5f + 0.5f };
 
-    return { currentUV.x - prevUV.x, currentUV.y - prevUV.y };
+    return { (currentUV.x - prevUV.x) * renderSize.x,
+             (currentUV.y - prevUV.y) * renderSize.y };
 }
 
 } // namespace
@@ -93,15 +94,14 @@ TEST(VfxMotionVector, IdenticalPositions_ReturnsZero) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Moving the particle in NDC from x=-0.5 → x=+0.5 with identical y/w should
-/// produce a motion vector of (+0.5, 0) in UV space: current NDC 0.5 → UV 0.75,
-/// previous NDC -0.5 → UV 0.25, delta 0.5.
+/// produce (+320, 0) render pixels at 640 x 360.
 TEST(VfxMotionVector, RightwardMotion_PositiveX_ZeroY) {
     const Float4 currentCS{  0.5f, 0.0f, 0.5f, 1.0f };
     const Float4 prevCS   { -0.5f, 0.0f, 0.5f, 1.0f };
 
     const Float2 mv = ComputeMotionVectorCPU(currentCS, prevCS);
 
-    EXPECT_NEAR(mv.x, 0.5f, 1e-6f);
+    EXPECT_NEAR(mv.x, 320.f, 1e-6f);
     EXPECT_NEAR(mv.y, 0.0f, 1e-6f);
 }
 
@@ -111,7 +111,7 @@ TEST(VfxMotionVector, RightwardMotion_PositiveX_ZeroY) {
 
 /// Moving the particle in NDC from y=+0.5 → y=-0.5 means downward on screen
 /// (DirectX flips Y). Current UV.y = -0.5*-0.5+0.5 = 0.75, prev UV.y = 0.25,
-/// delta = +0.5. X component stays zero.
+/// delta = +180 render pixels at 640 x 360. X component stays zero.
 TEST(VfxMotionVector, DownwardMotion_ZeroX_PositiveY) {
     const Float4 currentCS{ 0.0f, -0.5f, 0.5f, 1.0f };
     const Float4 prevCS   { 0.0f,  0.5f, 0.5f, 1.0f };
@@ -119,7 +119,7 @@ TEST(VfxMotionVector, DownwardMotion_ZeroX_PositiveY) {
     const Float2 mv = ComputeMotionVectorCPU(currentCS, prevCS);
 
     EXPECT_NEAR(mv.x, 0.0f, 1e-6f);
-    EXPECT_NEAR(mv.y, 0.5f, 1e-6f);
+    EXPECT_NEAR(mv.y, 180.f, 1e-6f);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -137,7 +137,7 @@ TEST(VfxMotionVector, DifferentWs_ApplyPerspectiveDivideIndependently) {
 
     const Float2 mv = ComputeMotionVectorCPU(currentCS, prevCS);
 
-    EXPECT_NEAR(mv.x, 0.5f, 1e-6f);
+    EXPECT_NEAR(mv.x, 320.f, 1e-6f);
     EXPECT_NEAR(mv.y, 0.0f, 1e-6f);
 }
 
@@ -146,8 +146,7 @@ TEST(VfxMotionVector, DifferentWs_ApplyPerspectiveDivideIndependently) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// A typical frame (60 fps, particle moving across 10% of the screen in one
-/// frame) should produce a motion vector with magnitude roughly 0.1 — well
-/// within the RG16Float range. Guards against accidental scale errors.
+/// frame) remains well within the RG16Float range in render pixels.
 TEST(VfxMotionVector, TypicalMotionMagnitude_FitsRG16Float) {
     const Float4 currentCS{ 0.10f, 0.05f, 0.5f, 1.0f };
     const Float4 prevCS   { 0.00f, 0.00f, 0.5f, 1.0f };
@@ -156,5 +155,7 @@ TEST(VfxMotionVector, TypicalMotionMagnitude_FitsRG16Float) {
 
     const float mag = std::sqrt(mv.x * mv.x + mv.y * mv.y);
     EXPECT_GT(mag, 0.0f);
-    EXPECT_LT(mag, 1.0f) << "Motion magnitude must stay inside RG16Float dynamic range";
+    EXPECT_NEAR(mv.x, 32.f, 1e-4f);
+    EXPECT_NEAR(mv.y, -9.f, 1e-4f);
+    EXPECT_LT(mag, 65504.f) << "Motion magnitude must stay inside RG16Float dynamic range";
 }

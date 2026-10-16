@@ -629,9 +629,10 @@ bool DlssUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
 
     // Motion vector scale — converts from MV texture value to pixel offset.
     // UzEngine velocity_ps.hlsl outputs in pixels (currScreen - prevScreen),
-    // so scale = 1.0 (no conversion needed). Positive Y = downward = DLSS convention.
-    setF(NVSDK_NGX_Parameter_MV_Scale_X, 1.0f);
-    setF(NVSDK_NGX_Parameter_MV_Scale_Y, 1.0f);
+    // DLSS expects prev - curr, so negate both axes without changing units.
+    // SDK-enabled runtime verification is deferred.
+    setF(NVSDK_NGX_Parameter_MV_Scale_X, -1.0f);
+    setF(NVSDK_NGX_Parameter_MV_Scale_Y, -1.0f);
 
     setF(NVSDK_NGX_Parameter_Sharpness, 0.0f);
     setI(NVSDK_NGX_Parameter_Reset, input.firstFrame ? 1 : 0);

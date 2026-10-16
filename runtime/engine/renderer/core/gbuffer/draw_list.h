@@ -7,10 +7,12 @@
 #pragma once
 
 #include "mat4.h"
+#include "prev_transform_cache.h"
 #include "engine/renderer/material/material_types.h"
 #include "engine/rhi/rhi_types.h"  // RHITextureHandle
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <vector>
 
@@ -49,6 +51,11 @@ struct DrawCommand {
 
     /// Object-to-world transform (column-major).
     Mat4 worldMatrix;
+
+    // CPU-only temporal inputs; no PerObjectCB or GPU layout change.
+    Mat4 prevWorldMatrix;
+    uint32_t prevVertexBufferSrvIndex = 0;
+    bool hasObjectMotion = false;
 
     /// Transpose of the inverse model matrix, used for correct normal transforms.
     ///
@@ -178,6 +185,23 @@ struct DrawCommand {
     /// Number of indices for the selected LOD (0 = use mesh default).
     uint32_t lodIndexCount = 0;
 };
+
+/// Static/Stationary draws never enter the history cache or redraw for camera motion.
+inline void FillPreviousTransform(DrawCommand& draw, PrevTransformCache& cache,
+                                  uint32_t frame, bool gpuSkinned, bool materialHasWpo) {
+    draw.prevWorldMatrix = draw.worldMatrix;
+    if (draw.mobility == EMobility::Movable) {
+        draw.prevWorldMatrix = cache.Lookup(draw.entityId, draw.worldMatrix, frame);
+        cache.Record(draw.entityId, draw.worldMatrix, frame);
+    }
+    bool moved = false;
+    for (uint32_t row = 0; row < 4; ++row)
+        for (uint32_t col = 0; col < 4; ++col)
+            moved |= std::abs(draw.prevWorldMatrix.m.m[row][col]
+                            - draw.worldMatrix.m.m[row][col]) > 1e-6f;
+    // WPO stage 2 supplies deformation history; stage 1 retains rigid history.
+    draw.hasObjectMotion = moved || gpuSkinned || materialHasWpo;
+}
 
 /// Shared occluder membership for the distance field and ray-tracing TLAS.
 /// Opaque and masked draws occlude; translucent/additive draws and mesh decals do not.

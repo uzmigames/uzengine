@@ -98,6 +98,7 @@ struct VSOutput {
     float2 flipbookUV0    : TEXCOORD8;   ///< Atlas UV for current frame at this vertex.
     float2 flipbookUV1    : TEXCOORD9;   ///< Atlas UV for next frame at this vertex (for blending).
     float  flipbookLerp   : TEXCOORD10;  ///< Inter-frame blend factor [0,1].
+    float4 currentPositionCS : TEXCOORD11; ///< Unjittered clip position; SV_Position becomes screen-space in PS.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -238,6 +239,8 @@ cbuffer VFXBillboardCB : register(b2) {
     uint     _cbsSpriteChannelMask; ///< PS reads spriteChannelMask here.
     float    _cbsVfxTotalTime;      ///< Global total time — matches PS vfxTotalTime.
     uint     _cbsPad4;              ///< 16-byte alignment padding.
+    float2   renderSize;            ///< Internal render dimensions, not output dimensions.
+    float2   jitterPixels;          ///< Current projection jitter in render pixels.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -742,6 +745,9 @@ VSOutput main(uint vertexID : SV_VertexID) {
 
     // ── Transform to clip space ──
     output.positionCS = mul(float4(worldPos, 1.0f), viewProj);
+    output.currentPositionCS = output.positionCS;
+    output.currentPositionCS.xy -= jitterPixels * float2(2.0f, -2.0f)
+                                 / renderSize * output.positionCS.w;
 
     // ── Compute previous frame clip-space position for TAA motion vectors ──
     // Estimate previous world position by subtracting velocity * deltaTime from

@@ -85,8 +85,9 @@ namespace uz {
 
 void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
                                          IRHICommandList* cmdList,
-                                         DrawList& outDrawList) {
+                                         DrawList& outDrawList, uint32_t frameIndex) {
     if (!world) return;
+    m_prevTransforms.Sweep(frameIndex);
 
     uint32_t drawIndex = 0;
 
@@ -655,6 +656,13 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
             }
         }
 
+        const bool previousDraw = cmd.mobility != EMobility::Movable
+            || m_prevTransforms.HasPrevious(cmd.entityId, frameIndex);
+        cmd.prevVertexBufferSrvIndex = gpuMesh.prevPoseValid && previousDraw ? gpuMesh.prevVbSrvIndex : 0;
+        const auto* wpo = graphForDraw ? graphForDraw->GetPBROutput().FindInput("WorldPositionOffset") : nullptr;
+        const bool materialHasWpo = wpo && wpo->IsConnected();
+        FillPreviousTransform(cmd, m_prevTransforms, frameIndex,
+            gpuMesh.prevVertexBuffer.IsValid(), materialHasWpo);
         outDrawList.Add(cmd);
         drawIndex++;
     }

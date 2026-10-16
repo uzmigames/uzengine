@@ -938,6 +938,11 @@ public:
     /// Used by the animation subsystem to upload per-frame skinned vertex data
     /// into the mesh's vertex buffer after GPU skinning.
     [[nodiscard]] const GPUMesh* GetGPUMesh(uint32_t meshId) const;
+    /// Animation owns pose writes; the mesh keeps both buffers alive together.
+    [[nodiscard]] GPUMesh* GetGPUMesh(uint32_t meshId) {
+        return meshId < m_meshes.size() && m_meshes[meshId].IsValid()
+            ? &m_meshes[meshId] : nullptr;
+    }
 
     /// Queues an RHI buffer for destruction after the current frame's fence
     /// completes. Used by subsystems that create transient upload/staging

@@ -122,6 +122,8 @@ void PipelineLibrary::Shutdown() {
     destroyPipeline(m_shadowDepthInstanced);
     destroyPipeline(m_skyAtmosphere);
     destroyPipeline(m_tonemap);
+    destroyPipeline(m_velocityObject[0]);
+    destroyPipeline(m_velocityObject[1]);
     destroyPipeline(m_heightFog);
     destroyPipeline(m_cloudComposite);
     destroyPipeline(m_transmittanceLut);
@@ -190,6 +192,8 @@ void PipelineLibrary::Shutdown() {
     destroyShader(m_dofSetupCS);
     destroyShader(m_dofBlurCS);
     destroyShader(m_velocityPS);
+    destroyShader(m_velocityObjectVS);
+    destroyShader(m_velocityObjectPS);
     destroyShader(m_fxaaPS);
 
     m_psoCache.Shutdown();

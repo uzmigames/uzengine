@@ -21,6 +21,7 @@
 #include "static_mesh_component.h"
 #include "skeletal_mesh_component.h"
 #include "log.h"
+#include "render_graph_states.h"
 
 #include <cstring>
 
@@ -445,16 +446,6 @@ bool EnsureGpuSkinningResources(SkeletalMeshInstance& inst,
     }
     inst.SetGpuOutputUav(outputUav);
 
-    // Output VB was left in CopyDst state after the initial bind-pose
-    // upload in UploadMesh. Transition it to ShaderResource so the very
-    // first per-frame barrier (ShaderResource → UnorderedAccess) starts
-    // from the correct tracked state.
-    RHIBarrierDesc vbInit{};
-    vbInit.buffer      = gmesh->vertexBuffer;
-    vbInit.stateBefore = RHIResourceState::CopyDst;
-    vbInit.stateAfter  = RHIResourceState::ShaderResource;
-    cmdList->ResourceBarrier(&vbInit, 1);
-
     // ── Skinned input buffer (one-time upload) ──────────────────────────
     if (!inst.GetGpuInputBuffer().IsValid()) {
         // stride=0 → raw ByteAddressBuffer SRV so the CPU-packed 56 B
@@ -579,7 +570,8 @@ bool EnsureGpuSkinningResources(SkeletalMeshInstance& inst,
 void SkeletalMeshSubsystem::DispatchSkinningGpu(IRHIDevice* device,
                                                  IRHICommandList* cmdList,
                                                  SceneRenderer& renderer,
-                                                 PipelineLibrary& pipelines) {
+                                                 PipelineLibrary& pipelines,
+                                                 rg::RgStateRegistry& states) {
     if (device == nullptr || cmdList == nullptr) return;
 
     RHIPipelineHandle skinningPso = pipelines.GetGpuSkinning();
@@ -660,11 +652,33 @@ void SkeletalMeshSubsystem::DispatchSkinningGpu(IRHIDevice* device,
             cmdList->ResourceBarrier(&palToSrv, 1);
         }
 
-        const GPUMesh* gmesh = renderer.GetGPUMesh(inst->GetOutputMeshId());
+        GPUMesh* gmesh = renderer.GetGPUMesh(inst->GetOutputMeshId());
         if (gmesh == nullptr || !gmesh->IsValid()) continue;
 
         const uint32_t vertexCount = inst->GetSourceMesh()->GetVertexCount();
         if (vertexCount == 0) continue;
+
+        const uint64_t vertexBytes = static_cast<uint64_t>(vertexCount) * gmesh->vertexStride;
+        gmesh->prevPoseValid = gmesh->prevVertexBuffer.IsValid();
+        if (!gmesh->prevVertexBuffer.IsValid()) {
+            RHIBufferDesc previous{};
+            previous.sizeBytes = vertexBytes;
+            previous.stride = gmesh->vertexStride;
+            previous.usage = RHIBufferUsage::UnorderedAccess | RHIBufferUsage::StructuredBuffer
+                | RHIBufferUsage::CopyDst | RHIBufferUsage::CopySrc;
+            previous.memory = RHIMemoryType::Default;
+            previous.debugName = "SkeletalMesh_PreviousPose";
+            gmesh->prevVertexBuffer = device->CreateBuffer(previous);
+            if (!gmesh->prevVertexBuffer.IsValid()) continue;
+            gmesh->prevVbSrvIndex = device->GetBufferSRVIndex(gmesh->prevVertexBuffer);
+        }
+        // Preserve the last dispatch before overwriting the output. On first
+        // dispatch this copies Bind()'s seeded pose; scene sync uses current VB
+        // until prevPoseValid, so first sight has zero deformation velocity.
+        states.Transition(cmdList, gmesh->vertexBuffer, RHIResourceState::CopySrc);
+        states.Transition(cmdList, gmesh->prevVertexBuffer, RHIResourceState::CopyDst);
+        cmdList->CopyBuffer(gmesh->vertexBuffer, 0, gmesh->prevVertexBuffer, 0, vertexBytes);
+        states.Transition(cmdList, gmesh->prevVertexBuffer, RHIResourceState::ShaderResource);
 
         // The GBuffer vertex shader reads this buffer as a bindless
         // StructuredBuffer SRV (see gbuffer_pass.cpp: bindless path uses
@@ -672,11 +686,7 @@ void SkeletalMeshSubsystem::DispatchSkinningGpu(IRHIDevice* device,
         // state around the compute dispatch is ShaderResource, not
         // VertexBuffer — the latter would leave the VS reading the buffer
         // from the wrong D3D12 resource state and blocking the SRV.
-        RHIBarrierDesc toUav{};
-        toUav.buffer       = gmesh->vertexBuffer;
-        toUav.stateBefore  = RHIResourceState::ShaderResource;
-        toUav.stateAfter   = RHIResourceState::UnorderedAccess;
-        cmdList->ResourceBarrier(&toUav, 1);
+        states.Transition(cmdList, gmesh->vertexBuffer, RHIResourceState::UnorderedAccess);
 
         // Push constants (4 uints: inputSrv, paletteSrv, outputUav, vertexCount).
         const uint32_t push[4] = {
@@ -692,11 +702,7 @@ void SkeletalMeshSubsystem::DispatchSkinningGpu(IRHIDevice* device,
 
         // UAV → ShaderResource so the GBuffer VS can read the freshly
         // written vertices via the bindless SRV path.
-        RHIBarrierDesc toSrv{};
-        toSrv.buffer       = gmesh->vertexBuffer;
-        toSrv.stateBefore  = RHIResourceState::UnorderedAccess;
-        toSrv.stateAfter   = RHIResourceState::ShaderResource;
-        cmdList->ResourceBarrier(&toSrv, 1);
+        states.Transition(cmdList, gmesh->vertexBuffer, RHIResourceState::ShaderResource);
     }
 
     // Defer staging destruction until the GPU fence of this frame elapses.

@@ -28,7 +28,7 @@ void SceneRenderer::SyncDrawListAndInstances(FrameContext& ctx) {
 
     // ── Build draw list from ECS ────────────────────────────────────────
     ctx.drawList.Clear();
-    SyncWorldToDrawList(ctx.world, ctx.vfs, ctx.cmdList, ctx.drawList);
+    SyncWorldToDrawList(ctx.world, ctx.vfs, ctx.cmdList, ctx.drawList, ctx.frameIndex);
     ctx.drawList.Sort();
 
     // ── GPU Instancing — batch identical mesh+material draw commands ────

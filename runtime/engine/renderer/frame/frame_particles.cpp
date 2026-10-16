@@ -462,6 +462,10 @@ void SceneRenderer::RegisterParticlePasses(rg::RgBuilder& rgBuilder, FrameContex
         const Mat4& particlePrevViewProj = ctx.temporal.matrixValid
             ? ctx.temporal.prevViewProj : ctx.unjitteredViewProj;
         std::memcpy(bbCBData.prevViewProj, &particlePrevViewProj, sizeof(float) * 16);
+        bbCBData.renderWidth  = ctx.renderWidth;
+        bbCBData.renderHeight = ctx.renderHeight;
+        bbCBData.jitterX      = ctx.jitterX;
+        bbCBData.jitterY      = ctx.jitterY;
 
         // ── PS rendering parameters ─────────────────────────────────────
         bbCBData.softFadeDistance      = emitter->softParticleFadeRange;

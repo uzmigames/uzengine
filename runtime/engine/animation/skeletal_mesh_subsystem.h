@@ -45,6 +45,7 @@ class PipelineLibrary;
 class World;
 struct Mesh;
 class IVFS;
+namespace rg { class RgStateRegistry; }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SkeletalMeshSubsystem
@@ -130,7 +131,8 @@ public:
     void DispatchSkinningGpu(IRHIDevice* device,
                              IRHICommandList* cmdList,
                              SceneRenderer& renderer,
-                             PipelineLibrary& pipelines);
+                             PipelineLibrary& pipelines,
+                             rg::RgStateRegistry& states);
 
     // ── Lookup ────────────────────────────────────────────────────────
 

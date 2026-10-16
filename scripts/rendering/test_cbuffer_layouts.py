@@ -26,6 +26,27 @@ FIXTURES = os.path.join(REPO, 'scripts', 'rendering', 'test_cbuffer_layouts_fixt
 
 ENTRIES = [
     {
+        'name': 'VFXBillboardCB (velocity VS)', 'shader': 'vfx/particle_billboard_vs.hlsl', 'profile': 'vs_6_6',
+        'header': 'runtime/engine/renderer/passes/vfx/particle_render_pass.h', 'struct': 'VFXBillboardCB',
+        'map': {'renderSize': 'renderWidth', 'jitterPixels': 'jitterX'},
+    },
+    {
+        'name': 'VFXBillboardCB (velocity PS)', 'shader': 'vfx/particle_billboard_ps.hlsl', 'profile': 'ps_6_6',
+        'header': 'runtime/engine/renderer/passes/vfx/particle_render_pass.h', 'struct': 'VFXBillboardCB',
+        'map': {'renderSize': 'renderWidth', 'jitterPixels': 'jitterX'},
+    },
+    {
+        'name': 'VelocityObjectCB', 'shader': 'postprocess/velocity_object_vs.hlsl', 'profile': 'vs_6_6',
+        'header': 'runtime/engine/renderer/passes/postprocess/velocity_pass.h', 'struct': 'VelocityObjectCB',
+        'map': {'model': 'model', 'prevModel': 'prevModel', 'unjitteredViewProj': 'unjitteredViewProj',
+                'prevViewProj': 'prevViewProj', 'screenSize': 'screenSize', '_velocityObjectPad': 'pad'},
+    },
+    {
+        'name': 'VelocityObjectCB (pixel copy)', 'shader': 'postprocess/velocity_object_ps.hlsl', 'profile': 'ps_6_6',
+        'header': 'runtime/engine/renderer/passes/postprocess/velocity_pass.h', 'struct': 'VelocityObjectCB',
+        'map': {'screenSize': 'screenSize'},
+    },
+    {
         'name': 'VolumetricFogCB', 'shader': 'atmosphere/volumetric_fog_inject_cs.hlsl', 'profile': 'cs_6_6',
         'header': 'runtime/engine/renderer/passes/atmosphere/volumetric_fog_pass.h', 'struct': 'VolumetricFogCB',
         'map': {'invViewProj': 'invViewProj', 'cameraPos': 'cameraPosX', 'nearZ': 'nearZ', 'farZ': 'farZ',

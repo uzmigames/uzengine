@@ -325,6 +325,7 @@
     uint32_t m_taaHistoryUav[2] = {UINT32_MAX, UINT32_MAX}; ///< UAV indices for history write.
     uint32_t m_taaHistoryIndex = 0;            ///< Index of current write target (0 or 1).
     TemporalHistoryState m_temporal;
+    PrevTransformCache m_prevTransforms;
     uint32_t m_temporalFailureWarnings = 0;    ///< One failure warning per upscaler type.
     bool     m_taaEnabled = true;              ///< Enables jitter + temporal upscaler dispatch (DLSS/TSR/TAA).
 
@@ -861,7 +862,7 @@
     /// Iterates the ECS World and populates a DrawList from entities with
     /// StaticMeshComponent + SceneComponent. Loads meshes/textures on demand.
     void SyncWorldToDrawList(World* world, IVFS* vfs, IRHICommandList* cmdList,
-                             DrawList& outDrawList);
+                              DrawList& outDrawList, uint32_t frameIndex);
 
     /// Flushes deferred mesh and texture load queues populated by `QueueMeshLoad`
     /// and `QueueTextureLoad`.  Called at the start of each `RenderFrame()`.
