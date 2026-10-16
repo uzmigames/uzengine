@@ -32,17 +32,19 @@ void SceneRenderer::SyncDrawListAndInstances(FrameContext& ctx) {
     ctx.drawList.Sort();
 
     // ── GPU Instancing — batch identical mesh+material draw commands ────
-    BuildInstanceBatches(ctx.drawList, ctx.instanceBatches, ctx.instanceDataVec);
+    // F-018 stage 1: the instanced VS is not implemented. Keep drawing per
+    // command until the shaders, batch eligibility and pass loops pass parity.
+    // Do not prepare or upload data without an instanced draw consumer.
+    ctx.useInstancing = false;
+    if (ctx.useInstancing) {
+        BuildInstanceBatches(ctx.drawList, ctx.instanceBatches, ctx.instanceDataVec);
+    } else {
+        ctx.instanceBatches.clear();
+        ctx.instanceDataVec.clear();
+    }
 
     // Ensure instance buffer has enough capacity (recreate only when too small)
     const auto instanceCount = static_cast<uint32_t>(ctx.instanceDataVec.size());
-    // Disable instancing when multiple mesh types are loaded — the instanced path
-    // currently only supports homogeneous batches (all mesh[0]). Per-mesh batching
-    // is future work. Fall back to per-draw-command path for multi-mesh scenes.
-    // Instancing disabled — the single-mesh-type instanced GBuffer path
-    // produces invisible geometry. Per-draw-command path works correctly.
-    // Re-enable after debugging the instanced pipeline.
-    ctx.useInstancing = false;
 
     // Triple-buffered instance data: CPU writes to frame N's buffer while GPU
     // reads from frame N-2. No WaitIdle needed — fence sync in the app layer
@@ -105,7 +107,8 @@ void SceneRenderer::SyncDrawListAndInstances(FrameContext& ctx) {
 
     // ── GPU Occlusion Culling — bounding sphere upload + cull constants ──
     ctx.gpuCullingActive = false;
-    if (m_gpuOcclusionCullingEnabled && m_depthPrepassEnabled && instanceCount > 0 && ctx.bindless) {
+    if (ctx.useInstancing && m_gpuOcclusionCullingEnabled && m_depthPrepassEnabled
+        && instanceCount > 0 && ctx.bindless) {
         UZ_PROFILE_SCOPE("GpuCull_Setup");
 
         // Grow GPU cull buffers if instance count exceeds current capacity.
