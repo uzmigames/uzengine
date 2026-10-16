@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { runInNewContext } from 'node:vm';
 import type * as vscode from 'vscode';
 import type { RuntimeClient, StatsCallback, FrameCallback } from '../runtime-client';
 
@@ -86,6 +87,7 @@ function nativeClient() {
       'stopRenderLoop',
       'getCodecExtradata',
       'resizeViewport',
+      'requestKeyframe',
       'mouseMove',
       'mouseButton',
       'key',
@@ -229,9 +231,11 @@ describe('viewport webview protocol', () => {
     const stats = client.startRenderLoop.mock.calls[0][1] as StatsCallback;
     const frame = client.startRenderLoop.mock.calls[0][2] as FrameCallback;
     stats({ fps: 60, frameMs: 16, drawCalls: 2, vertices: 6, triangles: 2, frameIndex: 1 });
-    frame('encoded');
-    expect(panel.webview.postMessage).toHaveBeenCalledWith({ type: 'init', extradata: [1, 2, 3] });
-    expect(panel.webview.postMessage).toHaveBeenCalledWith({ type: 'frame', data: 'encoded' });
+    frame('encoded', true);
+    expect(panel.webview.postMessage).toHaveBeenCalledWith({
+      type: 'init', extradata: [1, 2, 3], width: 1280, height: 720,
+    });
+    expect(panel.webview.postMessage).toHaveBeenCalledWith({ type: 'frame', data: 'encoded', key: true });
     panel.receive({ type: 'ready' });
     await settle();
     expect(client.startRenderLoop).toHaveBeenCalledTimes(1);
@@ -274,10 +278,145 @@ describe('viewport webview protocol', () => {
     expect(disposed).toHaveBeenCalledOnce();
     panel.webview.postMessage.mockClear();
     stats({ fps: 0, frameMs: 0, drawCalls: 0, vertices: 0, triangles: 0, frameIndex: 0 });
-    frame('late');
+    frame('late', false);
     panel.receive({ type: 'ready' });
     await settle();
     expect(panel.webview.postMessage).not.toHaveBeenCalled();
+  });
+
+  it('bounds panel frame delivery to two and resumes with a key after a drop', async () => {
+    panel.receive({ type: 'ready' });
+    await settle();
+    const frame = client.startRenderLoop.mock.calls[0][2] as FrameCallback;
+    const releases: Array<(value: boolean) => void> = [];
+    panel.webview.postMessage.mockImplementation(() =>
+      new Promise<boolean>((resolve) => releases.push(resolve)));
+    frame('key', true);
+    frame('delta', false);
+    frame('dropped', false);
+    expect(releases).toHaveLength(2);
+    expect(client.requestKeyframe).toHaveBeenCalledOnce();
+    releases.splice(0).forEach((resolve) => resolve(true));
+    await settle();
+    frame('held', false);
+    expect(releases).toHaveLength(0);
+    frame('next-key', true);
+    expect(releases).toHaveLength(1);
+    releases[0](true);
+    await settle();
+  });
+
+  it('reinitializes decoder extradata after an owner-routed resize and forwards key requests', async () => {
+    client.getCodecExtradata.mockResolvedValue(Buffer.from([7, 8]));
+    panel.receive({ type: 'resize', width: 640, height: 480 });
+    await settle();
+    expect(client.resizeViewport).toHaveBeenCalledWith(640, 480);
+    expect(panel.webview.postMessage).toHaveBeenCalledWith({
+      type: 'init', extradata: [7, 8], width: 640, height: 480,
+    });
+    panel.receive({ type: 'requestKeyframe' });
+    expect(client.requestKeyframe).toHaveBeenCalledOnce();
+  });
+
+  function decoderHarness() {
+    type Frame = { close: () => void };
+    const decoders: FakeDecoder[] = [];
+    class FakeDecoder {
+      state = 'configured';
+      decodeQueueSize = 0;
+      decode = vi.fn();
+      close = vi.fn(() => { this.state = 'closed'; });
+      configure = vi.fn();
+      constructor(public callbacks: { output: (frame: Frame) => void; error: (e: Error) => void }) {
+        decoders.push(this);
+      }
+    }
+    const elements = new Map<string, {
+      width: number; height: number; textContent: string;
+      classList: { add: ReturnType<typeof vi.fn>; remove: ReturnType<typeof vi.fn>; toggle: ReturnType<typeof vi.fn> };
+      addEventListener: ReturnType<typeof vi.fn>; getContext: () => { drawImage: ReturnType<typeof vi.fn> };
+    }>();
+    const getElementById = (id: string) => {
+      if (!elements.has(id)) elements.set(id, {
+        width: 0, height: 0, textContent: '',
+        classList: { add: vi.fn(), remove: vi.fn(), toggle: vi.fn() },
+        addEventListener: vi.fn(), getContext: () => ({ drawImage: vi.fn() }),
+      });
+      return elements.get(id)!;
+    };
+    let receive: (event: { data: unknown }) => void = () => {};
+    const postMessage = vi.fn();
+    const chunks: Array<{ type: string; data: Uint8Array }> = [];
+    const script = panel.webview.html.match(/<script>([\s\S]*?)<\/script>/)![1];
+    runInNewContext(script, {
+      acquireVsCodeApi: () => ({ postMessage }),
+      document: { getElementById, addEventListener: vi.fn() },
+      window: { addEventListener: (_type: string, callback: typeof receive) => { receive = callback; } },
+      VideoDecoder: FakeDecoder,
+      EncodedVideoChunk: class {
+        constructor(chunk: { type: string; data: Uint8Array }) { chunks.push(chunk); }
+      },
+      Image: class {},
+      atob, Uint8Array, performance, console: { error: vi.fn() },
+    });
+    const send = (data: unknown) => receive({ data });
+    send({ type: 'init', extradata: [1, 2, 3] });
+    return { decoders, chunks, send, postMessage, getElementById };
+  }
+
+  it('round-trips base64 into the exact binary bytes passed to EncodedVideoChunk', () => {
+    const h = decoderHarness();
+    const bytes = Buffer.from([0, 0, 0, 1, 0x67, 0xff, 0x80, 0, 1, 0x65, 0xab]);
+    h.send({ type: 'frame', data: bytes.toString('base64'), key: true });
+    expect(h.chunks).toHaveLength(1);
+    expect(h.chunks[0].type).toBe('key');
+    expect(Array.from(h.chunks[0].data)).toEqual(Array.from(bytes));
+    expect(h.decoders[0].decode).toHaveBeenCalledOnce();
+  });
+
+  it('holds startup deltas and bounds decoder submissions before resuming at a key', () => {
+    const h = decoderHarness();
+    const frame = (key: boolean) => h.send({ type: 'frame', data: 'AAAAAWU=', key });
+    frame(false);
+    expect(h.chunks).toHaveLength(0);
+    frame(true);
+    h.decoders[0].decodeQueueSize = 4;
+    frame(false);
+    expect(h.chunks).toHaveLength(1);
+    expect(h.postMessage).toHaveBeenCalledWith({ type: 'requestKeyframe' });
+    h.decoders[0].decodeQueueSize = 0;
+    frame(false);
+    expect(h.chunks).toHaveLength(1);
+    frame(true);
+    expect(h.chunks).toHaveLength(2);
+  });
+
+  it('recreates after an error or throw, holds deltas and stops after three consecutive failures', () => {
+    const h = decoderHarness();
+    const failed = new Error('decode failed');
+    h.decoders[0].callbacks.error(failed);
+    expect(h.decoders[0].close).toHaveBeenCalledOnce();
+    expect(h.decoders).toHaveLength(2);
+    h.send({ type: 'frame', data: 'AAAAAUE=', key: false });
+    expect(h.decoders[1].decode).not.toHaveBeenCalled();
+    h.decoders[1].decode.mockImplementation(() => { throw failed; });
+    h.send({ type: 'frame', data: 'AAAAAWU=', key: true });
+    expect(h.decoders).toHaveLength(3);
+    h.decoders[2].callbacks.error(failed);
+    expect(h.decoders).toHaveLength(3);
+    expect(h.getElementById('viewport-overlay').classList.remove).toHaveBeenCalledWith('hidden');
+    expect(h.getElementById('viewport-msg').textContent).not.toBe('');
+  });
+
+  it('resets consecutive recovery failures only when a frame is decoded', () => {
+    const h = decoderHarness();
+    h.decoders[0].callbacks.error(new Error('first'));
+    const close = vi.fn();
+    h.decoders[1].callbacks.output({ close });
+    expect(close).toHaveBeenCalledOnce();
+    h.decoders[1].callbacks.error(new Error('second'));
+    h.decoders[2].callbacks.error(new Error('third'));
+    expect(h.decoders).toHaveLength(4);
   });
 
   it('tolerates an existing viewport, unavailable codec data and teardown errors', async () => {
@@ -364,7 +503,7 @@ describe('scene editor session and failure contracts', () => {
     const frame = client.startRenderLoop.mock.calls[0][2] as FrameCallback;
     for (let i = 0; i < 31; i++) {
       stats({ fps: 120, frameMs: 8, drawCalls: 2, vertices: 6, triangles: 2, frameIndex: i });
-      frame('encoded');
+      frame('encoded', true);
     }
     expect(panel.webview.postMessage).toHaveBeenCalledWith({ type: 'frame', data: 'encoded' });
     vi.spyOn(Date, 'now').mockReturnValue(1000);

@@ -13,6 +13,9 @@
 
 namespace {
 
+constexpr size_t kFrameQueueDepth = 2;
+constexpr size_t kStatsQueueDepth = 4;
+
 void ApplyInput(const InputEvent& event) {
     switch (event.type) {
     case InputEvent::Type::MouseMove: uz_on_mouse_move(event.x, event.y); break;
@@ -77,14 +80,13 @@ bool RenderThread::Start(Napi::Env env, int targetFps,
     m_targetFps = (targetFps > 0) ? targetFps : 60;
     m_stopRequested.store(false, std::memory_order_release);
 
-    // Create ThreadSafeFunctions. MaxQueueSize=0 means unlimited -- we never
-    // want the render thread to block waiting for JS to drain the queue.
+    // Bound delivery memory without blocking the render thread on JavaScript.
     // InitialRefcount=1 keeps the TSFN alive until we call Release().
     m_onFrameTsfn = Napi::ThreadSafeFunction::New(
         env,
         onFrame,
         "uzRenderFrameCb",     // resource name (for async_hooks diagnostics)
-        0,                     // max queue size (0 = unlimited)
+        kStatsQueueDepth,      // max queue size
         1,                     // initial thread count
         static_cast<void*>(nullptr),  // release context
         [](Napi::Env, void*, void*) {},  // release callback (no-op)
@@ -95,7 +97,7 @@ bool RenderThread::Start(Napi::Env env, int targetFps,
         env,
         onEncodedFrame,
         "uzEncodedFrameCb",
-        0,
+        kFrameQueueDepth,
         1,
         static_cast<void*>(nullptr),
         [](Napi::Env, void*, void*) {},
@@ -153,6 +155,8 @@ void RenderThread::PushInput(const InputEvent& event) {
 
 void RenderThread::ThreadMain() {
     m_commands.BindOwnerThread();
+    m_gate.Arm();
+    uz_request_keyframe();
     // Initialize COM for this thread. uz_render_frame() uses Win32 message
     // pumping internally (PeekMessage/DispatchMessage), and DX12 device
     // creation may call into COM. MTA is appropriate for a worker thread.
@@ -170,6 +174,7 @@ void RenderThread::ThreadMain() {
             std::lock_guard<std::mutex> lock(m_mutex);
             if (m_resizePending) {
                 uz_resize_viewport(m_pendingWidth, m_pendingHeight);
+                m_gate.Arm();
                 m_resizePending = false;
             }
         }
@@ -206,7 +211,8 @@ void RenderThread::ThreadMain() {
         uint32_t encSize = 0;
         int encResult = uz_encode_frame(&encData, &encSize);
 
-        if (encResult && encData != nullptr && encSize > 0) {
+        if (encResult && encData != nullptr && encSize > 0 &&
+            m_gate.ShouldDeliver(uz::IsAnnexBKeyframe(encData, encSize))) {
             // The encoder's output buffer is only valid until the next
             // uz_encode_frame() call, so copy the NAL data for the async
             // delivery path.
@@ -215,6 +221,10 @@ void RenderThread::ThreadMain() {
                 nalCopy, OnEncodedFrameCallback);
             if (encStatus != napi_ok) {
                 delete nalCopy;
+                if (encStatus == napi_queue_full) {
+                    m_gate.OnDropped();
+                    uz_request_keyframe();
+                }
             }
         }
 

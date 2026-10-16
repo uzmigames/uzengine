@@ -23,6 +23,7 @@
 #include <napi.h>
 #include "../../runtime/engine/app/owner_command_queue.h"
 #include "../../runtime/engine/containers/ring_buffer.h"
+#include "../../runtime/engine/ipc/keyframe_gate.h"
 
 #include <atomic>
 #include <chrono>
@@ -72,6 +73,9 @@ public:
     /// Thread-safe -- can be called from the Node.js main thread at any time.
     void RequestResize(int width, int height);
 
+    /// Owner-thread only, after encoder reinitialization.
+    void ArmFrameStream() noexcept { m_gate.Arm(); }
+
     uz::OwnerStatus RunOnOwner(std::function<void()> fn,
                               std::chrono::milliseconds completionBudget);
     void PushInput(const InputEvent& event);
@@ -87,6 +91,7 @@ private:
 
     std::thread m_thread;
     uz::OwnerCommandQueue m_commands;
+    uz::KeyframeGate m_gate;
     uz::RingBuffer<InputEvent, 256> m_input;
     std::atomic<uint64_t> m_droppedInput{0};
     std::atomic<bool> m_running{false};

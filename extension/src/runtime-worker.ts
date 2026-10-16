@@ -24,6 +24,8 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
+import { FrameGate } from './frame-gate.js';
+import { isAnnexBKeyframe } from './nal-utils.js';
 
 // ── IPC message types ─────────────────────────────────────────────────────────
 
@@ -95,7 +97,7 @@ export type WorkerResponse =
       vertices: number;
       triangles: number;
     }
-  | { type: 'frame'; data: string }; // base64-encoded H.264 NAL bytes
+  | { type: 'frame'; data: string; key: boolean }; // base64-encoded H.264 NAL bytes
 
 // ── Worker entry-point guard ──────────────────────────────────────────────────
 // This file is both imported as a module (for its types) and executed directly
@@ -210,6 +212,10 @@ export function runWorker(
 
   let addon: UzAddon | undefined;
   let addonLoadError: string | undefined;
+  const frameGate = new FrameGate();
+  let framesInFlight = 0;
+  let statsInFlight = 0;
+  let frameChannelBacklogged = false;
 
   try {
     wlog('require(uzengine.node) ...');
@@ -360,12 +366,13 @@ export function runWorker(
         // ── Render loop ───────────────────────────────────────────────
         case 'startRenderLoop': {
           wlog(`startRenderLoop: fps=${msg.fps}`);
+          frameGate.arm();
           let statsCount = 0;
           let frameCount = 0;
           requireAddon().startRenderLoop(
             msg.fps,
             (stats) => {
-              if (!host.send) return;
+              if (!host.send || statsInFlight >= 4) return;
               statsCount++;
               if (statsCount <= 3 || statsCount % 120 === 0) {
                 wlog(
@@ -380,10 +387,18 @@ export function runWorker(
                 vertices: stats.vertices,
                 triangles: stats.triangles,
               };
-              host.send(statsMsg);
+              statsInFlight++;
+              host.send(statsMsg, undefined, undefined, () => statsInFlight--);
             },
             (nalBuffer: Buffer) => {
               if (!host.send) return;
+              const key = isAnnexBKeyframe(nalBuffer);
+              if (framesInFlight >= 2 || frameChannelBacklogged) {
+                frameGate.onDropped();
+                requireAddon().requestKeyframe();
+                return;
+              }
+              if (!frameGate.shouldDeliver(key)) return;
               frameCount++;
               if (frameCount <= 3 || frameCount % 120 === 0) {
                 wlog(`frame #${frameCount}: ${nalBuffer.byteLength} bytes`);
@@ -391,8 +406,20 @@ export function runWorker(
               const frameMsg: WorkerResponse = {
                 type: 'frame',
                 data: nalBuffer.toString('base64'),
+                key,
               };
-              host.send(frameMsg);
+              framesInFlight++;
+              let completed = false;
+              const accepted = host.send(frameMsg, undefined, undefined, (error) => {
+                completed = true;
+                framesInFlight--;
+                frameChannelBacklogged = false;
+                if (error) {
+                  frameGate.onDropped();
+                  requireAddon().requestKeyframe();
+                }
+              });
+              if (!accepted && !completed) frameChannelBacklogged = true;
             },
           );
           wlog('startRenderLoop OK');

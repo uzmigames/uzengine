@@ -15,6 +15,7 @@
 ///  - Panel visible → `client.startRenderLoop(60, onFrame, onEncodedFrame)`
 
 import * as vscode from 'vscode';
+import { FrameGate } from '../frame-gate.js';
 import type { RuntimeClient } from '../runtime-client';
 import type { SceneTreeProvider } from './scene-tree-panel';
 
@@ -23,6 +24,8 @@ import type { SceneTreeProvider } from './scene-tree-panel';
 /** Union of all messages sent from the WebView JS to the extension host. */
 type WebViewMessage =
   | { type: 'ready' }
+  | { type: 'requestKeyframe' }
+  | { type: 'resize'; width: number; height: number }
   | { type: 'mouseMove'; x: number; y: number }
   /**
    * Sent while the pointer is locked (right-click camera orbit).
@@ -49,6 +52,11 @@ export class ViewportPanel {
   private renderLoopActive = false;
   private disposed = false;
   private viewportCreated = false;
+  private readonly frameGate = new FrameGate();
+  private framesInFlight = 0;
+  private statsInFlight = 0;
+  private width = 1280;
+  private height = 720;
 
   /**
    * Translation table from `KeyboardEvent.code` (DOM standard) to Win32
@@ -213,24 +221,45 @@ export class ViewportPanel {
       // onFrame callback — per-frame stats
       (stats) => {
         if (this.disposed) return;
-        void this.panel.webview.postMessage({
+        if (this.statsInFlight >= 2) return;
+        this.statsInFlight++;
+        void Promise.resolve(this.panel.webview.postMessage({
           type: 'stats',
           fps: stats.fps,
           frameMs: stats.frameMs,
           drawCalls: stats.drawCalls,
           vertices: stats.vertices,
           triangles: stats.triangles,
-        });
+        })).then(() => this.statsInFlight--, () => this.statsInFlight--);
       },
       // onEncodedFrame callback — H.264 NAL as base64 string
-      (nalBase64: string) => {
+      (nalBase64: string, key: boolean) => {
         if (this.disposed) return;
-        void this.panel.webview.postMessage({ type: 'frame', data: nalBase64 });
+        if (this.framesInFlight >= 2) {
+          this.dropFrame();
+          return;
+        }
+        if (!this.frameGate.shouldDeliver(key)) return;
+        this.framesInFlight++;
+        void Promise.resolve(this.panel.webview.postMessage({ type: 'frame', data: nalBase64, key }))
+          .then((delivered) => {
+            if (!delivered) this.dropFrame();
+          }, () => this.dropFrame())
+          .finally(() => this.framesInFlight--);
       },
     );
 
     this.renderLoopActive = true;
+    await this.sendDecoderInit();
+  }
 
+  private dropFrame(): void {
+    this.frameGate.onDropped();
+    void this.client.requestKeyframe().catch(() => {});
+  }
+
+  private async sendDecoderInit(): Promise<void> {
+    this.frameGate.arm();
     // Send SPS/PPS codec extradata so the WebView can configure VideoDecoder.
     try {
       const extradata = await this.client.getCodecExtradata();
@@ -238,6 +267,8 @@ export class ViewportPanel {
         void this.panel.webview.postMessage({
           type: 'init',
           extradata: Array.from(extradata as Uint8Array),
+          width: this.width,
+          height: this.height,
         });
       }
     } catch {
@@ -263,6 +294,15 @@ export class ViewportPanel {
     switch (msg.type) {
       case 'ready':
         await this.startRenderLoop();
+        break;
+      case 'requestKeyframe':
+        await this.client.requestKeyframe();
+        break;
+      case 'resize':
+        await this.client.resizeViewport(msg.width, msg.height);
+        this.width = msg.width;
+        this.height = msg.height;
+        await this.sendDecoderInit();
         break;
       case 'mouseMove':
         this.client.mouseMove(msg.x, msg.y);
@@ -538,27 +578,49 @@ export class ViewportPanel {
     var hasWebCodecs = (typeof VideoDecoder !== 'undefined');
     var usingJpegFallback = !hasWebCodecs;
     var decoder = null;
+    var lastExtradata = null;
+    var awaitingKey = true;
+    var consecutiveFailures = 0;
+    var decoderStopped = false;
+
+    function recoverDecoder(e) {
+        console.error('[UzEngine] decode error:', e);
+        awaitingKey = true;
+        if (decoder !== null) {
+            try { decoder.close(); } catch (_) {}
+            decoder = null;
+        }
+        if (++consecutiveFailures >= 3) {
+            decoderStopped = true;
+            firstFrameDrawn = false;
+            if (overlay) overlay.classList.remove('hidden');
+            document.getElementById('viewport-msg').textContent = 'Video decoder failed';
+            document.getElementById('viewport-sub').textContent = String(e);
+            return;
+        }
+        initDecoder(lastExtradata);
+        vscode.postMessage({ type: 'requestKeyframe' });
+    }
 
     function initDecoder(extradata) {
-        if (usingJpegFallback) return;
+        if (usingJpegFallback || decoderStopped) return;
+        lastExtradata = extradata;
+        awaitingKey = true;
 
         if (decoder !== null) {
             try { decoder.close(); } catch (_) {}
             decoder = null;
         }
 
-        canvas.width  = 1280;
-        canvas.height = 720;
-
         decoder = new VideoDecoder({
             output: function (frame) {
+                consecutiveFailures = 0;
                 ctx2d.drawImage(frame, 0, 0, canvas.width, canvas.height);
                 frame.close();
                 onFirstFrame();
             },
             error: function (e) {
-                console.error('[UzEngine] VideoDecoder error:', e);
-                decoder = null;
+                recoverDecoder(e);
             },
         });
 
@@ -572,10 +634,7 @@ export class ViewportPanel {
                 optimizeForLatency: true,
             });
         } catch (configErr) {
-            console.warn('[UzEngine] VideoDecoder.configure() failed, switching to JPEG fallback:', configErr);
-            try { decoder.close(); } catch (_) {}
-            decoder = null;
-            usingJpegFallback = true;
+            recoverDecoder(configErr);
         }
     }
 
@@ -666,30 +725,34 @@ export class ViewportPanel {
         if (msg.type === 'init') {
             if (!usingJpegFallback) {
                 var extradataArray = new Uint8Array(msg.extradata);
+                canvas.width = msg.width || 1280;
+                canvas.height = msg.height || 720;
+                decoderStopped = false;
+                consecutiveFailures = 0;
                 initDecoder(extradataArray);
             }
         } else if (msg.type === 'frame') {
             if (usingJpegFallback) return;
             if (decoder === null || decoder.state === 'closed') return;
             try {
-                var nalData = msg.data;
-                var startOffset = 0;
-                if (nalData[0] === 0 && nalData[1] === 0 && nalData[2] === 0 && nalData[3] === 1) {
-                    startOffset = 4;
-                } else if (nalData[0] === 0 && nalData[1] === 0 && nalData[2] === 1) {
-                    startOffset = 3;
+                if (decoder.decodeQueueSize >= 4) {
+                    awaitingKey = true;
+                    vscode.postMessage({ type: 'requestKeyframe' });
+                    return;
                 }
-                var nalType = nalData[startOffset] & 0x1F;
-                var isKeyFrame = (nalType === 5 || nalType === 7 || nalType === 8);
+                if (awaitingKey && !msg.key) return;
+                var binary = atob(msg.data);
+                var nalData = Uint8Array.from(binary, function (ch) { return ch.charCodeAt(0); });
 
                 var chunk = new EncodedVideoChunk({
-                    type: isKeyFrame ? 'key' : 'delta',
+                    type: msg.key ? 'key' : 'delta',
                     timestamp: performance.now() * 1000,
                     data: nalData,
                 });
                 decoder.decode(chunk);
+                awaitingKey = false;
             } catch (e) {
-                console.error('[UzEngine] decode error:', e);
+                recoverDecoder(e);
             }
         } else if (msg.type === 'jpeg') {
             if (!usingJpegFallback) return;

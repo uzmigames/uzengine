@@ -53,7 +53,10 @@ static Napi::Value ResizeViewport(const Napi::CallbackInfo& info) {
     int w = info[0].As<Napi::Number>().Int32Value();
     int h = info[1].As<Napi::Number>().Int32Value();
 
-    UzNapiOnOwner(env, "resizeViewport", [w, h] { uz_resize_viewport(w, h); });
+    UzNapiOnOwner(env, "resizeViewport", [w, h] {
+        uz_resize_viewport(w, h);
+        g_renderThread.ArmFrameStream();
+    });
     return env.Undefined();
 }
 
@@ -70,7 +73,10 @@ static Napi::Value SetViewportPosition(const Napi::CallbackInfo& info) {
     const int y = info[1].As<Napi::Number>().Int32Value();
     const int w = info[2].As<Napi::Number>().Int32Value();
     const int h = info[3].As<Napi::Number>().Int32Value();
-    UzNapiOnOwner(env, "setViewportPosition", [x, y, w, h] { uz_set_viewport_position(x, y, w, h); });
+    UzNapiOnOwner(env, "setViewportPosition", [x, y, w, h] {
+        uz_set_viewport_position(x, y, w, h);
+        g_renderThread.ArmFrameStream();
+    });
     return env.Undefined();
 }
 
