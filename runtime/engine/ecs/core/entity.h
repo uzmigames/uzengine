@@ -27,8 +27,10 @@ namespace uz {
 /// become invalid without requiring explicit invalidation.
 ///
 /// # Layout
-/// - `id` — the entity slot index (maps to `entt::entity` under the hood)
-/// - `generation` — monotonically increasing counter per slot
+/// - `id` — the packed EnTT identifier (index | version << 20); the slot index is
+///   `entt::to_entity(id)`. Cast directly to `entt::entity`.
+/// - `generation` — World's per-slot counter (a `uint32_t`, independent of EnTT's
+///   12-bit version); bumped on each slot reuse, skipping 0 on wrap.
 ///
 /// # Null Entity
 /// `Entity::Invalid()` returns a sentinel with `id = UINT32_MAX` and `generation = 0`.

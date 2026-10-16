@@ -7,10 +7,12 @@
 /// adding/removing/querying components.
 ///
 /// # Generational Handles
-/// Each entity slot has a generation counter. When an entity is destroyed and its
-/// slot is later reused by EnTT, the generation is bumped. Stale `Entity` handles
-/// from before the destruction will fail `IsValid()` checks because their stored
-/// generation no longer matches the current slot generation.
+/// Each entity SLOT (`entt::to_entity` of the packed id) has a `uint32_t` World
+/// generation counter, independent of EnTT's 12-bit version. `Entity::id` stays the
+/// packed EnTT id (index | version << 20); `generations_` is keyed by the slot index,
+/// so memory is O(slots), not O(slots x versions). When a slot is reused the counter
+/// is bumped (skipping 0 on wrap), so stale `Entity` handles from before the
+/// destruction fail `IsValid()` even after EnTT's packed id repeats (period 4095).
 ///
 /// # Thread Safety
 /// Not thread-safe. All methods must be called from the main thread (game loop).
@@ -246,19 +248,30 @@ public:
     /// for that slot. The returned handle will pass `World::IsValid()` as long as the
     /// underlying entity is still alive.
     [[nodiscard]] Entity EntityFromEntt(entt::entity enttEntity) const {
-        const uint32_t slot = static_cast<uint32_t>(entt::to_integral(enttEntity));
+        const uint32_t packed = static_cast<uint32_t>(entt::to_integral(enttEntity));
+        const uint32_t slot   = SlotOf(packed);
         Entity e;
-        e.id = slot;
+        e.id = packed;
         e.generation = (slot < generations_.size()) ? generations_[slot] : 0u;
         return e;
     }
 
+    /// Number of entity slots ever allocated (bounded-memory contract / diagnostics).
+    /// Always <= the registry's entity storage size; O(slots), never O(slots x versions).
+    [[nodiscard]] size_t SlotCount() const noexcept { return generations_.size(); }
+
 private:
     entt::registry registry_;
 
-    /// Generation counter per entity slot. Indexed by the numeric value of entt::entity.
-    /// Grows as new slots are allocated.
+    /// Per-slot World generation, indexed by the SLOT index
+    /// (`entt::to_entity` of the packed id) - never by the packed id itself.
+    /// Size == number of entity slots ever allocated; O(slots), not O(slots x versions).
     std::vector<uint32_t> generations_;
+
+    /// Extracts the slot index (entt index bits) from a packed entity id.
+    [[nodiscard]] static uint32_t SlotOf(uint32_t packedId) noexcept {
+        return static_cast<uint32_t>(entt::to_entity(static_cast<entt::entity>(packedId)));
+    }
 
     /// Converts an Entity handle to the underlying entt::entity.
     ///

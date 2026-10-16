@@ -98,22 +98,109 @@ TEST_F(WorldTest, DestroyEntity_IsValid_ReturnsFalseAfterDestroy) {
 /// different generation, making the old handle stale.
 TEST_F(WorldTest, RecreateEntity_NewGenerationMakesOldHandleStale) {
     Entity first = world_.CreateEntity();
-    uint32_t firstGen = first.generation;
 
     world_.DestroyEntity(first);
-    Entity second = world_.CreateEntity(); // EnTT likely reuses slot 0
+    Entity second = world_.CreateEntity(); // EnTT's free list is LIFO: reuses the slot
 
-    // The old handle must be stale regardless of slot reuse
+    // EnTT reuses the destroyed slot (LIFO free list), so the slot index matches
+    // unconditionally; only the version bits of the packed id differ. (The old test
+    // guarded this with `if (second.id == first.id)`, which was never true because the
+    // version bits differ, so the reuse contract went untested.)
+    EXPECT_EQ(entt::to_entity(static_cast<entt::entity>(second.id)),
+              entt::to_entity(static_cast<entt::entity>(first.id)))
+        << "EnTT reuses the destroyed slot (LIFO free list)";
+    EXPECT_EQ(second.generation, first.generation + 1u)
+        << "Reused slot bumps the World generation by exactly one";
     EXPECT_FALSE(world_.IsValid(first))
-        << "Old handle must be stale after slot is recycled";
+        << "Old handle must be stale after the slot is recycled";
     EXPECT_TRUE(world_.IsValid(second))
-        << "New handle for recycled slot must be valid";
+        << "New handle for the recycled slot must be valid";
+}
 
-    // If EnTT reused the same slot, generation must be higher
-    if (second.id == first.id) {
-        EXPECT_GT(second.generation, firstGen)
-            << "Recycled slot must have higher generation than the destroyed entity";
+/// Test 4b — bounded memory: churning one slot must not grow the generation table.
+/// Negative control: the pre-fix code (keyed by the packed id) reached
+/// SlotCount() >= 1,048,577 on the first reuse.
+TEST_F(WorldTest, SlotChurn_TenThousandCycles_SlotCountStaysOne) {
+    Entity e = world_.CreateEntity();
+    for (int i = 0; i < 10000; ++i) {
+        world_.DestroyEntity(e);
+        e = world_.CreateEntity();
     }
+    EXPECT_EQ(world_.SlotCount(), 1u)
+        << "One logical slot must use exactly one generation entry";
+    EXPECT_TRUE(world_.IsValid(e));
+}
+
+/// Test 4c — the 32-bit World counter rejects a stale handle even after EnTT's
+/// 12-bit version wraps and the packed id repeats (Option C would fail here because
+/// EnTT alone would accept the handle).
+TEST_F(WorldTest, VersionWrap_PackedIdRepeats_OldHandleRejectedWhileEnttAcceptsIt) {
+    Entity first = world_.CreateEntity();
+    Entity current = first;
+    int cycles = 0;
+    // Recycle the single slot until EnTT's version wraps and the packed id repeats.
+    while (true) {
+        world_.DestroyEntity(current);
+        current = world_.CreateEntity();
+        ++cycles;
+        if (current.id == first.id) break;
+        ASSERT_LT(cycles, 8192) << "Packed id should repeat within one version cycle";
+    }
+    // EnTT alone would now accept the stale handle (its version matches again)...
+    EXPECT_TRUE(world_.GetRegistry().valid(static_cast<entt::entity>(first.id)))
+        << "control: EnTT's version check alone would accept the repeated packed id";
+    // ...but the 32-bit World generation still rejects it.
+    EXPECT_FALSE(world_.IsValid(first))
+        << "World's 32-bit per-slot counter rejects the stale handle after wrap";
+    EXPECT_TRUE(world_.IsValid(current));
+    EXPECT_EQ(world_.SlotCount(), 1u) << "All reuses stayed on one slot";
+}
+
+/// Test 4d — Clear keeps the generation table, so pre-clear handles stay stale and
+/// SlotCount is unchanged.
+TEST_F(WorldTest, Clear_ThenRecreate_OldHandlesStale_SlotCountUnchanged) {
+    Entity a = world_.CreateEntity();
+    Entity b = world_.CreateEntity();
+    const size_t slotsBefore = world_.SlotCount();
+
+    world_.Clear();
+    EXPECT_FALSE(world_.IsValid(a)) << "Cleared handle must be invalid";
+    EXPECT_FALSE(world_.IsValid(b)) << "Cleared handle must be invalid";
+
+    Entity c = world_.CreateEntity();
+    EXPECT_TRUE(world_.IsValid(c));
+    EXPECT_FALSE(world_.IsValid(a)) << "Pre-clear handles stay stale after recreate";
+    EXPECT_EQ(world_.SlotCount(), slotsBefore)
+        << "Clear keeps the generation table (no memory growth, no stale-handle reuse)";
+}
+
+/// Test 4e — EntityFromEntt round-trips a live handle, and entt::null is invalid.
+TEST_F(WorldTest, EntityFromEntt_RoundTrip_EqualsCreatedHandle) {
+    Entity a = world_.CreateEntity();
+    Entity b = world_.CreateEntity();
+
+    Entity ra = world_.EntityFromEntt(static_cast<entt::entity>(a.id));
+    Entity rb = world_.EntityFromEntt(static_cast<entt::entity>(b.id));
+    EXPECT_EQ(ra.id, a.id);
+    EXPECT_EQ(ra.generation, a.generation);
+    EXPECT_EQ(rb.id, b.id);
+    EXPECT_EQ(rb.generation, b.generation);
+    EXPECT_TRUE(world_.IsValid(ra));
+    EXPECT_TRUE(world_.IsValid(rb));
+
+    Entity rn = world_.EntityFromEntt(entt::null);
+    EXPECT_FALSE(world_.IsValid(rn)) << "entt::null reconstructs to an invalid handle";
+}
+
+/// Test 4f — with no destroys, one slot per entity: O(slots) memory.
+TEST_F(WorldTest, BulkCreate_100K_SlotCountEqualsEntityCount) {
+    constexpr int kN = 100000;
+    for (int i = 0; i < kN; ++i) {
+        world_.CreateEntity();
+    }
+    EXPECT_EQ(world_.EntityCount(), static_cast<size_t>(kN));
+    EXPECT_EQ(world_.SlotCount(), static_cast<size_t>(kN))
+        << "No destroys => one slot per entity, O(slots) memory";
 }
 
 /// Test 5 — EntityCount: create 5, destroy 2, expect count == 3.

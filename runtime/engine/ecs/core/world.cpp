@@ -14,16 +14,20 @@ namespace uz {
 
 Entity World::CreateEntity() {
     auto enttEntity = registry_.create();
-    auto slot = static_cast<uint32_t>(entt::to_integral(enttEntity));
+    const uint32_t packed = static_cast<uint32_t>(entt::to_integral(enttEntity));
+    const uint32_t slot   = SlotOf(packed);
 
     EnsureGenerationSlot(slot);
-    generations_[slot]++;
+    uint32_t& gen = generations_[slot];
+    if (++gen == 0u) {
+        ++gen;  // 0 is reserved (Invalid / never-created); skip it on a 2^32 wrap
+    }
 
     Entity handle;
-    handle.id = slot;
-    handle.generation = generations_[slot];
+    handle.id = packed;
+    handle.generation = gen;
 
-    UZ_LOG(ECS, Trace, "CreateEntity: id={}, generation={}", handle.id, handle.generation);
+    UZ_LOG(ECS, Trace, "CreateEntity: id={}, slot={}, generation={}", handle.id, slot, handle.generation);
     return handle;
 }
 
@@ -41,11 +45,12 @@ bool World::IsValid(Entity entity) const {
         return false;
     }
 
-    if (entity.id >= generations_.size()) {
+    const uint32_t slot = SlotOf(entity.id);
+    if (slot >= generations_.size()) {
         return false;
     }
 
-    if (entity.generation != generations_[entity.id]) {
+    if (entity.generation != generations_[slot]) {
         return false;
     }
 

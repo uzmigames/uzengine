@@ -316,14 +316,9 @@ void ScriptSystem::Update(float deltaTime) {
     lua_State* L = LuaVM::GetState();
 
     for (auto [enttEntity, script] : s_world->View<CScript>().each()) {
-        // Reconstruct the uz::Entity handle from the EnTT entity.
-        // Generation mapping mirrors lua_scene_api.cpp: Entity::generation = entt_version + 1.
-        const uint32_t slot = static_cast<uint32_t>(entt::to_entity(enttEntity));
-        const uint32_t gen  = static_cast<uint32_t>(
-            s_world->GetRegistry().current(enttEntity)) + 1u;
-        Entity entity;
-        entity.id         = slot;
-        entity.generation = gen;
+        // Reconstruct the uz::Entity handle from the EnTT entity (packed id +
+        // World per-slot generation), consistent with World::CreateEntity.
+        const Entity entity = s_world->EntityFromEntt(enttEntity);
 
         const bool needsLoad = (script.luaRef == LUA_REFNIL && !script.started);
 
@@ -354,12 +349,7 @@ void ScriptSystem::Shutdown() {
 
         if (L) {
             // Reconstruct entity handle for on_stop argument.
-            const uint32_t slot = static_cast<uint32_t>(entt::to_entity(enttEntity));
-            const uint32_t gen  = static_cast<uint32_t>(
-                s_world->GetRegistry().current(enttEntity)) + 1u;
-            Entity entity;
-            entity.id         = slot;
-            entity.generation = gen;
+            const Entity entity = s_world->EntityFromEntt(enttEntity);
 
             lua_pushlightuserdata(L, EntityToUserdata(entity));
             CallHook(L, script.envRef, "on_stop", 1, script.scriptPath.c_str());
