@@ -16,6 +16,7 @@
 #include "components.h"
 
 #include "camera.h"
+#include "camera_manager.h"
 #include "constant_buffers.h"
 #include "draw_list.h"
 #include "gpu_mesh.h"
@@ -31,6 +32,8 @@
 #include "profiler.h"
 #include "rhi.h"
 #include "log.h"
+
+#include <algorithm>
 
 UZ_DECLARE_LOG_CATEGORY(Renderer);
 
@@ -60,7 +63,18 @@ void SceneRenderer::RegisterTranslucentPasses(rg::RgBuilder& rgBuilder, FrameCon
     }
 
     // Capture state for the render graph lambdas.
-    const DrawList* drawList  = &ctx.drawList;
+    // Scene sync's opaque keys have no view depth. Sort only this pass's
+    // subset, independently of opaque mesh/material batching.
+    std::vector<DrawCommand> translucent;
+    for (const auto& drawCmd : commands) {
+        if ((drawCmd.materialFlags & 0x3u) >= 2u) translucent.push_back(drawCmd);
+    }
+    const Mat4 view = m_cameraManager->GetActiveCamera().GetView();
+    std::stable_sort(translucent.begin(), translucent.end(),
+        [&view](const DrawCommand& a, const DrawCommand& b) {
+            return (view * (a.worldMatrix * Vec3{})).z
+                 > (view * (b.worldMatrix * Vec3{})).z;
+        });
     CBRingAllocator* cbRing   = m_cbRing.get();
     const GPUMesh* meshes     = m_meshes.data();
     const uint32_t meshCount  = static_cast<uint32_t>(m_meshes.size());
@@ -72,12 +86,8 @@ void SceneRenderer::RegisterTranslucentPasses(rg::RgBuilder& rgBuilder, FrameCon
     RHITextureHandle transSceneColor = m_translucentSceneColor;
     const uint32_t transSceneColorSrv = m_translucentSceneColorSrv;
 
-    // Override PerFrameParams: inject the translucent scene color SRV into
-    // an unused slot. We reuse brdfLutSrvIndex (offset c14.x = byte 224)
-    // since brdfLut is not needed in the translucent shader. Instead we'll
-    // use a dedicated field: we put the scene color SRV in the PerObjectCB
-    // heightmapSrvIndex field (which glass doesn't use for POM).
-    // Actually, simpler: add scene color SRV as a root constant.
+    // The shader aliases PerObjectCB's POM fields as glassThickness and
+    // sceneColorSrvIndex. Neither the CB layout nor the root block grows.
 
     // Pre-allocate per-frame CB.
     PerFrameParams perFrameCopy = ctx.perFrame;
@@ -164,7 +174,7 @@ void SceneRenderer::RegisterTranslucentPasses(rg::RgBuilder& rgBuilder, FrameCon
             cmd->SetScissor(sc);
 
             // Draw loop — only translucent/additive materials (blendMode >= 2).
-            const auto& cmds = drawList->GetCommands();
+            const auto& cmds = translucent;
             uint32_t lastBoundMeshId = UINT32_MAX;
             uint32_t drawCallCount = 0;
 
@@ -192,8 +202,8 @@ void SceneRenderer::RegisterTranslucentPasses(rg::RgBuilder& rgBuilder, FrameCon
                     lastBoundMeshId = drawCmd.meshId;
                 }
 
-                // Fill per-object CB. Inject translucentSceneColorSrv into
-                // heightmapSrvIndex (unused by glass — POM is not active).
+                // Fill the unchanged per-object CB. The shader aliases the POM
+                // slots as glassThickness and sceneColorSrvIndex for glass.
                 PerObjectCB perObject{};
                 perObject.model        = drawCmd.worldMatrix;
                 perObject.normalMatrix = drawCmd.normalMatrix;
@@ -221,6 +231,7 @@ void SceneRenderer::RegisterTranslucentPasses(rg::RgBuilder& rgBuilder, FrameCon
                 perObject.alphaClipThreshold  = drawCmd.alphaClipThreshold;
                 perObject.opacitySrvIndex     = drawCmd.opacitySrvIndex;
                 perObject.materialFlags       = drawCmd.materialFlags;
+                perObject.displacementScale   = drawCmd.displacementScale;
                 // Inject scene color SRV for screen-space refraction.
                 perObject.heightmapSrvIndex   = transSceneColorSrv;
 

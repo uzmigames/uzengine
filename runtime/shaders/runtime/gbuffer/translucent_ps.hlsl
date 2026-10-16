@@ -8,9 +8,12 @@
 /// PerFrameCB layout (matching per_frame_params.h) for IBL access.
 /// Outputs to a single HDR render target (RGBA16F) with alpha blending.
 ///
-/// For glass materials (smID==9, ThinTranslucent): Fresnel-weighted IBL
-/// cubemap reflection at rim + transparency at center. Alpha = Fresnel,
-/// so SrcAlpha blend makes center transparent, rim reflective.
+/// ThinTranslucent (smID 9): any mesh, front faces only, treated as a thin slab.
+/// Authored local thickness is scaled per model axis along the refracted ray.
+/// Transmission samples the opaque scene copy; Fresnel reflection uses the IBL.
+/// Unsupported: translucent-through-translucent refraction, true volumes, image
+/// inversion/caustics, transmission roughness blur, thickness maps, glass shadows,
+/// and back faces. Premultiplied (One, InvSrcAlpha) blend; transmission has 16 levels.
 
 #include "../common/encoding.hlsli"
 #include "../common/region_dump.hlsli"
@@ -73,8 +76,9 @@ cbuffer PerObjectCB : register(b2) {
     float2   uvOffset;
     float    aoIntensity;
     float    matOpacity;
-    float    displacementScale;
-    uint     heightmapSrvIndex;
+    // PerObjectCB layout unchanged: field reuse for smID 9 (no POM here).
+    float    glassThickness;
+    uint     sceneColorSrvIndex;
     float    pomMinLayers;
     float    pomMaxLayers;
     float    pomFadeStart;
@@ -84,6 +88,7 @@ cbuffer PerObjectCB : register(b2) {
 };
 
 SamplerState linearSampler : register(s0);
+SamplerState clampSampler : register(s2);
 
 /// Region dump (diagnostics): what this pass consumed and produced at a pixel, into LIGHTING_EXTRA
 /// records +5..+10. The deferred pass cleared them earlier this frame, so a pixel this pass does not
@@ -146,112 +151,6 @@ float4 main(PSInput input) : SV_Target {
     }
 #endif
 
-    // ── Glass / ThinTranslucent (smID == 9) ─────────────────────────────
-    // @ref Shadertoy XdVfDd — analytical sphere ray tracing with refraction.
-    // @ref Walter 2007 "Microfacet Models for Refraction" — Snell's law
-    // @ref Falcor Fresnel.slang — dielectric Fresnel equations
-    //
-    // Traces the view ray through a glass sphere analytically:
-    //   1. Refract at entry (air → glass)
-    //   2. Trace inside sphere to back face
-    //   3. Refract at exit (glass → air), handling total internal reflection
-    //   4. Sample IBL cubemap in the exit ray direction
-    //   5. Add surface reflection weighted by Fresnel
-    if (smID == 9) {
-        // @ref Three.js — specular=0.5 → F0=0.04 → IOR=1.5
-        // @constants F0_dielectric = specular * 0.08, IOR = (1+√F0)/(1-√F0)
-        float f0_scalar = max(specularVal * 0.08, 0.001);
-        float sqrtF0 = sqrt(f0_scalar);
-        float ior = (1.0 + sqrtF0) / max(1.0 - sqrtF0, 0.001);
-        ior = clamp(ior, 1.0, 2.5);
-
-        // ── Surface Fresnel (entry: air → glass) ────────────────────────
-        // @ref Schlick 1994 — Fresnel approximation for dielectric interface
-        // @constants F0_glass = ((ior-1)/(ior+1))^2 = 0.04 for IOR=1.5
-        float F0_glass = pow((ior - 1.0) / (ior + 1.0), 2.0);
-        float fresnel = F0_glass + (1.0 - F0_glass) * pow(1.0 - NoV, 5.0);
-
-        // ── Surface reflection (weighted by Fresnel) ────────────────────
-        // @ref Shadertoy XdVfDd — surface_color = sky_sample(reflect) * (1 - |dot(ray,N)|)
-        float3 R = reflect(-V, N);
-        float3 surfaceReflection = float3(0, 0, 0);
-#ifdef UZ_BINDLESS
-        if (prefilteredSrvIndex != kSentinelSrvIndex) {
-            TextureCube<float4> prefTex = ResourceDescriptorHeap[prefilteredSrvIndex];
-            float3 skyTint = float3(skyLightColorR, skyLightColorG, skyLightColorB);
-            surfaceReflection = prefTex.SampleLevel(linearSampler, WorldToCubemap(R), 0.0).rgb
-                              * skyLightIntensity * skyTint;
-        }
-#endif
-        surfaceReflection *= fresnel * 0.5;
-
-        // ── Refraction: trace ray through the glass sphere ──────────────
-        // @ref Shadertoy XdVfDd — analytical sphere ray tracing with refract()
-        // @ref Walter 2007 — Snell's law: refract at entry, trace to back face,
-        //   refract at exit. Handle total internal reflection via reflect+loop.
-        //
-        // Step 1: Refract at entry (air → glass, eta = 1/IOR)
-        float3 entryRay = refract(-V, N, 1.0 / ior);
-        float3 refractionColor = float3(0, 0, 0);
-
-        if (dot(entryRay, entryRay) > 0.001) {
-            // Step 2: Analytically find where the refracted ray exits the sphere.
-            // For a unit sphere centered at C with radius r, the ray enters at P
-            // (the current pixel worldPos). The exit point is where the ray from P
-            // in direction entryRay hits the back face of the sphere.
-            //
-            // Sphere center approximation: obj_model[3].xyz (translation column).
-            // Radius: approximated from scale (obj_model[0] length).
-            float3 sphereCenter = float3(obj_model[3][0], obj_model[3][1], obj_model[3][2]);
-            float sphereRadius = length(float3(obj_model[0][0], obj_model[0][1], obj_model[0][2]));
-
-            // Ray-sphere intersection from inside (always hits back face).
-            float3 oc = input.positionWS - sphereCenter;
-            float b = dot(oc, entryRay);
-            float c = dot(oc, oc) - sphereRadius * sphereRadius;
-            float disc = b * b - c;
-            float exitDist = -b + sqrt(max(disc, 0.0));
-
-            float3 exitPoint = input.positionWS + entryRay * exitDist;
-            float3 exitNormal = normalize(exitPoint - sphereCenter);
-
-            // Step 3: Refract at exit (glass → air, eta = IOR)
-            // The normal points outward; for inside→outside, use -exitNormal.
-            float3 exitRay = refract(entryRay, -exitNormal, ior);
-
-            // Total internal reflection check
-            if (dot(exitRay, exitRay) < 0.001) {
-                // @ref Shadertoy XdVfDd — TIR fallback: reflect inside and try again
-                exitRay = reflect(entryRay, -exitNormal);
-            }
-
-            // Step 4: Sample IBL cubemap in exit ray direction.
-            // Use a mip level > 0 to simulate translucent/frosted glass.
-            // @ref Three.js applyIorToRoughness — blur based on material roughness.
-            // For translucent glass, sample higher mips for internal scattering.
-#ifdef UZ_BINDLESS
-            if (prefilteredSrvIndex != kSentinelSrvIndex) {
-                TextureCube<float4> prefTex = ResourceDescriptorHeap[prefilteredSrvIndex];
-                float3 skyTint = float3(skyLightColorR, skyLightColorG, skyLightColorB);
-
-                // Translucent blur: sample at higher mip for internal light scattering.
-                // @constants mipLevels-1 = max mip, translucentBlur = 2.0 base + roughness
-                float translucentMip = 1.0 + roughnessMultiplier * float((prefilteredMipLevels & 0xFFu) - 1u);   // bit 8 = PMREM flag
-                refractionColor = prefTex.SampleLevel(linearSampler, WorldToCubemap(exitRay), translucentMip).rgb
-                                * skyLightIntensity * skyTint;
-            }
-#endif
-        }
-
-        // @ref Shadertoy XdVfDd — color = refraction + surface_reflection
-        // Refraction is dominant (1-F ≈ 0.96 at center), reflection adds Fresnel rim.
-        float3 color = refractionColor + surfaceReflection + emission;
-        WriteRegionDumpTranslucent(uint2(input.positionCS.xy), input.positionCS.z, color, 1.0, float3(0, 0, 0), 0u,
-                                   refractionColor, prefilteredSrvIndex, N, smID, emission,
-                                   max(dot(N, normalize(lightDir.xyz)), 0.0));
-        return float4(color, 1.0);
-    }
-
     // ── Standard translucent (non-glass) ────────────────────────────────
     // Forward lighting for semi-transparent materials.
     float3 albedo = baseColorTint;
@@ -277,6 +176,41 @@ float4 main(PSInput input) : SV_Target {
 #endif
 
     float3 color = albedo * (lightColor.xyz * NdotL + iblDiffuse + ambientColor.xyz) + emission;
+    // Thin-surface transmission (Three.js getVolumeTransmissionRay). The standard
+    // path above is unchanged, and transmission zero bypasses all glass arithmetic.
+    float transmission = float((materialFlags >> 28u) & 0xFu) / 15.0;
+    if (smID == 9 && transmission > 0.0) {
+        float f0 = specularVal * 0.08;
+        float sqrtF0 = sqrt(f0);
+        float ior = (1.0 + sqrtF0) / max(1.0 - sqrtF0, 0.001);
+        float fresnel = f0 + (1.0 - f0) * pow(1.0 - NoV, 5.0);
+        float3 modelScale = float3(length(obj_model[0].xyz), length(obj_model[1].xyz), length(obj_model[2].xyz));
+        float3 refr = refract(-V, N, 1.0 / ior);
+        // TIR produces a zero refracted vector: keep the sample at this pixel.
+        float refrLengthSq = dot(refr, refr);
+        float3 offset = refrLengthSq > 0.0 ? refr * rsqrt(refrLengthSq) * glassThickness * modelScale : float3(0, 0, 0);
+        float4 exitClip = mul(float4(input.positionWS + offset, 1.0), viewProj);
+        float2 exitUV = saturate(exitClip.xy / max(exitClip.w, 1e-4) * float2(0.5, -0.5) + 0.5);
+        float3 transmitted = float3(0, 0, 0);
+        float3 reflection = float3(0, 0, 0);
+#ifdef UZ_BINDLESS
+        Texture2D<float4> sceneColor = ResourceDescriptorHeap[sceneColorSrvIndex];
+        transmitted = sceneColor.SampleLevel(clampSampler, exitUV, 0).rgb * baseColorTint;
+        if (prefilteredSrvIndex != kSentinelSrvIndex) {
+            TextureCube<float4> prefTex = ResourceDescriptorHeap[prefilteredSrvIndex];
+            float3 skyTint = float3(skyLightColorR, skyLightColorG, skyLightColorB);
+            reflection = prefTex.SampleLevel(linearSampler, WorldToCubemap(reflect(-V, N)), 0.0).rgb
+                       * skyLightIntensity * skyTint;
+        }
+#endif
+        float3 glass = (1.0 - fresnel) * transmitted + fresnel * reflection + emission;
+        float3 result = lerp(color * matOpacity, glass, transmission);
+        float alpha = lerp(matOpacity, 1.0, transmission);
+        WriteRegionDumpTranslucent(uint2(input.positionCS.xy), input.positionCS.z, result, alpha, albedo, albedoIndex,
+                                   transmitted, sceneColorSrvIndex, N, smID, emission, NdotL);
+        return float4(result, alpha);
+    }
+
     WriteRegionDumpTranslucent(uint2(input.positionCS.xy), input.positionCS.z, color, matOpacity, albedo, albedoIndex,
                                iblDiffuse, irradianceSrvIndex, N, smID, emission, NdotL);
     // Premultiplied alpha — color already weighted by opacity for (One, InvSrcAlpha) blend.

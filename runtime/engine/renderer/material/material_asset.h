@@ -133,17 +133,25 @@ struct Material : public MaterialInterface {
 
     // ── Transmission (glass/refractive materials) ────────────────────────
 
-    /// Transmission intensity. 0 = opaque (default), 1 = fully transmissive glass.
+    /// ThinTranslucent: any mesh, front faces only, treated as a thin slab.
+    /// The refracted exit point samples the opaque scene captured before this
+    /// pass; Fresnel reflection samples the environment. Not supported:
+    /// refraction of other translucent surfaces, true volumes/image inversion,
+    /// caustics, transmission roughness blur, thickness maps, glass shadows,
+    /// or back faces.
+    /// Transmission intensity (16 quantized levels). 0 = standard translucent
+    /// result unchanged; 1 = fully transmissive glass.
     /// @ref Three.js MeshPhysicalMaterial.transmission — KHR_materials_transmission
     float transmission = 0.0f;
 
     /// Index of refraction for transmission and Fresnel.
     /// 1.0 = air, 1.33 = water, 1.5 = glass (default), 2.42 = diamond.
+    /// Forward glass quantizes F0 through the 8-bit specular field (0..0.08):
+    /// effective IOR is 1..~1.79; larger authored values saturate.
     /// @ref KHR_materials_ior — glTF 2.0 extension
     float ior = 1.5f;
 
-    /// Thickness for refraction distortion in world units (cm).
-    /// Controls how much the view behind the object is distorted.
+    /// Local slab thickness (cm), scaled per model axis along the refracted ray.
     /// @ref KHR_materials_volume — glTF 2.0 extension
     float thicknessScale = 0.5f;
 
