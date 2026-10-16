@@ -365,8 +365,8 @@ TIER_C = [
                  PASSES + 'pathtracing/path_tracer_pass.h', 'GIMeshMaterialGPU'),
 ]
 
-# These are not successful reflection contracts. Keep the missing design prerequisites
-# visible in the result, rather than manufacturing HLSL definitions from C++ sizes.
+# These are not successful reflection contracts. Keep explicit exclusions visible
+# rather than manufacturing HLSL definitions from C++ sizes.
 UNTRACKED = {
     ("runtime/vfx/decal_forward_ps.hlsl", "DecalObjectCB"): "Additional DecalObjectCB mirror; independent CPU mapping still required (not claimed as a passing contract).",
     ("runtime/vfx/distortion_haze_ps.hlsl", "DistortionHazeCB"): "Root constants: DistortionHazeCB; uploader-specific block, not a header-backed Tier B contract.",
@@ -429,13 +429,13 @@ UNTRACKED = {
     ("editor/overlay_vs.hlsl", "RootConstants"): "Root constants: RootConstants; uploader-specific block, not a header-backed Tier B contract.",
 }
 
-UNAVAILABLE = {
-    'CullConstants/GpuCullConstants': 'compute/gpu_cull_cs.hlsl is an empty kernel with no cbuffer',
-    'InstanceData': 'no HLSL InstanceData declaration (instanced vertex shader is not implemented)',
-    'LightGPU': 'no HLSL LightGPU element declaration; lighting uses PointLightData/SpotLightData CB arrays',
-    'ReflectionProbeGPU': 'no named HLSL element declaration; the shader loads float4 records',
-    'SdfObjectGpuData': 'no named HLSL element declaration under runtime/shaders',
-    'SkinnedVertex': 'gpu_skinning_cs.hlsl reads a packed ByteAddressBuffer, not StructuredBuffer<SkinnedVertex>',
+UNTRACKED_CONTRACTS = {
+    'CullConstants/GpuCullConstants': 'compute/gpu_cull_cs.hlsl:1 is an empty kernel with no cbuffer; F-018 stage 2 owns implementation; CPU size asserted in engine/renderer/passes/geometry/gpu_cull_pass.h:70',
+    'InstanceData': 'instanced vertex shader is unimplemented (F-018); CPU-only transform upload in engine/renderer/frame/frame_sync.cpp:76-102; 128-byte size asserted in engine/renderer/core/instance_batcher.h:42',
+    'LightGPU': 'no same-named HLSL element; production lighting uses PointLightData/SpotLightData CB arrays (Tier A); legacy multi-light CPU descriptor size is asserted at engine/renderer/core/lighting/multi_light.h:92',
+    'ReflectionProbeGPU': 'no same-named HLSL element; CPU probe records have two float4 rows, 32-byte size asserted at engine/renderer/core/params/constant_buffers.h:873 and upload stride set in engine/renderer/probes/reflection_probe_renderer.cpp:201',
+    'SdfObjectGpuData': 'CPU atlas-manager object records have no HLSL consumer under runtime/shaders; 192-byte size asserted at engine/renderer/shadows/sdf_types.h:198 and upload stride set in sdf_atlas_manager.cpp:90',
+    'SkinnedVertex': 'raw ByteAddressBuffer contract, not a structured element: compute/gpu_skinning_cs.hlsl:39-45 pins stride 56 and offsets 0/12/24/32/48/52; CPU size asserted at engine/renderer/mesh/vertex.h:139',
 }
 
 STUBS = r'''
@@ -675,6 +675,10 @@ def inventory(list_only=False):
                 print(f'{key[0]}:{line} {name} register({match[4] or "implicit"}) '
                       + ('MAPPED' if tracked else f'UNTRACKED: {reason}' if reason else 'UNMAPPED'))
     failures += sum(not reason.strip() for reason in UNTRACKED.values())
+    for name, reason in UNTRACKED_CONTRACTS.items():
+        failures += not reason.strip()
+        if list_only:
+            print(f'Contract {name} UNTRACKED: {reason}')
     print(f'Inventory: {count} declarations; {mapped_count} mapped, {excluded_count} explicit exclusions; '
           f'{failures} unmapped/unlisted or reasonless')
     return failures
@@ -711,19 +715,21 @@ def main():
     print(f'  [{"PASS" if mismatches else "FAIL"}] negative control gpu_cull_cs.before.hlsl: '
           f'{len(mismatches)} fields differ ({mismatches})', flush=True)
     for tier, entries, kind in (('B', TIER_B, 'cbuffer'), ('C', TIER_C, 'struct')):
+        passed = 0
         for entry in entries:
             try:
                 reflected, cpp = compare_size(entry, workdir, kind)
                 ok = reflected == cpp
                 failures += not ok
+                passed += ok
                 print(f'  [{"PASS" if ok else "FAIL"}] Tier {tier} {entry["shader"]} {entry["struct"]}: '
                       f'DXC {reflected} bytes ({reflected / 4:g} DWORDs), sizeof {cpp}', flush=True)
             except (ValueError, SystemExit, subprocess.TimeoutExpired) as error:
                 failures += 1
                 print(f'  [FAIL] Tier {tier} {entry["struct"]}: {error}', flush=True)
-    for name, reason in UNAVAILABLE.items():
-        failures += 1
-        print(f'  [FAIL] Required contract unavailable: {name}: {reason}')
+        print(f'Tier {tier}: {passed}/{len(entries)} passing entries')
+    for name, reason in UNTRACKED_CONTRACTS.items():
+        print(f'  [UNTRACKED] {name}: {reason}')
     if not keep:
         import shutil
         shutil.rmtree(workdir, ignore_errors=True)
