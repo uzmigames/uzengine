@@ -65,13 +65,33 @@ static void SafeDestroyBuffer(IRHIDevice* device, RHIBufferHandle& handle) {
     }
 }
 
+static bool UploadColors(IRHIDevice* device, IRHICommandList* cmdList,
+                         UploadContext& upload, const Mesh& mesh, GPUMesh& gpu) {
+    // SM5 uses the documented white fallback; no side buffer is needed.
+    if (mesh.vertexColors.empty() || !device->IsBindless()) return true;
+    RHIBufferDesc desc{};
+    desc.sizeBytes = mesh.vertexColors.size() * sizeof(uint32_t);
+    desc.stride = sizeof(uint32_t);
+    desc.usage = RHIBufferUsage::StructuredBuffer | RHIBufferUsage::CopyDst;
+    desc.memory = RHIMemoryType::Default;
+    desc.debugName = "GPUMesh_Colors";
+    gpu.colorBuffer = device->CreateBuffer(desc);
+    if (!gpu.colorBuffer.IsValid()) return false;
+    if (!upload.UploadBuffer(cmdList, gpu.colorBuffer, mesh.vertexColors.data(), desc.sizeBytes)) {
+        SafeDestroyBuffer(device, gpu.colorBuffer);
+        return false;
+    }
+    gpu.colorSrvIndex = device->GetBufferSRVIndex(gpu.colorBuffer);
+    return true;
+}
+
 GPUMesh UploadMesh(IRHIDevice* device, IRHICommandList* cmdList, const Mesh& mesh) {
     if (!device || !cmdList) {
         UZ_LOG(Renderer, Error, "UploadMesh: null device or command list");
         return {};
     }
 
-    if (!mesh.IsValid()) {
+    if (!mesh.IsValid() || (!mesh.vertexColors.empty() && mesh.vertexColors.size() != mesh.GetVertexCount())) {
         UZ_LOG(Renderer, Error, "UploadMesh: invalid mesh (failed IsValid check)");
         return {};
     }
@@ -115,6 +135,13 @@ GPUMesh UploadMesh(IRHIDevice* device, IRHICommandList* cmdList, const Mesh& mes
             SafeDestroyBuffer(device, result.indexBuffer);
             return {};
         }
+    }
+
+    if (!UploadColors(device, cmdList, upload, mesh, result)) {
+        UZ_LOG(Renderer, Error, "UploadMesh: failed to upload color stream");
+        SafeDestroyBuffer(device, result.vertexBuffer);
+        SafeDestroyBuffer(device, result.indexBuffer);
+        return {};
     }
 
     // -- Execute copies and wait for GPU --
@@ -169,7 +196,7 @@ DeferredMeshUpload UploadMeshDeferred(IRHIDevice* device, IRHICommandList* cmdLi
         return result;
     }
 
-    if (!mesh.IsValid()) {
+    if (!mesh.IsValid() || (!mesh.vertexColors.empty() && mesh.vertexColors.size() != mesh.GetVertexCount())) {
         UZ_LOG(Renderer, Error, "UploadMeshDeferred: invalid mesh (failed IsValid check)");
         return result;
     }
@@ -209,6 +236,13 @@ DeferredMeshUpload UploadMeshDeferred(IRHIDevice* device, IRHICommandList* cmdLi
             SafeDestroyBuffer(device, result.mesh.indexBuffer);
             return result;
         }
+    }
+
+    if (!UploadColors(device, cmdList, result.upload, mesh, result.mesh)) {
+        UZ_LOG(Renderer, Error, "UploadMeshDeferred: failed to upload color stream");
+        SafeDestroyBuffer(device, result.mesh.vertexBuffer);
+        SafeDestroyBuffer(device, result.mesh.indexBuffer);
+        return result;
     }
 
     // -- Populate metadata (no GPU completion needed) --
@@ -299,6 +333,8 @@ void DestroyGPUMesh(IRHIDevice* device, GPUMesh& gpuMesh) {
 
     SafeDestroyBuffer(device, gpuMesh.vertexBuffer);
     SafeDestroyBuffer(device, gpuMesh.indexBuffer);
+    SafeDestroyBuffer(device, gpuMesh.colorBuffer);
+    gpuMesh.colorSrvIndex = 0;
 
     // Destroy the SDF 3D texture if it was baked for this mesh.
     if (gpuMesh.sdf.texture3D.IsValid()) {

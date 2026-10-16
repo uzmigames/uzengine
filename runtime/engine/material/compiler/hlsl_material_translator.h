@@ -18,12 +18,22 @@ namespace uz {
 
 /// Result of compiling a MaterialGraph to HLSL.
 struct MaterialCompileResult {
+    /// Context inputs read by emitted, output-reachable expressions.
+    enum ContextBits : uint32_t {
+        VertexColor = 1u << 0,
+        Camera = 1u << 1,
+        ObjectPosition = 1u << 2,
+        ScreenPosition = 1u << 3,
+        Time = 1u << 4,
+    };
+
     bool success = false;
     std::string hlslSource;    ///< Generated HLSL body (ComputeMaterialOutputs function)
     std::string errorMessage;  ///< Error description if !success
     uint64_t contentHash = 0;  ///< Graph content hash for cache keying
     uint32_t textureSlotCount = 0;  ///< Number of texture slots used
     uint32_t parameterCount = 0;    ///< Number of material parameters exposed
+    uint32_t contextMask = 0;       ///< OR of ContextBits; includes implicit Fresnel camera/Panner time reads.
 
     /// Parameter metadata for runtime binding.
     struct ParamInfo {

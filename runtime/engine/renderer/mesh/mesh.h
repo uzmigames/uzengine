@@ -117,6 +117,7 @@ struct Mesh {
     MeshHeader             header;       ///< Parsed file header
     std::vector<uint8_t>   vertexData;   ///< Raw vertex bytes (48 B Vertex stride, bind-pose for skinned)
     std::vector<uint8_t>   indexData;    ///< Raw index bytes
+    std::vector<uint32_t>  vertexColors; ///< Optional linear RGBA8 UNORM, one entry per vertex.
     std::vector<SubMesh>   submeshes;    ///< Submesh ranges (empty = single draw call for entire mesh)
 
     // ── Skinning data (set only when the source asset is UZMS/skinned) ──────

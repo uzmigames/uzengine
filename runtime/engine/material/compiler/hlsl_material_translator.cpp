@@ -426,6 +426,7 @@ std::string HlslMaterialTranslator::EmitExpression(const MaterialExpression& exp
         break;
 
     case MatExprType::ObjectPosition:
+        result_.contextMask |= MaterialCompileResult::ObjectPosition;
         EmitLine("float3 " + VarName(expr.id, 0) + " = objectPosition;");
         break;
 
@@ -434,20 +435,24 @@ std::string HlslMaterialTranslator::EmitExpression(const MaterialExpression& exp
         break;
 
     case MatExprType::VertexColor:
+        result_.contextMask |= MaterialCompileResult::VertexColor;
         EmitLine("float4 " + VarName(expr.id, 0) + " = vertexColor;");
         break;
 
     case MatExprType::CameraVector: {
+        result_.contextMask |= MaterialCompileResult::Camera;
         EmitLine("float3 " + VarName(expr.id, 0) +
                  " = normalize(cameraPosition - positionWS);");
         break;
     }
 
     case MatExprType::ScreenPosition:
+        result_.contextMask |= MaterialCompileResult::ScreenPosition;
         EmitLine("float2 " + VarName(expr.id, 0) + " = screenUV;");
         break;
 
     case MatExprType::Time:
+        result_.contextMask |= MaterialCompileResult::Time;
         EmitLine("float " + VarName(expr.id, 0) + " = totalTime;");
         break;
 
@@ -505,6 +510,7 @@ std::string HlslMaterialTranslator::EmitExpression(const MaterialExpression& exp
     }
 
     case MatExprType::Fresnel: {
+        result_.contextMask |= MaterialCompileResult::Camera;
         const std::string exponent = GetInputValue(expr.inputs[0], MatPinType::Float);
         EmitLine("float " + VarName(expr.id, 0) +
                  " = pow(1.0 - saturate(dot(normalWS, normalize(cameraPosition - positionWS))), " +
@@ -513,6 +519,7 @@ std::string HlslMaterialTranslator::EmitExpression(const MaterialExpression& exp
     }
 
     case MatExprType::Panner: {
+        result_.contextMask |= MaterialCompileResult::Time;
         const std::string uv = GetInputValue(expr.inputs[0], MatPinType::Float2);
         const std::string speedX = GetInputValue(expr.inputs[1], MatPinType::Float);
         const std::string speedY = GetInputValue(expr.inputs[2], MatPinType::Float);
@@ -766,6 +773,15 @@ MaterialCompileResult HlslMaterialTranslator::Compile(const MaterialGraph& graph
     }
 
     header +=
+        "// Context contract: uv = material UV (TEXCOORD0 * uvScale + uvOffset).\n"
+        "// positionWS = interpolated world position after WPO (cm); normalWS = normalized\n"
+        "// world vertex normal before normal mapping. vertexColor = linear RGBA COLOR0,\n"
+        "// or white without a color stream (also on SM5 non-bindless).\n"
+        "// cameraPosition = cameraPos.xyz; objectPosition = obj_model[3].xyz (world cm).\n"
+        "// screenUV = render-viewport pixel-center UV [0,1], +y down, includes TAA jitter.\n"
+        "// totalTime = timeParams.x, float32 seconds since renderer start.\n"
+        "// Bake snapshot: time 0, white vertex color, screenUV = uv, camera at origin,\n"
+        "// objectPosition = 0. contextMask flags dependencies on these snapshot inputs.\n"
         "void ComputeMaterialOutputs(\n"
         "    in float2 uv, in float3 positionWS, in float3 normalWS,\n"
         "    in float4 vertexColor, in float3 cameraPosition,\n"

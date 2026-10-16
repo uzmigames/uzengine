@@ -7,15 +7,16 @@ struct VSOutput {
     float2 texcoord   : TEXCOORD0;
     float4 tangentWS  : TANGENT;
     float3 positionWS : TEXCOORD1;
+    noperspective float2 screenUV : TEXCOORD2;
+    float4 color : COLOR0;
 };
 
 #ifdef UZ_BINDLESS
 struct Vertex { float3 position; float3 normal; float2 texcoord; float4 tangent; };
 struct VertexPacked { float3 position; int4 packedNormal; float2 texcoord; int4 packedTangent; uint _pad; };
-// usePackedNormals is at root constant slot 1 — set to 0 by default when
-// only vertexBufferIndex (slot 0) is pushed. Safe because root constants
-// are zero-initialized by the DX12 runtime within a draw call scope.
-struct PushConstants { uint vertexBufferIndex; uint usePackedNormals; };
+// Draw callers initialize all four mesh values; unused root constants are
+// not initialized by D3D12. The shared root block remains 24 DWORDs.
+struct PushConstants { uint vertexBufferIndex; uint usePackedNormals; uint colorBufferIndex; uint previousVertexBufferIndex; };
 ConstantBuffer<PushConstants> push : register(b0);
 #else
 struct VSInput {
@@ -78,6 +79,17 @@ VSOutput main(VSInput v) {
     float4 worldPos = mul(float4(vPosition, 1.0), instModel);
     output.positionWS = worldPos.xyz;
     output.positionCS = mul(worldPos, viewProj);
+    // Render-viewport UV, +y down, including the current projection jitter.
+    output.screenUV = (output.positionCS.xy / output.positionCS.w) * float2(0.5, -0.5) + 0.5;
+    output.color = float4(1, 1, 1, 1); // SM5 and absent streams use white.
+#ifdef UZ_BINDLESS
+    if (push.colorBufferIndex != 0) {
+        StructuredBuffer<uint> colors = ResourceDescriptorHeap[push.colorBufferIndex];
+        uint rgba = colors[vertexID];
+        output.color = float4(rgba & 255u, (rgba >> 8) & 255u,
+                              (rgba >> 16) & 255u, rgba >> 24) / 255.0;
+    }
+#endif
     output.normalWS   = normalize(mul(float4(vNormal, 0.0), instNormal).xyz);
     output.tangentWS  = float4(normalize(mul(float4(vTangent.xyz, 0.0), instNormal).xyz), vTangent.w);
     output.texcoord   = vTexcoord;
