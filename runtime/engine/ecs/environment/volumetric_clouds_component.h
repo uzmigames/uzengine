@@ -37,7 +37,9 @@
 #include "vector3.h"
 #include "../core/dirty_flags.h"
 
+#include <array>
 #include <cstdint>
+#include <string>
 
 namespace uz {
 
@@ -59,6 +61,33 @@ enum class TracingMaxDistanceMode : uint8_t {
 /// VolumetricCloudComponent conventions and avoid floating-point precision
 /// issues at planetary scale. Wind velocity is also in km/s.
 struct VolumetricCloudsComponent : public CBDirtyMixin {
+    /// Explicit weather-channel layer. Altitude and height are in kilometers.
+    struct CloudLayer {
+        struct DensityProfile {
+            float exp = 0.0f;
+            float expExponent = 0.0f;
+            float linear = 0.0f;
+            float constant = 1.0f;
+        };
+
+        uint32_t channel = 0;
+        float altitude = 7.0f;
+        float height = 6.0f;
+        float densityScale = 1.0f;
+        float shapeAmount = 1.0f;
+        float detailAmount = 1.0f;
+        float weatherExponent = 1.0f;
+        float shapeAlteringBias = 0.0f;
+        DensityProfile densityProfile{};
+    };
+
+    std::array<CloudLayer, 4> layers{};
+    uint32_t layerCount = 1;
+    /// False preserves the legacy single-shell geometry and density model.
+    bool useExplicitLayers = false;
+    /// Optional artist-authored linear RGBA weather texture; empty is uniform one.
+    std::string weatherTexturePath;
+
     // ── Cloud Layer Geometry ─────────────────────────────────────────────
 
     /// Bottom altitude of the cloud layer in km above sea level.

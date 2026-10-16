@@ -32,6 +32,49 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     float3 nearWorld = nearH.xyz / nearH.w;
     float3 direction = normalize(farH.xyz / farH.w - nearWorld);
     float3 origin = nearWorld + float3(0.0f, 0.0f, PLANET_RADIUS_KM);
+    if (g_explicitLayers != 0) {
+        float2 intervals[4];
+        float support = 0.0f;
+        uint count = min(g_layerCount, 4u);
+        for (uint layer = 0; layer < count; ++layer) {
+            float inner = PLANET_RADIUS_KM + g_layerGeometry[layer].x;
+            float nearT, farT;
+            bool hit = GetRayNearFar(origin, direction, inner,
+                inner + g_layerGeometry[layer].y, nearT, farT);
+            farT = min(farT, depthRangeKm);
+            intervals[layer] = hit ? float2(nearT, max(nearT, farT)) : 0.0f;
+            support += intervals[layer].y - intervals[layer].x;
+        }
+        uint steps = clamp(uint(ceil(float(max(g_primarySteps, 1u))
+            * max(g_shadowViewSampleCountScale, 0.0f))), 1u, 256u);
+        float stepLength = support / float(steps);
+        float opticalDepth = 0.0f, front = depthRangeKm, back = 0.0f;
+        for (uint step = 0; step < steps && support > 0.0f; ++step) {
+            float packedT = (float(step) + 0.5f) * stepLength;
+            for (uint layer = 0; layer < count; ++layer) {
+                float length = intervals[layer].y - intervals[layer].x;
+                if (packedT < length) {
+                    float t = intervals[layer].x + packedT;
+                    float mip = LayerMip(layer, direction, stepLength, 0.0f);
+                    float extinction = LayerDensity(origin + direction * t, layer, mip)
+                        * g_extinction * DENSITY_SCALE;
+                    opticalDepth += extinction * stepLength;
+                    if (extinction > 0.0f) {
+                        front = min(front, max(intervals[layer].x, t - stepLength * 0.5f));
+                        back = max(back, min(intervals[layer].y, t + stepLength * 0.5f));
+                    }
+                    break;
+                }
+                packedT -= length;
+            }
+        }
+        opticalDepth = min(max(opticalDepth, 0.0f), 65504.0f);
+        float meanExtinction = opticalDepth / max(back - front, EXT_EPS);
+        output[DTid.xy] = opticalDepth > 0.0f
+            ? float4(front, min(meanExtinction, 65504.0f), opticalDepth, exp(-opticalDepth))
+            : float4(0.0f, 0.0f, 0.0f, 1.0f);
+        return;
+    }
     float innerRadius = PLANET_RADIUS_KM + g_layerBottomKm;
     float2 outerHit = RaySphereIntersect(origin, direction, 0.0f, innerRadius + g_layerHeightKm);
     float start = max(outerHit.x, 0.0f);

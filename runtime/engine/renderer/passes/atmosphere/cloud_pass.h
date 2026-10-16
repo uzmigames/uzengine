@@ -33,6 +33,7 @@
 #include "engine/rhi/rhi_types.h"
 #include "render_graph_types.h"
 #include "cb_ring_allocator.h"
+#include "engine/ecs/environment/volumetric_clouds_component.h"
 #include <cstdint>
 #include <vector>
 
@@ -50,6 +51,10 @@ namespace rg { class RgBuilder; class RgStateRegistry; }
 /// Input parameters for a single cloud dispatch, filled from VolumetricCloudsComponent
 /// and current-frame scene data in frame_atmosphere_passes.cpp.
 struct CloudPassInput {
+    std::array<VolumetricCloudsComponent::CloudLayer, 4> layers{};
+    uint32_t layerCount = 1;
+    bool useExplicitLayers = false;
+    std::string weatherTexturePath;
     float    invViewProj[16];
     float    cameraPos[3];
     float    sunDir[3];
@@ -196,6 +201,8 @@ private:
     bool CreateTemporalTextures(uint32_t width, uint32_t height);
     void DestroyTemporalTextures();
     bool EnsureShadowPipelines();
+    void LoadWeatherTexture(IRHICommandList* cmd, rg::RgStateRegistry* states,
+                            const std::string& path);
     void DestroyShadowTextures();
 
     // ── Device + shader manager references ──
@@ -269,6 +276,9 @@ private:
     uint32_t         m_detailNoiseSrvIndex = UINT32_MAX;
     RHITextureHandle m_stbnTexture = RHITextureHandle::Invalid();
     uint32_t         m_stbnSrvIndex = UINT32_MAX;
+    RHITextureHandle m_weatherTexture{};
+    uint32_t m_weatherSrv = UINT32_MAX;
+    std::string m_weatherPath;
 
     // ── Staging buffers kept alive until GPU finishes ──
     std::vector<RHIBufferHandle> m_stagingBuffers;

@@ -215,12 +215,7 @@
     std::unique_ptr<VolumetricFogPass> m_volFogPass;   ///< 160×90×64 froxel fog pipeline (inject + scatter + composite).
 
     // ── Volumetric Clouds ───────────────────────────────────────────────
-    std::unique_ptr<CloudPass> m_cloudPass;           ///< GPU volumetric cloud pipeline (5 compute shaders).
-    IRHICommandList* m_cloudCmdList = nullptr;         ///< Dedicated command list for cloud compute dispatches.
-    uint32_t m_cloudOutputSrv = UINT32_MAX;           ///< SRV of the final cloud output for compositing.
-    std::unique_ptr<CloudPassInput> m_pendingCloudInput; ///< Deferred cloud input for pre-graph compute dispatch.
-    bool m_pendingCloudDispatch = false;               ///< True when cloud compute should run before render graph.
-    bool m_cloudOutputReady = false;                   ///< True after the first cloud compute dispatch has completed.
+    std::unique_ptr<CloudPass> m_cloudPass;           ///< Same-frame cloud raymarch and composite graph passes.
 
     // ── Distance Field Shadows ───────────────────────────────────────────
 
@@ -983,6 +978,7 @@
 
     /// Registers atmosphere, height fog, and volumetric cloud composite passes.
     void RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
+    void RegisterCloudShadowPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
 
     /// Copies current HDR scene color to SSGI prev-frame buffer.
     void RegisterSSGIPrevColorCopy(rg::RgBuilder& rgBuilder, FrameContext& ctx);

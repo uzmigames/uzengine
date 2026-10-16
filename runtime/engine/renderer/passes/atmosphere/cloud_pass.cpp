@@ -32,6 +32,7 @@
 #include <fstream>
 #include <algorithm>
 #include <cmath>
+#include <stb_image.h>
 
 UZ_DECLARE_LOG_CATEGORY(Renderer);
 
@@ -181,6 +182,10 @@ void CloudPass::Shutdown() {
         m_stbnTexture = RHITextureHandle::Invalid();
     }
     m_stbnSrvIndex = UINT32_MAX;
+    if (m_weatherTexture.IsValid()) m_device->DestroyTexture(m_weatherTexture);
+    m_weatherTexture = {};
+    m_weatherSrv = UINT32_MAX;
+    m_weatherPath.clear();
 
     // Destroy staging buffers
     for (auto& buf : m_stagingBuffers) {
@@ -385,6 +390,65 @@ static std::vector<uint8_t> ReadCloudAsset(IVFS* vfs, const std::string& relativ
     return {};
 }
 
+void CloudPass::LoadWeatherTexture(IRHICommandList* cmd, rg::RgStateRegistry* states,
+                                   const std::string& path) {
+    if (path == m_weatherPath) return;
+    // A path edit can retire a descriptor still referenced by earlier frames.
+    // Like temporal-mode changes, this is not a per-frame synchronization point.
+    if (m_weatherTexture.IsValid()) {
+        m_device->WaitIdle();
+        m_device->DestroyTexture(m_weatherTexture);
+    }
+    m_weatherTexture = {};
+    m_weatherSrv = UINT32_MAX;
+    m_weatherPath = path;
+    if (path.empty()) return; // Uniform RGBA=(1,1,1,1) weather, no allocation.
+    std::string source;
+    const auto bytes = ReadCloudAsset(m_vfs, path, source);
+    int width = 0, height = 0, channels = 0;
+    auto* pixels = bytes.empty() ? nullptr : stbi_load_from_memory(
+        bytes.data(), static_cast<int>(bytes.size()), &width, &height, &channels, 4);
+    if (!pixels) {
+        UZ_LOG(Renderer, Error, "CloudPass: cannot decode authored RGBA weather '{}'", path);
+        return;
+    }
+    const uint32_t pitch = (uint32_t(width) * 4 + 255u) & ~255u;
+    RHITextureDesc desc{};
+    desc.width = uint32_t(width);
+    desc.height = uint32_t(height);
+    desc.format = RHIFormat::RGBA8Unorm; // Linear coverage values, including alpha.
+    desc.usage = RHITextureUsage::ShaderResource | RHITextureUsage::CopyDst;
+    desc.debugName = "Cloud_Weather";
+    m_weatherTexture = m_device->CreateTexture(desc);
+    RHIBufferDesc upload{};
+    upload.sizeBytes = uint64_t(pitch) * height;
+    upload.usage = RHIBufferUsage::CopySrc;
+    upload.memory = RHIMemoryType::Upload;
+    upload.debugName = "Cloud_WeatherUpload";
+    auto buffer = m_device->CreateBuffer(upload);
+    auto* mapped = buffer.IsValid() ? static_cast<uint8_t*>(m_device->MapBuffer(buffer)) : nullptr;
+    if (!m_weatherTexture.IsValid() || !mapped) {
+        stbi_image_free(pixels);
+        if (mapped) m_device->UnmapBuffer(buffer);
+        if (buffer.IsValid()) m_device->DestroyBuffer(buffer);
+        if (m_weatherTexture.IsValid()) m_device->DestroyTexture(m_weatherTexture);
+        m_weatherTexture = {};
+        UZ_LOG(Renderer, Error, "CloudPass: authored weather upload allocation failed");
+        return;
+    }
+    for (int y = 0; y < height; ++y)
+        std::memcpy(mapped + uint64_t(y) * pitch, pixels + uint64_t(y) * width * 4, size_t(width) * 4);
+    stbi_image_free(pixels);
+    m_device->UnmapBuffer(buffer);
+    states->Transition(cmd, m_weatherTexture, RHIResourceState::CopyDst);
+    cmd->CopyBufferToTexture(buffer, 0, pitch, m_weatherTexture, 0, 0);
+    states->Transition(cmd, m_weatherTexture, RHIResourceState::ShaderResource);
+    m_stagingBuffers.push_back(buffer);
+    m_weatherSrv = m_device->GetTextureSRVIndex(m_weatherTexture);
+    UZ_LOG(Renderer, Info, "CloudPass: authored RGBA weather {}x{}, SRV={} from {}",
+           width, height, m_weatherSrv, source);
+}
+
 void CloudPass::LoadNoiseTextures(IRHICommandList* cmdList, rg::RgStateRegistry* states, IVFS* vfs) {
     if (m_noiseLoadAttempted || !m_initialized || !cmdList) return;
     m_noiseLoadAttempted = true;
@@ -540,10 +604,23 @@ struct alignas(16) CloudCB {
     uint32_t frontDepthUav;
     uint32_t shadowBufferSrv;
     uint32_t shadowCascadeCount;
-    float padding[41];
+    uint32_t layerCount;
+    uint32_t weatherSrv;
+    uint32_t explicitLayers;
+    float layerPad[2];
+    float layerGeometry[4][4]; // altitude, height, density scale, weather channel
+    float layerShape[4][4]; // shape amount, detail amount, weather exponent, bias
+    float layerProfile[4][4]; // exp term, exponent, linear term, constant
+    float padding[116];
 };
 
-static_assert(sizeof(CloudCB) == 512, "CloudCB must be 512 bytes for CBV alignment");
+static_assert(sizeof(CloudCB) == 1024, "CloudCB must be 1024 bytes for CBV alignment");
+static_assert(offsetof(CloudCB, layerCount) == 348);
+static_assert(offsetof(CloudCB, weatherSrv) == 352);
+static_assert(offsetof(CloudCB, explicitLayers) == 356);
+static_assert(offsetof(CloudCB, layerGeometry) == 368);
+static_assert(offsetof(CloudCB, layerShape) == 432);
+static_assert(offsetof(CloudCB, layerProfile) == 496);
 // The HLSL copy declares g_windVelocity as three scalars: a float3 at 152 would move to 160 and
 // shift the tail by 8 bytes (block B.4).
 static_assert(offsetof(CloudCB, windVelocity) == 152);
@@ -654,6 +731,40 @@ static CloudCB MakeCloudCB(const CloudPassInput& input, uint32_t shapeSrv,
     cb.powderScale = std::clamp(input.powderScale, 0.0f, 1.0f);
     cb.powderExponent = std::max(0.0f, input.powderExponent);
     cb.multiScatterOctaves = std::clamp(input.multiScatterOctaves, 1u, 8u);
+    cb.layerCount = input.useExplicitLayers ? std::clamp(input.layerCount, 1u, 4u) : 1u;
+    cb.weatherSrv = UINT32_MAX;
+    cb.explicitLayers = input.useExplicitLayers || !input.weatherTexturePath.empty();
+    for (uint32_t i = 0; i < cb.layerCount; ++i) {
+        auto layer = input.layers[i];
+        if (!input.useExplicitLayers) {
+            layer.altitude = input.layerBottomKm;
+            layer.height = input.layerHeightKm;
+        }
+        cb.layerGeometry[i][0] = layer.altitude;
+        cb.layerGeometry[i][1] = std::max(layer.height, 0.001f);
+        cb.layerGeometry[i][2] = layer.densityScale;
+        cb.layerGeometry[i][3] = float(std::min(layer.channel, 3u));
+        cb.layerShape[i][0] = layer.shapeAmount;
+        cb.layerShape[i][1] = layer.detailAmount;
+        cb.layerShape[i][2] = layer.weatherExponent;
+        cb.layerShape[i][3] = layer.shapeAlteringBias;
+        cb.layerProfile[i][0] = layer.densityProfile.exp;
+        cb.layerProfile[i][1] = layer.densityProfile.expExponent;
+        cb.layerProfile[i][2] = layer.densityProfile.linear;
+        cb.layerProfile[i][3] = layer.densityProfile.constant;
+    }
+    // A neutral explicit single layer uses precisely the original shader path.
+    if (cb.layerCount == 1 && input.weatherTexturePath.empty()) {
+        const auto& l = input.layers[0];
+        if (!input.useExplicitLayers || (l.densityScale == 1 && l.shapeAmount == 1
+            && l.detailAmount == 1 && l.shapeAlteringBias == 0
+            && l.densityProfile.exp == 0 && l.densityProfile.linear == 0
+            && l.densityProfile.constant == 1)) {
+            cb.explicitLayers = 0;
+            cb.layerBottomKm = cb.layerGeometry[0][0];
+            cb.layerHeightKm = cb.layerGeometry[0][1];
+        }
+    }
     return cb;
 }
 
@@ -756,6 +867,7 @@ void CloudPass::RegisterShadowPasses(rg::RgBuilder& builder, rg::RgStateRegistry
     if (!m_initialized || !GroundShadowsEnabled() || input.sunDir[2] <= 0.05f
         || !EnsureShadowPipelines()) return;
     if (!m_noiseLoadAttempted) LoadNoiseTextures(frameList, states, m_vfs);
+    LoadWeatherTexture(frameList, states, input.weatherTexturePath);
     if (!m_hasNoiseTextures) return;
     const uint32_t count = std::clamp(input.shadowCascadeCount, 1u, 3u);
     const uint32_t resolution = std::clamp(input.shadowResolution, 64u, 2048u);
@@ -825,12 +937,15 @@ void CloudPass::RegisterShadowPasses(rg::RgBuilder& builder, rg::RgStateRegistry
         && sun.Dot(Vec3(m_shadowPreviousSun[0], m_shadowPreviousSun[1], m_shadowPreviousSun[2])) > 0.99995f;
     const uint32_t write = m_shadowWrite;
     const uint32_t read = write ^ 1u;
-    const CloudCB cloud = MakeCloudCB(input, m_shapeNoiseSrvIndex, m_detailNoiseSrvIndex, m_stbnSrvIndex);
+    CloudCB cloud = MakeCloudCB(input, m_shapeNoiseSrvIndex, m_detailNoiseSrvIndex, m_stbnSrvIndex);
+    cloud.weatherSrv = m_weatherSrv;
     const auto cloudAlloc = cbRing.Allocate(sizeof(cloud));
     std::memcpy(cloudAlloc.cpuPtr, &cloud, sizeof(cloud));
     const auto shape = builder.ImportTrackedTexture("Cloud_ShapeNoise", m_shapeNoiseTexture);
     const auto detail = builder.ImportTrackedTexture("Cloud_DetailNoise", m_detailNoiseTexture);
     const auto stbn = builder.ImportTrackedTexture("Cloud_STBN", m_stbnTexture);
+    const auto weather = m_weatherTexture.IsValid()
+        ? builder.ImportTrackedTexture("Cloud_Weather", m_weatherTexture) : rg::RgResourceId{};
     for (uint32_t i = 0; i < count; ++i) {
         const float fraction = float(i + 1) / count;
         const float logarithmic = nearKm * std::pow(farKm / nearKm, fraction);
@@ -848,7 +963,11 @@ void CloudPass::RegisterShadowPasses(rg::RgBuilder& builder, rg::RgStateRegistry
         const float texel = (radius * 2) / resolution;
         center += right * (std::round(center.Dot(right) / texel) * texel - center.Dot(right));
         center += lightUp * (std::round(center.Dot(lightUp) / texel) * texel - center.Dot(lightUp));
-        const float depthRange = radius * 2 + 2 * (input.layerBottomKm + input.layerHeightKm
+        float layerTop = cloud.layerBottomKm + cloud.layerHeightKm;
+        if (cloud.explicitLayers != 0)
+            for (uint32_t layer = 0; layer < cloud.layerCount; ++layer)
+                layerTop = std::max(layerTop, cloud.layerGeometry[layer][0] + cloud.layerGeometry[layer][1]);
+        const float depthRange = radius * 2 + 2 * (layerTop
             + std::abs(camera.z)) / std::max(sun.z, 0.05f);
         const Mat4 vp = Mat4::LookAt(center + sun * (depthRange * 0.5f), center, up)
             * Mat4::Orthographic(radius * 2, radius * 2, 0, depthRange);
@@ -881,6 +1000,7 @@ void CloudPass::RegisterShadowPasses(rg::RgBuilder& builder, rg::RgStateRegistry
             pb.Read(shape, RHIResourceState::ShaderResource);
             pb.Read(detail, RHIResourceState::ShaderResource);
             pb.Read(stbn, RHIResourceState::ShaderResource);
+            if (weather.IsValid()) pb.Read(weather, RHIResourceState::ShaderResource);
             pb.SetExecutionCallback([=, this](IRHICommandList* cmd, const rg::RgPassResources&) {
                 cmd->SetPipeline(m_shadowPipeline);
                 cmd->SetRootCBV(kSlotPerFrame, generationAlloc.gpuAddr);
@@ -942,9 +1062,11 @@ void CloudPass::RegisterPasses(rg::RgBuilder& rgBuilder, rg::RgStateRegistry* st
 
     // Registration occurs on the open frame list, before graph execution.
     if (!m_noiseLoadAttempted) LoadNoiseTextures(frameList, states, m_vfs);
+    LoadWeatherTexture(frameList, states, input.weatherTexturePath);
 
     // ── Fill constant buffer ──
     CloudCB cb = MakeCloudCB(input, m_shapeNoiseSrvIndex, m_detailNoiseSrvIndex, m_stbnSrvIndex);
+    cb.weatherSrv = m_weatherSrv;
     cb.shadowBufferSrv = m_shadowBufferSrv;
     cb.shadowCascadeCount = m_shadowFrameCount;
     if (m_temporalUpscale) {
@@ -976,6 +1098,8 @@ void CloudPass::RegisterPasses(rg::RgBuilder& rgBuilder, rg::RgStateRegistry* st
         UZ_LOG(Renderer, Info,
                "CloudPass: lighting — multiScatterOctaves={}, powderScale={}, powderExponent={}, skyLightScale={}",
                cb.multiScatterOctaves, cb.powderScale, cb.powderExponent, cb.ambientMultiplier);
+        UZ_LOG(Renderer, Info, "CloudPass: layers={}, explicit={}, weatherSRV={}, base0={}, base1={}",
+               cb.layerCount, cb.explicitLayers, cb.weatherSrv, cb.layerGeometry[0][0], cb.layerGeometry[1][0]);
         UZ_LOG(Renderer, Info,
                "CloudPass: root constants — outputUAV={}, depthSRV={}, size={}x{}",
                rootConst[0], rootConst[1], rootConst[2], rootConst[3]);
@@ -1006,6 +1130,8 @@ void CloudPass::RegisterPasses(rg::RgBuilder& rgBuilder, rg::RgStateRegistry* st
         ? rgBuilder.ImportTrackedTexture("Cloud_DetailNoise", m_detailNoiseTexture) : rg::RgResourceId{};
     const auto stbnRes = m_stbnTexture.IsValid()
         ? rgBuilder.ImportTrackedTexture("Cloud_STBN", m_stbnTexture) : rg::RgResourceId{};
+    const auto weatherRes = m_weatherTexture.IsValid()
+        ? rgBuilder.ImportTrackedTexture("Cloud_Weather", m_weatherTexture) : rg::RgResourceId{};
     const auto raymarchPipeline = m_shadowFrameCount != 0
         ? m_shadowRaymarchPipeline[m_temporalUpscale ? 1 : 0]
         : (m_temporalUpscale ? m_upscaleRaymarchPipeline : m_raymarchPipeline);
@@ -1017,6 +1143,7 @@ void CloudPass::RegisterPasses(rg::RgBuilder& rgBuilder, rg::RgStateRegistry* st
         if (shapeRes.IsValid()) pb.Read(shapeRes, RHIResourceState::ShaderResource);
         if (detailRes.IsValid()) pb.Read(detailRes, RHIResourceState::ShaderResource);
         if (stbnRes.IsValid()) pb.Read(stbnRes, RHIResourceState::ShaderResource);
+        if (weatherRes.IsValid()) pb.Read(weatherRes, RHIResourceState::ShaderResource);
         for (uint32_t i = 0; i < m_shadowFrameCount; ++i)
             pb.Read(m_shadowResources[i], RHIResourceState::ShaderResource);
         pb.SetExecutionCallback([=, this](IRHICommandList* cmd, const rg::RgPassResources&) {

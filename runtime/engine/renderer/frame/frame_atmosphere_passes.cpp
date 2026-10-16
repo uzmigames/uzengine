@@ -47,6 +47,11 @@ void SceneRenderer::RegisterCloudShadowPasses(rg::RgBuilder& builder, FrameConte
         const auto& component = clouds.get<VolumetricCloudsComponent>(entity);
         if (!component.enabled) continue;
         CloudPassInput input{};
+        input.layers = component.layers;
+        input.layerCount = component.layerCount;
+        input.useExplicitLayers = component.useExplicitLayers;
+        input.weatherTexturePath = component.weatherTexturePath;
+        input.cloudType = component.cloudType;
         const Mat4 inverse = ctx.unjitteredViewProj.Inverse();
         std::memcpy(input.invViewProj, inverse.data(), 64);
         input.cameraPos[0] = ctx.perFrame.cameraPos.x * 0.00001f;
@@ -261,6 +266,10 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
             // Use UNJITTERED invViewProj — jittered matrix causes cloud noise
             // to shift every frame (TSR subpixel jitter), creating false movement.
             CloudPassInput cloudInput{};
+            cloudInput.layers = cloudComp.layers;
+            cloudInput.layerCount = cloudComp.layerCount;
+            cloudInput.useExplicitLayers = cloudComp.useExplicitLayers;
+            cloudInput.weatherTexturePath = cloudComp.weatherTexturePath;
             Mat4 unjitteredInvVP = ctx.unjitteredViewProj.Inverse();
             std::memcpy(cloudInput.invViewProj, &unjitteredInvVP, 64);
 

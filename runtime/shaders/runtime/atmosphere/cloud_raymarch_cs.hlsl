@@ -6,7 +6,7 @@
 ///
 /// # Root Signature Layout (Compute)
 /// - b0 (slot 0): 4x uint32 root constants {outputUavIdx, depthSrvIdx, halfWidth, halfHeight}
-/// - b2 (slot 2): CloudCB constant buffer (512 bytes)
+/// - b2 (slot 2): CloudCB constant buffer (1024 bytes)
 /// - u0 (slot 4): UAV descriptor table for output write
 ///
 /// # Output
@@ -34,7 +34,7 @@ cbuffer RootConstants : register(b0) {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Cloud Constant Buffer (b2) — matches CloudCB in cloud_pass.cpp (512 bytes)
+// Cloud Constant Buffer (b2) — matches CloudCB in cloud_pass.cpp (1024 bytes)
 // ─────────────────────────────────────────────────────────────────────────────
 
 cbuffer CloudCB : register(b2) {
@@ -104,12 +104,22 @@ cbuffer CloudCB : register(b2) {
     uint    _frontDepthUav;
     uint    g_cloudShadowBufferSrv;
     uint    g_cloudShadowCascadeCount;
-    float   _shadowPad;
-    float4  _cbReserved[10];
 #else
-    float3  _cbPad;
-    float4  _cbReserved[11];
+    uint _temporalUpscale;
+    uint _fullWidth;
+    uint _fullHeight;
+    uint _frontDepthUav;
+    uint _cloudShadowBufferSrv;
+    uint _cloudShadowCascadeCount;
 #endif
+    uint g_layerCount;
+    uint g_weatherSrv;
+    uint g_explicitLayers;
+    float2 _layerPad;
+    float4 g_layerGeometry[4];
+    float4 g_layerShape[4];
+    float4 g_layerProfile[4];
+    float4 _layerReserved[29];
 };
 
 SamplerState linearSampler : register(s3);
@@ -279,6 +289,13 @@ float HeightGradient(float sampleHeight, float innerRadius, float layerHeight) {
     float bottom = smoothstep(0.0f, 0.07f, h);
     // Rounded top fade — peak density around 20-40%, gradual falloff to top
     float top = smoothstep(1.0f, 0.3f, h);
+    if (g_cloudType != 0.5f) {
+        float type = saturate(g_cloudType);
+        float fadeEnd = lerp(0.35f, 1.0f, saturate(type * 2.0f));
+        float fadeStart = type < 0.5f ? lerp(0.1f, 0.3f, type * 2.0f)
+            : lerp(0.3f, 0.8f, (type - 0.5f) * 2.0f);
+        top = smoothstep(fadeEnd, fadeStart, h);
+    }
     return bottom * top;
 }
 
@@ -443,6 +460,7 @@ float LightMarch(float3 samplePosKm, float3 sunDir, float innerRadius,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+#include "cloud_layers.hlsli"
 // Main
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -466,6 +484,11 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     float minSafe = PLANET_RADIUS_KM + PLANET_RADIUS_OFFSET_KM;
     if (distToCenter < minSafe) {
         cameraSkyKm = cameraSkyKm * (minSafe / distToCenter);
+    }
+    if (g_explicitLayers != 0) {
+        float frontDepth;
+        output[DTid.xy] = MarchCloudLayers(cameraSkyKm, rayDir, DTid.xy, frontDepth);
+        return;
     }
 
     float innerRadius = PLANET_RADIUS_KM + g_layerBottomKm;

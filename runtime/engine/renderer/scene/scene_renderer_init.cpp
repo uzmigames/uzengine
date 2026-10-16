@@ -673,17 +673,6 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         UZ_LOG(Renderer, Warning, "SceneRenderer: CloudPass init failed (clouds disabled)");
         m_cloudPass.reset();
     }
-    // Dedicated command list for cloud compute — isolates cloud barrier
-    // management from the main render frame command list to avoid DX12
-    // debug layer state tracking conflicts.
-    m_cloudCmdList = m_device->CreateCommandList(RHIQueueType::Graphics);
-    if (!m_cloudCmdList) {
-        UZ_LOG(Renderer, Warning, "SceneRenderer: failed to create cloud command list");
-    }
-
-    // Cloud noise loading disabled — cloud pass disabled for manual testing.
-    // TODO(clouds): re-enable when cloud pipeline is debugged
-
     // ── Brixelizer GI (AMD FidelityFX sparse SDF voxel GI) ────────────
     if (CVarRegistry::Get().GetBool("r.BrixelizerGI", false)) {
         m_brixelizerGI = std::make_unique<BrixelizerGIPass>();
@@ -1664,7 +1653,6 @@ void SceneRenderer::Shutdown() {
     if (m_gtaoPass) m_gtaoPass->Shutdown();
     if (m_volFogPass) { m_volFogPass->Shutdown(m_device); m_volFogPass.reset(); }
     if (m_cloudPass) { m_cloudPass->Shutdown(); m_cloudPass.reset(); }
-    if (m_cloudCmdList) { m_device->DestroyCommandList(m_cloudCmdList); m_cloudCmdList = nullptr; }
     if (m_brixelizerGI) { m_brixelizerGI->Shutdown(); m_brixelizerGI.reset(); }
 
     // ── Runtime VFX Emitter cleanup ─────────────────────────────────
