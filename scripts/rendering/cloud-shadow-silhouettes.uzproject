@@ -1,0 +1,15 @@
+{
+  "name": "Opt-in cloud shadow silhouettes",
+  "version": "1.0",
+  "content_root": "../../sample/content",
+  "default_scene": "../../scripts/rendering/cloud-shadow-silhouettes.uzscene",
+  "window": { "width": 1280, "height": 720 },
+  "cvars": {
+    "r.AutoExposure": 0, "r.Exposure": 0.5, "r.GTAO": 0,
+    "r.RadianceCache": 0, "r.GI.FinalGather": 0, "r.GI.Reflections": 0,
+    "r.SSGI": 0, "r.TAA": 1, "r.Fog": 0, "r.ContactShadows": 0,
+    "r.TechPanel.Show": 0, "r.Toolbar.Show": 0,
+    "r.Cloud.NoiseXYScale": 1, "r.Cloud.NoiseZScale": 0.5,
+    "r.Cloud.DetailErosion": 0.15, "r.Clouds.GroundShadows": 1
+  }
+}
