@@ -35,6 +35,35 @@ class SceneRenderer;
 /// Per-frame shared state passed between the RenderFrame sub-functions.
 /// Lives on the stack inside RenderFrame() — never persisted across frames.
 struct FrameContext {
+    /// Consumers read this at execution, not graph registration. On a failed
+    /// temporal write the current HDR replaces history: it may still be jittered
+    /// for this frame, but never freezes on an old backend's output.
+    struct DisplaySource {
+        uint32_t srv = UINT32_MAX;
+        RHITextureHandle texture;
+        uint32_t uav = UINT32_MAX;
+        float width = 0.f, height = 0.f;
+        bool temporal = false;
+
+        static DisplaySource Hdr(uint32_t srv, RHITextureHandle texture, float width, float height) {
+            return {srv, texture, UINT32_MAX, width, height, false};
+        }
+        static DisplaySource Temporal(uint32_t srv, RHITextureHandle texture, uint32_t uav,
+                                      float width, float height) {
+            return {srv, texture, uav, width, height, true};
+        }
+    };
+    DisplaySource display{};
+
+    void ResolveDisplaySource(bool wrote, const DisplaySource& hdr, uint32_t& failureStreak) {
+        if (wrote) {
+            failureStreak = 0;
+        } else {
+            display = hdr;
+            ++failureStreak;
+        }
+    }
+
     // ── Externals (passed into RenderFrame) ─────────────────────────
     IRHICommandList* cmdList = nullptr;
     IRHISwapChain*   swapChain = nullptr;

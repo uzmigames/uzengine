@@ -373,6 +373,11 @@
 
     std::unique_ptr<ITemporalUpscaler> m_upscaler;         ///< Active temporal upscaler (TAA or TSR).
     UpscalerType m_upscalerType = UpscalerType::TAA;        ///< Default TAA. DLSS opt-in via r.AntiAliasingMethod=4.
+    UpscalerSelection m_upscalerSelection{};
+    bool m_upscalerSelectionInitialized = false;
+    bool m_forceReselect = false;
+    UpscalerType m_failedUpscaler = UpscalerType::None;
+    uint32_t m_upscalerFailStreak = 0;
 
     // ── Dynamic Resolution ───────────────────────────────────────────────────
 

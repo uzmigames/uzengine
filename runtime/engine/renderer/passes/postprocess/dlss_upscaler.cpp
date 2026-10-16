@@ -295,6 +295,7 @@ struct DlssUpscaler::Impl {
                    "DLSS: failed to get NGX capability parameters (result=0x{:08X})",
                    static_cast<uint32_t>(result));
             pfnShutdown(nativeDevice);
+            ngxParams = nullptr;
             return false;
         }
 
@@ -459,34 +460,40 @@ const char* DlssUpscaler::GetName() const noexcept { return "DLSS"; }
 float DlssUpscaler::GetMinScreenPercentage() const noexcept { return 33.3f; }
 float DlssUpscaler::GetMaxScreenPercentage() const noexcept { return 100.f; }
 bool DlssUpscaler::IsAvailable() const noexcept {
-    return m_impl && m_impl->dlssSupported && m_impl->ngxInitialized;
+    return true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Lifecycle
 // ─────────────────────────────────────────────────────────────────────────────
 
-void DlssUpscaler::Init(IRHIDevice* device, PipelineLibrary*, CBRingAllocator*) {
-    if (!device) { UZ_LOG(Renderer, Error, "DLSS: Init called with null device"); return; }
+bool DlssUpscaler::Init(IRHIDevice* device, PipelineLibrary*, CBRingAllocator*) {
+    Shutdown();
+    if (!device) { UZ_LOG(Renderer, Error, "DLSS: Init called with null device"); return false; }
     if (device->GetBackend() != RHIBackend::DX12) {
         UZ_LOG(Renderer, Warning, "DLSS: only DX12 backend is supported");
-        return;
+        return false;
     }
 
+    if (!m_impl) m_impl = std::make_unique<Impl>();
     m_impl->device = device;
     m_impl->dx12Device = static_cast<DX12Device*>(device);
 
     // Step 1: Load _nvngx.dll dynamically.
-    if (!m_impl->LoadDll()) return;
+    if (!m_impl->LoadDll()) {
+        Shutdown();
+        return false;
+    }
 
     // Step 2: Initialize NGX SDK.
     ID3D12Device* nativeDevice = m_impl->dx12Device->GetDevice();
     if (!nativeDevice || !m_impl->InitNgx(nativeDevice)) {
-        m_impl->UnloadDll();
-        return;
+        Shutdown();
+        return false;
     }
 
     UZ_LOG(Renderer, Info, "DLSS: backend initialized, feature created on first frame");
+    return true;
 }
 
 void DlssUpscaler::Shutdown() {
@@ -536,7 +543,10 @@ bool DlssUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     if (!m_impl->dlssFeature || m_impl->displayWidth != outputW ||
         m_impl->displayHeight != outputH || m_impl->currentQuality != quality) {
         if (outputW == 0 || outputH == 0) return false;
-        if (!m_impl->CreateFeature(nativeCmdList, outputW, outputH, quality)) return false;
+        if (!m_impl->CreateFeature(nativeCmdList, outputW, outputH, quality)) {
+            Shutdown();
+            return false;
+        }
     }
 
     // Resolve RHI textures to native DX12 resources.
@@ -688,9 +698,10 @@ float DlssUpscaler::GetMinScreenPercentage() const noexcept { return 33.f; }
 float DlssUpscaler::GetMaxScreenPercentage() const noexcept { return 100.f; }
 bool DlssUpscaler::IsAvailable() const noexcept { return false; }
 
-void DlssUpscaler::Init(IRHIDevice*, PipelineLibrary*, CBRingAllocator*) {
+bool DlssUpscaler::Init(IRHIDevice*, PipelineLibrary*, CBRingAllocator*) {
     UZ_LOG(Renderer, Warning,
            "DLSS is not available — build with UZ_DLSS_ENABLED=1 (run scripts/setup.ps1 to download the SDK)");
+    return false;
 }
 void DlssUpscaler::Shutdown() {}
 void DlssUpscaler::OnResize(uint32_t, uint32_t) {}

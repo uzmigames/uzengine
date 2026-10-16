@@ -921,36 +921,14 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         m_fallbackNormalSrvIndex = m_device->GetTextureSRVIndex(m_fallbackNormal);
     }
 
-    // ── Temporal Upscaler (default: DLSS → TSR fallback chain) ────
-    m_upscaler = CreateTemporalUpscaler(m_upscalerType);
-    if (m_upscaler) {
-        m_upscaler->Init(m_device, m_pipelines.get(), m_cbRing.get());
-
-        // DLSS fallback: if DLSS Init failed (non-NVIDIA GPU, missing DLL, old driver),
-        // fall back to TAA (TSR shader is a stub — not yet implemented).
-        if (m_upscalerType == UpscalerType::DLSS) {
-            auto* dlss = dynamic_cast<DlssUpscaler*>(m_upscaler.get());
-            if (!dlss || !dlss->IsAvailable()) {
-                UZ_LOG(Renderer, Info, "SceneRenderer: DLSS unavailable, falling back to TAA");
-                m_upscaler->Shutdown();
-                m_upscaler.reset();
-                m_upscalerType = UpscalerType::TAA;
-                m_upscaler = CreateTemporalUpscaler(m_upscalerType);
-                if (m_upscaler) {
-                    m_upscaler->Init(m_device, m_pipelines.get(), m_cbRing.get());
-                }
-            }
-        }
-    }
-
-    // Enable TAA jitter + upscaler dispatch for any non-None upscaler.
-    m_taaEnabled = (m_upscalerType != UpscalerType::None);
-
     // ── Dynamic Resolution Controller ────────────────────────────────────
     m_dynRes = std::make_unique<DynamicResolutionController>();
 
     // ── Register CVars ───────────────────────────────────────────────────
     RegisterCVars();
+    // Startup and runtime changes use the same capability/init fallback policy.
+    SetUpscalerType(static_cast<UpscalerType>(
+        CVarRegistry::Get().GetInt("r.AntiAliasingMethod", 1)));
 
     UZ_LOG(Renderer, Info, "SceneRenderer initialized ({}x{} display, {}x{} render, {}% scale, {})",
            width, height, m_renderWidth, m_renderHeight,
@@ -968,7 +946,7 @@ void SceneRenderer::RegisterCVars() {
     cvars.Register("r.ScreenPercentage", m_screenPercentage,
                    "Render scale percentage (10-200)", 10.f, 200.f);
 
-    cvars.Register("r.AntiAliasingMethod", static_cast<float>(m_upscalerType),
+    cvars.Register("r.AntiAliasingMethod", static_cast<float>(m_upscalerSelection.requested),
                    "Anti-aliasing method: 0=None, 1=TAA, 2=TSR, 3=FSR2, 4=DLSS, 5=XeSS", 0.f, 5.f);
 
     cvars.Register("r.TSR.History.ScreenPercentage", 100.f,
@@ -1061,7 +1039,7 @@ void SceneRenderer::ApplyCVars() {
 
     // Anti-aliasing method → upscaler type
     const auto aaMethod = static_cast<UpscalerType>(cvars.GetInt("r.AntiAliasingMethod", 1));
-    if (aaMethod != m_upscalerType) {
+    if (aaMethod != m_upscalerSelection.requested) {
         SetUpscalerType(aaMethod);
     }
 
@@ -1114,7 +1092,7 @@ void SceneRenderer::ApplyCVars() {
     if (ptEnabled) cvars.Set("r.TAA", 0.f);
     m_ptEnabledLastFrame = ptEnabled;
 
-    m_taaEnabled        = cvars.GetBool("r.TAA", false);
+    m_taaEnabled        = m_upscalerType != UpscalerType::None && cvars.GetBool("r.TAA", false);
     m_ssrEnabled        = cvars.GetBool("r.SSR", false);
     m_motionBlurEnabled = cvars.GetBool("r.MotionBlur", true);
     m_casEnabled        = cvars.GetBool("r.CAS", true);

@@ -39,6 +39,7 @@ public:
     [[nodiscard]] UpscalerType GetType() const noexcept override { return UpscalerType::TAA; }
     /// Returns "TAA".
     [[nodiscard]] const char*  GetName() const noexcept override { return "TAA"; }
+    [[nodiscard]] bool IsAvailable() const noexcept override { return true; }
 
     /// TAA operates at native resolution only — no upscaling support.
     [[nodiscard]] float GetMinScreenPercentage() const noexcept override { return 100.f; }
@@ -48,8 +49,8 @@ public:
     // --- Lifecycle ---
 
     /// Stores pointers to the pipeline library and CB ring allocator.
-    /// No GPU resource allocation — TAA uses the shared resolve pipeline.
-    void Init(IRHIDevice* device, PipelineLibrary* pipelines, CBRingAllocator* cbRing) override;
+    /// Validates the shared resolve pipeline before accepting the backend.
+    [[nodiscard]] bool Init(IRHIDevice* device, PipelineLibrary* pipelines, CBRingAllocator* cbRing) override;
 
     /// No-op: TAA owns no GPU resources to release.
     void Shutdown() override;

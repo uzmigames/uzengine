@@ -86,6 +86,47 @@
 
 namespace uz {
 
+struct UpscalerSelection {
+    UpscalerType requested = UpscalerType::TAA;
+    UpscalerType effective = UpscalerType::TAA;
+    const char* reason = "ok";
+};
+
+struct UpscalerProbe {
+    // Null means available; otherwise the reason this candidate cannot run.
+    std::function<const char*(UpscalerType)> available;
+    std::function<bool(UpscalerType)> init;
+};
+
+/// Pure selection policy, shared with the device-free tests. Failover keeps
+/// the user's request but never probes the producer that just failed.
+inline UpscalerSelection ResolveUpscalerSelection(
+    UpscalerType requested, const UpscalerProbe& probe,
+    UpscalerType failed = UpscalerType::None) {
+    UpscalerSelection selection{requested, UpscalerType::None, "ok"};
+    // TAA is the final producer in the chain, including when it was already
+    // the fallback for an unavailable vendor request.
+    if (failed == UpscalerType::TAA) return selection;
+    const UpscalerType candidates[] = {requested, UpscalerType::TAA, UpscalerType::None};
+    bool failedCandidate = false;
+    for (uint32_t i = 0; i < 3; ++i) {
+        const auto type = candidates[i];
+        if (type == UpscalerType::None) return selection;
+        if (type == failed) continue;
+        // TAA appears only once when it is itself requested.
+        if (i == 1 && requested == UpscalerType::TAA) continue;
+        const char* reason = probe.available(type);
+        if (!reason && !probe.init(type)) reason = "init failed";
+        if (!reason) {
+            selection.effective = type;
+            return selection;
+        }
+        if (!failedCandidate) selection.reason = reason;
+        failedCandidate = true;
+    }
+    return selection;
+}
+
 // Forward declarations
 class IRHIDevice;
 class IRHICommandList;
@@ -586,7 +627,9 @@ public:
     [[nodiscard]] bool IsLensFlareEnabled() const { return m_lensFlareEnabled; }
 
     /// Sets the temporal upscaler type. Recreates the upscaler on change.
-    void SetUpscalerType(UpscalerType type);
+    const UpscalerSelection& SetUpscalerType(UpscalerType type);
+
+    [[nodiscard]] const UpscalerSelection& GetUpscalerSelection() const noexcept { return m_upscalerSelection; }
 
     /// Returns the current upscaler type.
     [[nodiscard]] UpscalerType GetUpscalerType() const { return m_upscalerType; }

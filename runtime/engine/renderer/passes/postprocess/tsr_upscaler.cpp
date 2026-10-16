@@ -23,6 +23,10 @@ UZ_DECLARE_LOG_CATEGORY(Renderer);
 
 namespace uz {
 
+// tsr_resolve_cs.hlsl is an empty kernel since bd4db199 (known issues, r.TSR);
+// flip when the shader lands.
+static constexpr bool kTsrImplemented = false;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
@@ -49,11 +53,22 @@ TsrUpscaler::~TsrUpscaler() {
     Shutdown();
 }
 
-void TsrUpscaler::Init(IRHIDevice* device, PipelineLibrary* pipelines, CBRingAllocator* cbRing) {
+bool TsrUpscaler::IsAvailable() const noexcept {
+    return kTsrImplemented;
+}
+
+bool TsrUpscaler::Init(IRHIDevice* device, PipelineLibrary* pipelines, CBRingAllocator* cbRing) {
+    Shutdown();
+    if (!IsAvailable() || !device || !pipelines || !cbRing) return false;
+    const auto dilate = pipelines->GetTsrDilateVelocity();
+    const auto reject = pipelines->GetTsrRejectShading();
+    const auto history = pipelines->GetTsrUpdateHistory();
+    if (!dilate.IsValid() || !reject.IsValid() || !history.IsValid()) return false;
     m_device    = device;
     m_pipelines = pipelines;
     m_cbRing    = cbRing;
     UZ_LOG(Renderer, Info, "TsrUpscaler initialized (3-pass resolve: dilate + reject + history)");
+    return true;
 }
 
 void TsrUpscaler::Shutdown() {
@@ -61,6 +76,9 @@ void TsrUpscaler::Shutdown() {
     m_device    = nullptr;
     m_pipelines = nullptr;
     m_cbRing    = nullptr;
+    m_renderWidth = 0;
+    m_renderHeight = 0;
+    m_firstDispatch = true;
 }
 
 void TsrUpscaler::OnResize(uint32_t /*displayWidth*/, uint32_t /*displayHeight*/) {
@@ -140,6 +158,7 @@ void TsrUpscaler::DestroyIntermediateResources() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 bool TsrUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
+    if (!IsAvailable()) return false;
     UZ_PROFILE_SCOPE("TSR::Resolve");
 
     // Lazily recreate intermediates if render resolution changed.

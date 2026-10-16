@@ -34,6 +34,8 @@ static auto* cv_DOF             = UZ_CVAR_BOOL("r.DOF", false, "Depth of field (
 static auto* cv_CAS             = UZ_CVAR_BOOL("r.CAS", true, "Contrast adaptive sharpening (inert: pass not wired in the current post chain)");
 static auto* cv_TonemapOp       = UZ_CVAR_INT("r.TonemapOperator", 1,
     "Tonemap: 0=None, 1=Hill ACES, 2=Narkowicz ACES, 3=Reinhard, 4=Hable", 0, 4);
+static auto* cv_UpscalerForceExecuteFail = UZ_CVAR_BOOL("r.Upscaler.ForceExecuteFail", false,
+    "Diagnostic: force temporal Execute failure and display current HDR");
 static auto* cv_DOFFocusDist    = UZ_CVAR_FLOAT("r.DOF.FocusDistance", 0.f, "DOF focus distance (cm) (inert: DOF pass not wired)", 0.f, 100000.f);
 static auto* cv_DOFAperture     = UZ_CVAR_FLOAT("r.DOF.Aperture", 4.f, "DOF f-stop number (inert: DOF pass not wired)", 0.5f, 32.f);
 static auto* cv_DOFFocalRegion  = UZ_CVAR_FLOAT("r.DOF.FocalRegion", 0.f, "In-focus zone width (cm) (inert: DOF pass not wired)", 0.f, 10000.f);
@@ -259,10 +261,14 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
     // No CAS, no FXAA, no motion blur, no DOF.
     {
         // ── TAA resolve (jitter removal + temporal accumulation) ─────────
-        uint32_t tonemapInputSrv = m_hdrSceneColorSrv;
+        ctx.display = FrameContext::DisplaySource::Hdr(
+            m_hdrSceneColorSrv, m_hdrSceneColor, ctx.renderWidth, ctx.renderHeight);
 
         if (ctx.taaActive && m_upscaler && m_shadowDebugMode != 1) {
             const uint32_t writeIdx = ctx.taaWriteIdx;
+            ctx.display = FrameContext::DisplaySource::Temporal(
+                m_taaHistorySrv[writeIdx], m_taaHistory[writeIdx], m_taaHistoryUav[writeIdx],
+                ctx.vpWidth, ctx.vpHeight);
             const uint32_t readIdx  = ctx.taaReadIdx;
             const float jitterX = ctx.jitterX;
             const float jitterY = ctx.jitterY;
@@ -345,7 +351,12 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                         cmd->ResourceBarrier(&uav, 1);
                     }
 
-                    if (m_upscaler->Execute(cmd, input)) {
+                    const bool wrote = cv_UpscalerForceExecuteFail->value < 0.5f
+                        && m_upscaler->Execute(cmd, input);
+                    ctx.ResolveDisplaySource(wrote, FrameContext::DisplaySource::Hdr(
+                        m_hdrSceneColorSrv, m_hdrSceneColor, ctx.renderWidth, ctx.renderHeight),
+                        m_upscalerFailStreak);
+                    if (wrote) {
                         m_temporal.MarkWritten(writeIdx);
                     } else {
                         m_temporal.MarkFailed(writeIdx);
@@ -357,6 +368,12 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                         }
                     }
 
+                    if (CVarRegistry::Get().GetBool("r.TAA.LogDecisions")) {
+                        UZ_LOG(Renderer, Info,
+                               "TemporalExecute: frame={} execute={} display={} failures={}",
+                               ctx.frameIndex, wrote ? "ok" : "failed",
+                               ctx.display.temporal ? "history" : "hdr", m_upscalerFailStreak);
+                    }
 
                     // Write target → SRV for tonemap to read
                     {
@@ -364,9 +381,6 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                     }
                 });
             });
-
-            // Tonemap reads from TAA output (de-jittered + temporally stable)
-            tonemapInputSrv = m_taaHistorySrv[writeIdx];
 
             // Flip ping-pong for next frame
             m_taaHistoryIndex = 1 - m_taaHistoryIndex;
@@ -385,27 +399,17 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
             && m_ssrResolvedOutput.IsValid()
             && m_ssrResolvedOutputSrv != UINT32_MAX) {
 
-            // Determine the target: TAA output if TAA active, else raw HDR
-            const uint32_t compositeTargetUav = ctx.taaActive
-                ? m_taaHistoryUav[1 - m_taaHistoryIndex]  // TAA just-written
-                : UINT32_MAX;  // will use raw HDR fallback
-
-            if (compositeTargetUav != UINT32_MAX || !ctx.taaActive) {
-                rgBuilder.AddPass("SSR_Composite", [&, compositeTargetUav, tonemapInputSrv](rg::RgPassBuilder& pb) {
+                rgBuilder.AddPass("SSR_Composite", [&](rg::RgPassBuilder& pb) {
                     pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);   // block B.5: after TAA, before the tonemap
-                    pb.SetExecutionCallback([this, &ctx, compositeTargetUav, tonemapInputSrv](IRHICommandList* cmd, const rg::RgPassResources&) {
+                    pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources&) {
                         UZ_PROFILE_SCOPE("SSR::Composite");
 
                         auto ssrCompositePSO = ctx.pipelines->GetSsrComposite();
                         if (!ssrCompositePSO.IsValid() || cv_SSRComposite->value < 0.5f) return;
 
                         // Determine which texture to composite onto
-                        RHITextureHandle targetTex = ctx.taaActive
-                            ? m_taaHistory[1 - m_taaHistoryIndex]  // TAA wrote here
-                            : m_hdrSceneColor;
-                        uint32_t targetUav = ctx.taaActive
-                            ? m_taaHistoryUav[1 - m_taaHistoryIndex]
-                            : UINT32_MAX;  // need HDR UAV — skip if not available
+                        RHITextureHandle targetTex = ctx.display.texture;
+                        uint32_t targetUav = ctx.display.uav;
 
                         if (targetUav == UINT32_MAX) return;  // no UAV for raw HDR
 
@@ -446,7 +450,6 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                         }
                     });
                 });
-            }
         }
 
         // ── SSR CopyPrevColor (post-TAA, post-composite) ────────────────
@@ -455,18 +458,15 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
         // hdrSceneColor that cause micro-pixel TAA variation → stipple noise.
         // @ref UE5 — reads PrevViewInfo.TemporalAAHistory (prev TAA output)
         if (m_ssrEnabled && m_ssrPrevSceneColor.IsValid()) {
-            // Source: TAA output if available, else raw HDR
-            const RHITextureHandle copySource = ctx.taaActive
-                ? m_taaHistory[1 - m_taaHistoryIndex]
-                : m_hdrSceneColor;
             const auto copySourceState = RHIResourceState::ShaderResource;
 
-            rgBuilder.AddPass("SSR_CopyPrevColor", [&, copySource, copySourceState](rg::RgPassBuilder& pb) {
+            rgBuilder.AddPass("SSR_CopyPrevColor", [&, copySourceState](rg::RgPassBuilder& pb) {
                 // Block B.5: declared so the graph schedules the copy after TAA (it declared nothing and ran
                 // first in the frame, copying the TAA history in the wrong state: every SSR hit was black).
                 pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
-                pb.SetExecutionCallback([this, copySource, copySourceState](IRHICommandList* cmd, const rg::RgPassResources&) {
+                pb.SetExecutionCallback([this, &ctx, copySourceState](IRHICommandList* cmd, const rg::RgPassResources&) {
                     UZ_PROFILE_SCOPE("SSR::CopyPrevColor");
+                    const RHITextureHandle copySource = ctx.display.texture;
 
                     RHIBarrierDesc barriers[1]{};
                     barriers[0].texture     = copySource;
@@ -498,26 +498,22 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
         // the close-up wobble of 2026-09-08 (r.Bloom=0 left it unchanged);
         // that cause was the jitter matrix — see frame/taa_jitter.h.
         if (m_showFlags.Get(ShowFlag::Bloom) && ctx.bloomEnabled && m_bloomPass && m_bloomPass->IsInitialized()) {
-            const uint32_t bloomInputSrv = tonemapInputSrv;
-            const bool bloomFromDisplayRes = (bloomInputSrv != m_hdrSceneColorSrv);
-            const uint32_t bloomW = static_cast<uint32_t>(bloomFromDisplayRes ? ctx.vpWidth  : ctx.renderWidth);
-            const uint32_t bloomH = static_cast<uint32_t>(bloomFromDisplayRes ? ctx.vpHeight : ctx.renderHeight);
-            rgBuilder.AddPass("Bloom", [&, bloomInputSrv, bloomW, bloomH](rg::RgPassBuilder& pb) {
+            rgBuilder.AddPass("Bloom", [&](rg::RgPassBuilder& pb) {
                 pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
-                pb.SetExecutionCallback([this, &ctx, bloomInputSrv, bloomW, bloomH](IRHICommandList* cmd, const rg::RgPassResources&) {
+                pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources&) {
                     UZ_PROFILE_SCOPE("Bloom::Execute");
-                    m_bloomPass->Execute(cmd, bloomInputSrv, bloomW, bloomH, ctx.perFrame.exposure);
+                    m_bloomPass->Execute(cmd, ctx.display.srv, static_cast<uint32_t>(ctx.display.width),
+                                        static_cast<uint32_t>(ctx.display.height), ctx.perFrame.exposure);
                 });
             });
         }
 
         // ── Tonemap pass (direct to backbuffer) ─────────────────────────
-        const uint32_t capturedTonemapSrv = tonemapInputSrv;
-        rgBuilder.AddPass("Tonemap", [&, capturedTonemapSrv](rg::RgPassBuilder& pb) {
+        rgBuilder.AddPass("Tonemap", [&](rg::RgPassBuilder& pb) {
             pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
             pb.Write(ctx.bbRes, RHIResourceState::RenderTarget);
 
-            pb.SetExecutionCallback([this, &ctx, capturedTonemapSrv](IRHICommandList* cmd, const rg::RgPassResources& res) {
+            pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& res) {
                 UZ_PROFILE_SCOPE("Tonemap::Execute");
 
                 auto bb = res.GetTexture(ctx.bbRes);
@@ -554,19 +550,19 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 uint32_t bloomIntensityBits = 0;
                 std::memcpy(&bloomIntensityBits, &bloomIntensity, sizeof(float));
 
-                uint32_t indices[6] = { capturedTonemapSrv, bloomSrvIdx, bloomIntensityBits, 0, 0,
+                uint32_t indices[6] = { ctx.display.srv, bloomSrvIdx, bloomIntensityBits, 0, 0,
                                         static_cast<uint32_t>(cv_TonemapOp->value) };
                 cmd->SetRootConstants(kSlotRootConstants, indices, 6);
 
                 static bool loggedOnce = false;
                 if (!loggedOnce) {
-                    UZ_LOG(Renderer, Info, "Tonemap: hdrSRV={}, taaActive={}, bloomEnabled={}",
-                           capturedTonemapSrv, ctx.taaActive, ctx.bloomEnabled);
+                    UZ_LOG(Renderer, Info, "Tonemap: hdrSRV={}, display={}, taaActive={}, bloomEnabled={}",
+                           ctx.display.srv, ctx.display.temporal ? "history" : "hdr", ctx.taaActive, ctx.bloomEnabled);
                     loggedOnce = true;
                 }
 
                 if (!ctx.bindless) {
-                    cmd->SetFragmentTexture(0, m_hdrSceneColor);
+                    cmd->SetFragmentTexture(0, ctx.display.texture);
                     if (m_bloomPass && m_bloomPass->GetBloomResultTexture().IsValid())
                         cmd->SetFragmentTexture(1, m_bloomPass->GetBloomResultTexture());
                 }

@@ -2,7 +2,7 @@
 ///
 /// Creates the appropriate ITemporalUpscaler implementation based on the
 /// requested UpscalerType. FSR2 is integrated via AMD FidelityFX SDK.
-/// DLSS and XeSS are not yet integrated and fall back to TSR.
+/// Availability and initialization are checked by the caller before selection.
 ///
 /// @ref implementation detail
 
@@ -36,10 +36,7 @@ std::unique_ptr<ITemporalUpscaler> CreateTemporalUpscaler(UpscalerType type) {
     }
 
     case UpscalerType::XeSS:
-        UZ_LOG(Renderer, Warning,
-               "Upscaler type {} not yet implemented, falling back to TSR",
-               static_cast<uint32_t>(type));
-        return std::make_unique<TsrUpscaler>();
+        return nullptr;
     }
 
     // Unreachable for a well-formed UpscalerType, but handles corrupt values.

@@ -53,6 +53,8 @@ static auto* cv_TAACutAngle = UZ_CVAR_FLOAT("r.TAA.CameraCut.Angle", 30.f,
     "Camera cut angle per frame (degrees)", 0.f, 180.f);
 static auto* cv_TAALogDecisions = UZ_CVAR_BOOL("r.TAA.LogDecisions", false,
     "Log temporal matrix and history content validity each frame");
+static auto* cv_UpscalerFailoverFrames = UZ_CVAR_INT("r.Upscaler.FailoverFrames", 3,
+    "Consecutive failed temporal writes before failover (0 disables)", 0, 10000);
 static auto* cv_TAAJitterScale     = UZ_CVAR_FLOAT("r.TAA.JitterScale", 1.f,
     "Diagnostic: scales the Halton jitter offsets (1 = production). 0 gives TAA accumulation with NO "
     "sub-pixel offset, which is not the same as JitterSequenceLength=1 (that is a constant "
@@ -431,6 +433,15 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
 
     ctx.jitterX = 0.f;
     ctx.jitterY = 0.f;
+
+    // Replace the failed producer before jitter/history decisions, never while
+    // its graph callback is still recording commands. Preserve the CVar request.
+    const auto failoverFrames = static_cast<uint32_t>(cv_UpscalerFailoverFrames->value);
+    if (failoverFrames > 0 && m_upscalerFailStreak >= failoverFrames) {
+        m_failedUpscaler = m_upscalerType;
+        m_forceReselect = true;
+        SetUpscalerType(m_upscalerSelection.requested);
+    }
 
     // TAA runs on both bindless (DX12/SM6.6) and non-bindless (DX11/SM5) backends.
     // On SM5 the TAA upscaler binds textures via SetDescriptorTable/SetFragmentTexture

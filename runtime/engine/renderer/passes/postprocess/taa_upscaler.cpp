@@ -91,11 +91,16 @@ TaaUpscaler::~TaaUpscaler() {
     Shutdown();
 }
 
-void TaaUpscaler::Init(IRHIDevice* device, PipelineLibrary* pipelines, CBRingAllocator* cbRing) {
+bool TaaUpscaler::Init(IRHIDevice* device, PipelineLibrary* pipelines, CBRingAllocator* cbRing) {
+    Shutdown();
+    if (!device || !pipelines || !cbRing || !pipelines->GetTaaResolve().IsValid()) {
+        return false;
+    }
     m_device    = device;
     m_pipelines = pipelines;
     m_cbRing    = cbRing;
     UZ_LOG(Renderer, Info, "TaaUpscaler initialized (single-pass resolve)");
+    return true;
 }
 
 void TaaUpscaler::Shutdown() {
