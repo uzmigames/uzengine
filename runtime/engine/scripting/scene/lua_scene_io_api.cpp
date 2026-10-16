@@ -62,16 +62,15 @@ static constexpr const char* kVfsRegistryKey = "uz_vfs";
 /// given VFS-relative path (e.g. `"scenes/demo.uzscene"`).
 ///
 /// The file is read through the VFS registered via `LuaSetVFS`. The world is
-/// cleared via `World::Clear()` before parsing begins, so partial failures
-/// leave the world empty rather than in a mixed state.
+/// replaced only after validation succeeds, so malformed files preserve it.
 ///
 /// # Arguments
 /// * `path` (string) — VFS-relative path to the `.uzscene` file.
 ///
 /// # Returns
-/// - `true` if at least one entity was successfully created.
+/// - `true` on success, including a valid empty scene.
 /// - `false` if the World or VFS is not set, the file is not found, or the
-///   JSON is malformed (all failures are logged at Warning/Error level).
+///   input cannot be read. Malformed JSON returns `nil, message`.
 static int SceneLoadScene(lua_State* L) {
     const char* path = luaL_checkstring(L, 1);
 
@@ -99,22 +98,18 @@ static int SceneLoadScene(lua_State* L) {
         return 1;
     }
 
-    world->Clear();
-
-    const size_t count = uz::LoadScene(*world, data, path);
+    const auto result = uz::LoadSceneEx(*world, data, path);
+    if (!result.ok()) {
+        lua_pushnil(L);
+        lua_pushlstring(L, result.message.data(), result.message.size());
+        return 2;
+    }
     lua_getfield(L, LUA_REGISTRYINDEX, "uz_scene_renderer");
     auto* renderer = static_cast<SceneRenderer*>(lua_touserdata(L, -1));
     lua_pop(L, 1);
     if (renderer) renderer->InvalidateTemporalHistory(TemporalReset::SceneChanged);
-    if (count == 0) {
-        UZ_LOG(Scripting, Warning,
-            "uz.scene.load_scene: no entities loaded from '{}'", path);
-        lua_pushboolean(L, 0);
-        return 1;
-    }
-
     UZ_LOG(Scripting, Info,
-        "uz.scene.load_scene: loaded {} entities from '{}'", count, path);
+        "uz.scene.load_scene: loaded {} entities from '{}'", result.entityCount, path);
     lua_pushboolean(L, 1);
     return 1;
 }

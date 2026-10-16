@@ -22,6 +22,11 @@
 #include "scene_component.h"
 #include "camera_component.h"
 #include "light_component.h"
+#include "static_mesh_component.h"
+#include "component_serializer.h"
+#include "cvar.h"
+#include "vfs.h"
+#include <json.hpp>
 #include "../scripting/script_component.h"
 
 #include <gtest/gtest.h>
@@ -29,6 +34,7 @@
 #include <cmath>
 #include <string>
 #include <vector>
+#include <unordered_map>
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -58,6 +64,196 @@ class SceneLoaderTest : public ::testing::Test {
 protected:
     uz::World world_;
 };
+
+namespace {
+class SceneLoaderVFS final : public uz::IVFS {
+public:
+    std::unordered_map<std::string, std::vector<uint8_t>> files;
+    std::vector<uint8_t> Read(const std::string& path) override {
+        auto it = files.find(path);
+        return it == files.end() ? std::vector<uint8_t>{} : it->second;
+    }
+    bool Exists(const std::string& path) override { return files.count(path) != 0; }
+    std::string Name() const override { return "SceneLoaderVFS"; }
+};
+
+// Exercise the registry path which can throw on an unchecked Entity field.
+struct LoaderReference { uz::Entity target; };
+UZ_REGISTER_COMPONENT_SERIALIZER(scene_loader_test_reference, LoaderReference,
+    [](uz::World& world, uz::Entity entity, const void* data) {
+        const auto& j = *static_cast<const nlohmann::json*>(data);
+        auto& ref = world.AddComponent<LoaderReference>(entity);
+        ref.target.generation = j.at("generation").get<uint32_t>();
+    },
+    [](const uz::World&, uz::Entity, void*) { return false; }
+);
+}
+
+class TransactionalSceneLoaderTest : public SceneLoaderTest {
+protected:
+    SceneLoaderVFS vfs_;
+    void SetUp() override {
+        ASSERT_TRUE(Load(R"({"entities":[]})").ok());
+        uz::CVarRegistry::Get().Register("test.SceneLoader.Value", 7.f);
+        uz::CVarRegistry::Get().Set("test.SceneLoader.Value", 7.f);
+    }
+    void TearDown() override {
+        (void)Load(R"({"entities":[]})");
+    }
+    uz::SceneLoadResult Load(const std::string& text) {
+        return uz::LoadSceneEx(world_, ToBytes(text), "transaction.uzscene", &vfs_);
+    }
+    float Value() const { return uz::CVarRegistry::Get().GetFloat("test.SceneLoader.Value"); }
+};
+
+TEST_F(TransactionalSceneLoaderTest, LoadSceneEx_MalformedJson_FailsAndPreservesWorldCVarsAndMaterials) {
+    vfs_.files["test.uzmaterial"] = ToBytes(R"({"properties":{"roughness":0.3}})");
+    ASSERT_TRUE(Load(R"({"cvars":{"test.SceneLoader.Value":42},"entities":[
+        {"components":{"mesh":{"asset":"test.uzmesh"},"material":{"asset":"test.uzmaterial"}}}
+    ]})").ok());
+    auto view = world_.View<uz::StaticMeshComponent>();
+    const auto enttEntity = *view.begin();
+    const auto handle = world_.EntityFromEntt(enttEntity);
+    const auto* material = view.get<uz::StaticMeshComponent>(enttEntity).GetMaterial(0);
+    ASSERT_NE(material, nullptr);
+    const auto result = Load("{not json");
+    EXPECT_EQ(result.status, uz::SceneLoadStatus::ParseError);
+    EXPECT_NE(result.message.find("transaction.uzscene"), std::string::npos);
+    EXPECT_NE(result.message.find("byte"), std::string::npos);
+    EXPECT_EQ(world_.EntityCount(), 1u);
+    EXPECT_TRUE(world_.IsValid(handle));
+    EXPECT_EQ(world_.GetRegistry().get<uz::StaticMeshComponent>(enttEntity).GetMaterial(0), material);
+    EXPECT_FLOAT_EQ(Value(), 42.f);
+}
+
+TEST_F(TransactionalSceneLoaderTest, LoadSceneEx_MissingEntities_FailsWithoutApplyingCVars) {
+    const auto handle = world_.CreateEntity();
+    const auto result = Load(R"({"cvars":{"test.SceneLoader.Value":42}})");
+    EXPECT_EQ(result.status, uz::SceneLoadStatus::MissingEntities);
+    EXPECT_FLOAT_EQ(Value(), 7.f);
+    EXPECT_EQ(world_.EntityCount(), 1u);
+    EXPECT_TRUE(world_.IsValid(handle));
+}
+
+TEST_F(TransactionalSceneLoaderTest, LoadSceneEx_AllFatalStatuses_PreserveLiveScene) {
+    ASSERT_TRUE(Load(R"({"cvars":{"test.SceneLoader.Value":42},"entities":[{"components":{
+        "mesh":{"asset":"test.uzmesh"},"material":{"baseColorR":0.25}
+    }}]})").ok());
+    auto view = world_.View<uz::StaticMeshComponent>();
+    const auto e = *view.begin();
+    const auto handle = world_.EntityFromEntt(e);
+    const auto* material = view.get<uz::StaticMeshComponent>(e).GetMaterial(0);
+    const std::pair<const char*, uz::SceneLoadStatus> cases[] = {
+        {"", uz::SceneLoadStatus::EmptyInput},
+        {"{bad", uz::SceneLoadStatus::ParseError},
+        {R"("scene")", uz::SceneLoadStatus::RootNotObject},
+        {R"({"cvars":{"test.SceneLoader.Value":9}})", uz::SceneLoadStatus::MissingEntities},
+        {R"({"entities":{},"cvars":{"test.SceneLoader.Value":9}})", uz::SceneLoadStatus::EntitiesNotArray},
+    };
+    for (const auto& [text, status] : cases) {
+        const auto result = Load(text);
+        EXPECT_EQ(result.status, status);
+        EXPECT_EQ(result.entityCount, 0u);
+        EXPECT_EQ(world_.EntityCount(), 1u);
+        EXPECT_TRUE(world_.IsValid(handle));
+        EXPECT_EQ(world_.GetRegistry().get<uz::StaticMeshComponent>(e).GetMaterial(0), material);
+        EXPECT_FLOAT_EQ(Value(), 42.f);
+    }
+}
+
+TEST_F(TransactionalSceneLoaderTest, LoadSceneEx_EmptyEntities_IsOkWithZeroCount) {
+    const auto handle = world_.CreateEntity();
+    const auto result = Load(R"({"entities":[]})");
+    EXPECT_TRUE(result.ok());
+    EXPECT_EQ(result.entityCount, 0u);
+    EXPECT_EQ(result.warnings, 0u);
+    EXPECT_TRUE(result.message.empty());
+    EXPECT_EQ(world_.EntityCount(), 0u);
+    EXPECT_FALSE(world_.IsValid(handle));
+}
+
+TEST_F(TransactionalSceneLoaderTest, LoadSceneEx_EmptyBuffer_IsEmptyInput) {
+    const auto handle = world_.CreateEntity();
+    EXPECT_EQ(Load("").status, uz::SceneLoadStatus::EmptyInput);
+    EXPECT_TRUE(world_.IsValid(handle));
+}
+
+TEST_F(TransactionalSceneLoaderTest, LoadSceneEx_BareString_IsRootNotObject) {
+    const auto handle = world_.CreateEntity();
+    EXPECT_EQ(Load(R"("scene")").status, uz::SceneLoadStatus::RootNotObject);
+    EXPECT_TRUE(world_.IsValid(handle));
+}
+
+TEST_F(TransactionalSceneLoaderTest, LoadSceneEx_EntitiesObject_IsEntitiesNotArray) {
+    const auto handle = world_.CreateEntity();
+    EXPECT_EQ(Load(R"({"entities":{}})").status, uz::SceneLoadStatus::EntitiesNotArray);
+    EXPECT_TRUE(world_.IsValid(handle));
+}
+
+TEST_F(TransactionalSceneLoaderTest, LoadSceneEx_WrongFieldTypes_OkWithDefaultsAndWarnings) {
+    const auto result = Load(R"({"cvars":5,"entities":[{"components":{
+        "transform":{"position":"abc"},"camera":{"fov":true},
+        "scene_loader_test_reference":{"generation":"wrong"},
+        "script":{"path":"still-loaded.lua"}
+    }}]})");
+    ASSERT_TRUE(result.ok());
+    EXPECT_EQ(result.entityCount, 1u);
+    EXPECT_GE(result.warnings, 4u);
+    auto view = world_.View<uz::CameraComponent, uz::CScript>();
+    ASSERT_EQ(ViewCount(view), 1u);
+    const auto e = *view.begin();
+    EXPECT_FLOAT_EQ(view.get<uz::CameraComponent>(e).GetPosition().x, 0.f);
+    EXPECT_FLOAT_EQ(view.get<uz::CameraComponent>(e).fov, 60.f);
+    EXPECT_EQ(view.get<uz::CScript>(e).scriptPath, "still-loaded.lua");
+}
+
+TEST_F(TransactionalSceneLoaderTest, LoadSceneEx_ReplacesPreviousScene_OldHandlesStale) {
+    ASSERT_TRUE(Load(R"({"cvars":{"test.SceneLoader.Value":42},"entities":[{"name":"old"}]})").ok());
+    const auto old = world_.EntityFromEntt(*world_.View<uz::CName>().begin());
+    ASSERT_TRUE(Load(R"({"cvars":{"test.SceneLoader.Value":12},"entities":[{"name":"new"}]})").ok());
+    EXPECT_EQ(world_.EntityCount(), 1u);
+    EXPECT_FALSE(world_.IsValid(old));
+    EXPECT_FLOAT_EQ(Value(), 12.f);
+    ASSERT_TRUE(Load(R"({"entities":[]})").ok());
+    EXPECT_FLOAT_EQ(Value(), 7.f);
+    ASSERT_TRUE(Load(R"({"entities":[]})").ok());
+    EXPECT_FLOAT_EQ(Value(), 7.f);
+}
+
+TEST_F(TransactionalSceneLoaderTest, LoadSceneEx_MissingMaterialAsset_WarnsAndSucceeds) {
+    const auto result = Load(R"({"entities":[{"components":{
+        "mesh":{"asset":"test.uzmesh"},"material":{"asset":"missing.uzmaterial"}
+    }}]})");
+    EXPECT_TRUE(result.ok());
+    EXPECT_EQ(result.entityCount, 1u);
+    EXPECT_EQ(result.warnings, 1u);
+    auto view = world_.View<uz::StaticMeshComponent>();
+    ASSERT_EQ(ViewCount(view), 1u);
+    EXPECT_NE(view.get<uz::StaticMeshComponent>(*view.begin()).GetMaterial(0), nullptr);
+}
+
+TEST_F(TransactionalSceneLoaderTest, LoadSceneEx_InvalidOptionalAssetsAndEntries_WarnAndContinue) {
+    vfs_.files["bad.uzmaterial"] = ToBytes("{bad");
+    vfs_.files["bad.uzmat"] = ToBytes(R"({"blendMode":42})");
+    vfs_.files["bad.uzprefab"] = ToBytes("{bad");
+    const auto result = Load(R"({"cvars":{"test.SceneLoader.Unknown":1,"test.SceneLoader.Value":"bad"},
+        "entities":[42,{"components":{"transform":5,"unknown":{},"light":{"type":"unknown"}}},
+        {"prefab":{"asset":"bad.uzprefab"},"components":{"mesh":{"asset":"test.uzmesh"},
+        "material":{"asset":"bad.uzmaterial","material_graph":"bad.uzmat"}}},
+        {"prefab":{"asset":"missing.uzprefab"}}]})");
+    EXPECT_TRUE(result.ok());
+    EXPECT_EQ(result.entityCount, 3u);
+    EXPECT_GE(result.warnings, 9u);
+    EXPECT_FLOAT_EQ(Value(), 7.f);
+}
+
+TEST_F(TransactionalSceneLoaderTest, LoadScene_LegacyWrapper_ReturnsZeroOnFailureAndCountOnSuccess) {
+    EXPECT_EQ(uz::LoadScene(world_, ToBytes(R"({"entities":[{},{}]})"), "test"), 2u);
+    EXPECT_EQ(uz::LoadScene(world_, ToBytes("{bad"), "test", &vfs_), 0u);
+    EXPECT_EQ(world_.EntityCount(), 2u);
+    EXPECT_EQ(uz::LoadScene(world_, ToBytes(R"({"entities":[{}]})"), "test", &vfs_), 1u);
+    EXPECT_EQ(world_.EntityCount(), 1u);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. Empty JSON → returns 0
