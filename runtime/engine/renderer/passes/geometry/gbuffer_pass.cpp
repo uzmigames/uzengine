@@ -125,8 +125,8 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
             uint32_t drawCallCount = 0;
 
             // Instanced path uses mesh[0] as the homogeneous batch geometry.
-            // Per-batch meshId support is future work; for now all batches must
-            // reference the same mesh, which the InstanceBatcher already enforces.
+            // Per-batch meshId support is future work; this path assumes all batches
+            // reference mesh[0], but InstanceBatcher does not enforce that restriction.
             const bool useInstanced = desc.instanced && desc.bindless
                                       && desc.batchData != nullptr
                                       && desc.batchCount > 0

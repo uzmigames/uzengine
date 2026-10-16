@@ -18,6 +18,53 @@ namespace uz {
 class PipelineLibrary;
 class CBRingAllocator;
 
+/// Constant-buffer layout matching taa_resolve_cs.hlsl at b2.
+struct TaaCB {
+    float    jitterX, jitterY;
+    float    texelSizeX, texelSizeY;
+    float    blendWeight;
+    uint32_t sceneSrv;
+    uint32_t depthSrv;
+    uint32_t historySrv;
+    uint32_t velocitySrv;
+    float    outputWidth;
+    float    outputHeight;
+    float    varianceClipGamma;
+    float    velocityThreshold;
+    float    antiFlickerMax;
+    float    spatialWeightMul;
+    float    exposureScale;
+    uint32_t debugRegionUav;    // region dump (diagnostics), UINT32_MAX = off
+    uint32_t debugRegionSrv;
+    uint32_t debugRegionCount;
+    uint32_t debugRegionStamp;
+    uint32_t debugRegionFields;
+    uint32_t clampBoxSrvMin;      // r.TAA.ClampFreezeAfterFrame storage (0xffffffff = unavailable)
+    uint32_t clampBoxSrvMax;
+    uint32_t clampBoxUavMin;
+    uint32_t clampBoxUavMax;
+    uint32_t clampFreezeActive;   // 1 = read the stored box, 0 = compute it and store it
+    uint32_t clampFreezeEnabled;  // 0 = diagnostic off; the shader must not touch the storage
+    float    hdrWeightExponent;   // r.TAA.ReconstructionHdrWeightExponent (candidate correction)
+    uint32_t reconstructionMode;  // r.TAA.ReconstructionMode (diagnostic)
+    uint32_t clampMode;           // r.TAA.ClampMode (diagnostic)
+    uint32_t blendMode;           // r.TAA.BlendMode (diagnostic)
+    uint32_t historyReadMode;
+    uint32_t clampAverageFrames;
+    uint32_t frameIndex;
+    uint32_t clampFreezeFrame;
+    uint32_t stableReconEnabled;
+    uint32_t stableReconReset;
+    float    stableReconTolerance;
+    float    stableReconVelocityPx;
+    uint32_t flipBlendEnabled;
+    float    flipIsolationRatio;
+    float    flipVelocityPx;
+    float    flipBlendWeight;
+};
+
+static_assert(sizeof(TaaCB) == 172, "TaaCB must match the 43 shader scalar fields");
+
 /// Legacy temporal anti-aliasing upscaler.
 ///
 /// Wraps the existing `taa_resolve_cs.hlsl` compute shader behind the

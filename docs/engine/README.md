@@ -4,6 +4,8 @@
 
 189 files across 33 sections. Each section has multiple detailed sub-files covering API design, code examples, architecture diagrams, and engine comparisons.
 
+> **Current capability status**: the [capability matrix](../analysis/known-issues-and-partial-implementations.md#capability-matrix) records what the renderer actually supports, with evidence per row. The status columns below describe design coverage, not verification.
+
 ## Document Map
 
 ### Tier 0 — Architecture Overview

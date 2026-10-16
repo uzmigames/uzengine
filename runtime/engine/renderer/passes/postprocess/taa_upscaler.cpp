@@ -127,52 +127,6 @@ bool TaaUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
 
     cmd->SetPipeline(taaPSO);
 
-    // TaaCB layout matches taa_resolve_cs.hlsl cbuffer TaaCB at b2.
-    // 12 floats/uints = 48 bytes, padded to 16-byte alignment.
-    struct TaaCB {
-        float    jitterX, jitterY;
-        float    texelSizeX, texelSizeY;
-        float    blendWeight;
-        uint32_t sceneSrv;
-        uint32_t depthSrv;
-        uint32_t historySrv;
-        uint32_t velocitySrv;
-        float    outputWidth;
-        float    outputHeight;
-        float    varianceClipGamma;
-        float    velocityThreshold;
-        float    antiFlickerMax;
-        float    spatialWeightMul;
-        float    exposureScale;
-        uint32_t debugRegionUav;    // region dump (diagnostics), UINT32_MAX = off
-        uint32_t debugRegionSrv;
-        uint32_t debugRegionCount;
-        uint32_t debugRegionStamp;
-        uint32_t debugRegionFields;
-        uint32_t clampBoxSrvMin;      // r.TAA.ClampFreezeAfterFrame storage (0xffffffff = unavailable)
-        uint32_t clampBoxSrvMax;
-        uint32_t clampBoxUavMin;
-        uint32_t clampBoxUavMax;
-        uint32_t clampFreezeActive;   // 1 = read the stored box, 0 = compute it and store it
-        uint32_t clampFreezeEnabled;  // 0 = diagnostic off; the shader must not touch the storage
-        float    hdrWeightExponent;   // r.TAA.ReconstructionHdrWeightExponent (candidate correction)
-        uint32_t reconstructionMode;  // r.TAA.ReconstructionMode (diagnostic)
-        uint32_t clampMode;           // r.TAA.ClampMode (diagnostic)
-        uint32_t blendMode;           // r.TAA.BlendMode (diagnostic)
-        uint32_t historyReadMode;
-        uint32_t clampAverageFrames;
-        uint32_t frameIndex;
-        uint32_t clampFreezeFrame;
-        uint32_t stableReconEnabled;
-        uint32_t stableReconReset;
-        float    stableReconTolerance;
-        float    stableReconVelocityPx;
-        uint32_t flipBlendEnabled;
-        float    flipIsolationRatio;
-        float    flipVelocityPx;
-        float    flipBlendWeight;
-    };
-
     TaaCB taaCb{};
     taaCb.jitterX      = input.jitterX;
     taaCb.jitterY      = input.jitterY;

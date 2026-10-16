@@ -2,6 +2,8 @@
 
 # UzEngine Renderer Audit — Complete Quality Analysis
 
+> **Historical note (2026-10-16)**: historical, 2026-03; not evidence for the current tree. See the [capability matrix](../../known-issues-and-partial-implementations.md#capability-matrix).
+
 **Date**: 2026-03-22
 **Status**: Comprehensive review of all rendering subsystems
 **Scope**: Lighting, shadows, post-process, materials, atmosphere, reflections, shading
