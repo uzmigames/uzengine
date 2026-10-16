@@ -35,14 +35,20 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "../asset/vfs.h"
 
 namespace uz {
 
-/// Thread-local VFS pointer set during LoadScene for .uzmaterial loading.
+/// Load-scoped VFS pointer for optional assets. Scene loading is owner-thread only.
 static IVFS* s_loadVfs = nullptr;
+static size_t* s_loadWarnings = nullptr;
+
+static void CountLoadWarning() {
+    if (s_loadWarnings) ++*s_loadWarnings;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -97,9 +103,7 @@ static void RevertSceneCVarOverrides() {
     s_sceneCVarOverrides.clear();
 }
 
-/// Parses a top-level "cvars" JSON object and applies each entry as a CVar
-/// override. Records the previous value of each touched CVar in
-/// s_sceneCVarOverrides so RevertSceneCVarOverrides() can restore them later.
+/// Resolves a top-level "cvars" JSON object without applying overrides.
 ///
 /// Expected JSON shape:
 ///   "cvars": {
@@ -111,12 +115,14 @@ static void RevertSceneCVarOverrides() {
 /// Values may be number or bool. Unknown CVars are logged and skipped
 /// (Set() on an unregistered name is already a no-op, but we warn so
 /// typos in scene files are visible).
-static void ApplySceneCVarOverrides(const nlohmann::json& cvarsJson,
-                                    const std::string& sourceName) {
+static std::vector<std::pair<std::string, float>> ResolveSceneCVarOverrides(
+    const nlohmann::json& cvarsJson, const std::string& sourceName, size_t& warnings) {
+    std::vector<std::pair<std::string, float>> resolved;
     if (!cvarsJson.is_object()) {
+        ++warnings;
         UZ_LOG(Scene, Warning,
                "LoadScene: '{}': 'cvars' is not an object, ignoring", sourceName);
-        return;
+        return resolved;
     }
     auto& reg = CVarRegistry::Get();
     for (auto it = cvarsJson.begin(); it != cvarsJson.end(); ++it) {
@@ -127,6 +133,7 @@ static void ApplySceneCVarOverrides(const nlohmann::json& cvarsJson,
         } else if (it.value().is_boolean()) {
             newValue = it.value().get<bool>() ? 1.f : 0.f;
         } else {
+            ++warnings;
             UZ_LOG(Scene, Warning,
                    "LoadScene: '{}': cvar '{}' has unsupported value type, skipping",
                    sourceName, name);
@@ -134,20 +141,15 @@ static void ApplySceneCVarOverrides(const nlohmann::json& cvarsJson,
         }
         const CVar* existing = reg.Find(name);
         if (!existing) {
+            ++warnings;
             UZ_LOG(Scene, Warning,
                    "LoadScene: '{}': cvar '{}' is not registered, skipping",
                    sourceName, name);
             continue;
         }
-        // Remember the original value (first time we touch this cvar in this scene).
-        if (s_sceneCVarOverrides.find(name) == s_sceneCVarOverrides.end()) {
-            s_sceneCVarOverrides[name] = existing->value;
-        }
-        reg.Set(name, newValue);
-        UZ_LOG(Scene, Info,
-               "LoadScene: '{}': cvar override {} = {}",
-               sourceName, name, newValue);
+        resolved.emplace_back(name, newValue);
     }
+    return resolved;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -167,9 +169,12 @@ namespace {
                              float defaultZ) {
     auto it = obj.find(key);
     if (it == obj.end() || !it->is_array() || it->size() < 3) {
+        if (it != obj.end()) CountLoadWarning();
         return Vec3{defaultX, defaultY, defaultZ};
     }
     const auto& arr = *it;
+    if (!arr[0].is_number() || !arr[1].is_number() || !arr[2].is_number())
+        CountLoadWarning();
     return Vec3{
         arr[0].is_number() ? arr[0].get<float>() : defaultX,
         arr[1].is_number() ? arr[1].get<float>() : defaultY,
@@ -181,6 +186,7 @@ namespace {
 [[nodiscard]] float ReadFloat(const nlohmann::json& obj, const char* key, float defaultValue) {
     auto it = obj.find(key);
     if (it == obj.end() || !it->is_number()) {
+        if (it != obj.end()) CountLoadWarning();
         return defaultValue;
     }
     return it->get<float>();
@@ -190,6 +196,7 @@ namespace {
 [[nodiscard]] bool ReadBool(const nlohmann::json& obj, const char* key, bool defaultValue) {
     auto it = obj.find(key);
     if (it == obj.end() || !it->is_boolean()) {
+        if (it != obj.end()) CountLoadWarning();
         return defaultValue;
     }
     return it->get<bool>();
@@ -199,6 +206,7 @@ namespace {
 [[nodiscard]] std::string ReadString(const nlohmann::json& obj, const char* key) {
     auto it = obj.find(key);
     if (it == obj.end() || !it->is_string()) {
+        if (it != obj.end()) CountLoadWarning();
         return {};
     }
     return it->get<std::string>();
@@ -236,6 +244,7 @@ void ParseScriptComponent(World& world,
                            const nlohmann::json& comp) {
     const std::string scriptPath = ReadString(comp, "path");
     if (scriptPath.empty()) {
+        CountLoadWarning();
         UZ_LOG(Scene, Warning,
                "LoadScene: 'script' component has no 'path' field — entity {:d} skipped",
                entity.id);
@@ -363,6 +372,7 @@ void ApplyDirectionalLightFields(DirectionalLightComponent& light,
             if (key == k) { known = true; break; }
         }
         if (!known) {
+            CountLoadWarning();
             UZ_LOG(Scene, Warning,
                    "LoadScene: directional light has unrecognized key '{}' — ignored",
                    key);
@@ -427,6 +437,7 @@ void ParseLightComponent(World& world,
         auto& light = world.GetRegistry().emplace<SpotLightComponent>(enttEntity);
         ApplySpotLightFields(light, comp);
     } else {
+        CountLoadWarning();
         UZ_LOG(Scene, Warning,
                "LoadScene: '{}': 'light' component has unknown or missing type '{}' — skipped",
                sourceName, lightType);
@@ -444,12 +455,14 @@ uint32_t ReadFloatArray(const nlohmann::json& obj,
                         float defaultVal) {
     auto it = obj.find(key);
     if (it == obj.end() || !it->is_array()) {
+        if (it != obj.end()) CountLoadWarning();
         for (uint32_t i = 0; i < maxCount; ++i) out[i] = defaultVal;
         return 0;
     }
     const auto& arr = *it;
     const uint32_t count = std::min(maxCount, static_cast<uint32_t>(arr.size()));
     for (uint32_t i = 0; i < count; ++i) {
+        if (!arr[i].is_number()) CountLoadWarning();
         out[i] = arr[i].is_number() ? arr[i].get<float>() : defaultVal;
     }
     for (uint32_t i = count; i < maxCount; ++i) {
@@ -478,6 +491,7 @@ void ParseMeshComponent(World& world,
                          const nlohmann::json& comp) {
     const std::string asset = ReadString(comp, "asset");
     if (asset.empty()) {
+        CountLoadWarning();
         UZ_LOG(Scene, Warning,
                "LoadScene: 'mesh' component has no 'asset' field — skipped");
         return;
@@ -526,6 +540,8 @@ void ParseMeshComponent(World& world,
         auto forcedIt = comp.find("forcedLOD");
         if (forcedIt != comp.end() && forcedIt->is_number_integer()) {
             mesh.forcedLOD = forcedIt->get<int32_t>();
+        } else if (forcedIt != comp.end()) {
+            CountLoadWarning();
         }
     }
     mesh.boundingSphereRadius = ReadFloat(comp, "boundingSphereRadius", 0.0f);
@@ -542,6 +558,7 @@ void ParseSkeletalMeshComponent(World& world,
                                  const nlohmann::json& comp) {
     const std::string meshAsset = ReadString(comp, "asset");
     if (meshAsset.empty()) {
+        CountLoadWarning();
         UZ_LOG(Scene, Warning,
                "LoadScene: 'skeletal_mesh' component has no 'asset' field — skipped");
         return;
@@ -706,11 +723,13 @@ const UzmatParsedInfo& GetOrParseUzmat(const std::string& matGraphPath) {
                     info.metallicPath  = mtTex;
                 }
             }
-        } catch (const nlohmann::json::parse_error& e) {
+        } catch (const nlohmann::json::exception& e) {
+            CountLoadWarning();
             UZ_LOG(Scene, Warning, "Failed to parse material graph '{}': {}",
                    matGraphPath, e.what());
         }
     } else {
+        CountLoadWarning();
         UZ_LOG(Scene, Warning, "Failed to read material graph '{}'", matGraphPath);
     }
 
@@ -727,6 +746,7 @@ void ParseMaterialComponent(World& world,
                               const nlohmann::json& comp) {
     auto enttEntity = static_cast<entt::entity>(static_cast<uint32_t>(entity.id));
     if (!world.GetRegistry().all_of<StaticMeshComponent>(enttEntity)) {
+        CountLoadWarning();
         UZ_LOG(Scene, Warning,
                "LoadScene: 'material' component without 'mesh' — skipped");
         return;
@@ -737,6 +757,10 @@ void ParseMaterialComponent(World& world,
     // When "asset" field is present, load the .uzmaterial JSON file and
     // extract texture paths + properties from it instead of inline fields.
     const std::string matAssetPath = ReadString(comp, "asset");
+    if (!matAssetPath.empty() && !s_loadVfs) {
+        CountLoadWarning();
+        UZ_LOG(Scene, Warning, "Material '{}' requires VFS, using inline fallback", matAssetPath);
+    }
     if (!matAssetPath.empty() && s_loadVfs) {
         auto matBytes = s_loadVfs->Read(matAssetPath);
         if (!matBytes.empty()) {
@@ -771,10 +795,12 @@ void ParseMaterialComponent(World& world,
                 mesh.SetMaterial(0, mat.get());
                 s_sceneLoadedMaterials.push_back(std::move(mat));
                 return;
-            } catch (const nlohmann::json::parse_error& e) {
+            } catch (const nlohmann::json::exception& e) {
+                CountLoadWarning();
                 UZ_LOG(Scene, Warning, "Failed to parse material '{}': {}", matAssetPath, e.what());
             }
         } else {
+            CountLoadWarning();
             UZ_LOG(Scene, Warning, "Failed to read material asset '{}'", matAssetPath);
         }
         // Fall through to inline material parsing if .uzmaterial loading fails
@@ -943,6 +969,7 @@ size_t ProcessEntityJson(World& world,
                           const nlohmann::json& entityJson,
                           const std::string& sourceName) {
     if (!entityJson.is_object()) {
+        CountLoadWarning();
         UZ_LOG(Scene, Warning,
                "LoadScene: '{}': entity entry is not a JSON object — skipped",
                sourceName);
@@ -951,6 +978,15 @@ size_t ProcessEntityJson(World& world,
 
     const Entity entity = world.CreateEntity();
     size_t entityCount  = 1;
+    auto parseComponent = [&](const std::string& key, auto&& parse) {
+        try {
+            parse();
+        } catch (const nlohmann::json::exception& e) {
+            CountLoadWarning();
+            UZ_LOG(Scene, Warning, "LoadScene: '{}': component '{}': {}",
+                   sourceName, key, e.what());
+        }
+    };
 
     // ── Name ─────────────────────────────────────────────────────────────────
     const std::string name = ReadString(entityJson, "name");
@@ -967,42 +1003,47 @@ size_t ProcessEntityJson(World& world,
         // Pass 2: "material" last — requires StaticMeshComponent from pass 1.
         auto transformIt = compIt->find("transform");
         if (transformIt != compIt->end() && transformIt->is_object()) {
-            ParseTransformComponent(world, entity, *transformIt);
+            parseComponent("transform", [&] { ParseTransformComponent(world, entity, *transformIt); });
         }
 
         // Pass 1: all components except "transform" and "material".
         for (const auto& [compKey, compValue] : compIt->items()) {
             if (!compValue.is_object()) {
+                CountLoadWarning();
                 UZ_LOG(Scene, Warning,
                        "LoadScene: '{}': component '{}' value is not a JSON object — skipped",
                        sourceName, compKey);
                 continue;
             }
 
-            if (compKey == "material" || compKey == "transform") {
-                continue; // transform already processed in pass 0, material deferred to pass 2
-            } else if (compKey == "script") {
-                ParseScriptComponent(world, entity, compValue);
-            } else if (compKey == "camera") {
-                ParseCameraComponent(world, entity, compValue);
-            } else if (compKey == "mesh") {
-                ParseMeshComponent(world, entity, compValue);
-            } else if (compKey == "skeletal_mesh") {
-                ParseSkeletalMeshComponent(world, entity, compValue);
-            } else if (compKey == "light") {
-                ParseLightComponent(world, entity, compValue, sourceName);
-            } else if (!ComponentSerializerRegistry::Get().Deserialize(compKey, world, entity, &compValue)) {
-                UZ_LOG(Scene, Warning,
-                       "LoadScene: '{}': unknown component type '{}' — skipped",
-                       sourceName, compKey);
-            }
+            if (compKey == "material" || compKey == "transform") continue;
+            parseComponent(compKey, [&] {
+                if (compKey == "script") {
+                    ParseScriptComponent(world, entity, compValue);
+                } else if (compKey == "camera") {
+                    ParseCameraComponent(world, entity, compValue);
+                } else if (compKey == "mesh") {
+                    ParseMeshComponent(world, entity, compValue);
+                } else if (compKey == "skeletal_mesh") {
+                    ParseSkeletalMeshComponent(world, entity, compValue);
+                } else if (compKey == "light") {
+                    ParseLightComponent(world, entity, compValue, sourceName);
+                } else if (!ComponentSerializerRegistry::Get().Deserialize(compKey, world, entity, &compValue)) {
+                    CountLoadWarning();
+                    UZ_LOG(Scene, Warning,
+                           "LoadScene: '{}': unknown component type '{}' — skipped",
+                           sourceName, compKey);
+                }
+            });
         }
 
         // Pass 2: "material" (requires StaticMeshComponent from pass 1).
         auto matIt = compIt->find("material");
         if (matIt != compIt->end() && matIt->is_object()) {
-            ParseMaterialComponent(world, entity, *matIt);
+            parseComponent("material", [&] { ParseMaterialComponent(world, entity, *matIt); });
         }
+    } else if (compIt != entityJson.end()) {
+        CountLoadWarning();
     }
 
     // ── Prefab instantiation ────────────────────────────────────────────────
@@ -1022,14 +1063,16 @@ size_t ProcessEntityJson(World& world,
                     if (prefabCompIt != prefabJson.end() && prefabCompIt->is_object()) {
                         for (const auto& [ck, cv] : prefabCompIt->items()) {
                             if (!cv.is_object() || ck == "transform") continue;
-                            if (ck == "mesh") ParseMeshComponent(world, entity, cv);
-                            else if (ck == "light") ParseLightComponent(world, entity, cv, sourceName);
-                            else if (ck == "script") ParseScriptComponent(world, entity, cv);
-                            else if (ck == "camera") ParseCameraComponent(world, entity, cv);
+                            parseComponent(ck, [&] {
+                                if (ck == "mesh") ParseMeshComponent(world, entity, cv);
+                                else if (ck == "light") ParseLightComponent(world, entity, cv, sourceName);
+                                else if (ck == "script") ParseScriptComponent(world, entity, cv);
+                                else if (ck == "camera") ParseCameraComponent(world, entity, cv);
+                            });
                         }
                         auto prefabMatIt = prefabCompIt->find("material");
                         if (prefabMatIt != prefabCompIt->end() && prefabMatIt->is_object())
-                            ParseMaterialComponent(world, entity, *prefabMatIt);
+                            parseComponent("material", [&] { ParseMaterialComponent(world, entity, *prefabMatIt); });
                     }
 
                     // Process prefab's children as children of this entity
@@ -1042,13 +1085,16 @@ size_t ProcessEntityJson(World& world,
 
                     UZ_LOG(Scene, Info, "Prefab instantiated: '{}' ({} children)",
                            prefabPath, prefabJson.value("children", nlohmann::json::array()).size());
-                } catch (const nlohmann::json::parse_error& e) {
+                } catch (const nlohmann::json::exception& e) {
+                    CountLoadWarning();
                     UZ_LOG(Scene, Warning, "Failed to parse prefab '{}': {}", prefabPath, e.what());
                 }
             } else {
+                CountLoadWarning();
                 UZ_LOG(Scene, Warning, "Failed to read prefab asset '{}'", prefabPath);
             }
         } else if (!prefabPath.empty()) {
+            CountLoadWarning();
             UZ_LOG(Scene, Warning, "Prefab '{}' requires VFS (use LoadScene with VFS overload)", prefabPath);
         }
     }
@@ -1070,73 +1116,85 @@ size_t ProcessEntityJson(World& world,
 // LoadScene — public entry point
 // ─────────────────────────────────────────────────────────────────────────────
 
-size_t LoadScene(World& world,
-                 const std::vector<uint8_t>& sceneJson,
-                 const std::string& sourceName) {
-    // Release materials from any previously loaded scene.
-    s_sceneLoadedMaterials.clear();
-
-    // Drop memoized .uzmat parses — material files may have changed on disk
-    // between scene loads, and the cache must not outlive the VFS it read from.
-    s_uzmatCache.clear();
-
-    // Revert any CVar overrides applied by a previously-loaded scene so the
-    // new scene starts from global defaults before applying its own overrides.
-    RevertSceneCVarOverrides();
-
+SceneLoadResult LoadSceneEx(World& world,
+                            const std::vector<uint8_t>& sceneJson,
+                            const std::string& sourceName,
+                            IVFS* vfs) {
+    SceneLoadResult result;
+    auto fail = [&](SceneLoadStatus status, const std::string& detail) {
+        result.status = status;
+        result.message = "LoadScene: '" + sourceName + "': " + detail;
+        UZ_LOG(Scene, Error, "{}", result.message);
+        return result;
+    };
     if (sceneJson.empty()) {
-        UZ_LOG(Scene, Error, "LoadScene: '{}': input byte buffer is empty", sourceName);
-        return 0;
+        return fail(SceneLoadStatus::EmptyInput, "input byte buffer is empty");
     }
 
     nlohmann::json root;
     try {
         root = nlohmann::json::parse(sceneJson.begin(), sceneJson.end());
     } catch (const nlohmann::json::parse_error& ex) {
-        UZ_LOG(Scene, Error,
-               "LoadScene: '{}': JSON parse error at byte {}: {}",
-               sourceName, ex.byte, ex.what());
-        return 0;
+        return fail(SceneLoadStatus::ParseError,
+                    "JSON parse error at byte " + std::to_string(ex.byte) + ": " + ex.what());
     }
 
     if (!root.is_object()) {
-        UZ_LOG(Scene, Error,
-               "LoadScene: '{}': root element is not a JSON object", sourceName);
-        return 0;
-    }
-
-    // Apply top-level "cvars" overrides (if any) BEFORE entity construction,
-    // so components that read CVars during construction see the overridden values.
-    auto cvarsIt = root.find("cvars");
-    if (cvarsIt != root.end()) {
-        ApplySceneCVarOverrides(*cvarsIt, sourceName);
+        return fail(SceneLoadStatus::RootNotObject, "root element is not a JSON object");
     }
 
     auto entitiesIt = root.find("entities");
-    if (entitiesIt == root.end() || !entitiesIt->is_array()) {
-        UZ_LOG(Scene, Error,
-               "LoadScene: '{}': missing or invalid 'entities' array", sourceName);
-        return 0;
+    if (entitiesIt == root.end())
+        return fail(SceneLoadStatus::MissingEntities, "missing 'entities' array");
+    if (!entitiesIt->is_array())
+        return fail(SceneLoadStatus::EntitiesNotArray, "'entities' is not an array");
+
+    // Resolve without mutating any live scene state.
+    std::vector<std::pair<std::string, float>> cvars;
+    auto cvarsIt = root.find("cvars");
+    if (cvarsIt != root.end()) {
+        cvars = ResolveSceneCVarOverrides(*cvarsIt, sourceName, result.warnings);
     }
 
-    size_t totalCount = 0;
+    // Validation succeeded. CVars must be applied before constructing entities.
+    struct LoadContext {
+        IVFS* previousVfs = s_loadVfs;
+        size_t* previousWarnings = s_loadWarnings;
+        ~LoadContext() { s_loadVfs = previousVfs; s_loadWarnings = previousWarnings; }
+    } context;
+    s_loadVfs = vfs;
+    s_loadWarnings = &result.warnings;
+    s_sceneLoadedMaterials.clear();
+    s_uzmatCache.clear();
+    RevertSceneCVarOverrides();
+    auto& reg = CVarRegistry::Get();
+    for (const auto& [name, value] : cvars) {
+        s_sceneCVarOverrides[name] = reg.Find(name)->value;
+        reg.Set(name, value);
+        UZ_LOG(Scene, Info, "LoadScene: '{}': cvar override {} = {}", sourceName, name, value);
+    }
+    world.Clear();
+
     for (const auto& entityJson : *entitiesIt) {
-        totalCount += ProcessEntityJson(world, entityJson, sourceName);
+        result.entityCount += ProcessEntityJson(world, entityJson, sourceName);
     }
 
     UZ_LOG(Scene, Info,
-           "LoadScene: '{}': loaded {} entities", sourceName, totalCount);
-    return totalCount;
+           "LoadScene: '{}': loaded {} entities", sourceName, result.entityCount);
+    return result;
+}
+
+size_t LoadScene(World& world,
+                 const std::vector<uint8_t>& sceneJson,
+                 const std::string& sourceName) {
+    return LoadSceneEx(world, sceneJson, sourceName).entityCount;
 }
 
 size_t LoadScene(World& world,
                  const std::vector<uint8_t>& sceneJson,
                  const std::string& sourceName,
                  IVFS* vfs) {
-    s_loadVfs = vfs;
-    size_t result = LoadScene(world, sceneJson, sourceName);
-    s_loadVfs = nullptr;
-    return result;
+    return LoadSceneEx(world, sceneJson, sourceName, vfs).entityCount;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

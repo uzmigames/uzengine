@@ -6,6 +6,19 @@ status: draft
 
 # Path Tracer Implementation Plan — Index
 
+> Implementation note: 01-07 are approved historical design records; the shipped tracer is DXR-inline and pixel-shader based, not compute/analytic. Read [08 reconciliation](08-implementation-reconciliation.md) and the [shipped spec](../../specs/rendering/path-tracer.md) first.
+
+## Reference Render Gallery
+
+The sole valid reference render is
+`.sandbox/golden/path_tracer/reflection_reference.png` (repository-relative,
+local and not committed). It shows the metallic floor reflecting atmosphere sky
+and coloured sky-lit boxes, with indirect sky illumination on diffuse surfaces.
+See [09 test results](09-test-results.md) for Tier-1/2/5 evidence and the blocked
+Falcor gate. Committing this golden requires explicit user authorization.
+The Cornell project's default camera is outside the box; that open-sky capture
+is not a usable Cornell golden and needs a scene-authoring follow-up, not a PT fix.
+
 This directory contains a comprehensive plan for adding a **compute-based progressive path tracer** to UzEngine, enabling film-quality offline rendering via HLSL compute shaders.
 
 ## Quick Overview
@@ -41,6 +54,8 @@ NOT a separate executable. NOT a demo. NOT using DXR BLAS/TLAS. Pure compute pat
 | **05-cvars-and-controls.md** | Runtime CVars (enable, max bounces, SPP, etc.) and registration pattern |
 | **06-testing-plan.md** | CPU parity tests, visual regression, Falcor PSNR thresholds |
 | **07-risks-and-open-questions.md** | Known blockers and unresolved questions |
+| **08-implementation-reconciliation.md** | Authoritative shipped-design reconciliation and remaining gates |
+| **09-test-results.md** | Reported CPU, visual-reference, determinism, and Falcor results |
 
 ## Key Decisions
 
@@ -61,4 +76,4 @@ NOT a separate executable. NOT a demo. NOT using DXR BLAS/TLAS. Pure compute pat
 
 ---
 
-**Status**: DRAFT — under review. Final approval pending architectural sign-off.
+**Status**: 01-07 approved as historical design records with the reconciliation above; full verification sign-off remains open for Falcor and committed regression goldens.

@@ -13,6 +13,7 @@
 #include "gi/radiance_cache.h"
 #include "gi/global_distance_field.h"
 #include "cb_ring_allocator.h"
+#include "cvar.h"
 
 #include <algorithm>
 #include <cstring>
@@ -25,6 +26,24 @@ UZ_DECLARE_LOG_CATEGORY(Renderer);
 namespace uz {
 
 namespace {
+
+static auto* cv_PtMaxBounces = UZ_CVAR_INT("r.PathTracer.MaxBounces", 4,
+    "Max path tracer ray bounces", 1, 16);
+static auto* cv_PtSamplesPerFrame = UZ_CVAR_INT("r.PathTracer.SamplesPerFrame", 4,
+    "Path tracer samples per frame (at least one per lobe)", 1, 16);
+static auto* cv_PtEnvIntensity = UZ_CVAR_FLOAT("r.PathTracer.EnvIntensity", 1.f,
+    "Path tracer sky radiance multiplier", 0.f, 10.f);
+static auto* cv_PtRussianRoulette = UZ_CVAR_BOOL("r.PathTracer.RussianRoulette", true,
+    "Terminate low-throughput paths with Russian roulette");
+static auto* cv_PtRRMinBounce = UZ_CVAR_INT("r.PathTracer.RussianRouletteMinBounce", 2,
+    "First bounce eligible for Russian roulette", 0, 8);
+static auto* cv_PtClampFirefly = UZ_CVAR_FLOAT("r.PathTracer.ClampFirefly", 64.f,
+    "Per-channel sample clamp (0 disables)", 0.f, 1e6f);
+static auto* cv_PtAccumulate = UZ_CVAR_BOOL("r.PathTracer.Accumulate", true,
+    "Accumulate path tracer history; disable for fresh-frame preview");
+static uint32_t s_resetGeneration = 0;
+static auto* cv_PtResetAccum = UZ_CVAR_EXEC("r.PathTracer.ResetAccum",
+    [] { ++s_resetGeneration; }, "Reset path tracer accumulation on the next frame");
 
 /// Fills the GDF clipmap and sun/skylight rows of the shared b2 trace
 /// constants (`RadianceCacheTraceConstants`, rows 1-11) for the path
@@ -76,16 +95,22 @@ void FillPathTracerTraceConstants(RadianceCacheTraceConstants& constants,
 
 } // namespace
 
+uint32_t GetPathTracerResetGeneration() {
+    return s_resetGeneration;
+}
+
 void AddPathTracerPass(rg::RgBuilder& builder, const PathTracerPassDesc& desc)
 {
     builder.AddPass("PathTracer", [desc](rg::RgPassBuilder& pb) {
         pb.Write(desc.accumCurr,       RHIResourceState::RenderTarget);
+        pb.Read(desc.accumPrev,        RHIResourceState::ShaderResource);
         pb.Write(desc.hdrTarget,       RHIResourceState::RenderTarget);
         pb.Read(desc.normalGBuffer,    RHIResourceState::ShaderResource);
         pb.Read(desc.depthGBuffer,     RHIResourceState::ShaderResource);
         pb.Read(desc.albedoGBuffer,    RHIResourceState::ShaderResource);
         pb.Read(desc.positionGBuffer,  RHIResourceState::ShaderResource);
         pb.Read(desc.emissiveGBuffer,  RHIResourceState::ShaderResource);
+        pb.Read(desc.shadowAtlas,      RHIResourceState::ShaderResource);
 
         pb.SetExecutionCallback([desc](IRHICommandList* cmd, const rg::RgPassResources& res) {
             UZ_PROFILE_SCOPE("PathTracer::Execute");
@@ -126,8 +151,12 @@ void AddPathTracerPass(rg::RgBuilder& builder, const PathTracerPassDesc& desc)
 
             // Root constants — must match PathTracerRC layout in
             // path_tracer_ps.hlsl.
+            uint32_t clampFireflyBits;
+            uint32_t envIntensityBits;
+            std::memcpy(&clampFireflyBits, &desc.clampFirefly, sizeof(uint32_t));
+            std::memcpy(&envIntensityBits, &desc.envIntensity, sizeof(uint32_t));
             if (desc.bindless) {
-                const uint32_t constants[12] = {
+                const uint32_t constants[24] = {
                     desc.normalSrvIndex,
                     desc.depthSrvIndex,
                     desc.albedoSrvIndex,
@@ -139,9 +168,21 @@ void AddPathTracerPass(rg::RgBuilder& builder, const PathTracerPassDesc& desc)
                     desc.frameIndex,
                     desc.tlasSrvIndex,
                     desc.materialTableSrv,
-                    desc.skyCubemapSrv
+                    desc.skyCubemapSrv,
+                    desc.maxBounces,
+                    desc.samplesPerFrame,
+                    clampFireflyBits,
+                    envIntensityBits,
+                    desc.rrEnabled,
+                    desc.rrMinBounce,
+                    desc.equirectSrvIndex,
+                    desc.envAliasSrv,
+                    desc.envLumMip0Srv,
+                    desc.envTotalLumBits,
+                    desc.envLumWidth,
+                    desc.envLumHeight
                 };
-                cmd->SetRootConstants(kSlotRootConstants, constants, 12);
+                cmd->SetRootConstants(kSlotRootConstants, constants, 24);
 
                 // TraceConstants (b2) — GDF + sun/sky for the bounce-hit
                 // shading. Built HERE (execute time) because the PerFrameCB
@@ -159,8 +200,13 @@ void AddPathTracerPass(rg::RgBuilder& builder, const PathTracerPassDesc& desc)
                     }
                 }
             } else {
-                const uint32_t constants[2] = { desc.sampleCount, desc.frameIndex };
-                cmd->SetRootConstants(kSlotRootConstants, constants, 2);
+                const uint32_t constants[8] = {
+                    desc.sampleCount, desc.frameIndex,
+                    desc.maxBounces, desc.samplesPerFrame,
+                    clampFireflyBits, envIntensityBits,
+                    desc.rrEnabled, desc.rrMinBounce
+                };
+                cmd->SetRootConstants(kSlotRootConstants, constants, 8);
             }
 
             RHIViewport vp{};

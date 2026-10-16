@@ -122,3 +122,35 @@ an index-dependent path. Recorded in known-issues ("Capture reproducibility"), o
 3. Move the manual barriers to `Transition` (the audit's 7.3).
 
 The clouds' move into the graph (0c.1) and the path tracer's Phase A build on stage 1.
+
+## Stages 1-3 (2026-10-13): shipped
+
+All three stages are implemented and accepted on this workstation; the `--gpu-validation` GBV
+matrix (design §8.2) is deferred to a machine with a working DX12 debug layer (the Agility device
+factory returns `0x887A002D` here, so the layer never comes up).
+
+- **Stage 1 (item 2.1).** 33 graph imports switched to `ImportTracked*`; the option-a machinery
+  removed (`m_{hdr,depth,albedo,normal}EndState`, the frame-0 warmup barriers, the `GetFinalState`
+  exports). §7.2 wiring landed: `PassInspector` and the owner classes take the registry; the
+  pixel-debug inputs transition through it; `AtmosphereFrameContext` carries `states`, a read-only
+  `SkyCubemap_Readable` pass keeps the cubemap in SRV, `PostFrameAtmosphereBake` transitions it, and
+  the SM5 IBL UAV→SRV barriers are deleted. Required companions: SSR `copySource` = ShaderResource,
+  `m_hdrHasContent` cleared at Resize, GTAO+upscaler velocity reads, PT accum-prev tracked.
+- **Stage 2 (item 3.1).** The three missing reads declared: GBuf_Depth in the upscaler, ShadowAtlas
+  in the path tracer (`PathTracerPassDesc::shadowAtlas`), LocalShadowAtlas in the deferred lighting
+  pass (`LightingPassDesc::localShadowAtlasResource`, guarded on import validity).
+- **Stage 3 (item 3.2).** Manual barriers migrated to `RgStateRegistry` in the seven owner classes
+  (GTAO, Bloom, EnvMIS, AutoExposure, PixelDebug, DDGI, RadianceCache — wired via `SetStateRegistry`
+  from `SceneRenderer::Init`) and the frame-local sites (TAA history/clamp, SSR history/trace/resolved/
+  counter, SSR prev + translucent scene colour, HiZ/Bloom mips, cluster list, cull args, fallback
+  textures). Per-object state trackers deleted, including DDGI's `m_firstDispatch` and RadianceCache's
+  six trackers. §7.4 keep-list untouched. Raw barriers remain only where state-neutral, round-trip, or
+  paired with `Set` (gpu-cull indirect args, SSR/translucent copy sources, debug region dump).
+
+**Acceptance (option A, this workstation).** `zig build` exit 0; MockDevice gtest
+`RenderGraphStates*`+`RenderGraphTest.*` 42/42 (truth-list + negative control); the identity harness
+bit-identical on the pre-load-matched cases (reflection/hdri/path_tracer) with the observe mode
+reporting 0 claim-disagreements across 126-261 graphs per case — the stage-0 stale inventory is now
+empty. The remaining identity cases are UNMATCHED by pre-load drift (phase0_capture-preload-determinism),
+not a stage change. GBV id 942 clearance awaits the `--gpu-validation` matrix on a DX12-debug-layer-capable
+machine.

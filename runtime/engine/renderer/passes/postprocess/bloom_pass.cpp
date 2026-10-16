@@ -12,6 +12,7 @@
 ///
 
 #include "bloom_pass.h"
+#include "engine/renderer/render_graph/render_graph_states.h"
 
 #include "engine/rhi/rhi.h"
 #include "shader_manager.h"
@@ -418,12 +419,7 @@ void BloomPass::Execute(IRHICommandList* cmdList,
     {
         UZ_PROFILE_SCOPE("BloomPass::Threshold");
 
-        RHIBarrierDesc barrier{};
-        barrier.texture     = m_mipTextures[0];
-        barrier.buffer      = RHIBufferHandle::Invalid();
-        barrier.stateBefore = RHIResourceState::ShaderResource;
-        barrier.stateAfter  = RHIResourceState::UnorderedAccess;
-        cmdList->ResourceBarrier(&barrier, 1);
+        m_states->Transition(cmdList, m_mipTextures[0], RHIResourceState::UnorderedAccess);
 
         cmdList->SetPipeline(m_thresholdPipeline);
 
@@ -455,19 +451,10 @@ void BloomPass::Execute(IRHICommandList* cmdList,
         UZ_PROFILE_SCOPE("BloomPass::Downsample");
 
         // Transition source (mip[i]) from UAV to SRV
-        RHIBarrierDesc barriers[2] = {};
-        barriers[0].texture     = m_mipTextures[i];
-        barriers[0].buffer      = RHIBufferHandle::Invalid();
-        barriers[0].stateBefore = RHIResourceState::UnorderedAccess;
-        barriers[0].stateAfter  = RHIResourceState::ShaderResource;
+        m_states->Transition(cmdList, m_mipTextures[i], RHIResourceState::ShaderResource);
 
         // Transition destination (mip[i+1]) to UAV
-        barriers[1].texture     = m_mipTextures[i + 1];
-        barriers[1].buffer      = RHIBufferHandle::Invalid();
-        barriers[1].stateBefore = RHIResourceState::ShaderResource;
-        barriers[1].stateAfter  = RHIResourceState::UnorderedAccess;
-
-        cmdList->ResourceBarrier(barriers, 2);
+        m_states->Transition(cmdList, m_mipTextures[i + 1], RHIResourceState::UnorderedAccess);
 
         cmdList->SetPipeline(m_downsamplePipeline);
 
@@ -509,25 +496,8 @@ void BloomPass::Execute(IRHICommandList* cmdList,
 
         // Transition lower mip to SRV (it was either UAV from downsample or from previous upsample)
         // Transition current mip to UAV (will be overwritten with upsample result)
-        RHIBarrierDesc barriers[2] = {};
-        barriers[0].texture     = m_mipTextures[lowerIdx];
-        barriers[0].buffer      = RHIBufferHandle::Invalid();
-        barriers[0].stateBefore = RHIResourceState::UnorderedAccess;
-        barriers[0].stateAfter  = RHIResourceState::ShaderResource;
-
-        // For step 0, currentIdx (4) was in UAV from downsample. For subsequent
-        // steps, it's been untouched since the downsample wrote it (UAV state).
-        // But mip[0] was transitioned to SRV after threshold → downsample read.
-        // We transition it from SRV → UAV for the final upsample write.
-        //
-        // For steps 1+, currentIdx was written by downsample (UAV state),
-        // then transitioned to SRV for the next downsample read. So it's in SRV.
-        barriers[1].texture     = m_mipTextures[currentIdx];
-        barriers[1].buffer      = RHIBufferHandle::Invalid();
-        barriers[1].stateBefore = RHIResourceState::ShaderResource;
-        barriers[1].stateAfter  = RHIResourceState::UnorderedAccess;
-
-        cmdList->ResourceBarrier(barriers, 2);
+        m_states->Transition(cmdList, m_mipTextures[lowerIdx], RHIResourceState::ShaderResource);
+        m_states->Transition(cmdList, m_mipTextures[currentIdx], RHIResourceState::UnorderedAccess);
 
         cmdList->SetPipeline(m_upsamplePipeline);
 
@@ -569,12 +539,7 @@ void BloomPass::Execute(IRHICommandList* cmdList,
     // The tonemap shader composites bloom (mip[0]) into the scene color
     // before applying exposure and tonemapping. No separate composite pass needed.
     {
-        RHIBarrierDesc barrier{};
-        barrier.texture     = m_mipTextures[0];
-        barrier.buffer      = RHIBufferHandle::Invalid();
-        barrier.stateBefore = RHIResourceState::UnorderedAccess;
-        barrier.stateAfter  = RHIResourceState::ShaderResource;
-        cmdList->ResourceBarrier(&barrier, 1);
+        m_states->Transition(cmdList, m_mipTextures[0], RHIResourceState::ShaderResource);
     }
 
     // After execution, mip[0] is in SRV state with the final bloom result.

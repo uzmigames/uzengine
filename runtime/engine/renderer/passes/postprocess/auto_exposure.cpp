@@ -13,6 +13,7 @@
 ///   clear source for the histogram buffer each frame.
 
 #include "auto_exposure.h"
+#include "engine/renderer/render_graph/render_graph_states.h"
 
 #include "engine/rhi/rhi.h"
 #include "shader_manager.h"
@@ -181,16 +182,9 @@ void AutoExposure::ResetHistory(IRHICommandList* cmdList) {
     // streamed scene produced. The shader already treats a zero history as
     // "initialise directly"; no formula changes here.
     if (!m_initialized || !cmdList) return;
-    RHIBarrierDesc barrier{};
-    barrier.buffer = m_exposureBuffer;
-    barrier.texture = RHITextureHandle::Invalid();
-    barrier.stateBefore = RHIResourceState::UnorderedAccess;
-    barrier.stateAfter = RHIResourceState::CopyDst;
-    cmdList->ResourceBarrier(&barrier, 1);
+    m_states->Transition(cmdList, m_exposureBuffer, RHIResourceState::CopyDst);
     cmdList->CopyBuffer(m_zeroBuffer, 0, m_exposureBuffer, 0, kExposureBytes);
-    barrier.stateBefore = RHIResourceState::CopyDst;
-    barrier.stateAfter = RHIResourceState::UnorderedAccess;
-    cmdList->ResourceBarrier(&barrier, 1);
+    m_states->Transition(cmdList, m_exposureBuffer, RHIResourceState::UnorderedAccess);
 }
 
 void AutoExposure::Shutdown() {
@@ -406,21 +400,14 @@ float AutoExposure::Execute(IRHICommandList* cmdList, uint32_t hdrSrvIndex,
     // Copy from the pre-zeroed upload buffer to the histogram default buffer.
     {
         // Transition histogram to CopyDst for the clear copy
-        RHIBarrierDesc barrier{};
-        barrier.buffer      = m_histogramBuffer;
-        barrier.texture     = RHITextureHandle::Invalid();
-        barrier.stateBefore = RHIResourceState::UnorderedAccess;
-        barrier.stateAfter  = RHIResourceState::CopyDst;
-        cmdList->ResourceBarrier(&barrier, 1);
+        m_states->Transition(cmdList, m_histogramBuffer, RHIResourceState::CopyDst);
 
         cmdList->CopyBuffer(m_zeroBuffer, 0,
                             m_histogramBuffer, 0,
                             kHistogramBytes);
 
         // Transition back to UAV for compute write
-        barrier.stateBefore = RHIResourceState::CopyDst;
-        barrier.stateAfter  = RHIResourceState::UnorderedAccess;
-        cmdList->ResourceBarrier(&barrier, 1);
+        m_states->Transition(cmdList, m_histogramBuffer, RHIResourceState::UnorderedAccess);
     }
 
     // ── Step 2: Histogram pass ──────────────────────────────────────────
@@ -462,18 +449,14 @@ float AutoExposure::Execute(IRHICommandList* cmdList, uint32_t hdrSrvIndex,
         cmdList->Dispatch(groupsX, groupsY, 1);
     }
 
-    // ── Step 3: UAV barrier (histogram write → read) ────────────────────
+    // ── Step 3: Transition histogram write → read ──────────────────────
     {
-        RHIBarrierDesc barrier{};
-        barrier.buffer      = m_histogramBuffer;
-        barrier.texture     = RHITextureHandle::Invalid();
-        barrier.stateBefore = RHIResourceState::UnorderedAccess;
-        barrier.stateAfter  = RHIResourceState::ShaderResource;
-        cmdList->ResourceBarrier(&barrier, 1);
+        m_states->Transition(cmdList, m_histogramBuffer, RHIResourceState::ShaderResource);
     }
 
     // ── Step 4: Average/adaptation pass ─────────────────────────────────
     {
+        m_states->Transition(cmdList, m_exposureBuffer, RHIResourceState::UnorderedAccess);
         cmdList->SetPipeline(m_averagePipeline);
 
         AverageRootConstants rc{};
@@ -521,31 +504,19 @@ float AutoExposure::Execute(IRHICommandList* cmdList, uint32_t hdrSrvIndex,
 
     // ── Step 5: Copy exposure to readback buffer for CPU access ─────────
     {
-        RHIBarrierDesc barrier{};
-        barrier.buffer      = m_exposureBuffer;
-        barrier.texture     = RHITextureHandle::Invalid();
-        barrier.stateBefore = RHIResourceState::UnorderedAccess;
-        barrier.stateAfter  = RHIResourceState::CopySrc;
-        cmdList->ResourceBarrier(&barrier, 1);
+        m_states->Transition(cmdList, m_exposureBuffer, RHIResourceState::CopySrc);
 
         cmdList->CopyBuffer(m_exposureBuffer, 0,
                             m_readbackBuffer, 0,
                             kExposureBytes);
 
         // Transition exposure back to UAV for next frame
-        barrier.stateBefore = RHIResourceState::CopySrc;
-        barrier.stateAfter  = RHIResourceState::UnorderedAccess;
-        cmdList->ResourceBarrier(&barrier, 1);
+        m_states->Transition(cmdList, m_exposureBuffer, RHIResourceState::UnorderedAccess);
     }
 
     // ── Step 6: Transition histogram back to UAV for next frame ─────────
     {
-        RHIBarrierDesc barrier{};
-        barrier.buffer      = m_histogramBuffer;
-        barrier.texture     = RHITextureHandle::Invalid();
-        barrier.stateBefore = RHIResourceState::ShaderResource;
-        barrier.stateAfter  = RHIResourceState::UnorderedAccess;
-        cmdList->ResourceBarrier(&barrier, 1);
+        m_states->Transition(cmdList, m_histogramBuffer, RHIResourceState::UnorderedAccess);
     }
 
     // ── Step 7: Read back exposure from previous frame ──────────────────

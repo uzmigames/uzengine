@@ -19,6 +19,9 @@
 #include "render_graph_builder.h"
 #include "render_graph_resources.h"
 #include "render_graph_states.h"
+#include "ddgi_system.h"
+#include "cb_ring_allocator.h"
+#include "cvar.h"
 #include "../../rhi/rhi.h"
 
 namespace {
@@ -55,7 +58,7 @@ public:
         }
     }
 
-    uz::RHIBufferHandle CreateBuffer(const uz::RHIBufferDesc&) override {
+    uz::RHIBufferHandle CreateBuffer(const uz::RHIBufferDesc& desc) override {
         uint32_t index;
         if (!freeBuffers_.empty()) {
             index = freeBuffers_.back();
@@ -65,6 +68,7 @@ public:
             bufferGenerations_.push_back(0);
         }
         bufferGenerations_[index] += 1;
+        if (desc.memory == uz::RHIMemoryType::Readback) readback = {index, bufferGenerations_[index]};
         return {index, bufferGenerations_[index]};
     }
 
@@ -82,7 +86,13 @@ public:
     }
 
     // ── Unused by these tests ────────────────────────────────────────────
-    void* MapBuffer(uz::RHIBufferHandle) override { return nullptr; }
+    void* MapBuffer(uz::RHIBufferHandle h) override {
+        if (h == readback) {
+            ++readbackMaps;
+            return readbackData.empty() ? nullptr : readbackData.data();
+        }
+        return uploadData.empty() ? nullptr : uploadData.data();
+    }
     void UnmapBuffer(uz::RHIBufferHandle) override {}
     uint32_t GetBufferSRVIndex(uz::RHIBufferHandle) const override { return UINT32_MAX; }
     uint32_t GetBufferUAVIndex(uz::RHIBufferHandle) const override { return UINT32_MAX; }
@@ -104,12 +114,18 @@ public:
     void DestroyFence(uz::IRHIFence*) override {}
     uz::IRHICommandList* CreateCommandList(uz::RHIQueueType) override { return nullptr; }
     void DestroyCommandList(uz::IRHICommandList*) override {}
-    void WaitIdle() override {}
+    void WaitIdle() override { ++idleWaits; }
     const char* GetAdapterName() const override { return "GenerationalMockDevice"; }
     const char* GetFeatureLevel() const override { return "Mock"; }
     uz::RHIMemoryBudget GetMemoryBudget() const override { return {}; }
     uz::ShaderModel GetShaderModel() const override { return static_cast<uz::ShaderModel>(0); }
     uz::RHIBackend GetBackend() const override { return static_cast<uz::RHIBackend>(0); }
+
+    uz::RHIBufferHandle readback{};
+    uint32_t readbackMaps = 0;
+    uint32_t idleWaits = 0;
+    std::vector<uint8_t> uploadData;
+    std::vector<float> readbackData;
 
 private:
     struct TextureSlot {
@@ -228,6 +244,8 @@ public:
 
     std::vector<uz::RHIBarrierDesc> barriers;
     std::vector<Mismatch> mismatches;
+    uint32_t bufferCopies = 0;
+    uint64_t copiedBytes = 0;
 
     // ── No-op stubs ──────────────────────────────────────────────────────
     void Begin() override {}
@@ -249,7 +267,10 @@ public:
     void DispatchIndirect(uz::RHIBufferHandle, uint64_t) override {}
     void ClearRenderTarget(uz::RHITextureHandle, const float[4]) override {}
     void ClearDepthStencil(uz::RHITextureHandle, float, uint8_t) override {}
-    void CopyBuffer(uz::RHIBufferHandle, uint64_t, uz::RHIBufferHandle, uint64_t, uint64_t) override {}
+    void CopyBuffer(uz::RHIBufferHandle, uint64_t, uz::RHIBufferHandle, uint64_t, uint64_t bytes) override {
+        ++bufferCopies;
+        copiedBytes = bytes;
+    }
     void CopyTexture(uz::RHITextureHandle, uz::RHITextureHandle) override {}
     void CopyBufferToTexture(uz::RHIBufferHandle, uint64_t, uint32_t,
                              uz::RHITextureHandle, uint32_t, uint32_t) override {}
@@ -417,6 +438,67 @@ TEST_F(RenderGraphStates, FreshTexturesStartInTheirCreationState) {
     EXPECT_TRUE(Has(cmd->barriers, color, RHIResourceState::Common, RHIResourceState::RenderTarget));
     EXPECT_FALSE(Has(cmd->barriers, depth, RHIResourceState::Common, RHIResourceState::DepthStencilWrite));
     EXPECT_TRUE(Has(cmd->barriers, depth, RHIResourceState::DepthStencilWrite, RHIResourceState::ShaderResource));
+    EXPECT_TRUE(cmd->mismatches.empty());
+}
+
+TEST_F(RenderGraphStates, ShadowAndGBufferDepthTransitionFromActualPreviousState) {
+    const auto shadow = Texture(DepthDesc(), "ShadowAtlas");
+    const auto depth = Texture(DepthDesc(), "GBuf_Depth");
+    for (int frame = 0; frame < 2; ++frame) {
+        cmd->barriers.clear();
+        auto rg = Graph();
+        const auto s = rg.ImportTrackedTexture("ShadowAtlas", shadow);
+        const auto d = rg.ImportTrackedTexture("GBuf_Depth", depth);
+        Pass(rg, "DepthWrites", {W(s, RHIResourceState::DepthStencilWrite),
+                                 W(d, RHIResourceState::DepthStencilWrite)});
+        Pass(rg, "Lighting", {R(s, RHIResourceState::ShaderResource),
+                              R(d, RHIResourceState::ShaderResource)});
+        rg.Compile();
+        rg.Execute(cmd.get());
+        for (const auto texture : {shadow, depth}) {
+            EXPECT_FALSE(Has(cmd->barriers, texture, RHIResourceState::Common,
+                             RHIResourceState::DepthStencilWrite));
+            EXPECT_EQ(Has(cmd->barriers, texture, RHIResourceState::ShaderResource,
+                          RHIResourceState::DepthStencilWrite), frame != 0);
+            EXPECT_TRUE(Has(cmd->barriers, texture, RHIResourceState::DepthStencilWrite,
+                            RHIResourceState::ShaderResource));
+        }
+        cmd->Execute();
+    }
+    EXPECT_TRUE(cmd->mismatches.empty());
+}
+
+TEST_F(RenderGraphStates, DBufferFirstUseAfterSkippedFramesStartsInCommon) {
+    const auto a = Texture(ColorDesc(), "DBuffer_A");
+    const auto b = Texture(ColorDesc(), "DBuffer_B");
+    const auto c = Texture(ColorDesc(), "DBuffer_C");
+    // An import without a decal pass must not invent a state for an unused texture.
+    {
+        auto rg = Graph();
+        for (const auto texture : {a, b, c}) {
+            (void)rg.ImportTrackedTexture("DBuffer", texture);
+        }
+        rg.Compile();
+        rg.Execute(cmd.get());
+        cmd->Execute();
+    }
+    for (int frame = 0; frame < 2; ++frame) {
+        cmd->barriers.clear();
+        auto rg = Graph();
+        for (const auto texture : {a, b, c}) {
+            const auto id = rg.ImportTrackedTexture("DBuffer", texture);
+            Pass(rg, "DecalRender", {W(id, RHIResourceState::RenderTarget)});
+            Pass(rg, "DecalApply", {R(id, RHIResourceState::ShaderResource)});
+        }
+        rg.Compile();
+        rg.Execute(cmd.get());
+        for (const auto texture : {a, b, c}) {
+            EXPECT_TRUE(Has(cmd->barriers, texture,
+                            frame == 0 ? RHIResourceState::Common : RHIResourceState::ShaderResource,
+                            RHIResourceState::RenderTarget));
+        }
+        cmd->Execute();
+    }
     EXPECT_TRUE(cmd->mismatches.empty());
 }
 
@@ -792,6 +874,53 @@ TEST_F(RenderGraphStates, NegativeControlTodaysClaimsFailOnEveryPattern) {
     for (const char* name : {"FroxelFog_Integrated", "Light_Direct", "GBuf_Velocity", "HDR_SceneColor", "PT_AccumCurr"}) {
         EXPECT_TRUE(reported.count(name)) << name << " was not reported by the observe mode";
     }
+}
+
+TEST(DDGIDiagnosticReadback, MapsOnlyAfterFourFramesWithoutWaitingIdle) {
+    auto& cvars = uz::CVarRegistry::Get();
+    const float previous = cvars.GetFloat("r.GI.DDGI.Diagnostic", 0.0f);
+    struct RestoreDiagnostic {
+        float value;
+        ~RestoreDiagnostic() { uz::CVarRegistry::Get().Set("r.GI.DDGI.Diagnostic", value); }
+    } restore{previous};
+    cvars.Set("r.GI.DDGI.Diagnostic", 1.0f);
+
+    GenerationalMockDevice device;
+    device.uploadData.resize(3 * 65536);
+    constexpr uint32_t floats = uz::DDGISystem::kTotalProbes
+        * uz::DDGISystem::kIrradianceProbeSize * uz::DDGISystem::kIrradianceProbeSize * 8;
+    device.readbackData.resize(floats, 0.0f);
+    D3D12TruthCommandList cmd(&device);
+    RgStateRegistry states(&device);
+    states.BindCommandList(&cmd);
+    uz::CBRingAllocator ring;
+    ASSERT_TRUE(ring.Init(&device, 3, 65536));
+    uz::DDGISystem ddgi;
+    ddgi.SetStateRegistry(&states);
+    ASSERT_TRUE(ddgi.CreateResources(&device));
+
+    const auto dispatch = [&](uint32_t frame) {
+        ring.BeginFrame(frame);
+        ddgi.DispatchUpdate(&cmd, {1, 1}, {}, {2, 1}, UINT32_MAX, &ring, frame);
+        cmd.Execute();
+    };
+    dispatch(119);
+    EXPECT_EQ(cmd.bufferCopies, 0u);
+    dispatch(120);
+    ASSERT_EQ(cmd.bufferCopies, 1u);
+    EXPECT_EQ(cmd.copiedBytes, floats * sizeof(float));
+    for (uint32_t frame = 121; frame < 124; ++frame) {
+        dispatch(frame);
+        EXPECT_EQ(device.readbackMaps, 0u) << frame;
+        EXPECT_EQ(device.idleWaits, 0u) << frame;
+    }
+    dispatch(124);
+    EXPECT_EQ(device.readbackMaps, 1u);
+    EXPECT_EQ(device.idleWaits, 0u);
+    dispatch(125);
+    EXPECT_EQ(device.readbackMaps, 1u);
+    EXPECT_EQ(cmd.bufferCopies, 1u);
+    EXPECT_EQ(device.idleWaits, 0u);
 }
 
 } // namespace

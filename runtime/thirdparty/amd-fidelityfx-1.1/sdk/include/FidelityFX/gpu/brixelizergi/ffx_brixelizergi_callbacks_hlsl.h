@@ -894,31 +894,46 @@ FfxFloat32 SamplePrevDepth(FfxFloat32x2 uv)
 }
 #endif
 
+#if defined BRIXELIZER_GI_BIND_SRV_INPUT_NORMAL || defined BRIXELIZER_GI_BIND_SRV_INPUT_HISTORY_NORMAL
+FfxFloat32x3 UnpackBrixelizerNormal(FfxFloat32x3 encoded)
+{
+#if defined UZ_BRIXELIZER_OCT_NORMALS
+    FfxFloat32x2 f = encoded.xy * 2.0 - 1.0;
+    FfxFloat32x3 n = FfxFloat32x3(f, 1.0 - abs(f.x) - abs(f.y));
+    if (n.z < 0.0)
+        n.xy = (1.0 - abs(n.yx)) * FfxFloat32x2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);
+    return normalize(n);
+#else
+    return normalize(encoded * g_sdfgi_constants.normalsUnpackMul + g_sdfgi_constants.normalsUnpackAdd);
+#endif
+}
+#endif
+
 #if defined BRIXELIZER_GI_BIND_SRV_INPUT_NORMAL
 FfxFloat32x3 LoadWorldNormal(FfxUInt32x2 pixel_coordinate)
 {
-    return normalize(g_normal.Load(FfxInt32x3(pixel_coordinate, 0)).xyz * g_sdfgi_constants.normalsUnpackMul + g_sdfgi_constants.normalsUnpackAdd);
+    return UnpackBrixelizerNormal(g_normal.Load(FfxInt32x3(pixel_coordinate, 0)).xyz);
 }
 #endif
 
 #if defined BRIXELIZER_GI_BIND_SRV_INPUT_HISTORY_NORMAL
 FfxFloat32x3 LoadPrevWorldNormal(FfxUInt32x2 pixel_coordinate)
 {
-    return normalize(g_history_normal.Load(FfxInt32x3(pixel_coordinate, 0)).xyz * g_sdfgi_constants.normalsUnpackMul + g_sdfgi_constants.normalsUnpackAdd);
+    return UnpackBrixelizerNormal(g_history_normal.Load(FfxInt32x3(pixel_coordinate, 0)).xyz);
 }
 #endif
 
 #if defined BRIXELIZER_GI_BIND_SRV_INPUT_NORMAL
 FfxFloat32x3 SampleWorldNormal(FfxFloat32x2 uv)
 {
-    return normalize(g_normal.SampleLevel(g_clamp_nearest_sampler, uv, 0.0).xyz * g_sdfgi_constants.normalsUnpackMul + g_sdfgi_constants.normalsUnpackAdd);
+    return UnpackBrixelizerNormal(g_normal.SampleLevel(g_clamp_nearest_sampler, uv, 0.0).xyz);
 }
 #endif
 
 #if defined BRIXELIZER_GI_BIND_SRV_INPUT_HISTORY_NORMAL
 FfxFloat32x3 SamplePrevWorldNormal(FfxFloat32x2 uv)
 {
-    return normalize(g_history_normal.SampleLevel(g_clamp_nearest_sampler, uv, 0.0).xyz * g_sdfgi_constants.normalsUnpackMul + g_sdfgi_constants.normalsUnpackAdd);
+    return UnpackBrixelizerNormal(g_history_normal.SampleLevel(g_clamp_nearest_sampler, uv, 0.0).xyz);
 }
 #endif
 

@@ -10,7 +10,7 @@
 #   cmake -B build -G "Visual Studio 17 2022" -A x64
 #   cmake --build build --config Release
 #
-# Output: build/Release/uz_brixelizer.dll → copy to runtime/build/bin/
+# Output: build/bin/uz_brixelizer.dll → deployed by runtime/build.zig
 #
 # @ref AMD 2024 "FidelityFX Brixelizer GI"
 # @ref UzEngine docs/analysis/dlss-integration-analysis.md — same MSVC/CRT
@@ -38,7 +38,7 @@ if(NOT EXISTS "${FFX_LIB_DIR}/ffx_backend_dx12_x64.lib")
         "Pre-built FFX SDK static libs not found at ${FFX_LIB_DIR}. "
         "Run the FFX SDK build first: "
         "cd ../sdk && cmake -B build -G \"Visual Studio 17 2022\" -A x64 "
-        "-DFFX_API_BACKEND=DX12_X64 -DFFX_ALL=ON && "
+        "-DFFX_API_BACKEND=DX12_X64 -DFFX_ALL=ON -DUZ_BRIXELIZER_OCT_NORMALS=ON && "
         "cmake --build build --config Release")
 endif()
 

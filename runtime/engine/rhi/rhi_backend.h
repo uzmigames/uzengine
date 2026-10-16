@@ -33,6 +33,7 @@ struct RHIDeviceDesc {
     bool enableGpuValidation = false;        ///< Enable GPU-based validation (expensive, dev only).
     bool enableBreadcrumbs = false;          ///< Enable DRED auto-breadcrumbs + page-fault tracking (DX12 only).
     uint32_t adapterIndex = 0;               ///< GPU adapter index (0 = system default/highest performance).
+    uint8_t debugPoisonByte = 0;             ///< 0 = off; else fill every created resource with this byte (debug determinism gate).
 
     /// Forces a specific shader model instead of auto-negotiating the highest supported.
     /// Used for testing fallback paths (e.g., force SM5_0 to test FXC compilation).

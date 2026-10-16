@@ -51,6 +51,14 @@ CVar* CVarRegistry::Register(const std::string& name, float defaultValue,
 // Lookup
 // ─────────────────────────────────────────────────────────────────────────────
 
+CVar* CVarRegistry::RegisterExec(const std::string& name, void (*execute)(),
+                               const std::string& description) {
+    if (auto* existing = Find(name)) return existing;
+    auto* cv = Register(name, 0.f, description, 0.f, 0.f);
+    cv->execute = execute;
+    return cv;
+}
+
 CVar* CVarRegistry::Find(const std::string& name) {
     auto it = m_cvars.find(name);
     if (it == m_cvars.end()) {
@@ -105,7 +113,11 @@ void CVarRegistry::Set(const std::string& name, float value) {
         UZ_LOG(Engine, Warning, "CVarRegistry::Set: CVar '{}' not found (override ignored)", name);
         return;
     }
-    cv->value = std::clamp(value, cv->minValue, cv->maxValue);
+    if (cv->execute != nullptr) {
+        cv->execute();
+    } else {
+        cv->value = std::clamp(value, cv->minValue, cv->maxValue);
+    }
 }
 
 void CVarRegistry::Reset(const std::string& name) {

@@ -67,6 +67,7 @@ void SceneRenderer::RegisterGTAOPass(rg::RgBuilder& rgBuilder, FrameContext& ctx
         rgBuilder.AddPass("GTAO", [&](rg::RgPassBuilder& pb) {
             pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);
             pb.Read(ctx.normalRes, RHIResourceState::ShaderResource);
+            pb.Read(ctx.velocityRes, RHIResourceState::ShaderResource);
 
             pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& res) {
                 UZ_PROFILE_SCOPE("GTAO::Execute");

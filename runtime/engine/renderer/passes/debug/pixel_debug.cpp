@@ -3,6 +3,7 @@
 /// @ref NVIDIA Falcor PixelDebug — InterlockedAdd + structured buffer readback.
 
 #include "pixel_debug.h"
+#include "engine/renderer/render_graph/render_graph_states.h"
 #include "rhi_device.h"
 #include "rhi_command_list.h"
 #include "log.h"
@@ -114,20 +115,13 @@ bool PixelDebugSystem::Init(IRHIDevice* device, const PixelDebugConfig& config) 
 void PixelDebugSystem::BeginFrame(IRHICommandList* cmdList) {
     if (!IsEnabled()) return;
 
-    // Barrier: counter UAV -> CopyDst
-    RHIBarrierDesc barrier{};
-    barrier.buffer      = m_counterBuffer;
-    barrier.stateBefore = RHIResourceState::UnorderedAccess;
-    barrier.stateAfter  = RHIResourceState::CopyDst;
-    cmdList->ResourceBarrier(&barrier, 1);
+    m_states->Transition(cmdList, m_counterBuffer, RHIResourceState::CopyDst);
 
     // Copy 4 zero bytes from upload buffer to counter.
     cmdList->CopyBuffer(m_uploadBuffer, 0, m_counterBuffer, 0, 4);
 
-    // Barrier: counter CopyDst -> UAV
-    barrier.stateBefore = RHIResourceState::CopyDst;
-    barrier.stateAfter  = RHIResourceState::UnorderedAccess;
-    cmdList->ResourceBarrier(&barrier, 1);
+    m_states->Transition(cmdList, m_counterBuffer, RHIResourceState::UnorderedAccess);
+    m_states->Transition(cmdList, m_recordsBuffer, RHIResourceState::UnorderedAccess);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -139,20 +133,12 @@ void PixelDebugSystem::EndFrame(IRHICommandList* cmdList) {
 
     const uint64_t recordsSize = static_cast<uint64_t>(m_config.maxRecords) * 16;
 
-    // Barrier: records UAV -> CopySrc
-    RHIBarrierDesc barrier{};
-    barrier.buffer      = m_recordsBuffer;
-    barrier.stateBefore = RHIResourceState::UnorderedAccess;
-    barrier.stateAfter  = RHIResourceState::CopySrc;
-    cmdList->ResourceBarrier(&barrier, 1);
+    m_states->Transition(cmdList, m_recordsBuffer, RHIResourceState::CopySrc);
 
     // Copy records to readback.
     cmdList->CopyBuffer(m_recordsBuffer, 0, m_readbackBuffer, 0, recordsSize);
 
-    // Barrier: records CopySrc -> UAV (restore for next frame).
-    barrier.stateBefore = RHIResourceState::CopySrc;
-    barrier.stateAfter  = RHIResourceState::UnorderedAccess;
-    cmdList->ResourceBarrier(&barrier, 1);
+    m_states->Transition(cmdList, m_recordsBuffer, RHIResourceState::UnorderedAccess);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

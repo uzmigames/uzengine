@@ -1,6 +1,7 @@
 /// Environment MIS Temporal Accumulation Pass — Implementation.
 
 #include "env_mis_pass.h"
+#include "engine/renderer/render_graph/render_graph_states.h"
 
 #include "log.h"
 #include "rhi.h"
@@ -128,11 +129,7 @@ void EnvMISPass::Execute(IRHICommandList* cmdList, const EnvMapSampler& sampler,
     uint32_t readIdx  = 1 - writeIdx;
 
     // Transition write target to UAV
-    RHIBarrierDesc toUav;
-    toUav.texture     = m_history[writeIdx];
-    toUav.stateBefore = m_historyValid ? RHIResourceState::ShaderResource : RHIResourceState::Common;
-    toUav.stateAfter  = RHIResourceState::UnorderedAccess;
-    cmdList->ResourceBarrier(&toUav, 1);
+    m_states->Transition(cmdList, m_history[writeIdx], RHIResourceState::UnorderedAccess);
 
     cmdList->SetPipeline(m_pipeline);
 
@@ -188,11 +185,7 @@ void EnvMISPass::Execute(IRHICommandList* cmdList, const EnvMapSampler& sampler,
         1);
 
     // Transition write target to SRV (for deferred lighting to read)
-    RHIBarrierDesc toSrv;
-    toSrv.texture     = m_history[writeIdx];
-    toSrv.stateBefore = RHIResourceState::UnorderedAccess;
-    toSrv.stateAfter  = RHIResourceState::ShaderResource;
-    cmdList->ResourceBarrier(&toSrv, 1);
+    m_states->Transition(cmdList, m_history[writeIdx], RHIResourceState::ShaderResource);
 
     // Flip ping-pong
     m_writeIdx = 1 - m_writeIdx;

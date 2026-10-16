@@ -40,9 +40,54 @@
 #include "modules/emitter_module_stack.h"
 
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <memory>
+#include <regex>
+#include <string>
 
 using namespace uz;
+
+/// A dead/unspawned slot zero must not prevent surviving sorted threads from
+/// publishing their instance count. Only inspect the post-dead-check path;
+/// the separate thread-zero initialization before that check is allowed.
+TEST(MeshGuard_SortedInstanceCount, PostDeadCheckSortedPathHasNoThreadZeroGate) {
+    const auto path = std::filesystem::path(__FILE__).parent_path()
+        .parent_path().parent_path().parent_path()
+        / "shaders/runtime/vfx/particle_mesh_instance_cs.hlsl";
+    std::ifstream file(path);
+    ASSERT_TRUE(file.is_open()) << path;
+    const std::string source((std::istreambuf_iterator<char>(file)),
+                             std::istreambuf_iterator<char>());
+    const std::string code = std::regex_replace(
+        source, std::regex(R"(//[^\r\n]*|/\*[\s\S]*?\*/)"), " ");
+
+    std::smatch deadCheck;
+    ASSERT_TRUE(std::regex_search(
+        code, deadCheck,
+        std::regex(R"(if\s*\(\s*lifespan\s*<=\s*0\.0f\s*\|\|\s*age\s*>=\s*lifespan\s*\)\s*return\s*;)")))
+        << "The dead-particle check must be found before inspecting the sorted path";
+    const std::string survivingPath = deadCheck.suffix().str();
+    std::smatch sortedBranch;
+    ASSERT_TRUE(std::regex_search(
+        survivingPath, sortedBranch, std::regex(R"(if\s*\(\s*isSorted\s*\)\s*\{)")))
+        << "The sorted instance-count branch must be present";
+
+    const size_t begin = sortedBranch.position() + sortedBranch.length();
+    size_t end = begin;
+    unsigned depth = 1;
+    for (; end < survivingPath.size() && depth != 0; ++end) {
+        if (survivingPath[end] == '{') ++depth;
+        if (survivingPath[end] == '}') --depth;
+    }
+    ASSERT_EQ(depth, 0u) << "The sorted branch must have a closing brace";
+    const std::string sortedPath = survivingPath.substr(begin, end - begin - 1);
+    EXPECT_FALSE(std::regex_search(
+        sortedPath, std::regex(R"(if\s*\(\s*sortedSlot\s*==\s*0[uU]?\s*\))")))
+        << "Every surviving sorted thread must publish its count; slot zero "
+           "can return at the dead-particle check";
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MeshRenderModule::GetName() — string identity

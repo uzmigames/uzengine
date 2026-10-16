@@ -41,6 +41,10 @@ static auto* cv_TAAClampFreeze    = UZ_CVAR_INT("r.TAA.ClampFreezeAfterFrame", -
     "to it instead of recomputing it, so the bounds stop moving while the reconstruction, "
     "exposure and lighting stay unchanged. -1 = off. Screen-space frozen bounds are only "
     "meaningful with a static camera.", -1, 100000);
+static auto* cv_TAAClampAverage = UZ_CVAR_INT("r.TAA.ClampFreezeAverageFrames", 1,
+    "Diagnostic: average this many final clamp boxes before the freeze frame.", 1, 16);
+static auto* cv_TAAHistoryRead = UZ_CVAR_INT("r.TAA.HistoryReadMode", 0,
+    "Diagnostic: 0 bicubic history, 1 exact nearest history texel.", 0, 1);
 static auto* cv_TAAClampMode      = UZ_CVAR_INT("r.TAA.ClampMode", 0,
     "Diagnostic (followup-10), 0 = production: 0 AABB intersected with the variance box, "
     "1 no clamp (history passes through), 2 variance box only, 3 AABB only.", 0, 3);
@@ -49,6 +53,29 @@ static auto* cv_TAABlendMode      = UZ_CVAR_INT("r.TAA.BlendMode", 0,
     "1 fixed weight r.TAA.CurrentFrameWeight only.", 0, 1);
 static auto* cv_TAAPreExpose      = UZ_CVAR_BOOL("r.TAA.PreExposeWeights", false,
     "Multiply the HDR-weighting exposure (Karis 2014 HdrWeight) by the frame's auto-exposure value instead of 1.0. Default off = the shipped look; on = the filter/blend weights see display-referred luminance, so a clipped highlight (Sponza window panes, 8 Y at exposure 67) stops bleeding into neighbouring dark pixels through the jitter-weighted plus filter (2026-09-09 region-dump finding)");
+static auto* cv_TAAStableRecon = UZ_CVAR_INT("r.TAA.StableRecon", 1,
+    "phase0_sponza-flicker-correction (ON by default, gates passed 2026-10-13): 1 = hand "
+    "coverage-stable pixels their own centre tap, removing the jitter-weighted plus filter's "
+    "8-periodic leak on static bright regions (pose-W window: bright_std 0.0205->0.0007, energy "
+    "0.973->1.000; boundary bit-identical; neutral under motion). 0 = legacy (pre-fix).", 0, 1);
+static auto* cv_TAAStableReconTol = UZ_CVAR_FLOAT("r.TAA.StableReconTolerance", 0.02f,
+    "Relative-luma tolerance for the stable-reconstruction gate: a pixel is stable when its raw "
+    "centre luma is within this fraction of its running mean.", 0.001f, 0.5f);
+static auto* cv_TAAStableReconVel = UZ_CVAR_FLOAT("r.TAA.StableReconVelocityPx", 4.0f,
+    "The stable-reconstruction gate fades to zero by this screen velocity (pixels/frame).", 0.1f, 40.0f);
+static auto* cv_TAAFlipBlend = UZ_CVAR_INT("r.TAA.FlipBlend", 0,
+    "phase0_sponza-flicker-correction (opt-in until gates pass; requires r.TAA.StableRecon=1): 1 = "
+    "at static neighbour-corroborated coverage-flip pixels (the complement of StableRecon), use the "
+    "spatial-only reconstruction + equal blend weights, recovering the rear-door glass energy the "
+    "HDR weighting drains (energy ~0.52->target >=0.85). 0 = production.", 0, 1);
+static auto* cv_TAAFlipIsolation = UZ_CVAR_FLOAT("r.TAA.FlipBlendIsolationRatio", 2.0f,
+    "FlipBlend firefly guard: a centre brighter than this multiple of its brightest neighbour is an "
+    "isolated sample (firefly/sub-pixel sparkle) and keeps the Karis path.", 1.0f, 10.0f);
+static auto* cv_TAAFlipVelocity = UZ_CVAR_FLOAT("r.TAA.FlipBlendVelocityPx", 4.0f,
+    "The FlipBlend gate fades to zero by this screen velocity (pixels/frame).", 0.1f, 40.0f);
+static auto* cv_TAAFlipWeight = UZ_CVAR_FLOAT("r.TAA.FlipBlendWeight", -1.0f,
+    "FlipBlend optional fixed blend weight at flip pixels (-1 = inherit r.TAA.CurrentFrameWeight); "
+    "lower it to slow the settling if boundary flicker rises too much.", -1.0f, 0.2f);
 
 #include <cstring>
 
@@ -64,11 +91,16 @@ TaaUpscaler::~TaaUpscaler() {
     Shutdown();
 }
 
-void TaaUpscaler::Init(IRHIDevice* device, PipelineLibrary* pipelines, CBRingAllocator* cbRing) {
+bool TaaUpscaler::Init(IRHIDevice* device, PipelineLibrary* pipelines, CBRingAllocator* cbRing) {
+    Shutdown();
+    if (!device || !pipelines || !cbRing || !pipelines->GetTaaResolve().IsValid()) {
+        return false;
+    }
     m_device    = device;
     m_pipelines = pipelines;
     m_cbRing    = cbRing;
     UZ_LOG(Renderer, Info, "TaaUpscaler initialized (single-pass resolve)");
+    return true;
 }
 
 void TaaUpscaler::Shutdown() {
@@ -87,48 +119,13 @@ void TaaUpscaler::OnResize(uint32_t /*displayWidth*/, uint32_t /*displayHeight*/
 // Execution
 // ─────────────────────────────────────────────────────────────────────────────
 
-void TaaUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
+bool TaaUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     UZ_PROFILE_SCOPE("TAA::Resolve");
 
     auto taaPSO = m_pipelines->GetTaaResolve();
-    if (!taaPSO.IsValid()) return;
+    if (!taaPSO.IsValid()) return false;
 
     cmd->SetPipeline(taaPSO);
-
-    // TaaCB layout matches taa_resolve_cs.hlsl cbuffer TaaCB at b2.
-    // 12 floats/uints = 48 bytes, padded to 16-byte alignment.
-    struct TaaCB {
-        float    jitterX, jitterY;
-        float    texelSizeX, texelSizeY;
-        float    blendWeight;
-        uint32_t sceneSrv;
-        uint32_t depthSrv;
-        uint32_t historySrv;
-        uint32_t velocitySrv;
-        float    outputWidth;
-        float    outputHeight;
-        float    varianceClipGamma;
-        float    velocityThreshold;
-        float    antiFlickerMax;
-        float    spatialWeightMul;
-        float    exposureScale;
-        uint32_t debugRegionUav;    // region dump (diagnostics), UINT32_MAX = off
-        uint32_t debugRegionSrv;
-        uint32_t debugRegionCount;
-        uint32_t debugRegionStamp;
-        uint32_t debugRegionFields;
-        uint32_t clampBoxSrvMin;      // r.TAA.ClampFreezeAfterFrame storage (0xffffffff = unavailable)
-        uint32_t clampBoxSrvMax;
-        uint32_t clampBoxUavMin;
-        uint32_t clampBoxUavMax;
-        uint32_t clampFreezeActive;   // 1 = read the stored box, 0 = compute it and store it
-        uint32_t clampFreezeEnabled;  // 0 = diagnostic off; the shader must not touch the storage
-        float    hdrWeightExponent;   // r.TAA.ReconstructionHdrWeightExponent (candidate correction)
-        uint32_t reconstructionMode;  // r.TAA.ReconstructionMode (diagnostic)
-        uint32_t clampMode;           // r.TAA.ClampMode (diagnostic)
-        uint32_t blendMode;           // r.TAA.BlendMode (diagnostic)
-        uint32_t _padModes;
-    };
 
     TaaCB taaCb{};
     taaCb.jitterX      = input.jitterX;
@@ -168,7 +165,18 @@ void TaaUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     taaCb.reconstructionMode = static_cast<uint32_t>(cv_TAAReconstruction->value);
     taaCb.clampMode          = static_cast<uint32_t>(cv_TAAClampMode->value);
     taaCb.blendMode          = static_cast<uint32_t>(cv_TAABlendMode->value);
-    taaCb._padModes          = 0;
+    taaCb.historyReadMode    = static_cast<uint32_t>(cv_TAAHistoryRead->value);
+    taaCb.clampAverageFrames = static_cast<uint32_t>(cv_TAAClampAverage->value);
+    taaCb.frameIndex         = input.frameIndex;
+    taaCb.clampFreezeFrame   = static_cast<uint32_t>(static_cast<int>(cv_TAAClampFreeze->value));
+    taaCb.stableReconEnabled    = static_cast<uint32_t>(cv_TAAStableRecon->value);
+    taaCb.stableReconReset      = input.firstFrame ? 1u : 0u;
+    taaCb.stableReconTolerance  = cv_TAAStableReconTol->value;
+    taaCb.stableReconVelocityPx = cv_TAAStableReconVel->value;
+    taaCb.flipBlendEnabled      = static_cast<uint32_t>(cv_TAAFlipBlend->value);
+    taaCb.flipIsolationRatio    = cv_TAAFlipIsolation->value;
+    taaCb.flipVelocityPx        = cv_TAAFlipVelocity->value;
+    taaCb.flipBlendWeight       = cv_TAAFlipWeight->value;
 
     // Root signature slot 2 = b2 (per-object constant buffer).
     constexpr uint32_t kSlotPerObject = 2;
@@ -196,6 +204,7 @@ void TaaUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     const uint32_t groupsX = (static_cast<uint32_t>(input.outputWidth)  + 7) / 8;
     const uint32_t groupsY = (static_cast<uint32_t>(input.outputHeight) + 7) / 8;
     cmd->Dispatch(groupsX, groupsY, 1);
+    return true;
 }
 
 } // namespace uz

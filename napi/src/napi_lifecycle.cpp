@@ -37,6 +37,7 @@ static Napi::Value NapiInit(const Napi::CallbackInfo& info) {
 }
 
 static Napi::Value NapiShutdown(const Napi::CallbackInfo& info) {
+    UzNapiRenderThread().Stop();
     uz_runtime_shutdown();
     return info.Env().Undefined();
 }

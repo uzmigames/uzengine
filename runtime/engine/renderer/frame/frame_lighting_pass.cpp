@@ -15,6 +15,7 @@
 #include "components.h"
 
 #include "render_graph_builder.h"
+#include "render_graph_states.h"
 #include "render_graph_resources.h"
 #include "profiler.h"
 #include "rhi.h"
@@ -94,7 +95,6 @@ void SceneRenderer::RegisterLightCullPass(rg::RgBuilder& rgBuilder, FrameContext
         m_clusterListBytes  = m_clusterListBuffer.IsValid() ? neededBytes : 0;
         m_clusterListSrv    = m_clusterListBuffer.IsValid() ? m_device->GetBufferSRVIndex(m_clusterListBuffer) : UINT32_MAX;
         m_clusterListUav    = m_clusterListBuffer.IsValid() ? m_device->GetBufferUAVIndex(m_clusterListBuffer) : UINT32_MAX;
-        m_clusterListState  = RHIResourceState::Common;
         UZ_LOG(Renderer, Info, "LightCull: cluster list {} clusters ({}x{}x{}) x {} uints = {} bytes (SRV={}, UAV={})",
                clusters, lightingCB->clusterTilesX, lightingCB->clusterTilesY, lightingCB->clusterSlices,
                kClusterRecordUints, neededBytes, m_clusterListSrv, m_clusterListUav);
@@ -116,23 +116,14 @@ void SceneRenderer::RegisterLightCullPass(rg::RgBuilder& rgBuilder, FrameContext
         // the lighting pass's own depth read, before the lighting (block B.5's lesson).
         pb.Read(depthRes, RHIResourceState::ShaderResource);
         pb.SetExecutionCallback([=, this](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
-            RHIBarrierDesc toUav{};
-            toUav.buffer      = buffer;
-            toUav.stateBefore = m_clusterListState;
-            toUav.stateAfter  = RHIResourceState::UnorderedAccess;
-            cmd->ResourceBarrier(&toUav, 1);
+            m_rgStates->Transition(cmd, buffer, RHIResourceState::UnorderedAccess);
 
             cmd->SetPipeline(pipeline);
             cmd->SetRootCBV(kSlotPerFrame, perFrame.bufferHandle, perFrame.offsetBytes, perFrame.cpuPtr, sizeof(PerFrameCB));
             cmd->SetRootCBV(kSlotPerObject, lighting.bufferHandle, lighting.offsetBytes, lighting.cpuPtr, sizeof(LightingCB));
             cmd->Dispatch(groups, 1, 1);
 
-            RHIBarrierDesc toSrv{};
-            toSrv.buffer      = buffer;
-            toSrv.stateBefore = RHIResourceState::UnorderedAccess;
-            toSrv.stateAfter  = RHIResourceState::ShaderResource;
-            cmd->ResourceBarrier(&toSrv, 1);
-            m_clusterListState = RHIResourceState::ShaderResource;
+            m_rgStates->Transition(cmd, buffer, RHIResourceState::ShaderResource);
         });
     });
 }
@@ -203,9 +194,18 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
         lightDesc.depthGBuffer        = ctx.depthRes;
         lightDesc.positionGBuffer     = ctx.positionRes;
         lightDesc.emissiveGBuffer     = ctx.emissiveRes;
+        lightDesc.brixDiffuseResource = ctx.brixDiffuseRes;
+        lightDesc.brixSpecularResource = ctx.brixSpecularRes;
         lightDesc.perFrameAlloc       = ctx.perFrameAlloc;
         lightDesc.lightingAlloc       = ctx.lightingAlloc;
         lightDesc.pipeline            = ctx.pipelines->GetLighting();
+        if (ctx.bindless && m_cloudPass && m_cloudPass->GetShadowCascadeCount() != 0) {
+            lightDesc.pipeline = m_cloudPass->GetShadowLightingPipeline();
+            lightDesc.cloudShadowBufferSrv = m_cloudPass->GetShadowBufferSrv();
+            lightDesc.cloudShadowCascadeCount = m_cloudPass->GetShadowCascadeCount();
+            for (uint32_t i = 0; i < lightDesc.cloudShadowCascadeCount; ++i)
+                lightDesc.cloudShadowResources[i] = m_cloudPass->GetShadowResource(i);
+        }
         lightDesc.albedoSrvIndex      = m_gbuffer.albedoSRV;
         lightDesc.normalSrvIndex      = m_gbuffer.normalSRV;
         lightDesc.depthSrvIndex       = m_gbuffer.depthSRV;
@@ -227,6 +227,9 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
         lightDesc.emissiveTexture     = m_gbuffer.emissive;
         lightDesc.shadowAlloc         = ctx.shadowAlloc;
         lightDesc.shadowAtlasResource = ctx.shadowAtlasRes;
+        if (ctx.localShadowAtlasRes.IsValid()) {
+            lightDesc.localShadowAtlasResource = ctx.localShadowAtlasRes;
+        }
         lightDesc.shadowAtlasTexture  = m_shadowAtlas.GetTexture();
         // IBL texture handles for SM5 fallback path (t5-t7) — kept for
         // backward compat; the binder path reads from perFrameParams instead.

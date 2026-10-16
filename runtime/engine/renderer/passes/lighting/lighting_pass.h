@@ -57,6 +57,8 @@ struct LightingPassDesc {
     rg::RgResourceId depthGBuffer;      ///< Depth G-Buffer input (read as SRV, not DSV).
     rg::RgResourceId positionGBuffer;   ///< World-space position G-Buffer input (read, ShaderResource state).
     rg::RgResourceId emissiveGBuffer;  ///< Emissive G-Buffer input (read, ShaderResource state, RGBA16Float).
+    rg::RgResourceId brixDiffuseResource;
+    rg::RgResourceId brixSpecularResource;
     CBAllocation      perFrameAlloc;    ///< Per-frame CB with invViewProj filled (bound at b1).
     CBAllocation      lightingAlloc;    ///< LightingCB with point light data (bound at b2).
     RHIPipelineHandle pipeline;         ///< Lighting PSO (fullscreen triangle, no depth).
@@ -72,6 +74,9 @@ struct LightingPassDesc {
     /// deferred_lighting_ps.hlsl for the modes). A root constant because the
     /// PerFrameCB has no free bytes left; SM6.6 bindless path only.
     uint32_t          lightingDebugMode = 0;
+    uint32_t          cloudShadowBufferSrv = UINT32_MAX;
+    uint32_t          cloudShadowCascadeCount = 0;
+    rg::RgResourceId  cloudShadowResources[3]{};
     RHITextureHandle  albedoTexture;    ///< Physical albedo texture handle (SM5 fallback binding).
     RHITextureHandle  normalTexture;     ///< Physical normal texture handle (SM5 fallback binding).
     RHITextureHandle  depthTextureForSrv;///< Physical depth texture handle (SM5 fallback binding, read as SRV).
@@ -79,6 +84,7 @@ struct LightingPassDesc {
     RHITextureHandle  emissiveTexture;  ///< Physical emissive texture handle (SM5 fallback, bound at t10).
     CBAllocation      shadowAlloc;      ///< ShadowDataCB allocation (bound at b4 via root param 3). Zero-init if no shadows.
     rg::RgResourceId  shadowAtlasResource; ///< Render graph shadow atlas (read, ShaderResource state for barrier scheduling).
+    rg::RgResourceId  localShadowAtlasResource; ///< Local shadow atlas (read, ShaderResource). Invalid = not imported.
     RHITextureHandle  shadowAtlasTexture; ///< Physical shadow atlas texture handle (SM5 fallback, bound at t3).
     RHITextureHandle  iblIrradiance;    ///< IBL irradiance cubemap (SM5 fallback, bound at t5).
     RHITextureHandle  iblPrefiltered;   ///< IBL prefiltered specular cubemap (SM5 fallback, bound at t6).

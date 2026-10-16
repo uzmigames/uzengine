@@ -6,6 +6,7 @@
 
 #include "inspector_pass.h"
 #include "inspector_pass_utils.h"
+#include "render_graph_states.h"
 
 #include "rhi.h"
 #include "log.h"
@@ -195,13 +196,15 @@ std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICo
         uint32_t    sampleCountTotal = 0;
         double      sumTotal         = 0.0;
         bool        anyReadbackOk    = false;
+        const auto lastState = m_states ? m_states->Find(target.texture).value_or(target.lastState)
+                                       : target.lastState;
 
         for (uint32_t slice = 0; slice < arraySlices; ++slice) {
             // Record barrier + copy + restore barrier for this slice.
             {
                 RHIBarrierDesc barrier{};
                 barrier.texture     = target.texture;
-                barrier.stateBefore = target.lastState;
+                barrier.stateBefore = lastState;
                 barrier.stateAfter  = RHIResourceState::CopySrc;
                 cmdList->ResourceBarrier(&barrier, 1);
 
@@ -212,7 +215,7 @@ std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICo
                                               sliceBase + slice);
 
                 barrier.stateBefore = RHIResourceState::CopySrc;
-                barrier.stateAfter  = target.lastState;
+                barrier.stateAfter  = lastState;
                 cmdList->ResourceBarrier(&barrier, 1);
             }
 

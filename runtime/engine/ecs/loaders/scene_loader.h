@@ -32,10 +32,11 @@
 /// ```
 ///
 /// # Error Policy
-/// - Returns 0 and logs `Scene::Error` if the JSON is malformed or missing the
-///   `"entities"` array.
-/// - Individual entity parse errors are logged as `Scene::Warning` and that
-///   entity is skipped; loading continues for the remaining entities.
+/// - Empty input, malformed JSON, a non-object root, and missing/non-array
+///   `"entities"` are fatal and preserve the world, materials, and CVars.
+/// - Invalid entries/components/fields, unknown types/CVars and unavailable
+///   optional assets are counted warnings. Defaults/fallbacks apply and loading
+///   continues, retaining components successfully parsed on each entity.
 
 #pragma once
 
@@ -111,6 +112,26 @@ class World;
 /// ```
 class IVFS;
 
+enum class SceneLoadStatus : uint8_t {
+    Ok, EmptyInput, ParseError, RootNotObject, MissingEntities, EntitiesNotArray
+};
+
+struct SceneLoadResult {
+    SceneLoadStatus status = SceneLoadStatus::Ok;
+    size_t entityCount = 0;
+    size_t warnings = 0;
+    std::string message;
+    [[nodiscard]] bool ok() const noexcept { return status == SceneLoadStatus::Ok; }
+};
+
+/// Replaces the scene only after validation succeeds. Ok with zero entities
+/// is a valid empty scene; fatal validation failures have no state changes.
+[[nodiscard]] SceneLoadResult LoadSceneEx(World& world,
+                                        const std::vector<uint8_t>& sceneJson,
+                                        const std::string& sourceName,
+                                        IVFS* vfs = nullptr);
+
+/// Legacy wrapper: 0 means failure or an empty scene. Prefer LoadSceneEx.
 [[nodiscard]] size_t LoadScene(World& world,
                                 const std::vector<uint8_t>& sceneJson,
                                 const std::string& sourceName);

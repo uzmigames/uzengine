@@ -25,6 +25,8 @@
 #include "render_graph_types.h"
 #include "engine/rhi/rhi_types.h"
 
+#include <cstddef>
+
 namespace uz::rg {
 class RgBuilder;
 } // namespace uz::rg
@@ -37,28 +39,50 @@ class GlobalDistanceField;
 /// Per-mesh material entry for the path tracer's bounce-hit shading.
 ///
 /// Indexed by TLAS `InstanceID()` (the engine packs `cmd.meshId` there —
-/// see tlas_manager.cpp). The albedo TEXTURE average is obtained in-shader
-/// by sampling the material's albedo SRV at its last mip (the mip tail IS
-/// the average), tinted by the material's base color factor. Mirrored by
+/// see tlas_manager.cpp). Raw geometry views recover triangle UVs and normals;
+/// missing views retain the average-albedo fallback. Mirrored by
 /// `GIMeshMaterial` in shaders/runtime/gi/gi_trace_common.hlsli.
-struct GIMeshMaterialGPU {
-    float    tintR;              ///< BaseColor tint factor (linear).
-    float    tintG;
-    float    tintB;
-    uint32_t albedoSrv;          ///< Albedo texture SRV (UINT32_MAX = tint only).
+struct alignas(16) GIMeshMaterialGPU {
+    float    tintR = 1.f;        ///< BaseColor tint factor (linear).
+    float    tintG = 1.f;
+    float    tintB = 1.f;
+    uint32_t albedoSrv = UINT32_MAX; ///< Albedo texture SRV (UINT32_MAX = tint only).
+    uint32_t vbSrv = UINT32_MAX; ///< Raw vertex SRV; sentinel disables triangle lookup.
+    uint32_t ibSrv = UINT32_MAX; ///< Raw index SRV; sentinel disables triangle lookup.
+    uint32_t vertexStride = 0;   ///< Byte distance between vertices.
+    uint32_t uvOffset = 0;       ///< Float2 UV byte offset within a vertex.
+    uint32_t normalOffset = 0;   ///< Normal byte offset within a vertex.
+    uint32_t indexFormat = 0;    ///< Index element size in bytes (2 or 4).
+    uint32_t normalFormat = 0;   ///< 0 = float3, 1 = signed packed int8 xyz.
+    uint32_t padding = 0;
 };
 
-static_assert(sizeof(GIMeshMaterialGPU) == 16, "GIMeshMaterialGPU must be 16 bytes");
+static_assert(sizeof(GIMeshMaterialGPU) == 48, "GIMeshMaterialGPU must be 48 bytes");
+static_assert(alignof(GIMeshMaterialGPU) == 16);
+static_assert(offsetof(GIMeshMaterialGPU, tintR) == 0);
+static_assert(offsetof(GIMeshMaterialGPU, tintG) == 4);
+static_assert(offsetof(GIMeshMaterialGPU, tintB) == 8);
+static_assert(offsetof(GIMeshMaterialGPU, albedoSrv) == 12);
+static_assert(offsetof(GIMeshMaterialGPU, vbSrv) == 16);
+static_assert(offsetof(GIMeshMaterialGPU, ibSrv) == 20);
+static_assert(offsetof(GIMeshMaterialGPU, vertexStride) == 24);
+static_assert(offsetof(GIMeshMaterialGPU, uvOffset) == 28);
+static_assert(offsetof(GIMeshMaterialGPU, normalOffset) == 32);
+static_assert(offsetof(GIMeshMaterialGPU, indexFormat) == 36);
+static_assert(offsetof(GIMeshMaterialGPU, normalFormat) == 40);
+static_assert(offsetof(GIMeshMaterialGPU, padding) == 44);
 
 /// Configuration for the path tracer pass.
 struct PathTracerPassDesc {
     rg::RgResourceId  hdrTarget;        ///< HDR scene color RT[1] (write, RenderTarget).
     rg::RgResourceId  accumCurr;        ///< RGBA32F accumulation curr write target RT[0].
+    rg::RgResourceId  accumPrev;        ///< Previous ping-pong accumulation (read).
     rg::RgResourceId  normalGBuffer;    ///< GBuffer normal (read).
     rg::RgResourceId  depthGBuffer;     ///< GBuffer depth  (read).
     rg::RgResourceId  albedoGBuffer;    ///< GBuffer albedo+AO (read).
     rg::RgResourceId  positionGBuffer;  ///< GBuffer worldPos (read).
     rg::RgResourceId  emissiveGBuffer;  ///< GBuffer emissive HDR (read).
+    rg::RgResourceId  shadowAtlas;      ///< CSM shadow atlas (read, ShaderResource).
     CBAllocation      perFrameAlloc;    ///< PerFrame CB at b1.
     RHIPipelineHandle pipeline;         ///< Path tracer fullscreen PSO (2 RTs).
     uint32_t          normalSrvIndex;
@@ -70,6 +94,12 @@ struct PathTracerPassDesc {
     uint32_t          accumPrevSrvIndex;  ///< SRV of the OTHER ping-pong accum (history read).
     uint32_t          sampleCount;        ///< Accumulated sample count this frame (0=fresh).
     uint32_t          frameIndex;
+    uint32_t          maxBounces = 4;       ///< Maximum traced bounces, clamped to [1,16].
+    uint32_t          samplesPerFrame = 4;  ///< Per-frame ray budget, at least one per lobe.
+    float             clampFirefly = 64.f; ///< Per-channel sample clamp; zero disables it.
+    float             envIntensity = 1.f;  ///< Sky radiance multiplier.
+    uint32_t          rrEnabled = 1;       ///< Enables throughput-based Russian roulette.
+    uint32_t          rrMinBounce = 2;     ///< First bounce eligible for roulette termination.
     CBAllocation      shadowAlloc;        ///< ShadowDataCB allocation (b4) — for CSM sun shadows.
     /// Scene TLAS SRV for real multi-bounce transport (UINT32_MAX = fall
     /// back to the occlusion-free sky estimate — NOT reference quality).
@@ -85,12 +115,18 @@ struct PathTracerPassDesc {
     /// Atmosphere sky cubemap SRV for bounce-miss radiance (UINT32_MAX = the
     /// flat skylight colour). Passed as a root constant.
     uint32_t                   skyCubemapSrv   = UINT32_MAX;
+    uint32_t                   equirectSrvIndex = UINT32_MAX; ///< Raw equirect HDRI SRV for direct env sampling (UINT32_MAX = none, fall back to cubemap).
     /// StructuredBuffer<GIMeshMaterialGPU> SRV indexed by TLAS InstanceID
     /// (UINT32_MAX = GDF surface albedo). Passed as a root constant.
     uint32_t                   materialTableSrv = UINT32_MAX;
     bool              bindless;
     float             viewportWidth;
     float             viewportHeight;
+    uint32_t          envAliasSrv = UINT32_MAX;   ///< Environment alias table; sentinel disables NEE.
+    uint32_t          envLumMip0Srv = UINT32_MAX; ///< Luminance weights used to evaluate the MIS PDF.
+    uint32_t          envTotalLumBits = 0;        ///< Total luminance packed as float bits.
+    uint32_t          envLumWidth = 0;            ///< Luminance mip-zero width.
+    uint32_t          envLumHeight = 0;           ///< Luminance mip-zero height.
 };
 
 /// Registers the path tracer pass in the render graph.
@@ -100,5 +136,8 @@ struct PathTracerPassDesc {
 /// path when `r.PathTracer.Enable=1` (which also skips deferred lighting,
 /// GI, and shadow passes).
 void AddPathTracerPass(rg::RgBuilder& builder, const PathTracerPassDesc& desc);
+
+/// Returns the reset command generation so each renderer can invalidate its history.
+uint32_t GetPathTracerResetGeneration();
 
 } // namespace uz

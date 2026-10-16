@@ -27,6 +27,7 @@ class IRHIDevice;
 class IRHICommandList;
 class ShaderManager;
 class CBRingAllocator;
+namespace rg { class RgStateRegistry; }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GTAOQuality — resolution and sample count presets
@@ -195,6 +196,8 @@ public:
     GTAOPass(GTAOPass&&) = delete;
     GTAOPass& operator=(GTAOPass&&) = delete;
 
+    void SetStateRegistry(rg::RgStateRegistry* states) { m_states = states; }
+
     /// Initialize GPU resources and compile compute shaders.
     [[nodiscard]] bool Init(IRHIDevice* device, ShaderManager* shaderMgr,
                             uint32_t width, uint32_t height);
@@ -261,6 +264,7 @@ private:
     void DestroyTextures();
 
     IRHIDevice*    m_device    = nullptr;
+    rg::RgStateRegistry* m_states = nullptr;
     ShaderManager* m_shaderMgr = nullptr;
 
     // ── GPU Textures ─────────────────────────────────────────────────────
@@ -299,7 +303,6 @@ private:
     RHITextureHandle  m_aoHistory[2]        = { RHITextureHandle::Invalid(), RHITextureHandle::Invalid() };
     uint32_t          m_aoHistorySrvIndex[2] = { UINT32_MAX, UINT32_MAX };
     uint32_t          m_aoHistoryUavIndex[2] = { UINT32_MAX, UINT32_MAX };
-    RHIResourceState  m_aoHistoryState[2]   = { RHIResourceState::Common, RHIResourceState::Common };
     uint32_t          m_historyIndex        = 0;   ///< Current write target (flips each frame).
     bool              m_historyValid        = false; ///< False on first frame / after resize.
 
@@ -310,12 +313,6 @@ private:
     uint32_t m_halfHeight = 0;
 
     bool m_initialized = false;
-    bool m_initialBarriersDone = false;
-
-    /// Tracks the current resource state of m_filteredAOTexture across frames.
-    /// After initial barriers: UAV. After each Execute(): SRV.
-    /// The half-res upsample path needs this to transition SRV/UAV → RenderTarget correctly.
-    RHIResourceState m_filteredAOCurrentState = RHIResourceState::Common;
 
     // ── Constants ────────────────────────────────────────────────────────
     static constexpr uint32_t kThreadGroupSize = 8;

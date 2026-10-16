@@ -43,6 +43,7 @@
 #include "cvar.h"
 #include "raytracing/rt_manager.h"
 #include "passes/raytracing/rt_uv_test_pass.h"
+#include "passes/debug/pixel_debug.h"
 #include "material_pipeline.h"
 #include "engine/material/material_manager.h"
 #include "engine/vfx/vfx_system.h"
@@ -69,6 +70,13 @@ SceneRenderer::~SceneRenderer() {
 
 SceneRenderer::SceneRenderer(SceneRenderer&&) noexcept = default;
 SceneRenderer& SceneRenderer::operator=(SceneRenderer&&) noexcept = default;
+
+void SceneRenderer::SetPixelDebugSystem(PixelDebugSystem* pds) noexcept {
+    m_pixelDebugSystem = pds;
+    if (pds) {
+        pds->SetStateRegistry(m_rgStates.get());
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Init
@@ -149,6 +157,7 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     // ── Stats Overlay (deferred init — needs cmdList in recording state) ─
     m_statsOverlay = std::make_unique<StatsOverlay>();
     m_statsOverlayInitialized = false;
+    m_fallbackTexturesInitialized = false;
 
     // ── Viewport Toolbar (deferred init — needs cmdList in recording state) ─
     m_viewportToolbar = std::make_unique<ViewportToolbar>();
@@ -165,6 +174,12 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     // ── Render Graph Resource Pool ──────────────────────────────────────
     m_rgPool = std::make_unique<rg::RgResourcePool>(device);
     m_rgStates = std::make_unique<rg::RgStateRegistry>(device);
+    m_passInspector.SetStateRegistry(m_rgStates.get());
+    if (m_pixelDebugSystem) {
+        m_pixelDebugSystem->SetStateRegistry(m_rgStates.get());
+    }
+    m_ddgiSystem.SetStateRegistry(m_rgStates.get());
+    m_radianceCache.SetStateRegistry(m_rgStates.get());
 
     // ── Camera ──────────────────────────────────────────────────────────
     m_cameraManager = std::make_unique<CameraManager>();
@@ -575,6 +590,7 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
 
     // ── Environment MIS Temporal Accumulation ────────────────────────
     m_envMISPass = std::make_unique<EnvMISPass>();
+    m_envMISPass->SetStateRegistry(m_rgStates.get());
     if (m_envMISPass->Init(device, m_shaderMgr.get(), width, height)) {
         UZ_LOG(Renderer, Info, "SceneRenderer: EnvMISPass initialized ({}x{})", width, height);
     } else {
@@ -619,12 +635,14 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
 
     // ── Auto-Exposure ────────────────────────────────────────────────
     m_autoExposure = std::make_unique<AutoExposure>();
+    m_autoExposure->SetStateRegistry(m_rgStates.get());
     if (!m_autoExposure->Init(device, m_shaderMgr.get())) {
         UZ_LOG(Renderer, Warning, "SceneRenderer: auto-exposure init failed (will use exposure=1.0)");
     }
 
     // ── GTAO (at render resolution — operates on GBuffer depth/normals) ──
     m_gtaoPass = std::make_unique<GTAOPass>();
+    m_gtaoPass->SetStateRegistry(m_rgStates.get());
     if (!m_gtaoPass->Init(device, m_shaderMgr.get(), m_renderWidth, m_renderHeight)) {
         UZ_LOG(Renderer, Warning, "SceneRenderer: GTAO init failed (SSAO disabled)");
     }
@@ -632,6 +650,7 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     // ── Bloom (at render resolution — operates on HDR scene color) ───
     UZ_LOG(Renderer, Info, "SceneRenderer: initializing BloomPass...");
     m_bloomPass = std::make_unique<BloomPass>();
+    m_bloomPass->SetStateRegistry(m_rgStates.get());
     if (!m_bloomPass->Init(device, m_shaderMgr.get(), m_renderWidth, m_renderHeight)) {
         UZ_LOG(Renderer, Warning, "SceneRenderer: bloom init failed (bloom disabled)");
     }
@@ -654,26 +673,14 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         UZ_LOG(Renderer, Warning, "SceneRenderer: CloudPass init failed (clouds disabled)");
         m_cloudPass.reset();
     }
-    // Dedicated command list for cloud compute — isolates cloud barrier
-    // management from the main render frame command list to avoid DX12
-    // debug layer state tracking conflicts.
-    m_cloudCmdList = m_device->CreateCommandList(RHIQueueType::Graphics);
-    if (!m_cloudCmdList) {
-        UZ_LOG(Renderer, Warning, "SceneRenderer: failed to create cloud command list");
-    }
-
-    // Cloud noise loading disabled — cloud pass disabled for manual testing.
-    // TODO(clouds): re-enable when cloud pipeline is debugged
-
     // ── Brixelizer GI (AMD FidelityFX sparse SDF voxel GI) ────────────
-    // DISABLED: ffxBrixelizerContextCreate crashes with err=-2147483635
-    // on non-AMD GPUs, corrupting the command allocator and leaking D3D12MA.
-    // Re-enable after isolating the AMD-only code path.
-    // m_brixelizerGI = std::make_unique<BrixelizerGIPass>();
-    // if (!m_brixelizerGI->Init(device, m_renderWidth, m_renderHeight)) {
-    //     UZ_LOG(Renderer, Warning, "SceneRenderer: BrixelizerGI init failed (Brixelizer GI disabled)");
-    //     m_brixelizerGI.reset();
-    // }
+    if (CVarRegistry::Get().GetBool("r.BrixelizerGI", false)) {
+        m_brixelizerGI = std::make_unique<BrixelizerGIPass>();
+        if (!m_brixelizerGI->Init(device, m_renderWidth, m_renderHeight)) {
+            UZ_LOG(Renderer, Warning, "SceneRenderer: BrixelizerGI init failed (Brixelizer GI disabled)");
+            m_brixelizerGI.reset();
+        }
+    }
 
     // ── DFS Output Texture + Culling Buffers (at render resolution) ──
     // Created here but only populated when DFS is enabled at runtime.
@@ -914,36 +921,14 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         m_fallbackNormalSrvIndex = m_device->GetTextureSRVIndex(m_fallbackNormal);
     }
 
-    // ── Temporal Upscaler (default: DLSS → TSR fallback chain) ────
-    m_upscaler = CreateTemporalUpscaler(m_upscalerType);
-    if (m_upscaler) {
-        m_upscaler->Init(m_device, m_pipelines.get(), m_cbRing.get());
-
-        // DLSS fallback: if DLSS Init failed (non-NVIDIA GPU, missing DLL, old driver),
-        // fall back to TAA (TSR shader is a stub — not yet implemented).
-        if (m_upscalerType == UpscalerType::DLSS) {
-            auto* dlss = dynamic_cast<DlssUpscaler*>(m_upscaler.get());
-            if (!dlss || !dlss->IsAvailable()) {
-                UZ_LOG(Renderer, Info, "SceneRenderer: DLSS unavailable, falling back to TAA");
-                m_upscaler->Shutdown();
-                m_upscaler.reset();
-                m_upscalerType = UpscalerType::TAA;
-                m_upscaler = CreateTemporalUpscaler(m_upscalerType);
-                if (m_upscaler) {
-                    m_upscaler->Init(m_device, m_pipelines.get(), m_cbRing.get());
-                }
-            }
-        }
-    }
-
-    // Enable TAA jitter + upscaler dispatch for any non-None upscaler.
-    m_taaEnabled = (m_upscalerType != UpscalerType::None);
-
     // ── Dynamic Resolution Controller ────────────────────────────────────
     m_dynRes = std::make_unique<DynamicResolutionController>();
 
     // ── Register CVars ───────────────────────────────────────────────────
     RegisterCVars();
+    // Startup and runtime changes use the same capability/init fallback policy.
+    SetUpscalerType(static_cast<UpscalerType>(
+        CVarRegistry::Get().GetInt("r.AntiAliasingMethod", 1)));
 
     UZ_LOG(Renderer, Info, "SceneRenderer initialized ({}x{} display, {}x{} render, {}% scale, {})",
            width, height, m_renderWidth, m_renderHeight,
@@ -961,7 +946,7 @@ void SceneRenderer::RegisterCVars() {
     cvars.Register("r.ScreenPercentage", m_screenPercentage,
                    "Render scale percentage (10-200)", 10.f, 200.f);
 
-    cvars.Register("r.AntiAliasingMethod", static_cast<float>(m_upscalerType),
+    cvars.Register("r.AntiAliasingMethod", static_cast<float>(m_upscalerSelection.requested),
                    "Anti-aliasing method: 0=None, 1=TAA, 2=TSR, 3=FSR2, 4=DLSS, 5=XeSS", 0.f, 5.f);
 
     cvars.Register("r.TSR.History.ScreenPercentage", 100.f,
@@ -992,6 +977,10 @@ void SceneRenderer::RegisterCVars() {
     /// pass.dump: frame number to dump at (0=off/disabled)
     cvars.Register("r.PassInspector.DumpFrame", 0.f,
                    "Dump all targets at frame N (0=off)", 0.f, 1e6f);
+
+    /// Optionally save raw float targets alongside the display PNGs.
+    cvars.Register("r.PassInspector.DumpEXR", 0.f,
+                   "Also dump linear float targets as FP32 EXR (0=off, 1=on)", 0.f, 1.f);
 
     /// pass.grid: 0=off, 1=4x4 grid, 2=6x4 extended grid
     cvars.Register("r.PassInspector.Grid", 0.f,
@@ -1050,7 +1039,7 @@ void SceneRenderer::ApplyCVars() {
 
     // Anti-aliasing method → upscaler type
     const auto aaMethod = static_cast<UpscalerType>(cvars.GetInt("r.AntiAliasingMethod", 1));
-    if (aaMethod != m_upscalerType) {
+    if (aaMethod != m_upscalerSelection.requested) {
         SetUpscalerType(aaMethod);
     }
 
@@ -1087,7 +1076,23 @@ void SceneRenderer::ApplyCVars() {
     m_passInspector.SetGridConfig(gridCfg);
 
     // ── Render Pass Toggles ─────────────────────────────────────────────
-    m_taaEnabled        = cvars.GetBool("r.TAA", false);
+    // Apply PT's TAA override before frame setup computes jitter or schedules AA.
+    const bool ptEnabled = m_renderPath == RenderPath::Deferred
+                        && cvars.GetBool("r.PathTracer.Enable", false);
+    if (ptEnabled && !m_ptEnabledLastFrame) {
+        m_ptSavedTaa = cvars.GetFloat("r.TAA", 0.f);
+        m_ptAccumSamples = 0;
+        m_ptHistoryValid = false;
+        UZ_LOG(Renderer, Info,
+               "PathTracer enabled: forcing r.TAA=0 - TAA jitter and the temporal "
+               "upscaler dispatch (DLSS/TSR/FSR2) are disabled for the PT reference path");
+    } else if (!ptEnabled && m_ptEnabledLastFrame) {
+        cvars.Set("r.TAA", m_ptSavedTaa);
+    }
+    if (ptEnabled) cvars.Set("r.TAA", 0.f);
+    m_ptEnabledLastFrame = ptEnabled;
+
+    m_taaEnabled        = m_upscalerType != UpscalerType::None && cvars.GetBool("r.TAA", false);
     m_ssrEnabled        = cvars.GetBool("r.SSR", false);
     m_motionBlurEnabled = cvars.GetBool("r.MotionBlur", true);
     m_casEnabled        = cvars.GetBool("r.CAS", true);
@@ -1208,6 +1213,8 @@ void SceneRenderer::Resize(uint32_t width, uint32_t height) {
         m_hdrSceneColor = m_device->CreateTexture(hdrDesc);
         m_hdrSceneColorSrv = m_device->GetTextureSRVIndex(m_hdrSceneColor);
     }
+
+    m_hdrHasContent = false;
 
     // Recreate debug MRT targets at render resolution
     {
@@ -1529,6 +1536,7 @@ void SceneRenderer::Shutdown() {
         m_device->DestroyTexture(m_hdriCubemap);
         m_hdriCubemap = RHITextureHandle{};
         m_hdriCubemapSrv = UINT32_MAX;
+        m_hdriEquirectSrv = UINT32_MAX;
         m_hdriActive = false;
     }
     if (m_skyCubemap.IsValid()) {
@@ -1623,7 +1631,6 @@ void SceneRenderer::Shutdown() {
     if (m_gtaoPass) m_gtaoPass->Shutdown();
     if (m_volFogPass) { m_volFogPass->Shutdown(m_device); m_volFogPass.reset(); }
     if (m_cloudPass) { m_cloudPass->Shutdown(); m_cloudPass.reset(); }
-    if (m_cloudCmdList) { m_device->DestroyCommandList(m_cloudCmdList); m_cloudCmdList = nullptr; }
     if (m_brixelizerGI) { m_brixelizerGI->Shutdown(); m_brixelizerGI.reset(); }
 
     // ── Runtime VFX Emitter cleanup ─────────────────────────────────

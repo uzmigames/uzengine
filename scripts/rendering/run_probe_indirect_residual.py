@@ -12,6 +12,7 @@ per probe the cache logs its split (skyLum, hitSunLum, hitIndirectLum) and the D
   Reading: SOLE RESIDUAL (R1 holds) / NOT SOLE (R1 fails; residual reported, nothing attributed).
 
 Usage: python scripts/rendering/run_probe_indirect_residual.py [--repeats 2] [--out DIR] [--reuse]
+       [--cvar r.GI.MeshSdf.TwoSided=0]
 """
 from __future__ import annotations
 
@@ -30,6 +31,7 @@ import runner  # noqa: E402
 import run_probe_sky_parity as stage1  # noqa: E402
 import run_probe_sky_parity_full as stage2  # noqa: E402
 import run_probe_hit_identity as stage3  # noqa: E402
+import gi_energy_populations as populations  # noqa: E402
 
 MIN_MEAN = 0.05
 BAND = 0.05
@@ -52,7 +54,7 @@ def run(args, report):
             continue
         print(f'  ... repeat {k}', flush=True)
         res = runner.run_capture(work, os.path.join(runner.REPO, 'scripts', 'rendering', stage1.PROJECT), stage1.FRAMES,
-                                 cvars={**stage1.BASE, **stage2.COND}, timing_first=200, clean=True)
+                                 cvars={**stage1.BASE, **stage2.COND, **args.cvars}, timing_first=200, clean=True)
         if res['exit_code'] != 0:
             raise Stop('capture', f'repeat {k}: exit {res["exit_code"]}')
     if not args.reuse:
@@ -75,6 +77,12 @@ def run(args, report):
         if fd is None or fr is None or fd != fr or sl is None or sl['probeOffset'] != 0 or sl['probeBudget'] != stage1.TOTAL:
             raise Stop('P1', f'r{k}: snapshot/slice not aligned: ddgi {fd}, rc {fr}, slice {sl}')
         d, r = p['d'], p['r']   # d: sky, mean, skyLum, ... | r: field, sky, mean, skyLum, lost, hitLum, escMinD, hitSun, hitInd, hitCount
+        text = populations.read_text(os.path.join(w, 'run.log'))
+        building = [int(m.group(1)) for m in populations.RE_RC.finditer(text)
+                    if float(m.group(5)) >= 5.0
+                    and populations.in_building(tuple(int(m.group(i)) for i in (2, 3, 4)))]
+        building_ddgi_sky = float(np.mean(d[building, 0]))
+        building_rc_sky = float(np.mean(r[building, 1]))
         ok = np.isfinite(d).all(1) & np.isfinite(r).all(1) & (r[:, 0] >= 5.0) & (r[:, 2] > MIN_MEAN)
         sky, sun, ind = r[ok, 3], r[ok, 7], r[ok, 8]
         # the cache's split is per ray (sky over all rays, sun/indirect over hit rays -> scale to per-ray means)
@@ -91,12 +99,17 @@ def run(args, report):
                              'ratio_m_median': float(np.median(ratio_m[z == L])), 'ratio_p_median': float(np.median(ratio_p[z == L]))}
                     for L in sorted(set(z.tolist()))}
         row = {'repeat': k, 'probes': int(ok.sum()),
+               'H61_building_field_valid': {'probes': len(building), 'ddgi_sky_mean': building_ddgi_sky,
+                                           'rc_sky_mean': building_rc_sky,
+                                           'sky_escape_difference_pp': 100.0 * (building_ddgi_sky - building_rc_sky)},
                'R1': {'median': float(np.median(q)), 'p10': float(np.percentile(q, 10)), 'p90': float(np.percentile(q, 90)),
                       'within_band': within, 'err_model': err_model, 'err_null': err_null,
                       'pass': bool(abs(np.median(q) - 1.0) <= BAND and within >= FRACTION and err_model < err_null)},
                'R2_by_layer': by_layer,
                'ratio_m_median': float(np.median(ratio_m)), 'ratio_p_median': float(np.median(ratio_p))}
         rows.append(row)
+        print(f'  H61 r{k}: building field >= 5 cm n={len(building)} DDGI sky={building_ddgi_sky:.6f} '
+              f'RC sky={building_rc_sky:.6f} difference={100.0 * (building_ddgi_sky - building_rc_sky):.4f} pp')
         print(f'  R1 r{k}: n={row["probes"]}  DDGI/RC measured median {row["ratio_m_median"]:.4f}  predicted {row["ratio_p_median"]:.4f}  '
               f'm/p median {row["R1"]["median"]:.4f} (p10 {row["R1"]["p10"]:.4f}, p90 {row["R1"]["p90"]:.4f})  within +-{BAND}: {within:.1%}  '
               f'|err| model {err_model:.4f} vs null {err_null:.4f}  pass {row["R1"]["pass"]}')
@@ -117,10 +130,19 @@ def main():
     ap.add_argument('--out', default=os.path.join(runner.REPO, '.screenshots', 'flicker-elimination',
                                                   '58-probe-indirect-residual'))
     ap.add_argument('--reuse', action='store_true')
+    ap.add_argument('--cvar', action='append', default=[], metavar='NAME=VALUE',
+                    help='Override a capture CVar (repeatable).')
     args = ap.parse_args()
+    args.cvars = {}
+    for override in args.cvar:
+        name, separator, value = override.partition('=')
+        if not separator or not name or not value:
+            ap.error('--cvar requires NAME=VALUE')
+        args.cvars[name] = value
     print(f'the indirect term as the sole writer residual — Camera C, {args.repeats} repeats')
     report = {'status': 'incomplete', 'stopped_at': None, 'reasons': [], 'harness': runner.harness_stamp(),
-              'criteria': {'min_mean': MIN_MEAN, 'band': BAND, 'fraction': FRACTION, 'repeat_tol': REPEAT_TOL}}
+              'criteria': {'min_mean': MIN_MEAN, 'band': BAND, 'fraction': FRACTION, 'repeat_tol': REPEAT_TOL},
+              'cvar_overrides': args.cvars}
     code = 1
     try:
         run(args, report)

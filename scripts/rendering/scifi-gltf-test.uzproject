@@ -1,0 +1,16 @@
+{
+  "name": "SciFi gltf test",
+  "version": "1.0",
+  "content_root": "../../sample/content",
+  "default_scene": "scenes/scifi-gltf-test.uzscene",
+  "window": {
+    "width": 1920,
+    "height": 1080
+  },
+  "cvars": {
+    "r.AutoExposure": 0,
+    "r.Exposure": 1,
+    "r.TonemapOperator": 1,
+    "r.Fog": 0
+  }
+}

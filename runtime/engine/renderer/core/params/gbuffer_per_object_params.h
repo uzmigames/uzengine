@@ -27,10 +27,11 @@
 #pragma once
 
 #include "shader_parameters.h"
-#include "mat4.h"
+#include "constant_buffers.h"
 
 #include <cstddef>
 #include <cstdint>
+#include <type_traits>
 
 namespace uz {
 
@@ -68,8 +69,8 @@ namespace uz {
 /// 208      8      uvOffset (2 floats)
 /// 216      4      aoIntensity (float)
 /// 220      4      opacity (float)
-/// 224      28     _pad2[7] (POM-equivalent region, unused by binder path)
-/// 252      4      blendMode (uint32_t)
+/// 224      28     displacementScale..pomSelfShadow (POM disabled by default)
+/// 252      4      materialFlags (uint32_t)
 /// ─── 256 bytes (CB boundary) ───
 /// 256      8      albedoTexture (RHITextureHandle, NOT in CB)
 /// 264      8      normalTexture (RHITextureHandle, NOT in CB)
@@ -78,44 +79,8 @@ namespace uz {
 /// 288      8      aoTexture (RHITextureHandle, NOT in CB)
 /// 296      8      emissiveTexture (RHITextureHandle, NOT in CB)
 /// ```
-struct GBufferPerObjectParams {
-    // ── Scalar section (256 bytes, copied to CB) ─────────────────────────
-    // Layout MUST match PerObjectCB exactly — same offsets, same padding.
-    // Scalars first (offset 0) to avoid std140 matrix padding issues.
-
-    uint32_t albedoIndex    = 0;    ///< SRV heap index for BaseColor map.
-    uint32_t normalIndex    = 0;    ///< SRV heap index for normal map.
-    uint32_t roughnessIndex = 0;    ///< SRV heap index for roughness map.
-    uint32_t metallicIndex  = 0;    ///< SRV heap index for metallic map.
-    uint32_t aoIndex        = 0;    ///< SRV heap index for AO map.
-    uint32_t emissiveIndex  = 0;    ///< SRV heap index for emissive map (0 = no texture, use color only).
-    /// Default alpha clip threshold: 1/3 (standard masked material convention).
-    float    alphaClipThreshold = 0.3333f; ///< Alpha test threshold for Masked blend mode.
-    uint32_t opacitySrvIndex = 0;   ///< SRV index for opacity/alpha mask texture (0 = none, use scalar opacity).
-    Mat4     model;                 ///< Object-to-world transform.
-    Mat4     normalMatrix;          ///< transpose(inverse(model)) for lighting.
-    /// Emissive tint is added to scene color during the lighting pass.
-    float    emissiveColorR  = 0.0f; ///< Emissive tint R (linear). 0 = no emission.
-    float    emissiveColorG  = 0.0f; ///< Emissive tint G (linear).
-    float    emissiveColorB  = 0.0f; ///< Emissive tint B (linear).
-    float    emissiveIntensity = 0.0f; ///< Emissive brightness multiplier. Values > 1.0 drive bloom.
-
-    // ── Material parameters (offset 176, must match PerObjectCB) ────────
-    float    baseColorTintR      = 1.0f; ///< Albedo color multiplier R.
-    float    baseColorTintG      = 1.0f; ///< Albedo color multiplier G.
-    float    baseColorTintB      = 1.0f; ///< Albedo color multiplier B.
-    float    roughnessMultiplier = 1.0f; ///< Roughness texture multiplier.
-    float    metallicMultiplier  = 1.0f; ///< Metallic texture multiplier.
-    float    normalIntensity     = 1.0f; ///< Normal map strength (0=flat, 1=full).
-    float    uvScaleX            = 1.0f; ///< Texture tiling X.
-    float    uvScaleY            = 1.0f; ///< Texture tiling Y.
-    float    uvOffsetX           = 0.0f; ///< Texture offset X.
-    float    uvOffsetY           = 0.0f; ///< Texture offset Y.
-    float    aoIntensity         = 1.0f; ///< AO map strength.
-    float    opacity             = 1.0f; ///< Material opacity (1=opaque).
-    float    _pad2[7]           = {};   ///< Pad (POM-equivalent region, unused by binder path).
-    /// Material flags — bits[1:0]=blend mode (0-3), bit[2]=ORM packed.
-    uint32_t materialFlags      = 0;
+struct GBufferPerObjectParams : PerObjectCB {
+    // The shared POM defaults are uploaded too; displacementScale = 0 keeps POM off.
 
     // ── Resource handles (NOT copied to CB) ──────────────────────────────
     // Bound by ShaderParameterBinder at their HLSL register slots on SM5.
@@ -141,6 +106,8 @@ struct GBufferPerObjectParams {
 };
 
 // Verify scalar section matches PerObjectCB exactly
+static_assert(std::is_standard_layout_v<PerObjectCB>);
+static_assert(offsetof(GBufferPerObjectParams, albedoTexture) == sizeof(PerObjectCB));
 static_assert(offsetof(GBufferPerObjectParams, albedoTexture) == 256,
               "GBufferPerObjectParams resource section must start at byte 256 "
               "(after PerObjectCB-compatible scalar section)");

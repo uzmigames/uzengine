@@ -133,10 +133,10 @@ void VolumetricFogPass::RegisterPasses(
     std::memcpy(fogAlloc.cpuPtr, &fogCB, sizeof(VolumetricFogCB));
 
     // Import 3D textures into render graph
-    rg::RgResourceId inscatterRes = rgBuilder.ImportTexture("FroxelFog_Inscatter",
-        m_inscattering, RHIResourceState::UnorderedAccess);
-    rg::RgResourceId integratedRes = rgBuilder.ImportTexture("FroxelFog_Integrated",
-        m_integrated, RHIResourceState::UnorderedAccess);
+    rg::RgResourceId inscatterRes = rgBuilder.ImportTrackedTexture("FroxelFog_Inscatter",
+        m_inscattering);
+    rg::RgResourceId integratedRes = rgBuilder.ImportTrackedTexture("FroxelFog_Integrated",
+        m_integrated);
 
     // ── Phase 1: Inject — evaluate density + light per froxel ─────────
     auto injectPipeline = pipelines->GetVolumetricFogInject();

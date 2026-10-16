@@ -361,6 +361,7 @@ public:
     /// # Returns
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetVelocityPass();
+    [[nodiscard]] RHIPipelineHandle GetVelocityObject(bool twoSided);
 
     /// Returns the height fog pipeline (fullscreen_vs + height_fog_ps, 1 RT, alpha blend).
     ///

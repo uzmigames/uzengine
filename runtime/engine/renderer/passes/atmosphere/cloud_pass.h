@@ -3,7 +3,7 @@
 /// Dispatches a compute shader to ray-march through a spherical cloud shell,
 /// producing a half-resolution RGBA16F texture with premultiplied-alpha cloud
 /// color (RGB) and transmittance (A). The result is composited over the HDR
-/// scene by a fullscreen triangle pass in frame_lighting.cpp.
+/// scene by a fullscreen triangle pass registered alongside the raymarch.
 ///
 /// # Cloud Layer Model
 /// Clouds occupy a spherical shell between two altitudes above sea level:
@@ -15,21 +15,25 @@
 /// # Scattering Model
 /// @ref Schneider & Vos 2015 "Real-Time Volumetric Cloudscapes of Horizon Zero Dawn"
 /// @ref Hillaire 2020 "A Scalable and Production Ready Sky and Atmosphere Rendering Technique"
-/// Single-scattering with dual-lobe Henyey-Greenstein phase function.
+/// Bounded multi-scattering octaves with dual-lobe Henyey-Greenstein phase.
 /// Frostbite analytical integration: (S - S*T) / max(ext, eps).
 /// Premultiplied alpha composite: final = cloud.rgb + scene.rgb * transmittance.
 ///
 /// # GPU Resources
 /// - Cloud output: half-resolution RGBA16F (SRV + UAV).
-/// - 3D shape noise: 128^3 RGBA8 (loaded from content/atmosphere/shape.bin).
+/// - Scalar shape/detail noise: 128^3 / 32^3 R8 with filtered mip chains.
+/// - Spatiotemporal blue noise: 128x128x64 R8.
 ///
 /// # Integration
-/// Created and owned by SceneRenderer. The cloud SRV index is passed to the
-/// CloudComposite render graph pass in frame_lighting.cpp.
+/// Created and owned by SceneRenderer. RegisterPasses declares the raymarch's
+/// tracked textures and the composite's cloud/depth reads.
 
 #pragma once
 
 #include "engine/rhi/rhi_types.h"
+#include "render_graph_types.h"
+#include "cb_ring_allocator.h"
+#include "engine/ecs/environment/volumetric_clouds_component.h"
 #include <cstdint>
 #include <vector>
 
@@ -41,12 +45,17 @@ class IRHIDevice;
 class IRHICommandList;
 class ShaderManager;
 class CBRingAllocator;
+class PipelineLibrary;
+namespace rg { class RgBuilder; class RgStateRegistry; }
 
 /// Input parameters for a single cloud dispatch, filled from VolumetricCloudsComponent
-/// and per-frame scene data in frame_lighting.cpp.
+/// and current-frame scene data in frame_atmosphere_passes.cpp.
 struct CloudPassInput {
+    std::array<VolumetricCloudsComponent::CloudLayer, 4> layers{};
+    uint32_t layerCount = 1;
+    bool useExplicitLayers = false;
+    std::string weatherTexturePath;
     float    invViewProj[16];
-    float    prevViewProj[16];
     float    cameraPos[3];
     float    sunDir[3];
     float    sunColor[3];
@@ -64,11 +73,23 @@ struct CloudPassInput {
     float    windVelocity[3];
     float    detailWindScale;
     float    ambientMultiplier;
+    float    powderScale = 0.0f;
+    float    powderExponent = 2.0f;
+    uint32_t multiScatterOctaves = 8;
     uint32_t primarySteps;
     uint32_t lightSteps;
     uint32_t depthSrv;
+    uint32_t velocitySrv = UINT32_MAX;
+    rg::RgResourceId velocityRes{};
     float    globalCoverage;
-    float    temporalBlendFactor;
+    float    minStepSize = 0.01f;
+    float    maxStepSize = 0.5f;
+    float    perspectiveStepScale = 1.006f;
+    float    jitterScale = 1.0f;
+    uint32_t frameIndex = 0;
+    uint32_t shadowCascadeCount = 2;
+    uint32_t shadowResolution = 512;
+    float shadowDistance = 50.0f;
 
     // ── Additional tracing/quality parameters from VolumetricCloudsComponent ──
     float    cloudType;                                       ///< Cloud type [0,1]. 0=stratus, 1=cumulus.
@@ -128,14 +149,25 @@ public:
 
     /// Loads 3D noise textures via VFS and uploads to GPU.
     /// Falls back to procedural noise if the VFS does not contain the files.
-    void LoadNoiseTextures(IRHICommandList* cmdList, IVFS* vfs = nullptr);
+    void LoadNoiseTextures(IRHICommandList* cmdList, rg::RgStateRegistry* states, IVFS* vfs = nullptr);
 
-    /// Dispatches the cloud ray-march compute shader.
-    ///
-    /// The command list must be in recording state (Begin called, End not yet).
-    /// Manages all internal barriers (UAV transitions).
-    void Execute(IRHICommandList* cmdList, CBRingAllocator& cbRing,
-                 const CloudPassInput& input);
+    /// Registers same-frame raymarch and composite passes with tracked resources.
+    void RegisterPasses(rg::RgBuilder& rgBuilder, rg::RgStateRegistry* states,
+                        IRHICommandList* frameList, rg::RgResourceId hdrRes,
+                        rg::RgResourceId depthRes, const CBAllocation& perFrameAlloc,
+                        CBRingAllocator& cbRing, PipelineLibrary* pipelines, bool bindless,
+                        uint32_t renderWidth, uint32_t renderHeight, const CloudPassInput& input);
+
+    /// Called before deferred lighting; only the opt-in ground-shadow path allocates resources.
+    void RegisterShadowPasses(rg::RgBuilder& builder, rg::RgStateRegistry* states,
+                              IRHICommandList* frameList, CBRingAllocator& cbRing,
+                              const CloudPassInput& input);
+    void ResetShadowFrame();
+    static bool GroundShadowsEnabled();
+    uint32_t GetShadowBufferSrv() const { return m_shadowBufferSrv; }
+    uint32_t GetShadowCascadeCount() const { return m_shadowFrameCount; }
+    rg::RgResourceId GetShadowResource(uint32_t cascade) const { return m_shadowResources[cascade]; }
+    RHIPipelineHandle GetShadowLightingPipeline() const { return m_shadowLightingPipeline; }
 
     /// Returns the SRV descriptor index of the cloud output texture.
     /// UINT32_MAX if not initialized.
@@ -165,6 +197,13 @@ private:
 
     /// Lazily creates the compute pipeline on first use.
     bool EnsureRaymarchPipeline();
+    bool EnsureTemporalPipeline();
+    bool CreateTemporalTextures(uint32_t width, uint32_t height);
+    void DestroyTemporalTextures();
+    bool EnsureShadowPipelines();
+    void LoadWeatherTexture(IRHICommandList* cmd, rg::RgStateRegistry* states,
+                            const std::string& path);
+    void DestroyShadowTextures();
 
     // ── Device + shader manager references ──
     IRHIDevice*    m_device    = nullptr;
@@ -177,16 +216,69 @@ private:
     uint32_t         m_outputUavIndex  = UINT32_MAX;
     uint32_t         m_halfWidth       = 0;
     uint32_t         m_halfHeight      = 0;
+    uint32_t         m_fullWidth       = 0;
+    uint32_t         m_fullHeight      = 0;
+    bool             m_temporalUpscale = false;
+    bool             m_historyValid    = false;
+    uint32_t         m_historyWrite    = 0;
+    uint32_t         m_previousFrame   = 0;
+    float            m_previousViewProj[16]{};
+    RHITextureHandle m_frontDepthTexture = RHITextureHandle::Invalid();
+    uint32_t         m_frontDepthSrv = UINT32_MAX;
+    uint32_t         m_frontDepthUav = UINT32_MAX;
+    RHITextureHandle m_historyTexture[2]{};
+    uint32_t         m_historySrv[2]{UINT32_MAX, UINT32_MAX};
+    uint32_t         m_historyUav[2]{UINT32_MAX, UINT32_MAX};
 
     // ── Compute pipeline ──
     RHIShaderHandle   m_raymarchCS       = RHIShaderHandle::Invalid();
     RHIPipelineHandle m_raymarchPipeline = RHIPipelineHandle::Invalid();
+    RHIShaderHandle   m_upscaleRaymarchCS = RHIShaderHandle::Invalid();
+    RHIPipelineHandle m_upscaleRaymarchPipeline = RHIPipelineHandle::Invalid();
+    RHIShaderHandle   m_temporalCS = RHIShaderHandle::Invalid();
+    RHIPipelineHandle m_temporalPipeline = RHIPipelineHandle::Invalid();
+
+    struct ShadowCascade {
+        RHITextureHandle raw{};
+        RHITextureHandle history[2]{};
+        uint32_t rawSrv = UINT32_MAX;
+        uint32_t rawUav = UINT32_MAX;
+        uint32_t historySrv[2]{UINT32_MAX, UINT32_MAX};
+        uint32_t historyUav[2]{UINT32_MAX, UINT32_MAX};
+        float previousViewProj[16]{};
+        float previousDepthRange = 0;
+    };
+    ShadowCascade m_shadowCascades[3]{};
+    RHIBufferHandle m_shadowBuffers[4]{};
+    rg::RgResourceId m_shadowResources[3]{};
+    uint32_t m_shadowBufferSrv = UINT32_MAX;
+    uint32_t m_shadowFrameCount = 0;
+    uint32_t m_shadowCount = 0;
+    uint32_t m_shadowResolution = 0;
+    uint32_t m_shadowWrite = 0;
+    uint32_t m_shadowPreviousFrame = 0;
+    bool m_shadowHistoryValid = false;
+    float m_shadowPreviousSun[3]{};
+    RHIShaderHandle m_shadowCS{};
+    RHIShaderHandle m_shadowResolveCS{};
+    RHIShaderHandle m_shadowLightingPS{};
+    RHIShaderHandle m_shadowFullscreenVS{};
+    RHIShaderHandle m_shadowRaymarchCS[2]{};
+    RHIPipelineHandle m_shadowPipeline{};
+    RHIPipelineHandle m_shadowResolvePipeline{};
+    RHIPipelineHandle m_shadowLightingPipeline{};
+    RHIPipelineHandle m_shadowRaymarchPipeline[2]{};
 
     // ── 3D noise textures ──
     RHITextureHandle m_shapeNoiseTexture  = RHITextureHandle::Invalid();
     uint32_t         m_shapeNoiseSrvIndex = UINT32_MAX;
     RHITextureHandle m_detailNoiseTexture = RHITextureHandle::Invalid();
     uint32_t         m_detailNoiseSrvIndex = UINT32_MAX;
+    RHITextureHandle m_stbnTexture = RHITextureHandle::Invalid();
+    uint32_t         m_stbnSrvIndex = UINT32_MAX;
+    RHITextureHandle m_weatherTexture{};
+    uint32_t m_weatherSrv = UINT32_MAX;
+    std::string m_weatherPath;
 
     // ── Staging buffers kept alive until GPU finishes ──
     std::vector<RHIBufferHandle> m_stagingBuffers;
@@ -195,7 +287,6 @@ private:
     bool m_initialized          = false;
     bool m_hasNoiseTextures     = false;
     bool m_noiseLoadAttempted   = false;   ///< LoadNoiseTextures runs once; a missing file is not retried per frame
-    bool m_initialBarriersDone  = false;
 };
 
 } // namespace uz

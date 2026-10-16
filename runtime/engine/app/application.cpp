@@ -296,7 +296,10 @@ int Application::Run(int argc, char** argv) {
         if (m_screenshotPending && m_frameIndex % 50 == 0) {
             (void)m_renderer->IsSceneFullyLoadedDebug();
         }
-        if (m_screenshotPending && m_renderer->IsSceneFullyLoaded() && m_frameIndex >= 2) {
+        const bool readyForCapture = m_config.captureAtExplicitFrame
+            ? (m_frameIndex >= m_config.screenshotFrame)
+            : (m_renderer->IsSceneFullyLoaded() && m_frameIndex >= 2);
+        if (m_screenshotPending && readyForCapture) {
             if (m_screenshotBase64) {
                 m_renderer->RequestScreenshotBase64();
             } else {

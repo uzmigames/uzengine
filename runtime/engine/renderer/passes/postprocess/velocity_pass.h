@@ -14,8 +14,9 @@
 /// Barriers are scheduled automatically by the render graph compiler.
 ///
 /// # Binding Model
-/// - Root constants at slot 0 (b0): [depthSrvIndex, screenWidth, screenHeight]
-/// - VelocityCB at root param 2 (b2): invViewProj + prevViewProj (128 bytes)
+/// - Fullscreen root constants at slot 0 (b0): [depthSrvIndex, 0, 0, 0]
+/// - Object root constants: [vb, packed, color, prevVb], within the same 24 DWORDs
+/// - VelocityCB at root param 2 (b2): previous VP, current unjittered inverse VP, render size
 /// - SM5 fallback: depth texture bound via SetFragmentTexture at t0.
 
 #pragma once
@@ -31,6 +32,36 @@ class RgBuilder;
 } // namespace uz::rg
 
 namespace uz {
+
+class DrawList;
+class CBRingAllocator;
+struct GPUMesh;
+
+/// Current minus previous unjittered surface position in render pixels,
+/// +x right/+y down. Output consumers scale by output/render; SDKs negate.
+struct VelocityObjectCB {
+    Mat4 model, prevModel, unjitteredViewProj, prevViewProj;
+    float screenSize[2] = {};
+    float pad[2] = {};
+};
+static_assert(sizeof(VelocityObjectCB) == 272);
+
+struct VelocityObjectPassDesc {
+    rg::RgResourceId velocityTarget;
+    rg::RgResourceId depthBuffer;
+    CBAllocation perFrameAlloc;
+    CBRingAllocator* cbAllocator = nullptr;
+    const DrawList* drawList = nullptr;
+    const GPUMesh* meshes = nullptr;
+    uint32_t meshCount = 0;
+    RHIPipelineHandle pipeline;
+    RHIPipelineHandle twoSidedPipeline;
+    Mat4 unjitteredViewProj, prevViewProj;
+    float viewportWidth = 0.f, viewportHeight = 0.f;
+    bool bindless = true;
+};
+
+void AddVelocityObjectPass(rg::RgBuilder& builder, const VelocityObjectPassDesc& desc);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VelocityCB — constant buffer for the velocity generation pass
@@ -49,9 +80,10 @@ namespace uz {
 /// ```hlsl
 /// cbuffer VelocityCB : register(b2) {
 ///     row_major float4x4 prevViewProj;  // 64 bytes
+///     row_major float4x4 unjitteredInvViewProj; // 64 bytes
 ///     float  screenWidth;               // +4
 ///     float  screenHeight;              // +4
-///     float2 _velPad;                   // +8 = 80 bytes
+///     float2 _velPad;                   // +8 = 144 bytes, padded to 256 on CPU
 /// };
 /// ```
 ///
@@ -115,7 +147,7 @@ struct VelocityPassDesc {
 ///
 /// The pass reads the depth buffer, reconstructs world-space positions using
 /// `invViewProj`, reprojects them to the previous frame via `prevViewProj`,
-/// and writes screen-space motion vectors (current - previous NDC) to the
+/// and writes motion vectors (current - previous unjittered render pixels) to the
 /// velocity render target.
 ///
 /// # Arguments
@@ -128,7 +160,7 @@ struct VelocityPassDesc {
 /// During execution the pass:
 /// 1. Begins a render pass with 1 color attachment (velocity RT), no depth.
 /// 2. Binds the velocity PSO.
-/// 3. Pushes root constants at slot 0: [depthSrvIndex, screenWidth, screenHeight].
+/// 3. Pushes root constants at slot 0: [depthSrvIndex, 0, 0, 0].
 /// 4. Binds VelocityCB at root param 2 (b2).
 /// 5. For SM5: binds depth texture at t0 via SetFragmentTexture.
 /// 6. Sets the viewport and scissor rect.

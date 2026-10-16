@@ -43,7 +43,25 @@ export type StatsCallback = (stats: FrameStats) => void;
 /// Frame data is passed as a base64 string (not Buffer) because VSCode's
 /// webview.postMessage cannot reliably transfer typed arrays across the
 /// extension host ↔ webview boundary.
-export type FrameCallback = (nalBase64: string) => void;
+export type FrameCallback = (nalBase64: string, key: boolean) => void;
+
+export class RuntimeClientError extends Error {
+  constructor(
+    public readonly code: 'timeout' | 'worker-exit' | 'disposed' | 'backpressure' | 'native',
+    message: string,
+  ) {
+    super(message);
+    this.name = 'RuntimeClientError';
+  }
+}
+
+const kMaxPendingRequests = 64;
+const requestBudgets: Partial<Record<WorkerCommand['cmd'], number>> = {
+  init: 30_000,
+  createViewport: 60_000,
+  loadScene: 60_000,
+  saveScene: 30_000,
+};
 
 /** Signature for log messages forwarded from the worker process. */
 export type LogListener = (level: number, category: string, message: string) => void;
@@ -54,6 +72,7 @@ interface PendingCall {
   reject: (reason: Error) => void;
   /** Human-readable label for timeout error messages. */
   label: string;
+  timer: ReturnType<typeof setTimeout>;
 }
 
 // ── RuntimeClient ─────────────────────────────────────────────────────────────
@@ -72,6 +91,7 @@ export class RuntimeClient implements vscode.Disposable {
 
   private worker: cp.ChildProcess | undefined;
   private disposed = false;
+  private inputBacklogged = false;
 
   /** Monotonically increasing counter used to generate unique command IDs. */
   private nextId = 1;
@@ -448,8 +468,9 @@ export class RuntimeClient implements vscode.Disposable {
       this.log.warn(`[RuntimeClient] Worker ${reason}`);
 
       // Reject all pending Promises so callers don't hang.
-      const err = new Error(`UzEngine worker ${reason}`);
+      const err = new RuntimeClientError('worker-exit', `UzEngine worker ${reason}`);
       for (const [, pending] of this.pending) {
+        clearTimeout(pending.timer);
         pending.reject(err);
       }
       this.pending.clear();
@@ -457,6 +478,7 @@ export class RuntimeClient implements vscode.Disposable {
       this.frameCallback = undefined;
       this.worker = undefined;
       this.workerInitialised = false;
+      this.inputBacklogged = false;
 
       if (!this.disposed && code !== 0) {
         void vscode.window
@@ -477,7 +499,7 @@ export class RuntimeClient implements vscode.Disposable {
       if (this.worker !== worker) return;
       this.log.error(`[RuntimeClient] Worker process error: ${err.message}`);
       // A failed fork can emit error/close without exit. Settle its calls now.
-      this.killWorker(err);
+      this.killWorker(new RuntimeClientError('worker-exit', err.message));
     });
   }
 
@@ -487,7 +509,12 @@ export class RuntimeClient implements vscode.Disposable {
    * All pending Promises are rejected. Safe to call when the worker is
    * already dead.
    */
-  private killWorker(reason = new Error('RuntimeClient disposed')): void {
+  private killWorker(
+    reason = new RuntimeClientError(
+      this.disposed ? 'disposed' : 'worker-exit',
+      'RuntimeClient disposed',
+    ),
+  ): void {
     const worker = this.worker;
     this.worker = undefined;
     if (worker) {
@@ -496,11 +523,13 @@ export class RuntimeClient implements vscode.Disposable {
       }
     }
     for (const [, pending] of this.pending) {
+      clearTimeout(pending.timer);
       pending.reject(reason);
     }
     this.pending.clear();
     this.statsCallback = undefined;
     this.frameCallback = undefined;
+    this.inputBacklogged = false;
   }
 
   // ── Private: IPC messaging ────────────────────────────────────────────────
@@ -518,12 +547,21 @@ export class RuntimeClient implements vscode.Disposable {
    * @param label Human-readable name for error messages.
    */
   private send(cmd: WorkerCommand, label: string): Promise<unknown> {
-    if (this.disposed) return Promise.reject(new Error('RuntimeClient disposed'));
+    if (this.disposed) {
+      return Promise.reject(new RuntimeClientError('disposed', 'RuntimeClient disposed'));
+    }
+    if (this.pending.size >= kMaxPendingRequests) {
+      return Promise.reject(
+        new RuntimeClientError('backpressure', `RuntimeClient: too many pending requests (cmd=${label})`),
+      );
+    }
     this.ensureWorker();
 
     const worker = this.worker;
     if (!worker || !worker.connected) {
-      return Promise.reject(new Error(`RuntimeClient: worker not connected (cmd=${label})`));
+      return Promise.reject(
+        new RuntimeClientError('worker-exit', `RuntimeClient: worker not connected (cmd=${label})`),
+      );
     }
 
     const id = this.nextId++;
@@ -531,12 +569,21 @@ export class RuntimeClient implements vscode.Disposable {
     (cmd as { id: number }).id = id;
 
     return new Promise<unknown>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject, label });
-      try {
-        worker.send(cmd);
-      } catch (e: unknown) {
+      const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(e instanceof Error ? e : new Error(String(e)));
+        reject(new RuntimeClientError('timeout', `RuntimeClient: request timed out (cmd=${label})`));
+      }, requestBudgets[cmd.cmd] ?? 10_000);
+      this.pending.set(id, { resolve, reject, label, timer });
+      try {
+        worker.send(cmd, (error) => {
+          if (!error || !this.pending.delete(id)) return;
+          clearTimeout(timer);
+          reject(new RuntimeClientError('worker-exit', error.message));
+        });
+      } catch (e: unknown) {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        reject(new RuntimeClientError('worker-exit', e instanceof Error ? e.message : String(e)));
       }
     });
   }
@@ -547,10 +594,16 @@ export class RuntimeClient implements vscode.Disposable {
    * Pass `id: 0` — it is replaced internally before sending.
    */
   private fireAndForget(cmd: WorkerCommand): void {
-    if (!this.worker || !this.worker.connected) return;
+    if (!this.worker || !this.worker.connected || this.inputBacklogged) return;
+    const worker = this.worker;
     (cmd as { id: number }).id = this.nextId++;
     try {
-      this.worker.send(cmd);
+      let completed = false;
+      const accepted = worker.send(cmd, () => {
+        completed = true;
+        if (this.worker === worker) this.inputBacklogged = false;
+      });
+      if (!accepted && !completed) this.inputBacklogged = true;
     } catch {
       // Fire-and-forget: silently swallow send errors.
     }
@@ -568,10 +621,11 @@ export class RuntimeClient implements vscode.Disposable {
         return;
       }
       this.pending.delete(msg.id);
+      clearTimeout(pending.timer);
       if (msg.ok) {
         pending.resolve(msg.result);
       } else {
-        pending.reject(new Error(msg.error));
+        pending.reject(new RuntimeClientError('native', msg.error));
       }
     } else if (msg.type === 'log') {
       // Log message from the C++ runtime — route to the console panel.
@@ -601,7 +655,7 @@ export class RuntimeClient implements vscode.Disposable {
       // issues in VSCode's webview.postMessage (typed arrays don't survive
       // the extension host → webview boundary reliably).
       if (this.frameCallback) {
-        this.frameCallback(msg.data as string);
+        this.frameCallback(msg.data, msg.key);
       }
     }
   }

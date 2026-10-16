@@ -118,6 +118,7 @@ public:
     MaterialGraph();
 
     /// Add an expression of the given type. Returns a reference to the new expression.
+    /// Adding another expression may invalidate references; retain IDs and use FindExpression.
     MaterialExpression& AddExpression(MatExprType type);
 
     /// Remove an expression by ID. Disconnects all its pins first.

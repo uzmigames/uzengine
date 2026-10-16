@@ -8,8 +8,11 @@ static Napi::Value OnMouseMove(const Napi::CallbackInfo& info) {
         Napi::TypeError::New(env, "onMouseMove(x: number, y: number) expected").ThrowAsJavaScriptException();
         return env.Undefined();
     }
-    uz_on_mouse_move(static_cast<float>(info[0].As<Napi::Number>().DoubleValue()),
-                     static_cast<float>(info[1].As<Napi::Number>().DoubleValue()));
+    InputEvent event;
+    event.type = InputEvent::Type::MouseMove;
+    event.x = static_cast<float>(info[0].As<Napi::Number>().DoubleValue());
+    event.y = static_cast<float>(info[1].As<Napi::Number>().DoubleValue());
+    UzNapiRenderThread().PushInput(event);
     return env.Undefined();
 }
 
@@ -20,8 +23,11 @@ static Napi::Value OnMouseButton(const Napi::CallbackInfo& info) {
             .ThrowAsJavaScriptException();
         return env.Undefined();
     }
-    uz_on_mouse_button(info[0].As<Napi::Number>().Int32Value(),
-                       info[1].As<Napi::Boolean>().Value() ? 1 : 0);
+    InputEvent event;
+    event.type = InputEvent::Type::MouseButton;
+    event.code = info[0].As<Napi::Number>().Int32Value();
+    event.pressed = info[1].As<Napi::Boolean>().Value() ? 1 : 0;
+    UzNapiRenderThread().PushInput(event);
     return env.Undefined();
 }
 
@@ -32,8 +38,11 @@ static Napi::Value OnKey(const Napi::CallbackInfo& info) {
             .ThrowAsJavaScriptException();
         return env.Undefined();
     }
-    uz_on_key(info[0].As<Napi::Number>().Int32Value(),
-              info[1].As<Napi::Boolean>().Value() ? 1 : 0);
+    InputEvent event;
+    event.type = InputEvent::Type::Key;
+    event.code = info[0].As<Napi::Number>().Int32Value();
+    event.pressed = info[1].As<Napi::Boolean>().Value() ? 1 : 0;
+    UzNapiRenderThread().PushInput(event);
     return env.Undefined();
 }
 
@@ -44,9 +53,12 @@ static Napi::Value OnKeyEx(const Napi::CallbackInfo& info) {
             .ThrowAsJavaScriptException();
         return env.Undefined();
     }
-    uz_on_key_ex(info[0].As<Napi::Number>().Int32Value(),
-                 info[1].As<Napi::Boolean>().Value() ? 1 : 0,
-                 info[2].As<Napi::Number>().Int32Value());
+    InputEvent event;
+    event.type = InputEvent::Type::KeyEx;
+    event.code = info[0].As<Napi::Number>().Int32Value();
+    event.pressed = info[1].As<Napi::Boolean>().Value() ? 1 : 0;
+    event.modifiers = info[2].As<Napi::Number>().Int32Value();
+    UzNapiRenderThread().PushInput(event);
     return env.Undefined();
 }
 
@@ -56,7 +68,10 @@ static Napi::Value OnScroll(const Napi::CallbackInfo& info) {
         Napi::TypeError::New(env, "onScroll(delta: number) expected").ThrowAsJavaScriptException();
         return env.Undefined();
     }
-    uz_on_scroll(static_cast<float>(info[0].As<Napi::Number>().DoubleValue()));
+    InputEvent event;
+    event.type = InputEvent::Type::Scroll;
+    event.x = static_cast<float>(info[0].As<Napi::Number>().DoubleValue());
+    UzNapiRenderThread().PushInput(event);
     return env.Undefined();
 }
 

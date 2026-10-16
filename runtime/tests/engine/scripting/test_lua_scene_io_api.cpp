@@ -195,12 +195,42 @@ TEST_F(LuaSceneIoAPITest, LoadScene_EmptyFileContent_ReturnsFalse) {
     EXPECT_TRUE(EvalBool("uz.scene.load_scene('scenes/empty.uzscene') == false"));
 }
 
-TEST_F(LuaSceneIoAPITest, LoadScene_MalformedContent_ReturnsFalse) {
+TEST_F(LuaSceneIoAPITest, LoadScene_MalformedContent_ReturnsNilAndMessage) {
     InstallVFS();
-    // Garbage JSON/bytes — parser must return 0 entities → false.
+    // Malformed input returns a typed failure to Lua.
     vfs_.AddFile("scenes/bad.uzscene", "{ this is not valid scene data !!!");
 
-    EXPECT_TRUE(EvalBool("uz.scene.load_scene('scenes/bad.uzscene') == false"));
+    EXPECT_TRUE(DoString("local ok, message = uz.scene.load_scene('scenes/bad.uzscene'); "
+                        "assert(ok == nil and type(message) == 'string' and #message > 0)"));
+}
+
+TEST_F(LuaSceneIoAPITest, Scene_LoadScene_Malformed_PreservesPreviousScene) {
+    InstallVFS();
+    const auto handle = CreateNamedEntity("previous");
+    vfs_.AddFile("scenes/malformed.uzscene", "{not json");
+    EXPECT_TRUE(DoString("local ok, message = uz.scene.load_scene('scenes/malformed.uzscene'); "
+                        "assert(ok == nil and type(message) == 'string')"));
+    EXPECT_EQ(world_.EntityCount(), 1u);
+    EXPECT_TRUE(world_.IsValid(handle));
+}
+
+TEST_F(LuaSceneIoAPITest, LoadScene_EmptyEntities_ReturnsTrueAndReplacesWorld) {
+    InstallVFS();
+    const auto handle = CreateNamedEntity("previous");
+    vfs_.AddFile("scenes/empty-valid.uzscene", R"({"entities":[]})");
+    EXPECT_TRUE(EvalBool("uz.scene.load_scene('scenes/empty-valid.uzscene') == true"));
+    EXPECT_EQ(world_.EntityCount(), 0u);
+    EXPECT_FALSE(world_.IsValid(handle));
+}
+
+TEST_F(LuaSceneIoAPITest, LoadScene_PrefabResolutionMatchesLegacyVfslessBehavior) {
+    InstallVFS();
+    vfs_.AddFile("scenes/with-prefab.uzscene",
+                 R"({"entities":[{"name":"parent","prefab":{"asset":"child.uzprefab"}}]})");
+    vfs_.AddFile("child.uzprefab", R"({"children":[{"name":"child"}]})");
+    EXPECT_TRUE(EvalBool("uz.scene.load_scene('scenes/with-prefab.uzscene') == true"));
+    // The legacy Lua loader did not pass the VFS into entity construction.
+    EXPECT_EQ(world_.EntityCount(), 1u);
 }
 
 TEST_F(LuaSceneIoAPITest, LoadScene_MalformedContent_DoesNotCrash) {
@@ -214,25 +244,18 @@ TEST_F(LuaSceneIoAPITest, LoadScene_MalformedContent_DoesNotCrash) {
 // uz.scene.load_scene — World clearing behaviour
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST_F(LuaSceneIoAPITest, LoadScene_FileNotFound_DoesNotLeaveStaleEntities) {
+TEST_F(LuaSceneIoAPITest, LoadScene_FileNotFound_PreservesPreviousScene) {
     InstallVFS();
 
     // Pre-populate the world with entities.
-    CreateNamedEntity("pre_existing_a");
-    CreateNamedEntity("pre_existing_b");
+    const auto a = CreateNamedEntity("pre_existing_a");
+    const auto b = CreateNamedEntity("pre_existing_b");
     ASSERT_EQ(world_.EntityCount(), 2u);
 
-    // load_scene on a missing file must clear the world (world->Clear() is
-    // called before any parsing, so even on failure the world is empty).
-    // The implementation calls world->Clear() then LoadScene(); if LoadScene
-    // returns 0 it returns false. World IS cleared regardless.
-    EvalBool("uz.scene.load_scene('scenes/not_here.uzscene')");
-
-    // Whether the implementation clears-before-loading is an implementation
-    // detail tested here: we must NOT crash and the result must be false.
-    // The entity count after a failed load depends on implementation; what
-    // we guarantee is the call does not crash and returns false.
-    // (Asserting exact entity count would couple the test to internal ordering.)
+    EXPECT_TRUE(EvalBool("uz.scene.load_scene('scenes/not_here.uzscene') == false"));
+    EXPECT_EQ(world_.EntityCount(), 2u);
+    EXPECT_TRUE(world_.IsValid(a));
+    EXPECT_TRUE(world_.IsValid(b));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

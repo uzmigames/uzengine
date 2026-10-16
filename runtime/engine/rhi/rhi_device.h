@@ -110,6 +110,10 @@ public:
     /// buffer has no SRV (e.g., not created with `RHIBufferUsage::StructuredBuffer`).
     virtual uint32_t GetBufferSRVIndex(RHIBufferHandle handle) const = 0;
 
+    /// Creates or returns a cached ByteAddressBuffer SRV without replacing the
+    /// buffer's structured view. Unsupported backends return UINT32_MAX.
+    virtual uint32_t GetBufferRawSRVIndex(RHIBufferHandle) { return UINT32_MAX; }
+
     /// Returns the bindless UAV descriptor index for a buffer.
     ///
     /// # Arguments

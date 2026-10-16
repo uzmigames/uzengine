@@ -16,8 +16,11 @@ namespace uz {
 // Screen Percentage
 // ─────────────────────────────────────────────────────────────────────────────
 
-void SceneRenderer::SetUpscalerType(UpscalerType type) {
-    if (type == m_upscalerType && m_upscaler) return;
+const UpscalerSelection& SceneRenderer::SetUpscalerType(UpscalerType type) {
+    if (m_upscalerSelectionInitialized && type == m_upscalerSelection.requested
+        && !m_forceReselect) return m_upscalerSelection;
+    const bool failover = m_forceReselect;
+    m_forceReselect = false;
 
     // Shut down the old upscaler
     if (m_upscaler) {
@@ -25,25 +28,42 @@ void SceneRenderer::SetUpscalerType(UpscalerType type) {
         m_upscaler.reset();
     }
 
-    m_upscalerType = type;
-
     // Sync CVar so ApplyCVars() doesn't overwrite this value next frame
     CVarRegistry::Get().Set("r.AntiAliasingMethod", static_cast<float>(type));
 
-    // Create and initialize the new upscaler
-    m_upscaler = CreateTemporalUpscaler(type);
-    if (m_upscaler && m_device) {
-        m_upscaler->Init(m_device, m_pipelines.get(), m_cbRing.get());
-        if (m_width > 0 && m_height > 0) {
-            m_upscaler->OnResize(m_width, m_height);
-        }
+    UpscalerProbe probe{
+        [this](UpscalerType candidate) -> const char* {
+            m_upscaler = CreateTemporalUpscaler(candidate);
+            if (!m_upscaler)
+                return candidate == UpscalerType::XeSS ? "not implemented" : "unknown type";
+            if (!m_upscaler->IsAvailable())
+                return candidate == UpscalerType::TSR ? "TSR shader not implemented" : "not built with SDK";
+            return nullptr;
+        },
+        [this](UpscalerType) {
+            if (!m_device || !m_upscaler->Init(m_device, m_pipelines.get(), m_cbRing.get())) {
+                m_upscaler->Shutdown();
+                return false;
+            }
+            if (m_width > 0 && m_height > 0) m_upscaler->OnResize(m_width, m_height);
+            return true;
+        }};
+    m_upscalerSelection = ResolveUpscalerSelection(type, probe,
+        failover ? m_failedUpscaler : UpscalerType::None);
+    if (failover) m_upscalerSelection.reason = "failover after consecutive failed frames";
+    m_upscalerType = m_upscalerSelection.effective;
+    if (m_upscalerType == UpscalerType::None) m_upscaler.reset();
+    m_upscalerSelectionInitialized = true;
+    m_upscalerFailStreak = 0;
+    m_failedUpscaler = UpscalerType::None;
+    m_taaEnabled = (m_upscalerType != UpscalerType::None);
+    m_temporal.Invalidate(TemporalReset::UpscalerChanged);
+    if (m_upscalerType != type || failover) {
+        UZ_LOG(Renderer, Warning, "Upscaler {} unavailable ({}); using {}",
+               static_cast<uint32_t>(type), m_upscalerSelection.reason,
+               m_upscaler ? m_upscaler->GetName() : "None");
     }
-
-    // Enable/disable TAA jitter based on upscaler presence
-    m_taaEnabled = (type != UpscalerType::None);
-
-    UZ_LOG(Renderer, Info, "SceneRenderer: upscaler set to {}",
-           m_upscaler ? m_upscaler->GetName() : "None");
+    return m_upscalerSelection;
 }
 
 void SceneRenderer::SetScreenPercentage(float pct) {
@@ -106,6 +126,7 @@ bool SceneRenderer::SetHDRIEnvironment(uint32_t equirectSrvIndex, uint32_t cubem
 
     m_hdriCubemap = equirectResult.cubemap;
     m_hdriCubemapSrv = equirectResult.srvIndex;
+    m_hdriEquirectSrv = equirectSrvIndex;  // keep the raw equirect SRV so the path tracer can sample it directly (higher-res than the cube capture).
 
     // Destroy previous IBL textures before re-baking (caller-owned since baker
     // no longer auto-destroys — fixes reflection probe bake invalidating HDRI IBL).
@@ -206,6 +227,7 @@ bool SceneRenderer::SetPMREMEnvironment(const TextureLoadResult& result) {
 
     m_hdriCubemap = pmremResult.cubemap;
     m_hdriCubemapSrv = pmremResult.srvIndex;
+    m_hdriEquirectSrv = UINT32_MAX;  // PMREM path has no raw equirect; the PT falls back to the cubemap.
 
     // Step 3: Destroy previous IBL textures before re-baking
     if (m_iblResult.irradianceTexture.IsValid()) {

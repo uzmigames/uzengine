@@ -58,6 +58,7 @@ public:
 
     /// Returns `"FSR2"`.
     [[nodiscard]] const char* GetName() const noexcept override;
+    [[nodiscard]] bool IsAvailable() const noexcept override;
 
     /// FSR2 supports rendering at 33% of display resolution (Ultra Performance 3x).
     [[nodiscard]] float GetMinScreenPercentage() const noexcept override;
@@ -72,12 +73,13 @@ public:
     /// Extracts the native ID3D12Device from the RHI device to initialize
     /// the FfxInterface. Allocates scratch memory for the backend. The FSR2
     /// context is created lazily on the first Execute() call when the display
-    /// resolution is known.
+    /// resolution is known. Returns backend initialization success; lazy
+    /// context creation failure shuts down the backend and Execute returns false.
     ///
     /// @param device    The RHI device (must be DX12 backend).
     /// @param pipelines Not used by FSR2 (it has its own internal pipelines).
     /// @param cbRing    Not used by FSR2 (it manages its own constant buffers).
-    void Init(IRHIDevice* device, PipelineLibrary* pipelines, CBRingAllocator* cbRing) override;
+    [[nodiscard]] bool Init(IRHIDevice* device, PipelineLibrary* pipelines, CBRingAllocator* cbRing) override;
 
     /// Destroys the FSR2 context and frees all FFX resources.
     /// Safe to call multiple times (subsequent calls are no-ops).
@@ -104,7 +106,7 @@ public:
     ///
     /// @param cmd   Command list to record FSR2 dispatches on.
     /// @param input Per-frame textures, jitter, and resolution data.
-    void Execute(IRHICommandList* cmd, const UpscalerInput& input) override;
+    bool Execute(IRHICommandList* cmd, const UpscalerInput& input) override;
 
     // --- Non-copyable, movable ---
 

@@ -427,6 +427,94 @@ TEST(SceneComponentTest, AttachToSameParentIsNoOp) {
     EXPECT_EQ(parent.GetChildren().size(), 1u);
 }
 
+TEST(SceneComponentTest, SelfParentingRootLeavesStateUnchanged) {
+    SceneComponent root;
+    root.SetPosition({3.f, 4.f, 5.f});
+    const Vec3 before = root.GetWorldPosition();
+
+    root.AttachTo(&root);
+
+    EXPECT_EQ(root.GetParent(), nullptr);
+    EXPECT_TRUE(root.GetChildren().empty());
+    EXPECT_FALSE(root.IsDirty());
+    EXPECT_TRUE(NearlyEqualVec3(root.GetPosition(), before));
+    EXPECT_TRUE(NearlyEqualVec3(root.GetWorldPosition(), before));
+}
+
+TEST(SceneComponentTest, SelfParentingPreservesExistingParent) {
+    SceneComponent parent, child;
+    parent.SetPosition({10.f, 0.f, 0.f});
+    child.SetPosition({2.f, 0.f, 0.f});
+    child.AttachTo(&parent);
+    const Vec3 before = child.GetWorldPosition();
+
+    child.AttachTo(&child);
+
+    EXPECT_EQ(child.GetParent(), &parent);
+    ASSERT_EQ(parent.GetChildren().size(), 1u);
+    EXPECT_EQ(parent.GetChildren()[0], &child);
+    EXPECT_TRUE(child.GetChildren().empty());
+    EXPECT_FALSE(parent.IsDirty());
+    EXPECT_FALSE(child.IsDirty());
+    EXPECT_TRUE(NearlyEqualVec3(child.GetWorldPosition(), before));
+}
+
+TEST(SceneComponentTest, AncestorCyclePreservesHierarchyAndTransforms) {
+    SceneComponent root, parent, child, descendant;
+    root.SetPosition({10.f, 0.f, 0.f});
+    parent.SetPosition({2.f, 0.f, 0.f});
+    child.SetPosition({3.f, 0.f, 0.f});
+    descendant.SetPosition({4.f, 0.f, 0.f});
+    parent.AttachTo(&root);
+    child.AttachTo(&parent);
+    descendant.AttachTo(&child);
+    const Vec3 before = descendant.GetWorldPosition();
+
+    parent.AttachTo(&descendant);
+
+    EXPECT_EQ(parent.GetParent(), &root);
+    EXPECT_EQ(child.GetParent(), &parent);
+    EXPECT_EQ(descendant.GetParent(), &child);
+    ASSERT_EQ(root.GetChildren().size(), 1u);
+    EXPECT_EQ(root.GetChildren()[0], &parent);
+    ASSERT_EQ(parent.GetChildren().size(), 1u);
+    EXPECT_EQ(parent.GetChildren()[0], &child);
+    ASSERT_EQ(child.GetChildren().size(), 1u);
+    EXPECT_EQ(child.GetChildren()[0], &descendant);
+    EXPECT_TRUE(descendant.GetChildren().empty());
+    EXPECT_FALSE(root.IsDirty());
+    EXPECT_FALSE(parent.IsDirty());
+    EXPECT_FALSE(child.IsDirty());
+    EXPECT_FALSE(descendant.IsDirty());
+    EXPECT_TRUE(NearlyEqual(parent.GetPosition().x, 2.f));
+    EXPECT_TRUE(NearlyEqualVec3(descendant.GetWorldPosition(), before));
+}
+
+TEST(SceneComponentTest, ReparentAndNullDetachPreserveLocalTransform) {
+    SceneComponent first, second, child;
+    first.SetPosition({10.f, 0.f, 0.f});
+    second.SetPosition({20.f, 0.f, 0.f});
+    child.SetPosition({2.f, 0.f, 0.f});
+    child.AttachTo(&first);
+    EXPECT_TRUE(NearlyEqual(child.GetWorldPosition().x, 12.f));
+
+    child.AttachTo(&second);
+
+    EXPECT_TRUE(first.GetChildren().empty());
+    EXPECT_EQ(child.GetParent(), &second);
+    ASSERT_EQ(second.GetChildren().size(), 1u);
+    EXPECT_EQ(second.GetChildren()[0], &child);
+    EXPECT_TRUE(NearlyEqual(child.GetPosition().x, 2.f));
+    EXPECT_TRUE(NearlyEqual(child.GetWorldPosition().x, 22.f));
+
+    child.AttachTo(nullptr);
+
+    EXPECT_EQ(child.GetParent(), nullptr);
+    EXPECT_TRUE(second.GetChildren().empty());
+    EXPECT_TRUE(NearlyEqual(child.GetPosition().x, 2.f));
+    EXPECT_TRUE(NearlyEqual(child.GetWorldPosition().x, 2.f));
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Test Suite: SceneComponent — Destructor
 // ─────────────────────────────────────────────────────────────────────────────

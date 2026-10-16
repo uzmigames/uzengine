@@ -156,7 +156,14 @@ struct DlssUpscaler::Impl {
     /// @ref NVIDIA NGX Programming Guide — NGX core library is driver-provided.
     static HMODULE FindNvNgxInDriverStore() {
         // Enumerate DriverStore directories matching NVIDIA display driver pattern.
-        const wchar_t* driverStoreBase = L"C:\\Windows\\System32\\DriverStore\\FileRepository";
+        // Resolve System32 at runtime via GetSystemDirectoryW so discovery is
+        // path-agnostic (do not assume the Windows system drive is C:).
+        wchar_t systemDir[MAX_PATH];
+        const UINT systemDirLen = ::GetSystemDirectoryW(systemDir, MAX_PATH);
+        if (systemDirLen == 0 || systemDirLen >= MAX_PATH) return nullptr;
+        wchar_t driverStoreBase[MAX_PATH];
+        _snwprintf_s(driverStoreBase, MAX_PATH, _TRUNCATE,
+                     L"%s\\DriverStore\\FileRepository", systemDir);
         WIN32_FIND_DATAW findData{};
         wchar_t searchPattern[MAX_PATH];
         _snwprintf_s(searchPattern, MAX_PATH, _TRUNCATE, L"%s\\nv_dispi.inf_amd64_*", driverStoreBase);
@@ -288,6 +295,7 @@ struct DlssUpscaler::Impl {
                    "DLSS: failed to get NGX capability parameters (result=0x{:08X})",
                    static_cast<uint32_t>(result));
             pfnShutdown(nativeDevice);
+            ngxParams = nullptr;
             return false;
         }
 
@@ -452,34 +460,40 @@ const char* DlssUpscaler::GetName() const noexcept { return "DLSS"; }
 float DlssUpscaler::GetMinScreenPercentage() const noexcept { return 33.3f; }
 float DlssUpscaler::GetMaxScreenPercentage() const noexcept { return 100.f; }
 bool DlssUpscaler::IsAvailable() const noexcept {
-    return m_impl && m_impl->dlssSupported && m_impl->ngxInitialized;
+    return true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Lifecycle
 // ─────────────────────────────────────────────────────────────────────────────
 
-void DlssUpscaler::Init(IRHIDevice* device, PipelineLibrary*, CBRingAllocator*) {
-    if (!device) { UZ_LOG(Renderer, Error, "DLSS: Init called with null device"); return; }
+bool DlssUpscaler::Init(IRHIDevice* device, PipelineLibrary*, CBRingAllocator*) {
+    Shutdown();
+    if (!device) { UZ_LOG(Renderer, Error, "DLSS: Init called with null device"); return false; }
     if (device->GetBackend() != RHIBackend::DX12) {
         UZ_LOG(Renderer, Warning, "DLSS: only DX12 backend is supported");
-        return;
+        return false;
     }
 
+    if (!m_impl) m_impl = std::make_unique<Impl>();
     m_impl->device = device;
     m_impl->dx12Device = static_cast<DX12Device*>(device);
 
     // Step 1: Load _nvngx.dll dynamically.
-    if (!m_impl->LoadDll()) return;
+    if (!m_impl->LoadDll()) {
+        Shutdown();
+        return false;
+    }
 
     // Step 2: Initialize NGX SDK.
     ID3D12Device* nativeDevice = m_impl->dx12Device->GetDevice();
     if (!nativeDevice || !m_impl->InitNgx(nativeDevice)) {
-        m_impl->UnloadDll();
-        return;
+        Shutdown();
+        return false;
     }
 
     UZ_LOG(Renderer, Info, "DLSS: backend initialized, feature created on first frame");
+    return true;
 }
 
 void DlssUpscaler::Shutdown() {
@@ -505,9 +519,9 @@ void DlssUpscaler::OnResize(uint32_t displayWidth, uint32_t displayHeight) {
 // Execution
 // ─────────────────────────────────────────────────────────────────────────────
 
-void DlssUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
+bool DlssUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     UZ_PROFILE_SCOPE("DLSS::Execute");
-    if (!m_impl || !m_impl->dx12Device || !m_impl->dlssSupported) return;
+    if (!m_impl || !m_impl->dx12Device || !m_impl->dlssSupported) return false;
 
     const auto outputW = static_cast<uint32_t>(input.outputWidth);
     const auto outputH = static_cast<uint32_t>(input.outputHeight);
@@ -523,13 +537,16 @@ void DlssUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
 
     auto* dx12Cmd = static_cast<DX12CommandList*>(cmd);
     ID3D12GraphicsCommandList* nativeCmdList = dx12Cmd->GetNative();
-    if (!nativeCmdList) return;
+    if (!nativeCmdList) return false;
 
     // Lazily create or recreate feature.
     if (!m_impl->dlssFeature || m_impl->displayWidth != outputW ||
         m_impl->displayHeight != outputH || m_impl->currentQuality != quality) {
-        if (outputW == 0 || outputH == 0) return;
-        if (!m_impl->CreateFeature(nativeCmdList, outputW, outputH, quality)) return;
+        if (outputW == 0 || outputH == 0) return false;
+        if (!m_impl->CreateFeature(nativeCmdList, outputW, outputH, quality)) {
+            Shutdown();
+            return false;
+        }
     }
 
     // Resolve RHI textures to native DX12 resources.
@@ -541,7 +558,7 @@ void DlssUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     if (!colorRes || !depthRes || !velocityRes || !outputRes) {
         UZ_LOG(Renderer, Error, "DLSS: null textures — color={} depth={} vel={} out={}",
                (void*)colorRes, (void*)depthRes, (void*)velocityRes, (void*)outputRes);
-        return;
+        return false;
     }
 
     // Debug: log resource details on first evaluate only
@@ -612,9 +629,10 @@ void DlssUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
 
     // Motion vector scale — converts from MV texture value to pixel offset.
     // UzEngine velocity_ps.hlsl outputs in pixels (currScreen - prevScreen),
-    // so scale = 1.0 (no conversion needed). Positive Y = downward = DLSS convention.
-    setF(NVSDK_NGX_Parameter_MV_Scale_X, 1.0f);
-    setF(NVSDK_NGX_Parameter_MV_Scale_Y, 1.0f);
+    // DLSS expects prev - curr, so negate both axes without changing units.
+    // SDK-enabled runtime verification is deferred.
+    setF(NVSDK_NGX_Parameter_MV_Scale_X, -1.0f);
+    setF(NVSDK_NGX_Parameter_MV_Scale_Y, -1.0f);
 
     setF(NVSDK_NGX_Parameter_Sharpness, 0.0f);
     setI(NVSDK_NGX_Parameter_Reset, input.firstFrame ? 1 : 0);
@@ -655,7 +673,9 @@ void DlssUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     if (NVSDK_NGX_FAILED(result)) {
         UZ_LOG(Renderer, Error, "DLSS: evaluate failed (result=0x{:08X})",
                static_cast<uint32_t>(result));
+        return false;
     }
+    return true;
 }
 
 } // namespace uz
@@ -679,13 +699,14 @@ float DlssUpscaler::GetMinScreenPercentage() const noexcept { return 33.f; }
 float DlssUpscaler::GetMaxScreenPercentage() const noexcept { return 100.f; }
 bool DlssUpscaler::IsAvailable() const noexcept { return false; }
 
-void DlssUpscaler::Init(IRHIDevice*, PipelineLibrary*, CBRingAllocator*) {
+bool DlssUpscaler::Init(IRHIDevice*, PipelineLibrary*, CBRingAllocator*) {
     UZ_LOG(Renderer, Warning,
            "DLSS is not available — build with UZ_DLSS_ENABLED=1 (run scripts/setup.ps1 to download the SDK)");
+    return false;
 }
 void DlssUpscaler::Shutdown() {}
 void DlssUpscaler::OnResize(uint32_t, uint32_t) {}
-void DlssUpscaler::Execute(IRHICommandList*, const UpscalerInput&) {}
+bool DlssUpscaler::Execute(IRHICommandList*, const UpscalerInput&) { return false; }
 
 } // namespace uz
 

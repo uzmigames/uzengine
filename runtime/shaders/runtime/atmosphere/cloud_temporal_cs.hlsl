@@ -1,178 +1,138 @@
-/// UzEngine Cloud Temporal Reprojection — variance-clipped temporal accumulation.
-///
-/// @ref Karis 2014 "High Quality Temporal Supersampling" — variance clipping in YCoCg
-/// @ref Salvi 2016 "An Excursion in Temporal Supersampling" — neighborhood clamping
+/// Full-resolution cloud Bayer resolve, enabled only by r.Clouds.TemporalUpscale.
+/// @ref Karis 2014 "High Quality Temporal Supersampling"
+/// @ref Salvi 2016 "An Excursion in Temporal Supersampling"
 /// @ref Schneider & Vos 2015 "Real-Time Volumetric Cloudscapes of Horizon Zero Dawn"
-///
-/// Takes the current half-res cloud output and blends with reprojected history
-/// using variance clipping to reject ghosted samples. Output: temporally stable
-/// RGBA16F cloud texture (same format as input).
-///
-/// Root constants (b0): { currentSrvIndex, historySrvIndex, outputUavIndex, halfWidth }
-/// Additional root constants packed: { halfHeight, frameIndex, 0, 0 } at b0 offset 16
-/// Constant buffer (b2): prevViewProj + current invViewProj for reprojection.
-///
-/// NOTE: This shader is not yet wired into the pipeline. CloudPass currently
-/// outputs directly without temporal filtering. When wired, the C++ side needs
-/// to create a ping-pong history buffer and dispatch this shader after the
-/// ray march and before the composite.
+/// Current Bayer pixels pass through without blending; other pixels reproject
+/// and variance-clip history. TAA therefore receives a complete cloud image,
+/// not a sparse Bayer mask. The 512-byte CB holds every descriptor and matrix.
 
-// Cloud temporal reprojection uses bindless descriptors for input/output/history.
-// On SM5 this shader is a no-op; cloud temporal filtering is disabled.
 #ifndef UZ_BINDLESS
 [numthreads(1, 1, 1)]
 void main(uint3 DTid : SV_DispatchThreadID) {}
 #else
-
-#include "../common/constants.hlsli"
 #include "../common/bindless.hlsli"
+#include "cloud_bayer.hlsli"
 
-cbuffer RootConstants : register(b0) {
-    uint currentSrvIndex;   // current frame cloud output (half-res)
-    uint historySrvIndex;   // previous frame temporal result (half-res)
-    uint outputUavIndex;    // output temporal result (half-res)
-    uint halfWidth;
+cbuffer CloudTemporalCB : register(b2) {
+    row_major float4x4 invViewProj;
+    row_major float4x4 previousViewProj;
+    float3 cameraPosKm;
+    uint fullWidth;
+    uint fullHeight;
+    uint quarterWidth;
+    uint quarterHeight;
+    uint frameIndex;
+    uint historyValid;
+    uint currentSrv;
+    uint historySrv;
+    uint outputUav;
+    uint frontDepthSrv;
+    uint depthSrv;
+    uint velocitySrv;
+    float varianceGamma;
+    float4 _padding[20];
 };
 
-cbuffer TemporalCB : register(b2) {
-    float4x4 prevViewProj;  // previous frame unjittered view-projection
-    float4x4 invViewProj;   // current frame unjittered inverse view-projection
-    uint halfHeight;
-    float temporalBlendFactor; // 0.0 = all history, 1.0 = all current (bypass)
-    float _pad[2];
-};
+SamplerState linearSampler : register(s3);
 
-SamplerState linearSampler : register(s0);
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Color space conversion for variance clipping
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// @ref Karis 2014 — YCoCg color space for better variance clipping behavior
 float3 RGBtoYCoCg(float3 rgb) {
-    return float3(
-         0.25 * rgb.r + 0.5 * rgb.g + 0.25 * rgb.b,   // Y
-         0.5  * rgb.r                - 0.5  * rgb.b,    // Co
-        -0.25 * rgb.r + 0.5 * rgb.g - 0.25 * rgb.b     // Cg
-    );
+    return float3(dot(rgb, float3(0.25, 0.5, 0.25)),
+                  0.5 * (rgb.r - rgb.b),
+                  dot(rgb, float3(-0.25, 0.5, -0.25)));
 }
 
-float3 YCoCgToRGB(float3 ycocg) {
-    float y  = ycocg.x;
-    float co = ycocg.y;
-    float cg = ycocg.z;
-    return float3(
-        y + co - cg,
-        y      + cg,
-        y - co - cg
-    );
+float3 YCoCgToRGB(float3 c) {
+    return float3(c.x + c.y - c.z, c.x + c.z, c.x - c.y - c.z);
 }
 
-/// Clip a color to the AABB defined by [boxMin, boxMax] along the ray from
-/// the AABB center to the color. Returns the clipped color.
-/// @ref Salvi 2016 — AABB clipping for temporal anti-aliasing
-float3 ClipToAABB(float3 color, float3 boxMin, float3 boxMax) {
-    float3 center = 0.5 * (boxMin + boxMax);
-    float3 extents = 0.5 * (boxMax - boxMin);
-
+float3 ClipToAABB(float3 color, float3 center, float3 extent) {
     float3 offset = color - center;
-    float3 ts = abs(extents) / max(abs(offset), float3(1e-6, 1e-6, 1e-6));
-    float t = saturate(min(ts.x, min(ts.y, ts.z)));
-    return center + offset * t;
+    float3 ratio = extent / max(abs(offset), 1e-6);
+    return center + offset * saturate(min(ratio.x, min(ratio.y, ratio.z)));
 }
 
 [numthreads(8, 8, 1)]
 void main(uint3 DTid : SV_DispatchThreadID) {
-    if (DTid.x >= halfWidth || DTid.y >= halfHeight) return;
-
-    RWTexture2D<float4> outputTex = ResourceDescriptorHeap[outputUavIndex];
-
-    // Sample current frame cloud output
-    float2 uv = (float2(DTid.xy) + 0.5) / float2(halfWidth, halfHeight);
-    float4 current = UzSampleTexture2DLevel(currentSrvIndex, linearSampler, uv, 0.0);
-
-    // Bypass temporal if blend factor is 1.0 (debug / first frame)
-    if (temporalBlendFactor >= 0.99) {
-        outputTex[DTid.xy] = current;
+    if (DTid.x >= fullWidth || DTid.y >= fullHeight) return;
+    RWTexture2D<float4> output = ResourceDescriptorHeap[outputUav];
+    Texture2D<float4> currentTex = ResourceDescriptorHeap[currentSrv];
+    int2 quarterPixel = int2(DTid.xy / 4);
+    float4 current = currentTex.Load(int3(quarterPixel, 0));
+    uint2 slot = DTid.xy % 4;
+    bool currentSlot = bayerMatrix[slot.x][slot.y] == frameIndex % 16;
+    if (currentSlot || historyValid == 0) {
+        output[DTid.xy] = current;
         return;
     }
 
-    // ── Reprojection ─────────────────────────────────────────────────────
-    // Reconstruct world position from UV, then project to previous frame
-    float2 ndc = uv * 2.0 - 1.0;
-    ndc.y = -ndc.y;
+    float2 size = float2(fullWidth, fullHeight);
+    float2 uv = (float2(DTid.xy) + 0.5) / size;
+    float2 ndc = float2(uv.x * 2 - 1, 1 - uv.y * 2);
+    float4 nearPoint = mul(float4(ndc, 0.25, 1), invViewProj);
+    float4 farPoint = mul(float4(ndc, 0.75, 1), invViewProj);
+    float3 ray = normalize(nearPoint.xyz / nearPoint.w - farPoint.xyz / farPoint.w);
+    Texture2D<float> frontDepthTex = ResourceDescriptorHeap[frontDepthSrv];
+    float frontDepthKm = frontDepthTex.Load(int3(quarterPixel, 0));
+    // Finite cloud depth includes translation. Transparent sky uses direction only.
+    float4 world = frontDepthKm > 0
+        ? float4((cameraPosKm + ray * frontDepthKm) * 1e5, 1)
+        : float4(ray, 0);
+    float4 previousClip = mul(world, previousViewProj);
+    float2 previousUV = float2(previousClip.x / previousClip.w * 0.5 + 0.5,
+                              0.5 - previousClip.y / previousClip.w * 0.5);
 
-    // Use a fixed depth in the cloud layer (approximate — clouds are distant)
-    float4 worldPos = mul(float4(ndc, 0.5, 1.0), invViewProj);
-    worldPos.xyz /= worldPos.w;
-
-    float4 prevClip = mul(float4(worldPos.xyz, 1.0), prevViewProj);
-    float2 prevUV = prevClip.xy / prevClip.w;
-    prevUV = prevUV * 0.5 + 0.5;
-    prevUV.y = 1.0 - prevUV.y;
-
-    // Check if reprojected UV is within bounds
-    bool validHistory = all(prevUV >= 0.0) && all(prevUV <= 1.0);
-
-    if (!validHistory) {
-        outputTex[DTid.xy] = current;
-        return;
-    }
-
-    // Sample history at reprojected location
-    float4 history = UzSampleTexture2DLevel(historySrvIndex, linearSampler, prevUV, 0.0);
-
-    // ── Variance clipping in YCoCg ───────────────────────────────────────
-    /// @ref Karis 2014 "High Quality Temporal Supersampling"
-    /// 3x3 neighborhood statistics for variance clipping.
-    /// gamma = 1.25 gives good ghosting rejection without flicker.
-    /// @constants gamma = 1.25 (Karis 2014 recommended range: 1.0-1.5)
-    float3 m1 = float3(0, 0, 0);   // mean
-    float3 m2 = float3(0, 0, 0);   // mean of squares
-    float  a1 = 0.0;               // alpha mean
-    float  a2 = 0.0;               // alpha mean of squares
-
+    // @ref Karis 2014 - 3x3 nearest-fragment velocity dilation.
+    // @constants reversed-Z: largest depth is closest; GBuffer velocity is in pixels.
+    Texture2D<float> sceneDepth = ResourceDescriptorHeap[depthSrv];
+    Texture2D<float2> velocity = ResourceDescriptorHeap[velocitySrv];
+    float closestDepth = 0;
+    int2 closestPixel = int2(DTid.xy);
+    [unroll]
     for (int dy = -1; dy <= 1; ++dy) {
+        [unroll]
         for (int dx = -1; dx <= 1; ++dx) {
-            int2 coord = int2(DTid.xy) + int2(dx, dy);
-            coord = clamp(coord, int2(0, 0), int2(halfWidth - 1, halfHeight - 1));
-            float2 sampleUV = (float2(coord) + 0.5) / float2(halfWidth, halfHeight);
-            float4 s = UzSampleTexture2DLevel(currentSrvIndex, linearSampler, sampleUV, 0.0);
-            float3 ycocg = RGBtoYCoCg(s.rgb);
-            m1 += ycocg;
-            m2 += ycocg * ycocg;
-            a1 += s.a;
-            a2 += s.a * s.a;
+            int2 p = clamp(int2(DTid.xy) + int2(dx, dy), int2(0, 0),
+                           int2(fullWidth - 1, fullHeight - 1));
+            float depth = sceneDepth.Load(int3(p, 0));
+            if (depth > closestDepth) {
+                closestDepth = depth;
+                closestPixel = p;
+            }
         }
     }
+    if (closestDepth > 0.0001) {
+        previousUV = uv - velocity.Load(int3(closestPixel, 0)) / size;
+    }
+    if (previousClip.w <= 0 || any(previousUV < 0) || any(previousUV > 1)) {
+        output[DTid.xy] = current;
+        return;
+    }
 
-    m1 /= 9.0;
-    m2 /= 9.0;
-    a1 /= 9.0;
-    a2 /= 9.0;
-
-    float3 stddev = sqrt(max(m2 - m1 * m1, float3(0, 0, 0)));
-    float  aStddev = sqrt(max(a2 - a1 * a1, 0.0));
-
-    static const float kGamma = 1.25;  // Karis 2014
-    float3 boxMin = m1 - kGamma * stddev;
-    float3 boxMax = m1 + kGamma * stddev;
-
-    // Clip history color to the variance AABB
-    float3 historyYCoCg = RGBtoYCoCg(history.rgb);
-    float3 clippedYCoCg = ClipToAABB(historyYCoCg, boxMin, boxMax);
-    float3 clippedRGB = YCoCgToRGB(clippedYCoCg);
-
-    // Clip history alpha similarly
-    float clippedAlpha = clamp(history.a, a1 - kGamma * aStddev, a1 + kGamma * aStddev);
-
-    // ── Temporal blend ───────────────────────────────────────────────────
-    // Default blend: 5% current, 95% history (converges in ~20 frames)
-    float blendWeight = max(temporalBlendFactor, 0.05);
-    float3 finalRGB = lerp(clippedRGB, current.rgb, blendWeight);
-    float  finalA   = lerp(clippedAlpha, current.a, blendWeight);
-
-    outputTex[DTid.xy] = float4(max(finalRGB, float3(0, 0, 0)), saturate(finalA));
+    // A dense 3x3 neighborhood of this frame's quarter-resolution samples,
+    // not the sparse full-resolution Bayer lattice (which contains no zeros).
+    float4 mean = 0;
+    float4 meanSquare = 0;
+    [unroll]
+    for (int y = -1; y <= 1; ++y) {
+        [unroll]
+        for (int x = -1; x <= 1; ++x) {
+            int2 p = clamp(quarterPixel + int2(x, y), int2(0, 0),
+                           int2(quarterWidth - 1, quarterHeight - 1));
+            float4 s = currentTex.Load(int3(p, 0));
+            s.rgb = RGBtoYCoCg(s.rgb);
+            mean += s;
+            meanSquare += s * s;
+        }
+    }
+    mean /= 9;
+    meanSquare /= 9;
+    float4 extent = varianceGamma * sqrt(max(meanSquare - mean * mean, 0));
+    Texture2D<float4> historyTex = ResourceDescriptorHeap[historySrv];
+    // Clamp sampling to texel centers because s3 is a wrapping sampler.
+    float4 history = historyTex.SampleLevel(linearSampler,
+        clamp(previousUV, 0.5 / size, 1 - 0.5 / size), 0);
+    float3 clipped = ClipToAABB(RGBtoYCoCg(history.rgb), mean.rgb, extent.rgb);
+    output[DTid.xy] = float4(max(YCoCgToRGB(clipped), 0),
+                            saturate(clamp(history.a, mean.a - extent.a, mean.a + extent.a)));
 }
-
-#endif // UZ_BINDLESS
+#endif

@@ -27,6 +27,7 @@
 #include "quaternion.h"
 #include "world.h"
 #include "render_graph_builder.h"
+#include "render_graph_states.h"
 #include "render_graph_resources.h"
 #include "profiler.h"
 #include "rhi.h"
@@ -60,7 +61,8 @@ static void RegisterInitIndirectArgsPass(
     const char* passName,
     CBRingAllocator& cbRing,
     const GPUMesh& mesh0,
-    RHIBufferHandle dstBuffer)
+    RHIBufferHandle dstBuffer,
+    rg::RgStateRegistry* states)
 {
     CBAllocation staging = cbRing.Allocate(sizeof(RHIDrawIndexedIndirectArgs));
     if (!staging.cpuPtr) return;
@@ -74,23 +76,17 @@ static void RegisterInitIndirectArgsPass(
 
     const RHIBufferHandle srcBuf = staging.bufferHandle;
     const uint64_t srcOff = staging.offsetBytes;
-    rgBuilder.AddPass(passName, [srcBuf, srcOff, dstBuffer](rg::RgPassBuilder& pb) {
-        pb.SetExecutionCallback([srcBuf, srcOff, dstBuffer](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
+    rgBuilder.AddPass(passName, [srcBuf, srcOff, dstBuffer, states](rg::RgPassBuilder& pb) {
+        pb.SetExecutionCallback([srcBuf, srcOff, dstBuffer, states](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
             UZ_PROFILE_SCOPE("GpuCull::InitIndirectArgs");
             // Transition indirect args buffer to copy dest.
-            RHIBarrierDesc barrier{};
-            barrier.buffer      = dstBuffer;
-            barrier.stateBefore = RHIResourceState::IndirectArgument;
-            barrier.stateAfter  = RHIResourceState::CopyDst;
-            cmd->ResourceBarrier(&barrier, 1);
+            states->Transition(cmd, dstBuffer, RHIResourceState::CopyDst);
 
             cmd->CopyBuffer(srcBuf, srcOff, dstBuffer, 0,
                             sizeof(RHIDrawIndexedIndirectArgs));
 
             // Transition to UAV for the cull pass to write.
-            barrier.stateBefore = RHIResourceState::CopyDst;
-            barrier.stateAfter  = RHIResourceState::UnorderedAccess;
-            cmd->ResourceBarrier(&barrier, 1);
+            states->Transition(cmd, dstBuffer, RHIResourceState::UnorderedAccess);
         });
     });
 }
@@ -133,10 +129,11 @@ void SceneRenderer::RegisterGeometryPasses(rg::RgBuilder& rgBuilder, FrameContex
                 // Initialize Phase 1 indirect args buffer.
                 RegisterInitIndirectArgsPass(
                     rgBuilder, "GpuCull_InitIndirectArgs_Phase1",
-                    *m_cbRing, m_meshes[0], ctx.indirectArgsBuffer);
+                    *m_cbRing, m_meshes[0], ctx.indirectArgsBuffer, m_rgStates.get());
 
                 // Phase 1 cull dispatch.
                 GpuCullPassDesc phase1Desc{};
+                phase1Desc.states                = m_rgStates.get();
                 phase1Desc.pipeline              = pipelines->GetGpuCull();
                 phase1Desc.cullCBAlloc           = ctx.gpuCullCBAlloc;  // prev-frame HiZ
                 phase1Desc.boundingSphereSrvIndex = ctx.boundingSphereSrvIndex;
@@ -198,10 +195,11 @@ void SceneRenderer::RegisterGeometryPasses(rg::RgBuilder& rgBuilder, FrameContex
                     // Initialize Phase 2 indirect args buffer.
                     RegisterInitIndirectArgsPass(
                         rgBuilder, "GpuCull_InitIndirectArgs_Phase2",
-                        *m_cbRing, m_meshes[0], ctx.indirectArgsBuffer2);
+                        *m_cbRing, m_meshes[0], ctx.indirectArgsBuffer2, m_rgStates.get());
 
                     // Phase 2 cull dispatch — uses current frame's HiZ.
                     GpuCullPassDesc phase2Desc{};
+                    phase2Desc.states                = m_rgStates.get();
                     phase2Desc.pipeline              = pipelines->GetGpuCull();
                     phase2Desc.cullCBAlloc           = ctx.gpuCullCBAlloc2;  // current HiZ
                     phase2Desc.boundingSphereSrvIndex = ctx.boundingSphereSrvIndex;
@@ -348,6 +346,7 @@ void SceneRenderer::RegisterGeometryPasses(rg::RgBuilder& rgBuilder, FrameContex
         // reflections never found a hit.
         if (m_hizMipCount > 0) {
             HiZPyramidPassDesc hizDesc{};
+            hizDesc.states               = m_rgStates.get();
             hizDesc.depthSource          = ctx.depthRes;
             hizDesc.depthSourceTexture   = m_gbuffer.depth;
             hizDesc.depthSourceSrvIndex  = m_gbuffer.depthSRV;
@@ -393,9 +392,9 @@ void SceneRenderer::RegisterGeometryPasses(rg::RgBuilder& rgBuilder, FrameContex
         // Generates per-pixel screen-space motion vectors by reprojecting
         // depth-reconstructed world positions through prevViewProj.
         // @ref camera-only velocity pass
-        if (m_prevViewProjValid && m_gbuffer.velocity.IsValid()) {
+        if (ctx.temporal.matrixValid && m_gbuffer.velocity.IsValid()) {
             VelocityCB velCB{};
-            velCB.prevViewProj          = m_prevViewProj;
+            velCB.prevViewProj          = ctx.temporal.prevViewProj;
             velCB.unjitteredInvViewProj = ctx.unjitteredViewProj.Inverse();
             velCB.screenWidth           = vpWidth;
             velCB.screenHeight          = vpHeight;
@@ -417,6 +416,27 @@ void SceneRenderer::RegisterGeometryPasses(rg::RgBuilder& rgBuilder, FrameContex
             velDesc.bindless        = bindless;
 
             AddVelocityPass(rgBuilder, velDesc);
+
+            const auto& draws = ctx.drawList.GetCommands();
+            if (std::any_of(draws.begin(), draws.end(),
+                [](const DrawCommand& draw) { return draw.hasObjectMotion && IsGIOccluder(draw); })) {
+                VelocityObjectPassDesc objectDesc{};
+                objectDesc.velocityTarget = ctx.velocityRes;
+                objectDesc.depthBuffer = ctx.depthRes;
+                objectDesc.perFrameAlloc = ctx.perFrameAlloc;
+                objectDesc.cbAllocator = m_cbRing.get();
+                objectDesc.drawList = &ctx.drawList;
+                objectDesc.meshes = m_meshes.data();
+                objectDesc.meshCount = static_cast<uint32_t>(m_meshes.size());
+                objectDesc.pipeline = pipelines->GetVelocityObject(false);
+                objectDesc.twoSidedPipeline = pipelines->GetVelocityObject(true);
+                objectDesc.unjitteredViewProj = ctx.unjitteredViewProj;
+                objectDesc.prevViewProj = ctx.temporal.prevViewProj;
+                objectDesc.viewportWidth = vpWidth;
+                objectDesc.viewportHeight = vpHeight;
+                objectDesc.bindless = bindless;
+                AddVelocityObjectPass(rgBuilder, objectDesc);
+            }
         }
     } else {
         // ── Forward: single-pass PBR ────────────────────────────────────

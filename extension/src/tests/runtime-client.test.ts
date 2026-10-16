@@ -6,7 +6,7 @@ import type { WorkerCommand, WorkerResponse } from '../runtime-worker';
 const platform = vi.hoisted(() => ({ fork: vi.fn(), showErrorMessage: vi.fn() }));
 vi.mock('child_process', () => ({ fork: platform.fork }));
 vi.mock('vscode', () => ({ window: { showErrorMessage: platform.showErrorMessage } }));
-import { RuntimeClient } from '../runtime-client';
+import { RuntimeClient, RuntimeClientError } from '../runtime-client';
 
 class Worker extends EventEmitter {
   connected = true;
@@ -45,7 +45,10 @@ describe('RuntimeClient IPC and process lifecycle', () => {
     log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
     client = new RuntimeClient(log as unknown as vscode.LogOutputChannel);
   });
-  afterEach(() => client.dispose());
+  afterEach(() => {
+    client.dispose();
+    vi.useRealTimers();
+  });
 
   it('spawns lazily and correlates concurrent replies regardless of reply order', async () => {
     expect(platform.fork).not.toHaveBeenCalled();
@@ -205,7 +208,7 @@ describe('RuntimeClient IPC and process lifecycle', () => {
     await start;
     const sample = { type: 'stats', fps: 60, frameMs: 16, drawCalls: 3, vertices: 9, triangles: 3 };
     workers[0].emit('message', sample);
-    workers[0].emit('message', { type: 'frame', data: 'AP+A' });
+    workers[0].emit('message', { type: 'frame', data: 'AP+A', key: true });
     workers[0].emit('message', { type: 'log', level: 2, category: 'Scene', message: 'loaded' });
     expect(stats).toHaveBeenCalledWith({
       fps: 60,
@@ -215,14 +218,14 @@ describe('RuntimeClient IPC and process lifecycle', () => {
       triangles: 3,
       frameIndex: 0,
     });
-    expect(frames).toHaveBeenCalledWith('AP+A');
+    expect(frames).toHaveBeenCalledWith('AP+A', true);
     expect(logs).toHaveBeenCalledWith(2, 'Scene', 'loaded');
     const stop = client.stopRenderLoop();
     workers[0].reply();
     await stop;
     client.setLogListener(undefined);
     workers[0].emit('message', sample);
-    workers[0].emit('message', { type: 'frame', data: 'late' });
+    workers[0].emit('message', { type: 'frame', data: 'late', key: false });
     workers[0].emit('message', { type: 'log', level: 4, category: 'GPU', message: 'lost' });
     expect(stats).toHaveBeenCalledOnce();
     expect(frames).toHaveBeenCalledOnce();
@@ -256,7 +259,7 @@ describe('RuntimeClient IPC and process lifecycle', () => {
   it('rejects native failures and synchronous send failures', async () => {
     const command = client.getVersion();
     workers[0].emit('message', { id: 1, ok: false, error: 'addon unavailable' });
-    await expect(command).rejects.toThrow('addon unavailable');
+    await expect(command).rejects.toMatchObject({ code: 'native', message: 'addon unavailable' });
     workers[0].send.mockImplementation(() => {
       throw 'closed channel';
     });
@@ -268,7 +271,10 @@ describe('RuntimeClient IPC and process lifecycle', () => {
 
   it('rejects pending calls when the worker crashes and offers restart', async () => {
     const command = client.getVersion();
-    const rejected = expect(command).rejects.toThrow('exited with code 9');
+    const rejected = expect(command).rejects.toMatchObject({
+      code: 'worker-exit',
+      message: expect.stringContaining('exited with code 9'),
+    });
     platform.showErrorMessage.mockResolvedValue('Restart');
     workers[0].emit('exit', 9, null);
     await rejected;
@@ -304,7 +310,7 @@ describe('RuntimeClient IPC and process lifecycle', () => {
   it('never spawns a worker after disposal', async () => {
     client.dispose();
     client.dispose();
-    await expect(client.getVersion()).rejects.toThrow('disposed');
+    await expect(client.getVersion()).rejects.toMatchObject({ code: 'disposed' });
     expect(platform.fork).not.toHaveBeenCalled();
   });
 
@@ -322,6 +328,107 @@ describe('RuntimeClient IPC and process lifecycle', () => {
       if (code === 0) expect(platform.showErrorMessage).not.toHaveBeenCalled();
     },
   );
+
+  it.each([
+    ['getVersion', (c: RuntimeClient) => c.getVersion(), 10_000],
+    ['init', (c: RuntimeClient) => c.init(), 30_000],
+    ['createViewport', (c: RuntimeClient) => c.createViewport(0, 1, 1), 60_000],
+    ['loadScene', (c: RuntimeClient) => c.loadScene('scene'), 60_000],
+    ['saveScene', (c: RuntimeClient) => c.saveScene('scene'), 30_000],
+  ] as const)('times out %s at its deadline and ignores late replies', async (_name, invoke, budget) => {
+    vi.useFakeTimers();
+    const call = invoke(client);
+    const settled = vi.fn();
+    void call.then(settled, settled);
+    const rejected = expect(call).rejects.toMatchObject({ code: 'timeout' });
+    await vi.advanceTimersByTimeAsync(budget - 1);
+    expect(settled).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await rejected;
+    expect(settled.mock.calls[0][0]).toBeInstanceOf(RuntimeClientError);
+    workers[0].reply('late');
+    expect(settled).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('clears deadlines for successful and native-error replies', async () => {
+    vi.useFakeTimers();
+    const success = client.getVersion();
+    workers[0].reply('v');
+    await expect(success).resolves.toBe('v');
+    expect(vi.getTimerCount()).toBe(0);
+    const failure = client.getBackend();
+    const rejected = expect(failure).rejects.toMatchObject({ code: 'native' });
+    workers[0].emit('message', { id: 2, ok: false, error: 'native failure' });
+    await rejected;
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(['exit', 'dispose', 'restart'] as const)('clears all deadlines on %s', async (event) => {
+    vi.useFakeTimers();
+    const calls = [client.getVersion(), client.getBackend()];
+    const rejected = calls.map((call) =>
+      expect(call).rejects.toMatchObject({ code: event === 'dispose' ? 'disposed' : 'worker-exit' }),
+    );
+    expect(vi.getTimerCount()).toBe(2);
+    if (event === 'exit') workers[0].emit('exit', 0, null);
+    else if (event === 'dispose') client.dispose();
+    else client.restart();
+    await Promise.all(rejected);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('rejects the 65th pending request with backpressure and frees a slot on reply', async () => {
+    vi.useFakeTimers();
+    const calls = Array.from({ length: 64 }, () => client.getVersion());
+    await expect(client.getBackend()).rejects.toMatchObject({ code: 'backpressure' });
+    expect(workers[0].send).toHaveBeenCalledTimes(64);
+    workers[0].reply('v', 0);
+    await calls[0];
+    const next = client.getBackend();
+    workers[0].reply('dx12');
+    await expect(next).resolves.toBe('dx12');
+    for (let i = 1; i < calls.length; i++) workers[0].reply('v', i);
+    await Promise.all(calls);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('drops fire-and-forget input after send returns false until its callback fires', async () => {
+    const version = client.getVersion();
+    workers[0].reply('v');
+    await version;
+    let drained: ((error: Error | null) => void) | undefined;
+    workers[0].send.mockImplementationOnce((_command, callback) => {
+      drained = callback;
+      return false;
+    });
+    client.mouseMove(1, 2);
+    client.mouseButton(1, true);
+    client.key(32, true);
+    client.keyEx(32, false, 0);
+    client.scroll(1);
+    expect(workers[0].send).toHaveBeenCalledTimes(2);
+    drained!(null);
+    client.scroll(2);
+    expect(workers[0].send).toHaveBeenCalledTimes(3);
+    expect(workers[0].send.mock.calls[2][0]).toMatchObject({ cmd: 'scroll', delta: 2 });
+  });
+
+  it('clears deadlines on asynchronous send errors', async () => {
+    vi.useFakeTimers();
+    const first = client.getVersion();
+    workers[0].reply('v');
+    await first;
+    workers[0].send.mockImplementationOnce((_command, callback) => {
+      callback?.(new Error('channel closed'));
+      return false;
+    });
+    await expect(client.getBackend()).rejects.toMatchObject({
+      code: 'worker-exit',
+      message: 'channel closed',
+    });
+    expect(vi.getTimerCount()).toBe(0);
+  });
 
   it('settles failed forks even without an exit event and ignores later errors from them', async () => {
     const pending = client.getVersion();

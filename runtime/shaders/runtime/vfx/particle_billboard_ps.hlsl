@@ -66,6 +66,7 @@ struct PSInput {
     float2 flipbookUV0    : TEXCOORD8;   ///< Atlas UV for current frame (interpolated).
     float2 flipbookUV1    : TEXCOORD9;   ///< Atlas UV for next frame.
     float  flipbookLerp   : TEXCOORD10;  ///< Inter-frame blend factor.
+    float4 currentPositionCS : TEXCOORD11; ///< Unjittered current clip-space position.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -194,6 +195,8 @@ cbuffer VFXBillboardCB : register(b2) {
     uint     spriteChannelMask;     ///< 0=RGBA, 1=R, 2=G, 3=B, 4=A.
     float    vfxTotalTime;          ///< Global total time (s) — same as debug quad.
     uint     _vfxBillboardPad1;
+    float2   renderSize;            ///< Internal render dimensions, not output dimensions.
+    float2   jitterPixels;          ///< Declared for layout; VS removes projection jitter.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -464,14 +467,14 @@ PSOutput main(PSInput input) {
     }
 
     // ── Motion vector output (SV_Target1) ──
-    // Computed from current SV_Position clip-space and the VS-provided
+    // Computed from the VS-provided unjittered current clip-space position and
     // prevPositionCS (which uses prevViewProj * prevWorldPos). TAA / DLSS /
     // FSR use this to reproject the previous frame so fast-moving particles
     // do not leave stale history trails.
     //
     // @ref Karis 2014 "High Quality Temporal Supersampling"
-    // @ref vfx_motion_vectors.hlsli — ComputeMotionVector NDC-to-UV helper
-    output.motionVector = ComputeMotionVector(input.positionCS, input.prevPositionCS);
+    // @ref vfx_motion_vectors.hlsli — current-minus-previous render pixels
+    output.motionVector = ComputeMotionVector(input.currentPositionCS, input.prevPositionCS, renderSize);
 
     // ── Blend mode output (Niagara exact match) ──
     // Each blend mode requires a different alpha treatment to produce correct

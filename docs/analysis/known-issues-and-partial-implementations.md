@@ -18,6 +18,64 @@ of these, read this doc and the linked code locations.
 - `PARTIAL` — builds and runs but known incorrect / incomplete
 - `STUB` — scaffolding only, never integrated / tested
 - `BUG` — enabled but produces wrong output
+- `LANDED` — implemented, enabled (or opt-in) and verified
+
+---
+
+## Capability matrix
+
+Single source of truth for what the renderer actually supports, versus what is
+partial, stub or a known bug. Established 2026-10-15 (audit item 5.3, F-022 part b) and
+reconciled 2026-10-16 against the landed stabilization commits (F-001 42b64396, F-005 e782f6b7,
+F-004 6c1fcbe3 + 46858197, F-002 5834d10f, F-007 ed5521c0, F-011 23c62f5c, F-009 db4e7c82)
+and the cloud rewrite M0-M6. Design: [13-remaining-stabilization-design.md, F-022](project-stabilization/13-remaining-stabilization-design.md).
+
+Rules: `Validation evidence` names a revision plus the test or script that proves the row;
+`untested` is a legal value, blank is not. `Integration point` is the file:line where the
+behaviour is decided, checked against the tree on 2026-10-16. The per-feature sections below
+are the notes behind each row. Every rendering task updates its row in the same change
+(rows flip from "designed" to "LANDED @ sha").
+
+| Feature | Status | Backend | Integration point (file:line) | Validation evidence (revision+test) | Known limits | Owner task |
+|---|---|---|---|---|---|---|
+| TAA | OFF by default (`r.TAA`); implemented | DX12 SM6.6 | frame_setup.cpp:48 | 42b64396: `test_temporal_history_state.cpp` 17/17, frame-95 reflection reference byte-identical; flicker-programme region dumps | history validity now keyed on frame continuity, size, camera cut, upscaler and scene change (F-001); WPO motion still missing (F-002 stage 2) | audit 3.2 (F-001 landed) |
+| TSR | STUB, declared unavailable | DX12 SM6.6 | tsr_upscaler.cpp:28 (`kTsrImplemented = false`) | e782f6b7: `test_upscaler_selection.cpp` 20/20 | `tsr_resolve_cs.hlsl` empty since bd4db199; selecting it falls back to TAA, then None | audit 3.3 (F-005 landed) |
+| FSR2 | STUB without SDK; SDK path untested | DX12 | fsr2_upscaler.cpp:17 (`UZ_FSR2_ENABLED` default 0); :568 stub `IsAvailable` false, :313 SDK `IsAvailable` true | e782f6b7: `test_upscaler_selection.cpp` FSR2 stub guard 20/20; SDK path untested | stub reports unavailable and never becomes the display source | phase2_fsr2-full-integration |
+| DLSS | PARTIAL (SDK builds) | DX12, NVIDIA | dlss_upscaler.cpp:462 (`IsAvailable`, SDK build), :700 (stub, false) | 0f2c2de4: path-agnostic discovery (F-021); e782f6b7: `test_upscaler_selection.cpp` DLSS stub guard 20/20; SDK upscale untested in this programme | RR and FG not integrated; vendor motion-vector scale sign deferred (5834d10f) | audit 3.4 |
+| XeSS | not implemented | none | temporal_upscaler.cpp:38-39 (`UpscalerType::XeSS` returns nullptr) | e782f6b7: `test_upscaler_selection.cpp` 20/20 | none to ship | audit 3.3 |
+| Upscaler selection and display source | LANDED | DX12 | scene_upscaler.cpp:19 (`SetUpscalerType`); frame_setup.cpp:56 (`r.Upscaler.FailoverFrames`, default 3) | e782f6b7: `test_upscaler_selection.cpp` (UpscalerSelection, DisplaySource) 20/20; forced-failure run failed over to None | CVar keeps the requested value, `GetUpscalerType` returns the effective one | audit 3.3 (F-005) |
+| Object velocity | PARTIAL: rigid and skinned LANDED (stage 1); WPO missing | DX12 SM6.6 | velocity_pass.cpp:28 (`AddVelocityObjectPass`), called at frame_geometry.cpp:438 | 5834d10f: `test_velocity_pass.cpp` 15/15 (8 DX12 RG16F readbacks), translating-box and skinned smokes | WPO is stage 2; object pass runs only when `ctx.temporal.matrixValid`; particle vectors now in render pixels | audit 3.4 (F-002 stage 1 landed) |
+| Material-graph context | LANDED (real inputs) | DX12 SM6.6; SM5 vertex colour white | mesh_vs.hlsl:20 (`ConstantBuffer<PushConstants> push : register(b0)`, {vb, packed, color, prevVb}); pushed at gbuffer_pass.cpp:145 (instanced) and :263 (per-draw) | 46858197 (completes 6c1fcbe3): `test_gbuffer.cpp` MaterialContextDraw, `test_gpu_mesh.cpp` GPUMeshColorUpload (GPU-gated, passed in the 7742 suite) | 6c1fcbe3 alone is incoherent (shader reads 4 constants, C++ pushed 2); use 46858197 or later | audit 3.5 (F-004 landed) |
+| Glass (shading model 9) | PARTIAL: thin-slab transmission LANDED | DX12 SM6.6 | translucent_ps.hlsl:188 (`refract(-V, N, 1/ior)`) | ed5521c0: `test_glass_contract.cpp` 8/8 (7 on DX12), checker scene shows the wall through the pane | thin-slab only, front faces; no volume, no other-translucent refraction, no roughness blur, no thickness maps; reuses `heightmapSrvIndex`/`displacementScale` for model 9; audit 3.6 stays open on Sponza panes | audit 3.6 (F-007) |
+| POM | OFF on the binder path | DX12 SM6.6 | constant_buffers.h:413 (POM defaults); gbuffer_per_object_params.h:82 (`GBufferPerObjectParams : PerObjectCB`) | working tree, uncommitted F-022(a) de-dup: ReleaseFast build exit 0, reflection-reference frame 95 byte-identical to the F-005 baseline (capture `E:/UzmiEngine/f022-after-1792160613122` vs `E:/UzmiEngine/f005-after/frames/f_95.png`, max code delta 0, 0 changed channels, 1920x1080) | the binder uploads the PerObjectCB defaults 8 / 32 / 1000 / 2000 instead of zeros at 224-251, but `displacementScale` stays 0, so POM stays off | audit 5.3 (F-022 a) |
+| CB / structured-buffer layout contracts | PARTIAL (5.3a) | DX12 SM6.6 | scripts/rendering/test_cbuffer_layouts.py:215; constant_buffers.h:53; per_frame_params.h:89; gbuffer_per_object_params.h:82; mesh_vs.hlsl:16 (`VertexPacked`) | working tree, uncommitted: Tier A 82/85 (every available required mirror mapped, incl. every PerFrame declaration), Tier B 25/27, Tier C 3/4; inventory 163 declarations = 102 mapped + 61 excluded with an explicit reason, 0 unmapped; both new negative controls reject (PerObject: 4 fields, emissiveColor 176 vs 160; cull: `_pad1` offset 416 vs 272); 12 blocking findings left visible (shader fixes out of scope); build exit 0, default frame 95 byte-identical; native suite 7755 passed (+4), only the 3 pre-existing VfxEditorSlate failures | BUG: 3 VFX PerFrame mirrors (billboard VS, mesh VS/PS) declare exposure at 248 vs canonical 252; BUG: 2 particle-mesh root blocks with `uint[14]` reserved arrays reflect 228 B / 57 DWORDs vs CPU 64 B / 16; BUG: `VertexPacked` `int4` normal/tangent vs CPU `int8_t[4]`, reflected stride 56 vs `sizeof` 32; 6 declarations unavailable to reflection, including gpu_cull_cs.hlsl (empty kernel, no `CullConstants`); `LightGPU` (multi_light.h:74), `InstanceData` (instance_batcher.h:37), `ReflectionProbeGPU` (constant_buffers.h:862), `SdfObjectGpuData` (sdf_types.h:157) have no HLSL element type of that name; `SkinnedVertex` uses an explicit 56-byte ByteAddressBuffer contract, not a structured element | audit 5.3 (F-022 a open, c deferred) |
+| Mesh decals | LANDED | DX12 | gbuffer_pass.cpp:218 (`materialFlags & 0x10`, bit 4, drawn in the decal phase) | 513e2983: `test_mesh_decals.py` 5/5 | albedo blend by opacity only; skipped in depth-only mode (gbuffer_pass.cpp:222) | lighting side item |
+| GPU instancing | OFF; instanced VS unimplemented | DX12 | frame_sync.cpp:45 (`ctx.useInstancing = false`) | no `UZ_INSTANCED` VS exists in runtime/shaders | wrong push constants and mis-keyed batcher until F-018 stage 2 | audit 5.1 (F-018) |
+| GPU occlusion culling (`r.GpuCull`) | STUB: no implemented kernel, no consumer | DX12 SM6.6 | scene_renderer_init.cpp:1106; frame_geometry.cpp:114; gpu_cull_cs.hlsl (empty kernel, no `CullConstants` cbuffer) | untested | the CPU dispatch path exists but the kernel does nothing and nothing reads its buffers | audit 5.1 (F-018 stage 1) |
+| Depth prepass (`r.DepthPrepass`) | OFF; per-draw only | DX12 | frame_setup.cpp:63 | 5470d37f: `test_depth_prepass.py` 5/5 | depth-only GBuffer mode + Equal; mutually exclusive with instancing | lighting B.4c |
+| Post-process chain | PARTIAL | DX12 | frame_postprocess.cpp:260 (TAA + Bloom + Tonemap pipeline), :492 (Bloom), :49 (`r.Tonemap.ChromaAbScale` marked inert) | e782f6b7 display source, `test_upscaler_selection.cpp` DisplaySource; chain audit in [postprocess-chain-status](post-process/postprocess-chain-status.md) | active: Bloom, Tonemap (+ TAA, SSR composite and copy); inert: CAS, FXAA, motion blur, DOF, lens flare, LUT, chromatic aberration | audit 3.8 (F-008) |
+| Path tracer | PARTIAL (diagnostic) | DX12 DXR | frame_lighting.cpp:71 (`r.PathTracer.Enable`, default off), :87 (replaces the lighting) | e933550a (3.7 closed); doc 10, F-006; no automated test | not a parity oracle | none |
+| Shadow cache static/movable | LANDED (per-draw loop) | DX12 | frame_shadows.cpp:55 (pass 2: movable geometry into the dynamic atlas), :85 (`ShadowCacheMode::Uncached` fallback) | untested in this programme | the instanced loop (F-018 stage 2) must filter per batch | audit 5.1 |
+| SM5 / non-bindless | PARTIAL | DX12 SM5 | frame_setup.cpp:74 (`ctx.bindless`) | untested | TAA off, instancing n/a, vertex colour white (F-004) | none |
+| Vulkan, Metal | untested in this programme | Vulkan 1.3, Metal | vulkan_command_list.cpp:751 (`DrawIndexed`); metal_command_list.cpp:618 (`DrawIndexed`) | untested | sources exist, nothing verified here | none |
+| ECS handle validity | LANDED | n/a | world.h:272 (`SlotOf`), world.cpp:18 | db4e7c82: `test_world.cpp` 6 new tests incl. SlotChurn and VersionWrap control, `test_lua_scene_api.cpp` | generation table keyed by slot, 4 B/slot; ABA needs 2^32-1 reuses of one slot | audit 2.1 (F-009) |
+| Owner-thread world mutation | BUG (unsynchronized) | n/a | render_thread.cpp, napi_*.cpp | untested; F-010 design (doc 11) | Node thread mutates RuntimeState while the render thread reads; shutdown use-after-free | audit 2.2 |
+| Transactional scene load | LANDED (validate, then commit) | n/a | scene_loader.cpp:1119 (`LoadSceneEx`), called at runtime.cpp:863 | 23c62f5c: `test_scene_loader.cpp` malformed-JSON and missing-entities negative controls, `test_lua_scene_io_api.cpp` | legacy `LoadScene` wrapper still returns 0 for failure and for an empty scene | audit 2.3 (F-011) |
+| IPC / H.264 streaming | BUG + PARTIAL | n/a | render_thread.cpp, runtime-client.ts, webview | untested; F-020 design (doc 11) | unbounded queues, no deadlines; the webview never converts base64 to bytes, so H.264 never decodes | audit 2.5 |
+| Lighting B.1 per-pass GPU timings | LANDED | DX12 | render_graph_builder.h:184 (per-pass GPU timestamp profiling in `Execute`) | 088b8f40: `test_diag_timing.py` 7/7 | `--diag` only | lighting block B |
+| Lighting B.2 incremental global distance field | LANDED | DX12 SM6.6 | frame_gi_passes.cpp:71 (`r.GI.GDF.RegionalRetrace`) | ce2caa5e, 0a9cc732, ec24a4ce: `test_gdf_incremental.py` (see the index for per-letter results) | regional recompose; history kept outside change boxes | lighting block B |
+| Lighting B.3 async disk-cached mesh SDF bake | LANDED | DX12 | mesh_sdf_bake_queue.h / mesh_sdf_bake_queue.cpp (bake queue, from :1) | 8c4d14b6: `test_sdf_bake_cache.py` 7/11 (C1 138/138 identical) | C2/C4/C5 documented as measurement letters | lighting block B |
+| Lighting B.4 froxel fog | LANDED | DX12 SM6.6 | frame_atmosphere_passes.cpp:31 (`r.VolumetricFog`, default on), :178 | 8851f37e: `test_froxel_fog.py` 12/12, `test_cbuffer_layouts.py` | sun once, shadowed | lighting block B |
+| Lighting B.4b contact shadows | LANDED | DX12 SM6.6 | frame_constants.cpp:60 (`r.ContactShadow.Length`); deferred_lighting_ps.hlsl:619 (`ComputeContactShadow`) | 8aeb8917: `test_contact_shadows.py` 9/9 | reversed-Z linearisation | lighting block B |
+| Lighting B.5 layered SSR | LANDED, `r.SSR` default OFF | DX12 SM6.6 | frame_lighting.cpp:50 (`r.SSR`, default false); frame_gi_passes.cpp:31 (SSR per-pass CVars) | 9f1be63f: `test_layered_reflections.py` 7/7 | off by default; frame_lighting.cpp:49 notes the resolved-history pass produces zero | lighting block B |
+| Lighting B.6 DDGI dedup | LANDED | DX12 DXR | frame_gi_passes.cpp:276 (radiance cache trace and DDGI probe update) | edfd7942: `test_ddgi_dedup.py` 6/6 (+ `test_gi_energy_gpu.ps1`) | needs `r.RayTracing.GI` and a TLAS | lighting block B |
+| Lighting B.7 clustered lights | LANDED | DX12 SM6.6 | frame_constants.cpp:37 (`r.Lights.Clustered`, default on); frame_lighting_pass.cpp:78 | 58340259, 794b632f: `test_clustered_lights.py` 8/9 | 512 / 128 light limits; spot cone added in a side item | lighting block B |
+| Lighting side items: env-MIS specular, sky capture per-channel sun, Sponza recalibration | LANDED | DX12 SM6.6 | deferred_lighting_ps.hlsl:1383 (env-MIS SRV); sky capture sun colour atmosphere_renderer.cpp:151, :164 (`skyComp.sunIlluminance`, per channel) | B.5b ea13ab21: `test_env_mis.py` 8/9; B.5c b8ff5077: `test_sky_capture.py` 5/5; 4501fa74: `test_sponza_recalibration.py` | env-MIS E1 read the old sky value, fixed in B.5c; details in the [block-B index](lighting/uzengine/sponza-lighting-2026-10/lighting-block-b-2026-10.md) | lighting side items |
+| Brixelizer GI (`r.BrixelizerGI`) | LANDED (opt-in, default OFF) | DX12 | frame_gi_passes.cpp:394 | enabled 2026-10-14 (A/B 6.90 dB, +1.26 ms) | needs `uz_brixelizer.dll` and the FFX SDK libs at build | none |
+| Volumetric clouds | LANDED (M0-M6) | DX12 SM6.6 | cloud_raymarch_cs.hlsl:506 via cloud_layers.hlsli:76 (`MarchCloudLayers`) | M1 b5232d3d, M2 8c50c1c0, M3 a1f16cd8, M4 25ce13b0, M1 fix 8efdbf4d, M5 597477f4, M4b c6027060, M6 849e5fef (`test_cbuffer_layouts.py` CloudCB 1024 B, default-unchanged pairs within one code value) | opt-in caveats recorded in 849e5fef; ground shadows gated, default-safe | phase0 clouds-rewrite |
+
+The March 2026 [uzengine-audit.md](rendering-arch/overview/uzengine-audit.md) "production-ready" claim
+is historical and is not evidence for the current tree; this matrix supersedes it.
 
 ---
 
@@ -270,11 +328,15 @@ not run since 2026-04-07 (entry below).
 
 ---
 
-### `r.BrixelizerGI` — `DORMANT` (never constructed since 2026-04-10; task closed as superseded 2026-10-08)
+### `r.BrixelizerGI` — `OFF` by default, functional opt-in on RTX 5080 (verified 2026-10-14)
 **File**: [brixelizer_gi_pass.cpp:50](../../runtime/engine/renderer/passes/gi/brixelizer_gi_pass.cpp)
 **Task**: `.rulebook/tasks/phase0_brixelizer-gi-integration/tasks.md` (reconciliation note: which ticks hold, defects found)
 
-AMD FidelityFX Brixelizer GI (sparse SDF voxel GI + screen-space probes), integrated in source only.
+AMD FidelityFX Brixelizer GI now builds, loads its wrapper, creates both real contexts, and
+contributes diffuse GI in Sponza when opted in. Final 1080p A/B PSNR is 6.904351404 dB;
+measured RTX 5080 frame overhead is 1.259197 ms. See
+[enablement evidence](brixelizer-gi-integration/01-enablement-2026-10-14.md) for commands,
+SRV/target proof, all 12 passing Brixelizer tests, and the remaining numerical-coverage gap.
 
 **Wrong when written (2026-04-07).** This entry read "`OFF` → `ON (via scene CVars)`" and
 "Implementation is **functional** — produces diffuse GI visible in Sponza", and listed three gaps:
@@ -288,7 +350,7 @@ screen or in a dump after that commit, which predates the saturated dump; no com
 dispatched it. The gaps described code that was not running, and the delete-all + re-create-all
 path had already been removed by `29c83ba5`.
 
-**State today:**
+**Historical state verified 2026-10-08 (superseded by the enablement above):**
 - **Not compiled.** `runtime/build.zig:903-912` defines `UZ_BRIXELIZER_ENABLED` (`:929-931`) only
   when the MSVC-built `runtime/thirdparty/amd-fidelityfx-1.1/wrapper/build/bin/uz_brixelizer.dll`
   exists. Nothing in the repo produces it (`scripts/setup.ps1:543-549` only clones SDK v1.1.4), so
@@ -305,9 +367,8 @@ path had already been removed by `29c83ba5`.
   the wrapper only re-exports the function (`wrapper/uz_brixelizer_dll.cpp:112-116`, resolved by
   `brixelizer_loader.cpp:118`).
 
-The GI in use is the SDF radiance cache with the final gather and SDF reflections (next entry), with
-DDGI as the DXR option. The dormant source is kept; removing it is the user's decision (a separate
-task, not opened).
+The default GI remains the SDF radiance cache with final gather and SDF reflections (next entry),
+with DDGI as the DXR option. Brixelizer is opt-in; its default was not changed.
 
 ---
 
@@ -332,9 +393,30 @@ shaders".) Sponza enables it from
 task 05. Brixelizer GI was planned as the alternative path; it is dormant (never constructed since
 2026-04-10, entry above) and its task was closed as superseded on 2026-10-08.
 
+**SDF fixture refresh (2026-10-13):** the two standalone GPU fixtures now bind the
+current 9-DWORD mesh bake and 13-DWORD GDF composite layouts, whole-window regions,
+production toroidal window origins, zero slice offset/band, and WRAP s3.
+`test_sdf_window.ps1 -BvhCompare` passes: all 2,097,152 fp16 voxels are bit-identical
+(mesh128/GDF256, mesh voxel 37.500 cm, combined bias 28.516 cm).
+`test_sdf_gpu.ps1` and `test_sdf_refined_controls.ps1` pass; enclosed/transformed/
+mixed-validity reflection controls have max absolute error 0.000195.
+`test_sdf_reflection_energy.ps1` passes its uniform agreement check with RGB
+Karis/plain ratios (0.9965, 0.9949, 0.9949); layered history retains
+(0.8845, 0.8846, 0.8846), a measured approximately 11.55% energy loss.
+The gate is **unblocked (2026-10-13)**: `test_sdf_surface_origin.ps1` and
+`test_sdf_diffuse_gpu.ps1` now compile. Their wrappers (regenerated on each run from
+the `.ps1` heredocs) supply the 8th `GatherSdfDiffuse` argument `rotationMode` as `0u`,
+the canonical hashed rotation that matches the fixtures' own embedded `GeometricCoverage`
+reference. On the current build (RTX 5080): `test_sdf_diffuse_gpu.ps1` passes every
+sub-test (world reflections max abs error <= 0.000195); `test_sdf_surface_origin.ps1`
+reproduces the carried-over diffuse-path leak below (max abs error 0.009328) and its
+`-Reflections` variant passes (max abs error 0.001984 < 0.002). See [fixture refresh evidence](sdf-gpu-fixture-refresh/01-fixture-refresh.md).
+
 Unresolved (carried over from SponzaTest's handoff and reproduced here on 2026-09-08):
 - 1 of 32 world-reflection rays leaks through the enclosed-box fixture
-  (`scripts/rendering/test_sdf_surface_origin.ps1`, max abs error 0.009328).
+  (`scripts/rendering/test_sdf_surface_origin.ps1`, max abs error 0.009328;
+  reproduced on the current build 2026-10-13 after the compile was unblocked — the
+  diffuse-gather default path only; the `-Reflections` mirror path is clean at 0.001984).
 - An extreme grazing reflection exhausts the 256-step budget
   (`scripts/rendering/test_sdf_dynamic_trace.ps1`, 14/15).
 - ~~Sponza LOD2/LOD3 decal triangles still carry the flipped normals~~ —
@@ -911,6 +993,11 @@ Whether to keep the volume (documented as inert) or remove it, which settles the
 decision N3, owner: `phase0_indoor-lighting-system` (see `docs/guides/indoor-lighting-guide.md`,
 section 4).
 
+**Tail disposition (2026-10-14):** retain the volume as documented inert infrastructure (N3).
+Adding a `LightProbeVolumeComponent` is not a way to brighten an interior; use the active
+radiance cache/DDGI paths or artist-authored local fill lights instead. The tail's render gates
+must measure those active paths, not treat buffer allocation as proof of probe-volume lighting.
+
 ### SkyLight `intensity` / `indirect_lighting_intensity` / lower hemisphere — `OPEN DECISION` (2026-10-08, `phase0_indoor-lighting-system` N1/N2)
 **Files**: [frame_constants.cpp](../../runtime/engine/renderer/frame/frame_constants.cpp) (`:418-454`),
 [deferred_lighting_ps.hlsl](../../runtime/shaders/runtime/lighting/deferred_lighting_ps.hlsl) (`:714-715`),
@@ -961,6 +1048,13 @@ therefore does not depend on N1, but it would change under N2 if the GI writers 
 intensity. No harness measures any of this yet (task item 8.2). Evidence and options: the task's
 `tasks.md` header and `docs/guides/indoor-lighting-guide.md`, section 2. Open, owner:
 `phase0_indoor-lighting-system` (N1, N2 and the related items above).
+
+**Tail disposition (2026-10-14):** document the N1/N2 split rather than change scene lighting.
+Use strictly positive indirect-intensity values when measuring the fallback's scaling; zero
+selects the cubemap fallback described above and is not an ambient-off control. A GI-on interior
+must be checked through its consumed indirect-light/probe-support records, not by sweeping a
+SkyLight setting that never reaches that path. Changing the split remains separate implementation
+work; the documentation tail does not make these settings uniform across lighting paths.
 
 ---
 
@@ -1804,3 +1898,46 @@ G-buffer after the render-loop resize (docs/analysis/rendering-arch/render-graph
 D3D12 debug layer cannot run on this workstation to report them. Stage 0 (the registry, observe only) shipped
 in 9735d401; stages 1-3 (tracked imports, the missing reads, the manual barriers) are open, owner:
 `phase0_render-graph-state-registry`.
+
+## GDF incremental - transient-arrival ghosting (G3e), 2026-10-14
+
+`phase0_lighting-block-b-02-gdf-incremental` shipped its regional knock-on (item 4.1); the
+transient-arrival END-strip peak gate **G3e stays at 8.83 % (target <= 5 %)** as an accepted
+limitation. The optimization that targeted it (4.3: persist each change box a few frames and
+retrace only its probes at a decaying blend) was tried 2026-10-06 and made G3e WORSE
+(7.34 % vs 6.51 % HEAD), so it was reverted. Research follow-up, not yet pursued: per-probe
+transport readback on the arrival frames (measure which probes actually received transport the
+frame the object arrives, and retrace only those) rather than a geometric change-box blend.
+
+## Brixelizer GI enabled; numerical coverage unverified (2026-10-14)
+
+The formerly dormant opt-in path is now built and running. SDK DX12 Release libraries exist at
+`runtime/thirdparty/amd-fidelityfx-1.1/sdk/bin/ffx_sdk/`, and the MSVC wrapper exists at
+`wrapper/build/bin/uz_brixelizer.dll` and is deployed to `runtime/build/bin/uz_brixelizer.dll`.
+The loader binds all 18 exports. Both real contexts create on NVIDIA GeForce RTX 5080.
+
+The context-creation error was diagnosed: `ffxBrixelizerContextCreate` returned
+`-2147483635` (`FFX_ERROR_BACKEND_API_ERROR`), while the actual failed operation was system
+`D3D12SerializeRootSignature`, HRESULT `0x887E0003` (`D3D12_ERROR_INVALID_REDIST`).
+The executable exports `D3D12SDKPath = ".\\D3D12\\"`, but DLL deployment only populated
+the executable directory's root. Deploying the Agility DLLs into `build/bin/D3D12/`
+resolved it; this deployment is now automatic when the Brixelizer build gate is enabled.
+No AMD-only restriction or scratch/ABI mismatch was established.
+
+Final 1920x1080 Sponza captures each exit 0 after 282 frames, screenshot frame 240,
+with no shader compile failure or device-removal error. Actual bake/GI submission
+uses diffuse SRV 36955 and specular SRV 36957 for 138 instances. `brixelizer.diffuse`
+is measured nonzero (min 0.836426, max 63.968750, average 16.763229).
+NumPy/PIL A/B PSNR is 6.904351404 dB, with visibly added interior indirect light.
+Mean GPU frame time is 6.859859 ms on versus 5.600662 ms off, overhead +1.259197 ms;
+the GI pass averages 1.435603 ms over 82 samples. These are RTX 5080 measurements,
+not RTX 4090 claims. An earlier TDR capture was discarded and its condition retried successfully.
+
+Task items 8.1-8.5 are verified. All nine retained API-safety tests and three new real GPU
+tests pass in one final suite run: 7,664 passed, 19 skipped, exactly the three pre-existing
+`VfxEditorSlate.*` failures. Item 8.6 remains unticked: the requested enumerated-test
+coverage argument is recorded, but no native instrumented percentage certifies >=95%;
+allocation/upload failure injection and initialized resizing are not covered.
+`r.BrixelizerGI` remains OFF by default. No commit or archive was made.
+Full commands, artifacts, test names, and limitations:
+[enablement report](brixelizer-gi-integration/01-enablement-2026-10-14.md).

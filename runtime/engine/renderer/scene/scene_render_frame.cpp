@@ -77,36 +77,6 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     // The frame list's recording order is the registry's state timeline; its submits decay buffer states.
     if (m_rgStates) m_rgStates->BindCommandList(cmdList);
 
-    // ── First-frame resource warmup ─────────────────────────────────────
-    // On frame 0, all textures start in Common state. Transition the core
-    // render targets to their expected states so the render graph's barrier
-    // scheduler doesn't see mismatches. This is a one-shot initialization.
-    if (frameIndex == 0) {
-        RHIBarrierDesc warmupBarriers[8] = {};
-        uint32_t bc = 0;
-        auto addTex = [&](RHITextureHandle tex, RHIResourceState target) {
-            if (tex.IsValid() && bc < 8) {
-                warmupBarriers[bc].texture = tex;
-                warmupBarriers[bc].stateBefore = RHIResourceState::Common;
-                warmupBarriers[bc].stateAfter = target;
-                ++bc;
-            }
-        };
-        addTex(m_hdrSceneColor, RHIResourceState::RenderTarget);
-        addTex(m_gbuffer.albedo, RHIResourceState::RenderTarget);
-        addTex(m_gbuffer.normal, RHIResourceState::RenderTarget);
-        // GBuffer_Depth NOT warmed up here — the render graph handles
-        // Common→DepthStencilWrite via its own barrier scheduler.
-        addTex(m_gbuffer.positionWS, RHIResourceState::RenderTarget);
-        addTex(m_gbuffer.emissive, RHIResourceState::RenderTarget);
-        addTex(m_gbuffer.velocity, RHIResourceState::RenderTarget);
-        if (bc > 0) cmdList->ResourceBarrier(warmupBarriers, bc);
-        // Recorded, not emitted again: the registry learns the states these raw barriers set.
-        if (m_rgStates) {
-            for (uint32_t i = 0; i < bc; ++i) m_rgStates->Set(warmupBarriers[i].texture, warmupBarriers[i].stateAfter);
-        }
-    }
-
     // ── Pixel Debug: clear counter buffer ────────────────────────────────
     if (m_pixelDebugSystem && m_pixelDebugSystem->IsEnabled()) {
         m_pixelDebugSystem->BeginFrame(cmdList);
@@ -162,31 +132,6 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
                 m_rtUVTestPass->GetOutputSRVIndex(),
                 VisDisplayMode::Color, m_renderWidth, m_renderHeight);
         }
-    }
-
-    // ── Volumetric Cloud Compute (inline on main command list) ─────────
-    // Noise textures are loaded from disk (precomputed .bin files).
-    // Weather/raymarch/temporal run as compute dispatches directly on the
-    // main command list before the render graph. The cloud pass manages
-    // its own barriers internally (SRV→UAV→SRV on the output texture),
-    // so no external synchronization is needed.
-    if (m_pendingCloudDispatch && m_cloudPass && m_cloudPass->IsInitialized()
-        && m_pendingCloudInput) {
-
-        if (m_gpuProfileEnabled) {
-            m_device->GpuProfilerBeginTimestamp(cmdList, "CloudCompute");
-        }
-
-        m_cloudPass->SetVFS(vfs);
-        m_cloudPass->Execute(cmdList, *m_cbRing, *m_pendingCloudInput);
-
-        if (m_gpuProfileEnabled) {
-            m_device->GpuProfilerEndTimestamp(cmdList, "CloudCompute");
-        }
-
-        m_cloudOutputSrv = m_cloudPass->GetCloudOutputSrv();
-        m_pendingCloudDispatch = false;
-        m_cloudOutputReady = true;
     }
 
     // ── VFX Emitter Sync ───────────────────────────────────────────────
@@ -249,12 +194,6 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     // when m_gpuProfileEnabled is set (wraps each pass callback).
     rgBuilder.Compile();
 
-    // Export end-of-frame states for next frame's imports.
-    m_hdrEndState    = rgBuilder.GetFinalState(ctx.hdrRes);
-    m_depthEndState  = rgBuilder.GetFinalState(ctx.depthRes);
-    m_albedoEndState = rgBuilder.GetFinalState(ctx.albedoRes);
-    m_normalEndState = rgBuilder.GetFinalState(ctx.normalRes);
-
     rgBuilder.Execute(cmdList);
 
     // Shadow Atlas Diagnostic Readback (shadowDebugMode >= 2).
@@ -276,6 +215,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     {
         AtmosphereFrameContext atmoCtx{};
         atmoCtx.device              = m_device;
+        atmoCtx.states              = m_rgStates.get();
         atmoCtx.world               = world;
         atmoCtx.cbRing              = m_cbRing.get();
         atmoCtx.pipelines           = ctx.pipelines;
@@ -317,12 +257,17 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     }
 
     // ── Pixel Debug: compute post-pass (reads GBuffer + HDR, writes records) ─
-    // Dispatched as a single-thread compute shader after the render graph so
-    // all GBuffer/HDR textures are in SRV state. Must run BEFORE EndFrame()
+    // Dispatched as a single-thread compute shader after the render graph.
+    // Transition the inputs to SRV before reading them. Must run BEFORE EndFrame()
     // which copies the records buffer to the readback staging buffer.
     if (m_pixelDebugSystem && m_pixelDebugSystem->IsEnabled() && ctx.bindless) {
         auto pdPipeline = ctx.pipelines->GetPixelDebugCompute();
         if (pdPipeline.IsValid()) {
+            m_rgStates->Transition(cmdList, m_gbuffer.albedo, RHIResourceState::ShaderResource);
+            m_rgStates->Transition(cmdList, m_gbuffer.normal, RHIResourceState::ShaderResource);
+            m_rgStates->Transition(cmdList, m_gbuffer.depth, RHIResourceState::ShaderResource);
+            m_rgStates->Transition(cmdList, m_gbuffer.emissive, RHIResourceState::ShaderResource);
+            m_rgStates->Transition(cmdList, m_hdrSceneColor, RHIResourceState::ShaderResource);
             const auto& pdConfig = m_pixelDebugSystem->GetConfig();
             const uint32_t pdConstants[10] = {
                 m_gbuffer.albedoSRV,
@@ -339,6 +284,14 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
 
             cmdList->SetPipeline(pdPipeline);
             cmdList->SetRootConstants(0, pdConstants, 10);
+            // SetupFrameData can submit the list after BeginFrame, decaying these buffers.
+            for (auto buffer : {m_pixelDebugSystem->GetCounterBuffer(), m_pixelDebugSystem->GetRecordsBuffer()}) {
+                if (m_rgStates->Get(buffer) == RHIResourceState::UnorderedAccess) {
+                    m_rgStates->UavBarrier(cmdList, buffer);
+                } else {
+                    m_rgStates->Transition(cmdList, buffer, RHIResourceState::UnorderedAccess);
+                }
+            }
             cmdList->Dispatch(1, 1, 1);
         }
     }

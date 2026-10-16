@@ -95,7 +95,7 @@ static_assert(sizeof(ParticleBillboardIndices) == 48,
 /// Layout MUST match the HLSL cbuffer VFXBillboardCB byte-for-byte.
 /// VS reads invView + emitter params; PS reads rendering params.
 /// Uses float arrays instead of Mat4 for portability.
-/// Total: 304 bytes (19 x float4).
+/// Total: 336 bytes (21 x float4).
 struct VFXBillboardCB {
     // ── VS data: emitter parameters (bytes 0-159) ───────────────────────
     float invView[16]              = {};    ///<  0: Inverse view matrix (rows 0,1 = camera right/up).
@@ -162,8 +162,12 @@ struct VFXBillboardCB {
     uint32_t spriteChannelMask     = 0;     ///< 308: 0=RGBA pass-through, 1=R, 2=G, 3=B, 4=A.
     float    vfxTotalTime          = 0.0f;  ///< 312: Global total time (s) for flipbook cycling.
     uint32_t _vfxBillboardPad1     = 0;     ///< 316
+    float    renderWidth          = 0.0f;  ///< 320: Internal render width for motion vectors.
+    float    renderHeight         = 0.0f;  ///< 324: Internal render height for motion vectors.
+    float    jitterX              = 0.0f;  ///< 328: Projection jitter in render pixels.
+    float    jitterY              = 0.0f;  ///< 332
 };
-static_assert(sizeof(VFXBillboardCB) == 320, "VFXBillboardCB must be 320 bytes to match HLSL layout");
+static_assert(sizeof(VFXBillboardCB) == 336, "VFXBillboardCB must be 336 bytes to match HLSL layout");
 
 // ---------------------------------------------------------------------------
 // EmitterRenderData -- per-emitter data for the render pass

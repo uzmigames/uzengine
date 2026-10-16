@@ -10,6 +10,7 @@
 #include "scene_loader.h"
 #include "world.h"
 #include "platform_window.h"
+#include "cvar.h"
 
 #include <cstdlib>
 #include <cstring>
@@ -45,6 +46,11 @@ bool Application::InitPlatform() {
 
     RHIDeviceDesc deviceDesc{};
     deviceDesc.backend = m_config.backend.value_or(RHIBackend::DX12);
+    deviceDesc.debugPoisonByte = m_config.poisonAllocations;
+    UZ_CVAR_INT("r.Debug.PoisonAllocations", 0,
+        "Mirror of --poison-allocations; the fill byte. Set by the CLI, read by nothing - recorded in capture manifests.",
+        0, 255);
+    CVarRegistry::Get().Set("r.Debug.PoisonAllocations", m_config.poisonAllocations);
 #ifdef NDEBUG
     deviceDesc.enableValidation = false;
 #else
@@ -194,6 +200,7 @@ void Application::FlushPendingSceneLoad() {
     // Pass the VFS so "prefab" entities resolve their referenced assets —
     // the VFS-less overload silently skips prefab instantiation.
     const size_t count = uz::LoadScene(*m_world, bytes, path, m_vfs.get());
+    if (m_renderer) m_renderer->InvalidateTemporalHistory(TemporalReset::SceneChanged);
     UZ_LOG(App, Info, "Application: scene '{}' loaded ({} entities)", path, count);
 }
 

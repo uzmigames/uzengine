@@ -495,21 +495,6 @@ IBLBaker::BakeResult IBLBaker::BakeEnvironment(uint32_t envCubemapSrvIndex, RHIT
 
     cmdList->Begin();
 
-    // ── Transition env cubemap UAV → SRV for SM5 reads ────────────────
-    // On SM6.6+ bindless, textures are accessed via ResourceDescriptorHeap
-    // which doesn't require explicit state tracking. On SM5/SM6.0, the
-    // cubemap was left in UnorderedAccess by the sky capture pass — we must
-    // transition to ShaderResource before reading it as an SRV in the
-    // compute shader's descriptor table.
-    if (!m_device->IsBindless()) {
-        RHIBarrierDesc envBarrier = {};
-        envBarrier.texture = envCubemapTexture;
-        envBarrier.buffer = RHIBufferHandle::Invalid();
-        envBarrier.stateBefore = RHIResourceState::UnorderedAccess;
-        envBarrier.stateAfter = RHIResourceState::ShaderResource;
-        cmdList->ResourceBarrier(&envBarrier, 1);
-    }
-
     // ── Irradiance dispatch ─────────────────────────────────────────────
     cmdList->SetPipeline(m_irradiancePipeline);
 
@@ -536,6 +521,18 @@ IBLBaker::BakeResult IBLBaker::BakeEnvironment(uint32_t envCubemapSrvIndex, RHIT
                irradGroupsXY, irradGroupsXY, envCubemapSrvIndex,
                irradUavIndex, kIrradianceSize);
         loggedIrradDispatch = true;
+    }
+
+    // Common -> UAV before the compute write: irradianceTex is created in Common and D3D12 does
+    // not implicitly promote a non-simultaneous-access texture Common->UAV, so the UAV->SRV
+    // barrier below would otherwise mismatch (GBV id 527). phase0 frame-allocation / design 7.4.
+    {
+        RHIBarrierDesc irradInit;
+        irradInit.texture = irradianceTex;
+        irradInit.buffer = RHIBufferHandle::Invalid();
+        irradInit.stateBefore = RHIResourceState::Common;
+        irradInit.stateAfter = RHIResourceState::UnorderedAccess;
+        cmdList->ResourceBarrier(&irradInit, 1);
     }
 
     // Dispatch (32/8, 32/8, 6) = (4, 4, 6) — one thread group per 8x8 tile per face
@@ -594,6 +591,17 @@ IBLBaker::BakeResult IBLBaker::BakeEnvironment(uint32_t envCubemapSrvIndex, RHIT
             if (mip == kPrefilteredMipLevels - 1) {
                 loggedPrefilterMips = true;
             }
+        }
+
+        // Common -> UAV before the compute write (per-mip texture created in Common; no implicit
+        // Common->UAV promotion for non-simultaneous textures). phase0 frame-allocation / design 7.4.
+        {
+            RHIBarrierDesc mipInit;
+            mipInit.texture = prefilteredMipTextures[mip];
+            mipInit.buffer = RHIBufferHandle::Invalid();
+            mipInit.stateBefore = RHIResourceState::Common;
+            mipInit.stateAfter = RHIResourceState::UnorderedAccess;
+            cmdList->ResourceBarrier(&mipInit, 1);
         }
 
         cmdList->Dispatch(groupsXY, groupsXY, 6);
@@ -725,16 +733,6 @@ IBLBaker::IrradianceResult IBLBaker::BakeIrradianceOnly(uint32_t envCubemapSrvIn
 
     cmdList->Begin();
 
-    // SM5 path: transition env cubemap to SRV
-    if (!m_device->IsBindless() && envCubemapTexture.IsValid()) {
-        RHIBarrierDesc envBarrier = {};
-        envBarrier.texture = envCubemapTexture;
-        envBarrier.buffer = RHIBufferHandle::Invalid();
-        envBarrier.stateBefore = RHIResourceState::UnorderedAccess;
-        envBarrier.stateAfter = RHIResourceState::ShaderResource;
-        cmdList->ResourceBarrier(&envBarrier, 1);
-    }
-
     cmdList->SetPipeline(m_irradiancePipeline);
 
     const uint32_t irradConstants[2] = { envCubemapSrvIndex, kIrradianceSize };
@@ -751,6 +749,17 @@ IBLBaker::IrradianceResult IBLBaker::BakeIrradianceOnly(uint32_t envCubemapSrvIn
     UZ_LOG(Renderer, Info,
            "IBLBaker: irradiance-only dispatch — groups=({},{},6), envSRV={}, UAV={}",
            groupsXY, groupsXY, envCubemapSrvIndex, irradUavIndex);
+
+    // Common -> UAV before the compute write (irradianceTex created in Common; D3D12 has no
+    // implicit Common->UAV promotion for non-simultaneous textures). phase0 frame-allocation / 7.4.
+    {
+        RHIBarrierDesc irradInit;
+        irradInit.texture = irradianceTex;
+        irradInit.buffer = RHIBufferHandle::Invalid();
+        irradInit.stateBefore = RHIResourceState::Common;
+        irradInit.stateAfter = RHIResourceState::UnorderedAccess;
+        cmdList->ResourceBarrier(&irradInit, 1);
+    }
 
     cmdList->Dispatch(groupsXY, groupsXY, 6);
 
@@ -1106,6 +1115,16 @@ IBLBaker::PmremResult IBLBaker::PmremToCubemap(uint32_t atlasSrvIndex,
 
         // Dispatch: (lodFaceSize/8, lodFaceSize/8, 6)
         const uint32_t groupsXY = (lodFaceSize + kThreadGroupSize - 1) / kThreadGroupSize;
+        // Common -> UAV before the compute write (per-LOD texture created in Common; no implicit
+        // Common->UAV promotion for non-simultaneous textures). phase0 frame-allocation / 7.4.
+        {
+            RHIBarrierDesc lodInit;
+            lodInit.texture = mipTextures[lod];
+            lodInit.buffer = RHIBufferHandle::Invalid();
+            lodInit.stateBefore = RHIResourceState::Common;
+            lodInit.stateAfter = RHIResourceState::UnorderedAccess;
+            cmdList->ResourceBarrier(&lodInit, 1);
+        }
         cmdList->Dispatch(groupsXY, groupsXY, 6);
 
         UZ_LOG(Renderer, Info,

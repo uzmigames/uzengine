@@ -57,6 +57,7 @@ struct ApplicationConfig {
 
     /// Default render path for SceneRenderer.
     RenderPath renderPath = RenderPath::Deferred;
+    uint8_t poisonAllocations = 0;   ///< --poison-allocations: fill fresh GPU allocations with this byte (0 = off).
 
     // ── Asset System ─────────────────────────────────────────────────────
 
@@ -83,6 +84,11 @@ struct ApplicationConfig {
 
     /// Frames to wait after OnStart() before capturing the screenshot.
     uint32_t screenshotFrame = 5;
+
+    /// When true, --screenshot-frame set an explicit absolute capture frame;
+    /// capture at exactly that frame, bypassing the scene-loaded auto-trigger
+    /// (needed for script-loaded environments and path-tracer accumulation).
+    bool captureAtExplicitFrame = false;
 
     /// If non-empty, capture all debug view modes and compose into a labeled grid PNG.
     std::string allModesOutputPath;

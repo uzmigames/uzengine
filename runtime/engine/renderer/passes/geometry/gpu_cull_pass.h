@@ -36,6 +36,7 @@
 
 namespace uz::rg {
 class RgBuilder;
+class RgStateRegistry;
 } // namespace uz::rg
 
 namespace uz {
@@ -82,6 +83,7 @@ static_assert(sizeof(GpuCullConstants) == 288,
 /// # Thread Safety
 /// NOT thread-safe. Must be populated from the render thread only.
 struct GpuCullPassDesc {
+    rg::RgStateRegistry* states = nullptr;
     // ── Pipeline ────────────────────────────────────────────────────────
 
     /// Compute PSO for the gpu_cull_cs.hlsl shader.

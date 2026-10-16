@@ -140,6 +140,10 @@ public:
     /// The returned pointer is valid for the lifetime of the upscaler.
     [[nodiscard]] virtual const char* GetName() const noexcept = 0;
 
+    /// True when this build has an implemented backend. No device is needed;
+    /// Init validates whether it can run on the actual device.
+    [[nodiscard]] virtual bool IsAvailable() const noexcept = 0;
+
     /// Returns the minimum supported screen percentage.
     /// For TSR this is typically 50% (2x upscale). For TAA it is 100% (no upscale).
     [[nodiscard]] virtual float GetMinScreenPercentage() const noexcept = 0;
@@ -152,11 +156,12 @@ public:
 
     /// Initializes GPU resources (compute pipelines, intermediate buffers).
     /// Called once after the RHI device is fully initialized.
+    /// Returns false on failure, leaving the object in the Shutdown state.
     ///
     /// @param device    The RHI device for resource creation.
     /// @param pipelines The pipeline library for compute shader compilation.
     /// @param cbRing    The constant buffer ring allocator for per-frame CB uploads.
-    virtual void Init(IRHIDevice* device, PipelineLibrary* pipelines, CBRingAllocator* cbRing) = 0;
+    [[nodiscard]] virtual bool Init(IRHIDevice* device, PipelineLibrary* pipelines, CBRingAllocator* cbRing) = 0;
 
     /// Releases all GPU resources. Called during engine shutdown.
     /// Safe to call multiple times (subsequent calls are no-ops).
@@ -179,7 +184,8 @@ public:
     ///
     /// @param cmd   The command list to record dispatches on.
     /// @param input Per-frame input data (textures, jitter, resolution).
-    virtual void Execute(IRHICommandList* cmd, const UpscalerInput& input) = 0;
+    /// Returns true iff a history write was recorded.
+    virtual bool Execute(IRHICommandList* cmd, const UpscalerInput& input) = 0;
 
     // --- Non-copyable (prevent slicing) ---
 
@@ -196,8 +202,8 @@ public:
 
 /// Creates a temporal upscaler of the specified type.
 ///
-/// Returns nullptr for `UpscalerType::None` or unimplemented vendor
-/// upscalers (FSR2, DLSS, XeSS).
+/// Returns nullptr for `UpscalerType::None`, XeSS, or unknown types.
+/// SDK-less FSR2 and DLSS instances report IsAvailable() == false.
 ///
 /// @param type The upscaler algorithm to instantiate.
 /// @return Owning pointer to the upscaler, or nullptr if the type is

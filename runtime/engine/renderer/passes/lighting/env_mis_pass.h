@@ -29,6 +29,7 @@ class IRHIDevice;
 class IRHICommandList;
 class ShaderManager;
 class EnvMapSampler;
+namespace rg { class RgStateRegistry; }
 
 /// GPU resources and dispatch logic for the env MIS temporal accumulation pass.
 class EnvMISPass {
@@ -40,6 +41,8 @@ public:
 
     EnvMISPass(const EnvMISPass&) = delete;
     EnvMISPass& operator=(const EnvMISPass&) = delete;
+
+    void SetStateRegistry(rg::RgStateRegistry* states) { m_states = states; }
 
     /// Initialize pipeline and resources.
     [[nodiscard]] bool Init(IRHIDevice* device, ShaderManager* shaderMgr,
@@ -87,6 +90,7 @@ private:
     [[nodiscard]] bool EnsurePipeline();
 
     IRHIDevice*    m_device    = nullptr;
+    rg::RgStateRegistry* m_states = nullptr;
     ShaderManager* m_shaderMgr = nullptr;
 
     // ── Compute pipeline ─────────────────────────────────────────────────

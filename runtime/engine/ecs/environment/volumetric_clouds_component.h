@@ -37,7 +37,9 @@
 #include "vector3.h"
 #include "../core/dirty_flags.h"
 
+#include <array>
 #include <cstdint>
+#include <string>
 
 namespace uz {
 
@@ -59,6 +61,33 @@ enum class TracingMaxDistanceMode : uint8_t {
 /// VolumetricCloudComponent conventions and avoid floating-point precision
 /// issues at planetary scale. Wind velocity is also in km/s.
 struct VolumetricCloudsComponent : public CBDirtyMixin {
+    /// Explicit weather-channel layer. Altitude and height are in kilometers.
+    struct CloudLayer {
+        struct DensityProfile {
+            float exp = 0.0f;
+            float expExponent = 0.0f;
+            float linear = 0.0f;
+            float constant = 1.0f;
+        };
+
+        uint32_t channel = 0;
+        float altitude = 7.0f;
+        float height = 6.0f;
+        float densityScale = 1.0f;
+        float shapeAmount = 1.0f;
+        float detailAmount = 1.0f;
+        float weatherExponent = 1.0f;
+        float shapeAlteringBias = 0.0f;
+        DensityProfile densityProfile{};
+    };
+
+    std::array<CloudLayer, 4> layers{};
+    uint32_t layerCount = 1;
+    /// False preserves the legacy single-shell geometry and density model.
+    bool useExplicitLayers = false;
+    /// Optional artist-authored linear RGBA weather texture; empty is uniform one.
+    std::string weatherTexturePath;
+
     // ── Cloud Layer Geometry ─────────────────────────────────────────────
 
     /// Bottom altitude of the cloud layer in km above sea level.
@@ -121,11 +150,17 @@ struct VolumetricCloudsComponent : public CBDirtyMixin {
 
     // ── Multi-Scatter Approximation ──────────────────────────────────────
 
-    /// Ambient light multiplier for cloud interiors.
-    /// @source Schneider 2015 — multi-scatter ambient approximation.
-    /// Prevents fully black cloud bases by simulating multi-bounce scattering
-    /// with a constant ambient term scaled by this value.
+    /// Sky irradiance scale for the height-dependent isotropic sky source.
+    /// The legacy serialized name is retained; multiple scattering is evaluated
+    /// separately using optical depth toward the sun.
     float ambientMultiplier = 6.0f;
+
+    /// Optional Beer-powder attenuation. Zero disables the effect.
+    float powderScale = 0.0f;
+    float powderExponent = 2.0f;
+
+    /// Oz/Kulla scattering orders including direct light, clamped to [1,8].
+    uint32_t multiScatterOctaves = 8;
 
     // ── Ray March Parameters ─────────────────────────────────────────────
 
@@ -137,9 +172,20 @@ struct VolumetricCloudsComponent : public CBDirtyMixin {
     /// More steps = higher quality but more expensive. 64 is a good balance.
     uint32_t primarySteps = 48;
 
+    /// Adaptive march distances in km. The shader always caps the iteration count.
+    float minStepSize = 0.01f;
+    float maxStepSize = 0.5f;
+    float perspectiveStepScale = 1.006f;
+    float jitterScale = 1.0f;
+
     /// Number of light march steps toward the sun at each primary step.
     /// Used to compute in-scattering and shadow self-occlusion. 6 is typical.
     uint32_t lightSteps = 6;
+
+    // Beer shadow map configuration. Distances use cloud-space kilometers.
+    uint32_t shadowCascadeCount = 2;
+    uint32_t shadowResolution = 512;
+    float shadowDistance = 50.0f;
 
     // ── Tracing Quality ────────────────────────────────────────────────────
 

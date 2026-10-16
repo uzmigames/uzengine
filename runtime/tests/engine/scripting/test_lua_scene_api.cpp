@@ -124,6 +124,30 @@ TEST_F(LuaSceneAPITest, FindReturnsLightuserdata) {
                          "assert(type(e) == 'userdata', 'expected userdata, got ' .. type(e))"));
 }
 
+/// Regression (F-009): after a slot is destroyed and reused, uz.scene.find must
+/// return the LIVE handle (packed id + World generation), not a slot-only handle.
+/// The old hand-rolled reconstruction built id = entt::to_entity(slot) + version+1,
+/// which equals the packed id only while the slot's version is 0; after one recycle
+/// (version 1) the returned handle resolved to the wrong (stale) entity, so
+/// get_position could not read the live occupant's position.
+TEST_F(LuaSceneAPITest, FindEntityByName_AfterSlotRecycle_ReturnsWorldValidHandle) {
+    uz::Entity first = CreateNamedEntity("recycled", {1.0f, 1.0f, 1.0f});
+    world_.DestroyEntity(first);
+    // Second occupant reuses the same slot at EnTT version 1; its packed id differs
+    // from the bare slot index.
+    uz::Entity second = CreateNamedEntity("recycled", {5.0f, 6.0f, 7.0f});
+    ASSERT_TRUE(world_.IsValid(second));
+    ASSERT_FALSE(world_.IsValid(first)) << "sanity: old handle is stale";
+
+    EXPECT_TRUE(DoString(
+        "local e = uz.scene.find('recycled')\n"
+        "assert(e ~= nil, 'find returned nil after recycle')\n"
+        "px, py, pz = uz.scene.get_position(e)\n"));
+    EXPECT_NEAR(EvalNumber("px"), 5.0, 0.01);
+    EXPECT_NEAR(EvalNumber("py"), 6.0, 0.01);
+    EXPECT_NEAR(EvalNumber("pz"), 7.0, 0.01);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // uz.scene.get/set_position
 // ─────────────────────────────────────────────────────────────────────────────

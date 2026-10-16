@@ -59,15 +59,16 @@ void Application::ParseArgs(int argc, char* argv[]) {
         if (std::strcmp(argv[i], "--backend") == 0 && i + 1 < argc) {
             RHIBackend backend{};
             if (ParseBackendArg(argv[++i], backend)) m_config.backend = backend;
+        } else if (std::strcmp(argv[i], "--poison-allocations") == 0 && i + 1 < argc) {
+            m_config.poisonAllocations = static_cast<uint8_t>(std::strtoul(argv[++i], nullptr, 0));
         } else if (std::strcmp(argv[i], "--sm") == 0 && i + 1 < argc) {
             ShaderModel sm{};
             if (ParseShaderModelArg(argv[++i], sm)) m_config.shaderModel = sm;
         } else if (std::strcmp(argv[i], "--screenshot") == 0 && i + 1 < argc) {
             m_config.screenshotPath = argv[++i];
         } else if (std::strcmp(argv[i], "--screenshot-frame") == 0 && i + 1 < argc) {
-            // Deprecated — screenshot now auto-triggers after scene fully loads.
-            // Argument consumed but ignored.
-            ++i;
+            m_config.screenshotFrame = static_cast<uint32_t>(std::atoi(argv[++i]));
+            m_config.captureAtExplicitFrame = true;
         } else if (std::strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
             m_config.maxFrames = static_cast<uint32_t>(std::atoi(argv[++i]));
         } else if (std::strcmp(argv[i], "--view-mode") == 0 && i + 1 < argc) {
@@ -166,6 +167,13 @@ void Application::ParseArgs(int argc, char* argv[]) {
     }
     if (m_screenshotBase64 && m_config.maxFrames == 0) {
         m_config.maxFrames = 500;
+    }
+
+    // --screenshot-frame N: render at least to that absolute frame so a
+    // script-loaded environment and path-tracer accumulation are ready.
+    if (m_config.captureAtExplicitFrame
+        && m_config.maxFrames < m_config.screenshotFrame + 3) {
+        m_config.maxFrames = m_config.screenshotFrame + 3;
     }
 
     // --screenshot-stdout implies --headless (LLM doesn't need a visible window)

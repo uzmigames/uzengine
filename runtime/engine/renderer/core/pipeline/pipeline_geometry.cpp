@@ -20,6 +20,40 @@ UZ_DECLARE_LOG_CATEGORY(Renderer);
 
 namespace uz {
 
+RHIPipelineHandle PipelineLibrary::GetVelocityObject(bool twoSided) {
+    if (!m_initialized) return RHIPipelineHandle::Invalid();
+    auto& pipeline = m_velocityObject[twoSided ? 1 : 0];
+    if (pipeline != RHIPipelineHandle::Invalid()) return pipeline;
+    if (!m_velocityObjectVS.IsValid())
+        m_velocityObjectVS = m_shaderMgr->CreateShader(EngineShader::VelocityObjectVS, RHIShaderStage::Vertex);
+    if (!m_velocityObjectPS.IsValid())
+        m_velocityObjectPS = m_shaderMgr->CreateShader(EngineShader::VelocityObjectPS, RHIShaderStage::Pixel);
+    if (!m_velocityObjectVS.IsValid() || !m_velocityObjectPS.IsValid()) {
+        pipeline = RHIPipelineHandle::Failed();
+        return pipeline;
+    }
+    RHIGraphicsPipelineDesc desc{};
+    desc.vertexShader = m_velocityObjectVS;
+    desc.pixelShader = m_velocityObjectPS;
+    desc.topology = RHIPrimitiveTopology::TriangleList;
+    desc.rasterizer.cullMode = twoSided ? RHICullMode::None : RHICullMode::Back;
+    desc.depthStencil.depthEnable = true;
+    desc.depthStencil.depthWrite = false;
+    desc.depthStencil.depthFunc = RHICompareFunc::Equal;
+    desc.depthStencilFormat = RHIFormat::D32Float;
+    desc.renderTargetCount = 1;
+    desc.renderTargetFormats[0] = RHIFormat::RG16Float;
+    desc.debugName = twoSided ? "VelocityObject_TwoSided" : "VelocityObject";
+    const auto layout = VertexLayout::Standard();
+    if (!m_device->IsBindless()) {
+        desc.inputElements = layout.elements;
+        desc.inputElementCount = layout.count;
+        desc.vertexStride = layout.stride;
+    }
+    pipeline = CreateCachedPipeline(desc);
+    return pipeline;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Pipeline Getters
 // ─────────────────────────────────────────────────────────────────────────────

@@ -47,7 +47,18 @@ cbuffer TaaCB : register(b2) {
     uint   reconstructionMode;  ///< CVar r.TAA.ReconstructionMode (0 = production).
     uint   clampMode;           ///< CVar r.TAA.ClampMode (0 = production).
     uint   blendMode;           ///< CVar r.TAA.BlendMode (0 = production).
-    uint   _padModes;
+    uint   historyReadMode;
+    uint   clampAverageFrames;
+    uint   frameIndex;
+    uint   clampFreezeFrame;
+    uint   stableReconEnabled;    ///< CVar r.TAA.StableRecon (0 = production until gates pass).
+    uint   stableReconReset;      ///< 1 on first frame / after resize (history.a invalid).
+    float  stableReconTolerance;  ///< CVar r.TAA.StableReconTolerance (relative luma, 0.02).
+    float  stableReconVelocityPx; ///< CVar r.TAA.StableReconVelocityPx (gate fades to 0, 4.0).
+    uint   flipBlendEnabled;      ///< CVar r.TAA.FlipBlend (0 = production until gates pass).
+    float  flipIsolationRatio;    ///< CVar r.TAA.FlipBlendIsolationRatio (firefly guard, 2.0).
+    float  flipVelocityPx;        ///< CVar r.TAA.FlipBlendVelocityPx (gate fades to 0, 4.0).
+    float  flipBlendWeight;       ///< CVar r.TAA.FlipBlendWeight (-1 = inherit CurrentFrameWeight).
 };
 
 SamplerState LinearClampSampler : register(s0);
@@ -200,6 +211,10 @@ void main(uint2 DTid : SV_DispatchThreadID)
     // 3x3 with the same sample-position-aware weights.
     float3 filteredColor = float3(0, 0, 0);
     float totalWeight = 0.0;
+    // FlipBlend: a parallel spatial-only (no HDR weighting) plus-filter sum, used at coverage-flip
+    // pixels where the HDR weighting of a dark neighbour tap is what drains the bright glass energy.
+    float3 filteredSpatial = float3(0, 0, 0);
+    float totalSpatial = 0.0;
     // Region dump (diagnostics): the weight applied to each plus tap, so the reconstruction can be
     // recomputed from the records. Stays 0 for the 3x3 mode, which the records cannot describe.
     float dbgPlusWeight[5] = { 0.0, 0.0, 0.0, 0.0, 0.0 };
@@ -234,8 +249,11 @@ void main(uint2 DTid : SV_DispatchThreadID)
             dbgPlusWeight[j] = sampleWeight;
             filteredColor += neighbors[kPlusIndices[j]] * sampleWeight;
             totalWeight   += sampleWeight;
+            filteredSpatial += neighbors[kPlusIndices[j]] * spatialWeight;
+            totalSpatial    += spatialWeight;
         }
         filteredColor *= rcp(totalWeight);
+        filteredSpatial *= rcp(totalSpatial);
     }
 
     // ── Neighborhood Min/Max ────────────────────────────────────────────────
@@ -303,7 +321,7 @@ void main(uint2 DTid : SV_DispatchThreadID)
     /// @ref Catmull & Rom 1974 — cubic spline interpolation
     /// @ref Karis 2014 "High Quality Temporal Supersampling" — 5-tap optimization
     float2 clampedHistoryUV = clamp(historyUV, outputTexelSize * 0.5, 1.0 - outputTexelSize * 0.5);
-    float3 rawHistory;
+    float4 rawHistory;
     // Recorded so an offline replay does not have to reconstruct the sample position from the
     // velocity: a position error and a filtering difference are then separable.
     float2 dbgHistorySamplePos = float2(0, 0);
@@ -339,17 +357,54 @@ void main(uint2 DTid : SV_DispatchThreadID)
         float weight3 = w3.x  * w12.y;
         float weight4 = w12.x * w3.y;
 
-        rawHistory  = HistoryTex.SampleLevel(LinearClampSampler, float2(sample1.x, sample0.y), 0).rgb * weight0;
-        rawHistory += HistoryTex.SampleLevel(LinearClampSampler, float2(sample0.x, sample1.y), 0).rgb * weight1;
-        rawHistory += HistoryTex.SampleLevel(LinearClampSampler, float2(sample1.x, sample1.y), 0).rgb * weight2;
-        rawHistory += HistoryTex.SampleLevel(LinearClampSampler, float2(sample2.x, sample1.y), 0).rgb * weight3;
-        rawHistory += HistoryTex.SampleLevel(LinearClampSampler, float2(sample1.x, sample2.y), 0).rgb * weight4;
+        rawHistory  = HistoryTex.SampleLevel(LinearClampSampler, float2(sample1.x, sample0.y), 0) * weight0;
+        rawHistory += HistoryTex.SampleLevel(LinearClampSampler, float2(sample0.x, sample1.y), 0) * weight1;
+        rawHistory += HistoryTex.SampleLevel(LinearClampSampler, float2(sample1.x, sample1.y), 0) * weight2;
+        rawHistory += HistoryTex.SampleLevel(LinearClampSampler, float2(sample2.x, sample1.y), 0) * weight3;
+        rawHistory += HistoryTex.SampleLevel(LinearClampSampler, float2(sample1.x, sample2.y), 0) * weight4;
 
         float finalMultiplier = rcp(weight0 + weight1 + weight2 + weight3 + weight4);
         rawHistory *= finalMultiplier;
     }
 
-    float3 historyYCoCg = RGBToYCoCg(rawHistory);
+    if (historyReadMode == 1u) {
+        int2 historyCoord = clamp(int2(clampedHistoryUV * float2(outputWidth, outputHeight)),
+                                  int2(0, 0), int2(outputWidth, outputHeight) - 1);
+        rawHistory = HistoryTex.Load(int3(historyCoord, 0));
+    }
+    float3 historyYCoCg = RGBToYCoCg(rawHistory.rgb);
+    float  rawLumaMean  = max(rawHistory.a, 0.0);
+
+    // Stability-gated reconstruction (phase0_sponza-flicker-correction): a coverage-stable pixel
+    // (raw centre sample within stableReconTolerance of its reprojected running mean) is handed its
+    // own centre tap, because the jitter-weighted plus filter only injects an 8-periodic leak of
+    // neighbour taps there (sweep 2026-10-13: mode-2 gives bright 0.000295). Boundary and moving
+    // pixels keep the Karis path: the gate closes on any raw change or with velocity.
+    const float centreY = neighbors[4].x;
+    float stableConf = 0.0;
+    const bool stableGateLive = stableReconEnabled != 0u && reconstructionMode == 0u
+                             && stableReconReset == 0u && !offScreen;
+    if (stableGateLive) {
+        float lumaDev = abs(centreY - rawLumaMean) / max(max(centreY, rawLumaMean), 1e-4);
+        stableConf = saturate(1.0 - lumaDev / stableReconTolerance)
+                   * (1.0 - saturate(velocityMag / stableReconVelocityPx));
+        filteredColor = lerp(filteredColor, neighbors[4], stableConf);
+    }
+    // FlipBlend (phase0_sponza-flicker-correction): a static, neighbour-corroborated coverage-flip
+    // pixel (the complement of a StableRecon pixel) carries supersampling information, not a
+    // firefly; give it the spatial-only reconstruction, which drops the HDR weighting that drains
+    // ~48% of the rear-door glass energy. Isolated bright samples and moving pixels keep Karis.
+    float flipConf = 0.0;
+    if (flipBlendEnabled != 0u && reconstructionMode == 0u && stableReconReset == 0u && !offScreen) {
+        float nMax8 = max(max(max(neighbors[0].x, neighbors[1].x), max(neighbors[2].x, neighbors[3].x)),
+                          max(max(neighbors[5].x, neighbors[6].x), max(neighbors[7].x, neighbors[8].x)));
+        bool isolated = centreY > flipIsolationRatio * nMax8;
+        flipConf = isolated ? 0.0
+                 : (1.0 - stableConf) * (1.0 - saturate(velocityMag / flipVelocityPx));
+        filteredColor = lerp(filteredColor, filteredSpatial, flipConf);
+    }
+    const float newLumaMean = (stableReconEnabled == 0u) ? 1.0
+                            : (stableGateLive ? lerp(rawLumaMean, centreY, 0.125) : centreY);
 
     // ── Variance Clip ───────────────────────────────────────────────────────
     /// @ref Salvi 2016 "An Excursion in Temporal Supersampling" — variance clipping
@@ -389,8 +444,17 @@ void main(uint2 DTid : SV_DispatchThreadID)
         } else if (clampBoxUavMin != 0xffffffffu && clampBoxUavMax != 0xffffffffu) {
             RWTexture2D<float4> BoxMinOut = ResourceDescriptorHeap[clampBoxUavMin];
             RWTexture2D<float4> BoxMaxOut = ResourceDescriptorHeap[clampBoxUavMax];
-            BoxMinOut[DTid] = float4(clipMin, 0.0);
-            BoxMaxOut[DTid] = float4(clipMax, 0.0);
+            uint averageStart = clampFreezeFrame - min(clampFreezeFrame, clampAverageFrames - 1u);
+            uint count = frameIndex >= averageStart ? frameIndex - averageStart + 1u : 1u;
+            if (count > 1u && clampAverageFrames > 1u) {
+                float4 previousMin = BoxMinOut[DTid];
+                float4 previousMax = BoxMaxOut[DTid];
+                BoxMinOut[DTid] = float4(lerp(previousMin.rgb, clipMin, rcp(float(count))), float(count));
+                BoxMaxOut[DTid] = float4(lerp(previousMax.rgb, clipMax, rcp(float(count))), float(count));
+            } else {
+                BoxMinOut[DTid] = float4(clipMin, 1.0);
+                BoxMaxOut[DTid] = float4(clipMax, 1.0);
+            }
         }
     }
 
@@ -416,6 +480,10 @@ void main(uint2 DTid : SV_DispatchThreadID)
     if (blendMode == 1u) blendFinal = currentFrameWeight;
     else blendFinal = max(blendFinal, min(antiFlicker, antiFlickerMax));
 
+    // FlipBlend optional rate knob: at flip pixels bias the blend toward a fixed weight so the
+    // now-unweighted (higher-amplitude) input settles slower if boundary flicker rises too much.
+    if (flipBlendWeight > 0.0) blendFinal = lerp(blendFinal, flipBlendWeight, flipConf);
+
     // NaN guard
     blendFinal = -min(-blendFinal, 0.0);
 
@@ -425,8 +493,10 @@ void main(uint2 DTid : SV_DispatchThreadID)
 
     // ── HDR-Weighted Blend ──────────────────────────────────────────────────
     /// @ref Karis 2014 "High Quality Temporal Supersampling" — HDR weighted lerp
-    float filterWeight  = HdrWeightY(filteredColor.x, FrameExposureScale);
     float historyWeight = HdrWeightY(clampedHistory.x, FrameExposureScale);
+    // FlipBlend stage 2: fold the filter weight toward the history weight at flip pixels so
+    // WeightedLerpFactors collapses to an equal (unweighted) blend, removing its energy bias.
+    float filterWeight  = lerp(HdrWeightY(filteredColor.x, FrameExposureScale), historyWeight, flipConf);
 
     float2 blendWeights = WeightedLerpFactors(historyWeight, filterWeight, blendFinal);
     float3 outputYCoCg = clampedHistory * blendWeights.x + filteredColor * blendWeights.y;
@@ -435,7 +505,7 @@ void main(uint2 DTid : SV_DispatchThreadID)
     float3 outputRGB = YCoCgToRGB(outputYCoCg);
     outputRGB = -min(-outputRGB, 0.0); // NaN/negative guard
 
-    taaOutput[DTid] = float4(outputRGB, 1.0);
+    taaOutput[DTid] = float4(outputRGB, newLumaMean);
 
 #ifdef UZ_BINDLESS
     // Region dump (diagnostics): resolve-side records, see common/region_dump.hlsli.
@@ -454,7 +524,7 @@ void main(uint2 DTid : SV_DispatchThreadID)
                 const uint rec = pixelBase + UzRegionTaaOffset(debugRegionFields);
                 dump[rec + 0] = float4(YCoCgToRGB(neighbors[4]), blendFinal);
                 dump[rec + 1] = float4(YCoCgToRGB(filteredColor), velocityPixels.x);
-                dump[rec + 2] = float4(rawHistory, velocityPixels.y);
+                dump[rec + 2] = float4(rawHistory.rgb, velocityPixels.y);
                 dump[rec + 3] = float4(YCoCgToRGB(clampedHistory), offScreen ? 1.0 : 0.0);
                 dump[rec + 4] = float4(outputRGB, FrameExposureScale);
             }
@@ -478,7 +548,7 @@ void main(uint2 DTid : SV_DispatchThreadID)
                 // +9 the jitter the filter consumed, the normalisation and the spatial multiplier;
                 // +10 the HDR weighting parameters and the reconstruction mode.
                 dump[rec + 9]  = float4(jitterOffset.x, jitterOffset.y, totalWeight, spatialWeightMul);
-                dump[rec + 10] = float4(FrameExposureScale, hdrWeightExponent, float(reconstructionMode), 0.0);
+                dump[rec + 10] = float4(FrameExposureScale, hdrWeightExponent, float(reconstructionMode), stableConf);
             }
             if (rp.x == a.x && rp.y == a.y) {
                 dump[UzRegionFooterBase(a, b) + 1] =

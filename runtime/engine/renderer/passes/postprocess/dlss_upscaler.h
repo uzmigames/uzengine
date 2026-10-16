@@ -14,8 +14,7 @@
 ///
 /// The implementation uses the NVIDIA NGX SDK (nvsdk_ngx.h) with the
 /// DX12 backend to create and evaluate the DLSS feature. On non-NVIDIA
-/// hardware or when the SDK is unavailable, the upscaler gracefully
-/// falls back to FSR2 or TSR.
+/// hardware or when the SDK is unavailable, selection chooses a fallback.
 ///
 /// @ref NVIDIA 2020 "Deep Learning Super Sampling" — AI temporal upscaling
 ///      with motion vectors, depth, and exposure inputs.
@@ -63,8 +62,7 @@ enum class DlssQuality : uint32_t {
 ///
 /// # Graceful Fallback
 /// If DLSS is not supported (non-NVIDIA GPU, old driver, missing DLL), Init()
-/// returns without creating the feature. The upscaler factory detects this and
-/// falls back to FSR2 or TSR automatically.
+/// returns false. The caller selects a supported fallback.
 class DlssUpscaler final : public ITemporalUpscaler {
 public:
     DlssUpscaler();
@@ -84,8 +82,8 @@ public:
     /// DLSS supports native AA mode at 100% (DLAA preset).
     [[nodiscard]] float GetMaxScreenPercentage() const noexcept override;
 
-    /// Returns true if NGX initialization succeeded and DLSS feature is available.
-    [[nodiscard]] bool IsAvailable() const noexcept;
+    /// Returns build capability before Init; device support is checked by Init.
+    [[nodiscard]] bool IsAvailable() const noexcept override;
 
     // --- Lifecycle ---
 
@@ -93,13 +91,13 @@ public:
     ///
     /// Calls NVSDK_NGX_D3D12_Init with the application directory to locate
     /// nvngx_dlss.dll. Queries optimal render resolution for the current
-    /// quality preset. If DLSS is not supported, logs a warning and returns
-    /// (IsAvailable() will return false).
+    /// quality preset. If DLSS is not supported, logs a warning and returns false
+    /// in the Shutdown state. The feature is created lazily on the first frame.
     ///
     /// @param device    The RHI device (must be DX12 backend).
     /// @param pipelines Not used by DLSS (it has its own internal pipelines).
     /// @param cbRing    Not used by DLSS (it manages its own constant buffers).
-    void Init(IRHIDevice* device, PipelineLibrary* pipelines, CBRingAllocator* cbRing) override;
+    [[nodiscard]] bool Init(IRHIDevice* device, PipelineLibrary* pipelines, CBRingAllocator* cbRing) override;
 
     /// Destroys the DLSS feature and shuts down the NGX SDK.
     /// Safe to call multiple times (subsequent calls are no-ops).
@@ -121,7 +119,7 @@ public:
     ///
     /// @param cmd   Command list to record DLSS dispatches on.
     /// @param input Per-frame textures, jitter, and resolution data.
-    void Execute(IRHICommandList* cmd, const UpscalerInput& input) override;
+    bool Execute(IRHICommandList* cmd, const UpscalerInput& input) override;
 
     // --- Non-copyable, movable ---
 

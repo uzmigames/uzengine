@@ -27,7 +27,7 @@ class IRHIDevice;
 class IRHICommandList;
 class EnvMapSampler;
 
-namespace rg { class RgBuilder; }
+namespace rg { class RgBuilder; class RgStateRegistry; }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AtmosphereFrameContext — parameters for atmosphere passes
@@ -40,6 +40,7 @@ namespace rg { class RgBuilder; }
 /// to SceneRenderer members.
 struct AtmosphereFrameContext {
     IRHIDevice*       device         = nullptr;
+    rg::RgStateRegistry* states      = nullptr;
     World*            world          = nullptr;
     CBRingAllocator*  cbRing         = nullptr;
     PipelineLibrary*  pipelines      = nullptr;
@@ -142,6 +143,12 @@ struct AtmosphereFrameContext {
 /// atmosphere fullscreen pass. All passes read/write the HDR scene color.
 ///
 /// Must be called during render graph construction (before Compile/Execute).
+/// Import LUTs, AP volume and the sky cubemap through ImportTrackedTexture: their first
+/// compute write transitions from the creation state (Common), later writes from the
+/// recorded state. Filled/dirty flags describe content, not resource states. Raw work
+/// outside the graph must use ctx.states->Transition to keep that record current.
+/// Bruneton scattering precompute is currently compiled out; do not add barriers for
+/// its inactive dispatches or duplicate the graph's transitions for active passes.
 void AddAtmospherePasses(
     rg::RgBuilder& rgBuilder,
     rg::RgResourceId hdrRes,

@@ -31,6 +31,8 @@
 
 namespace uz {
 
+namespace rg { class RgStateRegistry; }
+
 class GlobalDistanceField;
 
 class IRHIDevice;
@@ -93,6 +95,8 @@ public:
     /// # Returns
     /// `true` on success.
     [[nodiscard]] bool CreateResources(IRHIDevice* device);
+
+    void SetStateRegistry(rg::RgStateRegistry* states) { m_rgStates = states; }
 
     /// Releases the atlas textures and bindless descriptors.
     void DestroyResources();
@@ -199,6 +203,7 @@ public:
 
 private:
     IRHIDevice*      m_device       = nullptr;
+    rg::RgStateRegistry* m_rgStates = nullptr;
     RHITextureHandle m_irradAtlas{};
     RHITextureHandle m_depthAtlas{};
     uint32_t         m_irradSrv     = UINT32_MAX;
@@ -210,7 +215,6 @@ private:
     float            m_probeSpacing = 0.0f;
     bool             m_initialized  = false;
     bool             m_firstUpdateComplete = false;
-    bool m_firstDispatch = true; ///< Atlases start in Common state.
     bool m_atlasCleared = false;   ///< Both atlases cleared once (border fill pass, H-55).
 
     // ── Per-ray buffers (block B.6) ────────────────────────────────────────
@@ -223,7 +227,6 @@ private:
     uint32_t         m_rayRadianceUav = UINT32_MAX;
     uint32_t         m_rayInfoSrv     = UINT32_MAX;
     uint32_t         m_rayInfoUav     = UINT32_MAX;
-    RHIResourceState m_rayBufferState = RHIResourceState::Common;
     bool             m_lastRayBuffers  = false;   ///< identity log line
     bool             m_lastIndirectTerm = false;  ///< identity log line
 

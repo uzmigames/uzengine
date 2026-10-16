@@ -15,7 +15,6 @@ Planning gates and dependencies below are local queue constraints; they do not r
 
 ## Next action
 
-[Render graph state registry](tasks/phase0_render-graph-state-registry/tasks.md)
 
 2.1 Graph imports switched to tracked imports (the design's 7.1) with the required fixes.
 
@@ -23,27 +22,14 @@ Planning gates and dependencies below are local queue constraints; they do not r
 
 | Order | Work and scope | Why now | Readiness |
 |---|---|---|---|
-| 20 | [Render graph state registry](tasks/phase0_render-graph-state-registry/tasks.md) — 3/9 checked; pending | Systemic before-state and declared-access correctness. Include audit F-003 remaining UAV/transient acceptance (audit item 3.1). | Ready for next action |
-| 30 | [Fix dx12 first frame resource state crash](tasks/phase0_fix-dx12-first-frame-resource-state-crash/tasks.md) — 11/29 checked; pending | Reproduce the old startup crash on the current build and reconcile remaining init barriers; do not reintroduce frame-index state guesses. | Waiting: phase0_render-graph-state-registry |
 | 40 | [Fix entity lifetime, scene loading and editor ownership](tasks/phase0_project-stabilization-audit/tasks.md) — items 2.1, 2.2, 2.3, 2.4, 2.5, 2.6 | Bound ECS generations, serialize world mutation, preserve scenes on load failure, bound IPC and remove absolute discovery paths. | Ready for next action |
-| 50 | [Preexisting test failures](tasks/phase0_preexisting-test-failures/tasks.md) — 2/8 checked; pending | Stop carrying native failures as an unowned exception; rebaseline the current build and fix owned suites. | Ready for next action |
-| 60 | [Sdf gpu fixture refresh](tasks/phase0_sdf-gpu-fixture-refresh/tasks.md) — 0/5 checked; pending | Stale root constants and samplers invalidate several SDF/GI measurements. | Waiting: phase0_render-graph-state-registry |
-| 70 | [Frame allocation layout dependence](tasks/phase0_frame-allocation-layout-dependence/tasks.md) — 0/6 checked; pending | Allocation-dependent pixels undermine regression evidence; isolate the first differing pass before more visual tuning. | Waiting: phase0_render-graph-state-registry |
 
 ## P1 — execution order (10 items)
 
 | Order | Work and scope | Why now | Readiness |
 |---|---|---|---|
-| 80 | [Correct temporal history, unavailable upscalers and mesh motion](tasks/phase0_project-stabilization-audit/tasks.md) — items 3.2, 3.3, 3.4 | Fix inputs and resource validity before tuning flicker or enabling temporal SDK features. | Waiting: phase0_render-graph-state-registry |
 | 90 | [Correct material graph context and glass contracts](tasks/phase0_project-stabilization-audit/tasks.md) — items 3.5, 3.6 | Real time, camera, object, vertex and viewport data precede BRDF feature expansion. | Ready for next action |
-| 100 | [Sponza flicker correction](tasks/phase0_sponza-flicker-correction/tasks.md) — 0/7 checked; pending | Directly addresses the visible instability, using current baselines and region-specific gates. | Waiting: phase0_frame-allocation-layout-dependence; gate temporal |
-| 110 | [Ssr exposure correction](tasks/phase0_ssr-exposure-correction/tasks.md) — 0/5 checked; pending | Concrete exposure-contract defect in an existing reflection path; precedes a wider SSR rewrite. | Waiting: phase0_render-graph-state-registry |
-| 120 | [Lighting ddgi sdf writer parity head](tasks/phase0_lighting-ddgi-sdf-writer-parity-head/tasks.md) — 0/6 checked; pending | Align current occluder sets and remeasure writer energy before indirect-light recalibration. | Waiting: phase0_sdf-gpu-fixture-refresh |
-| 130 | [Lighting rc probe support followups](tasks/phase0_lighting-rc-probe-support-followups/tasks.md) — 0/8 checked; pending | The shipped probe configuration lacks its acceptance coverage and visibility evidence. | Waiting: phase0_sdf-gpu-fixture-refresh |
-| 140 | [Gi final gather bias coupling](tasks/phase0_gi-final-gather-bias-coupling/tasks.md) — 0/6 checked; pending | Establish reference convergence and separate diffuse/reflection/AO coupling before tuning energy. | Waiting: phase0_sdf-gpu-fixture-refresh; phase0_frame-allocation-layout-dependence |
-| 150 | [Vfx mesh bindless attr read bug](tasks/phase0_vfx-mesh-bindless-attr-read-bug/tasks.md) — 9/23 checked; blocked | Garbage mesh-particle attributes are a correctness defect; retain the existing GPU-capture blocker, not a fake ready state. | Waiting: existing Rulebook blocker: read task evidence; phase0_render-graph-state-registry |
 | 160 | [Vfx sort pipeline hardware validation](tasks/phase16_vfx-sort-pipeline-hardware-validation/tasks.md) — 0/15 checked; blocked | Validate mesh-particle sorting only after attribute reads work; requires real DX12 capture evidence. | Waiting: existing Rulebook blocker: read task evidence; phase0_vfx-mesh-bindless-attr-read-bug |
-| 170 | [Accept the corrected renderer with images and sequences](tasks/phase0_project-stabilization-audit/tasks.md) — items 4.1 | Record matched Falcor and temporal evidence before treating the renderer as the next feature baseline. | Waiting: phase0_sponza-flicker-correction; phase0_ssr-exposure-correction; gate lifecycle; gate temporal; gate materials |
 
 ## P2 — execution order (14 items)
 
@@ -53,8 +39,6 @@ Planning gates and dependencies below are local queue constraints; they do not r
 | 200 | [Falcor dlss integration](tasks/phase1_falcor-dlss-integration/tasks.md) — 10/14 checked; pending | Finish RTX validation after correct motion/history and path-agnostic capability selection. | Waiting: gate temporal; gate visual |
 | 210 | [Fsr2 full integration](tasks/phase2_fsr2-full-integration/tasks.md) — 0/23 checked; pending | SDK integration follows the P1 unavailable-backend guard and valid velocity; it is not the guard itself. | Waiting: gate temporal; gate visual |
 | 220 | [Reflection probes](tasks/phase3a-3.37.0-reflection-probes/tasks.md) — 12/20 checked; pending | Verify the partially implemented local-reflection fallback before wider reflection expansion. | Waiting: gate visual |
-| 230 | [Ssr stochastic refactor](tasks/phase2_ssr-stochastic-refactor/tasks.md) — 25/46 checked; pending | Reconcile later layered-reflection fixes first; remaining work overlaps reflection probes and denoising. | Waiting: phase0_ssr-exposure-correction; phase3a-3.37.0-reflection-probes; gate visual |
-| 240 | [Volumetric clouds rewrite](tasks/phase0-3.1.0-volumetric-clouds-rewrite/tasks.md) — 13/78 checked; pending | Finish graph integration and verify current clouds before the separate UE5 parity expansion. | Waiting: phase0_render-graph-state-registry; gate visual |
 | 250 | [Multi material multi uv](tasks/phase5-5.1.0-multi-material-multi-uv/tasks.md) — 5/47 checked; pending | Asset correctness for real multi-primitive meshes; upstream of lightmaps and advanced material authoring. | Waiting: gate materials; gate visual |
 | 260 | [Fbx skeletal animation pipeline](tasks/phase3-3.0.0-fbx-skeletal-animation-pipeline/tasks.md) — 30/84 checked; pending | Consolidate import/skinning/animation ownership before expanding the two overlapping phase4 tasks. | Waiting: gate temporal; gate visual |
 | 270 | [Lod system](tasks/phase3a-3.38.0-lod-system/tasks.md) — 5/18 checked; pending | Measure geometry cost and complete LOD behavior against a stable image baseline. | Waiting: gate visual |
@@ -62,7 +46,6 @@ Planning gates and dependencies below are local queue constraints; they do not r
 | 290 | [Measure batching, VFS and maintain shared layouts](tasks/phase0_project-stabilization-audit/tasks.md) — items 5.1, 5.2, 5.3, 6.1, 6.2, 6.3 | Optimize measured costs and simplify boundaries after correctness, then close the umbrella with evidence. | Waiting: gate visual |
 | 300 | [Vscode pass inspector ui](tasks/phase5-5.2.0-vscode-pass-inspector-ui/tasks.md) — 0/20 checked; untracked | Useful diagnostic UI, but existing CLI diagnostics already unblock P0/P1 work. | Waiting: gate lifecycle |
 | 310 | [Quality scalability system](tasks/phase3a-quality-scalability-system/tasks.md) — 0/45 checked; untracked | Presets must describe working validated capabilities, not conceal correctness defects. | Waiting: gate visual |
-| 320 | [Path tracer runtime mode](tasks/phase0_path-tracer-runtime-mode/tasks.md) — 17/73 checked; in-progress | Rebaseline the old checklist and define its supported scope; Falcor remains the oracle, so this does not block current fixes. | Waiting: gate visual |
 
 ## P3 — execution order (31 items)
 
@@ -106,17 +89,12 @@ These are scope/status reviews, not new implementation assignments. Do not repea
 
 | Task | Metadata / checklist | Required reconciliation |
 |---|---|---|
-| [Lighting block b 02 gdf incremental](tasks/phase0_lighting-block-b-02-gdf-incremental/tasks.md) | completed; 12/14 | Completed metadata but items 4.2/4.3 remain open, including a failing moving-object transient gate. Assign successors before archive. |
-| [Lighting block b 05 layered reflections](tasks/phase0_lighting-block-b-05-layered-reflections/tasks.md) | completed; 10/12 | Completed metadata with remaining graph/coverage items; reconcile against state-registry and SSR tasks before archive. |
-| [Brixelizer gi integration](tasks/phase0_brixelizer-gi-integration/tasks.md) | completed; 42/48 | Explicitly closed as superseded, not implemented. Archive only with that resolution and preserved follow-up ownership. |
 | [Material graph pipeline](tasks/phase2_material-graph-pipeline/tasks.md) | pending; 0/34 | 0/34 conflicts with the active generated-material path and completed parity-02. Audit F-004 owns the known remaining context defect. |
 | [Froxel volumetric fog](tasks/phase2_froxel-volumetric-fog/tasks.md) | pending; 0/31 | Proposal says no froxel fog, but block-b-04 already implemented and validated it. Reconcile residual scope instead of rebuilding. |
 | [Clustered forward plus](tasks/phase3a-3.32.0-clustered-forward-plus/tasks.md) | pending; 3/22 | Later block-b-07 and cluster-spot-cone tasks supersede much of the old checklist; preserve only real uncovered acceptance. |
 | [3.4b scene loader](tasks/phase3b-3.4b-scene-loader/tasks.md) | pending; 1/17 | A live scene loader exists; 1/17 is stale. Audit F-011/F-012 track concrete remaining failure and hierarchy gaps. |
 | [3.5b render bridge](tasks/phase3b-3.5b-render-bridge/tasks.md) | pending; 8/21 | Scenes already flow through ECS draw-list synchronization. Reconcile the old RenderProxy architecture with the current implementation. |
-| [Lumen lite gi core](tasks/phase0_lumen-lite-gi-core/tasks.md) | in-progress; 17/26 | July in-progress context predates September/October GI work. Map remaining energy/composition scope to current focused tasks first. |
 | [Fix sponza intel lighting parity](tasks/phase1_fix-sponza-intel-lighting-parity/tasks.md) | in-progress; 15/21 | Old active calibration/Metal blocker predates neutral-port and recalibration tasks. Do not restart artistic calibration from stale instructions. |
-| [Indoor lighting system](tasks/phase0_indoor-lighting-system/tasks.md) | pending; 40/43 | 40/43 with only the mandatory tail unchecked; verify current docs/tests and overlap before deciding closure. |
 | [Point spot light shadows](tasks/phase3a-3.30.0-point-spot-light-shadows/tasks.md) | pending; 24/27 | 24/27 with only the mandatory tail open; reconcile later local-shadow validation rather than implement shadows again. |
 | [Skylight fog ambient fix](tasks/phase3a-3.51.0-skylight-fog-ambient-fix/tasks.md) | untracked; 13/28 | Predates sky-capture intensity, froxel correctness and recalibration; establish residual failures on the current build. |
 | [Aces hill specular occlusion](tasks/phase2_aces-hill-specular-occlusion/tasks.md) | pending; 6/19 | Partial implementation and historical defaults need current-source acceptance reconciliation before changing the tone/occlusion model. |
@@ -143,12 +121,6 @@ Validate evidence and archive with Rulebook; this view does not archive or certi
 <details>
 <summary>Show candidates outside the execution queue</summary>
 
-- [Rulebook priority queue](tasks/phase0_rulebook-priority-queue/tasks.md) (`phase0_rulebook-priority-queue`)
-- [Stabilization build provenance](tasks/phase0_stabilization-build-provenance/tasks.md) (`phase0_stabilization-build-provenance`)
-- [Stabilization diagnostic baseline](tasks/phase0_stabilization-diagnostic-baseline/tasks.md) (`phase0_stabilization-diagnostic-baseline`)
-- [Stabilization falcor gate](tasks/phase0_stabilization-falcor-gate/tasks.md) (`phase0_stabilization-falcor-gate`)
-- [Stabilization powershell gates](tasks/phase0_stabilization-powershell-gates/tasks.md) (`phase0_stabilization-powershell-gates`)
-- [Stabilization test integrity](tasks/phase0_stabilization-test-integrity/tasks.md) (`phase0_stabilization-test-integrity`)
 
 </details>
 

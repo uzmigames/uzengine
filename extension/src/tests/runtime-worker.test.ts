@@ -18,7 +18,12 @@ class Host extends EventEmitter {
   pid = 123;
   version = 'test-node';
   arch = 'x64';
-  send: ReturnType<typeof vi.fn> | undefined = vi.fn();
+  send: ReturnType<typeof vi.fn> | undefined = vi.fn(
+    (_message: unknown, _handle?: unknown, _options?: unknown, callback?: (error: Error | null) => void) => {
+      callback?.(null);
+      return true;
+    },
+  );
   exit = vi.fn();
 }
 
@@ -238,7 +243,7 @@ describe('runtime worker at the native addon boundary', () => {
     const sample = { fps: 60, frameMs: 16, drawCalls: 3, vertices: 9, triangles: 3, frameIndex: 7 };
     for (let i = 0; i < 121; i++) {
       stats(sample);
-      frame(Buffer.from([0, 255, 128]));
+      frame(Buffer.from([0, 0, 1, 0x65]));
     }
     expect(host.send).toHaveBeenCalledWith({
       type: 'stats',
@@ -247,8 +252,13 @@ describe('runtime worker at the native addon boundary', () => {
       drawCalls: 3,
       vertices: 9,
       triangles: 3,
-    });
-    expect(host.send).toHaveBeenLastCalledWith({ type: 'frame', data: 'AP+A' });
+    }, undefined, undefined, expect.any(Function));
+    expect(host.send).toHaveBeenLastCalledWith(
+      { type: 'frame', data: 'AAABZQ==', key: true },
+      undefined,
+      undefined,
+      expect.any(Function),
+    );
     host.send = undefined;
     expect(() => {
       log(4, 'GPU', 'lost');
@@ -256,6 +266,76 @@ describe('runtime worker at the native addon boundary', () => {
       frame(Buffer.alloc(0));
     }).not.toThrow();
   });
+
+  it('bounds outstanding stats while the extension host is stalled', () => {
+    start();
+    send({ id: 1, cmd: 'startRenderLoop', fps: 60 });
+    const stats = addon.startRenderLoop.mock.calls[0][1] as (stats: FrameStats) => void;
+    const callbacks: Array<() => void> = [];
+    host.send!.mockImplementation(
+      (_message: unknown, _handle: unknown, _options: unknown, callback: () => void) => {
+        callbacks.push(callback);
+        return false;
+      },
+    );
+    const sample = { fps: 60, frameMs: 16, drawCalls: 3, vertices: 9, triangles: 3, frameIndex: 7 };
+    for (let i = 0; i < 100; i++) stats(sample);
+    expect(callbacks).toHaveLength(4);
+    callbacks.shift()!();
+    stats(sample);
+    expect(callbacks).toHaveLength(4);
+    callbacks.forEach((callback) => callback());
+  });
+
+  it.each([false, true])(
+    'bounds frames and resumes only at a key after backlog (send accepted=%s)',
+    (accepted) => {
+      start();
+      send({ id: 1, cmd: 'startRenderLoop', fps: 60 });
+      const frame = addon.startRenderLoop.mock.calls[0][2] as (buffer: Buffer) => void;
+      const callbacks: Array<(error: Error | null) => void> = [];
+      host.send!.mockImplementation(
+        (_message: unknown, _handle: unknown, _options: unknown, callback: (error: Error | null) => void) => {
+          callbacks.push(callback);
+          return accepted;
+        },
+      );
+      const key = Buffer.from([0, 0, 1, 0x65]);
+      const delta = Buffer.from([0, 0, 1, 0x61]);
+      frame(delta);
+      expect(callbacks).toHaveLength(0);
+      frame(key);
+      frame(delta);
+      frame(delta);
+      expect(callbacks).toHaveLength(accepted ? 2 : 1);
+      expect(addon.requestKeyframe).toHaveBeenCalled();
+      for (const callback of callbacks.splice(0)) callback(null);
+      frame(delta);
+      expect(callbacks).toHaveLength(0);
+      frame(key);
+      expect(callbacks).toHaveLength(1);
+      expect(host.send).toHaveBeenLastCalledWith(
+        { type: 'frame', data: key.toString('base64'), key: true },
+        undefined,
+        undefined,
+        expect.any(Function),
+      );
+      callbacks.shift()!(null);
+      host.send!.mockImplementation(
+        (_message: unknown, _handle: unknown, _options: unknown, callback: (error: Error | null) => void) => {
+          callback(null);
+          return true;
+        },
+      );
+      frame(delta);
+      expect(host.send).toHaveBeenLastCalledWith(
+        { type: 'frame', data: delta.toString('base64'), key: false },
+        undefined,
+        undefined,
+        expect.any(Function),
+      );
+    },
+  );
 
   it('replies to unknown commands and native exceptions without terminating the worker', () => {
     start();
@@ -278,6 +358,18 @@ describe('runtime worker at the native addon boundary', () => {
     expect(host.exit).not.toHaveBeenCalled();
   });
 
+  it('shutdown stops the render loop before destroying the viewport and the runtime', () => {
+    start();
+    send({ id: 8, cmd: 'shutdown' });
+    expect(addon.stopRenderLoop).toHaveBeenCalledExactlyOnceWith();
+    expect(addon.stopRenderLoop.mock.invocationCallOrder[0]).toBeLessThan(
+      addon.destroyViewport.mock.invocationCallOrder[0],
+    );
+    expect(addon.destroyViewport.mock.invocationCallOrder[0]).toBeLessThan(
+      addon.shutdown.mock.invocationCallOrder[0],
+    );
+  });
+
   it.each([true, false])(
     'flushes shutdown replies even when addon cleanup fails (loaded=%s)',
     async (loaded) => {
@@ -285,7 +377,7 @@ describe('runtime worker at the native addon boundary', () => {
         loader.mockImplementation(() => {
           throw new Error('missing addon');
         });
-      for (const method of ['setLogCallback', 'destroyViewport', 'shutdown']) {
+      for (const method of ['stopRenderLoop', 'setLogCallback', 'destroyViewport', 'shutdown']) {
         addon[method].mockImplementation(() => {
           throw new Error('already stopped');
         });

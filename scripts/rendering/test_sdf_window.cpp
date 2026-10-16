@@ -58,15 +58,18 @@ int main(int argc,char** argv) try {
     if (!device) throw std::runtime_error("No hardware adapter");
     D3D12_ROOT_PARAMETER parameters[2]{};
     parameters[0].ParameterType=D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    parameters[0].Constants.Num32BitValues=9;
+    parameters[0].Constants.Num32BitValues=13;
     parameters[1].ParameterType=D3D12_ROOT_PARAMETER_TYPE_CBV;
     parameters[1].Descriptor.ShaderRegister=2;
     D3D12_STATIC_SAMPLER_DESC sampler{};
     sampler.Filter=D3D12_FILTER_MIN_MAG_MIP_LINEAR;
     sampler.AddressU=sampler.AddressV=sampler.AddressW=D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
     sampler.MaxLOD=D3D12_FLOAT32_MAX; sampler.ShaderRegister=2;
+    D3D12_STATIC_SAMPLER_DESC samplers[2]={sampler,sampler};
+    samplers[1].AddressU=samplers[1].AddressV=samplers[1].AddressW=D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    samplers[1].ShaderRegister=3;
     D3D12_ROOT_SIGNATURE_DESC root{};
-    root.NumParameters=2; root.pParameters=parameters; root.NumStaticSamplers=1; root.pStaticSamplers=&sampler;
+    root.NumParameters=2; root.pParameters=parameters; root.NumStaticSamplers=2; root.pStaticSamplers=samplers;
     root.Flags=D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED;
     ComPtr<ID3DBlob> rootBytes,error;
     Check(D3D12SerializeRootSignature(&root,D3D_ROOT_SIGNATURE_VERSION_1,&rootBytes,&error),"Serialize window root");
@@ -118,9 +121,10 @@ int main(int argc,char** argv) try {
     uav.Format=DXGI_FORMAT_R16_FLOAT;
     device->CreateUnorderedAccessView(rawGlobal.Get(),nullptr,&uav,descriptor(8));
     ID3D12DescriptorHeap* heaps[]={heap.Get()}; list->SetDescriptorHeaps(1,heaps); list->SetComputeRootSignature(signature.Get());
-    struct Bake { UINT output,triangles,count,resolution; float minimum[3],voxel; } bake{0,1,8,meshResolution|0x80000000u,{-2400,-2400,-2400},4800.0f/meshResolution};
+    struct Bake { UINT output,triangles,count,resolution; float minimum[3],voxel; UINT sliceOffset; } bake{0,1,8,meshResolution|0x80000000u,{-2400,-2400,-2400},4800.0f/meshResolution,0};
+    static_assert(sizeof(Bake)==36);
     if (bvh) bake.count|=uz::kMeshSdfBvhFlag;
-    list->SetComputeRoot32BitConstants(0,8,&bake,0); list->Dispatch(meshResolution/4,meshResolution/4,meshResolution/4);
+    list->SetComputeRoot32BitConstants(0,9,&bake,0); list->Dispatch(meshResolution/4,meshResolution/4,meshResolution/4);
     Transition(list.Get(),mesh.Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_COPY_SOURCE);
     D3D12_TEXTURE_COPY_LOCATION meshSource{}; meshSource.pResource=mesh.Get(); meshSource.Type=D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
     D3D12_TEXTURE_COPY_LOCATION meshDestination{}; meshDestination.pResource=meshReadback.Get(); meshDestination.Type=D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; meshDestination.PlacedFootprint=meshFootprint;
@@ -131,8 +135,11 @@ int main(int argc,char** argv) try {
     const Mesh metadata{{0,0,0},1,{2400,2400,2400},2400.0f/meshResolution,{{1,0,0,0},{0,1,0,0},{0,0,1,0}},2,meshResolution,0,0,{.8f,.2f,.1f},1,0,{0,0,0}};
     auto constants=Resource(device.Get(),BufferDesc(512*sizeof(Mesh)),D3D12_HEAP_TYPE_UPLOAD,D3D12_RESOURCE_STATE_GENERIC_READ);
     Check(constants->Map(0,nullptr,&mapped),"Map window GDF constants"); std::memset(mapped,0,512*sizeof(Mesh)); std::memcpy(mapped,&metadata,sizeof(metadata)); constants->Unmap(0,nullptr);
-    struct Composite { UINT output,count,accumulate,resolution; float center[3],extent; UINT rawOutput; } composite{3,1,0,globalResolution,{0,0,0},2500,8};
-    list->SetPipelineState(compositePipeline.Get()); list->SetComputeRoot32BitConstants(0,9,&composite,0);
+    struct Composite { UINT output,count,accumulate,resolution; float center[3],extent; UINT rawOutput,regionOrigin,regionSize,windowOrigin; float band; } composite{3,1,0,globalResolution,{0,0,0},2500,8,0,globalResolution|(globalResolution<<9)|(globalResolution<<18),0,0};
+    static_assert(sizeof(Composite)==52);
+    const UINT windowOrigin=globalResolution/2;
+    composite.windowOrigin=windowOrigin|(windowOrigin<<9)|(windowOrigin<<18);
+    list->SetPipelineState(compositePipeline.Get()); list->SetComputeRoot32BitConstants(0,13,&composite,0);
     list->SetComputeRootConstantBufferView(1,constants->GetGPUVirtualAddress()); list->Dispatch(globalResolution/4,globalResolution/4,globalResolution/4);
     Transition(list.Get(),global.Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_COPY_SOURCE);
     Transition(list.Get(),rawGlobal.Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
@@ -142,7 +149,7 @@ int main(int argc,char** argv) try {
     Check(fence->SetEventOnCompletion(1,event),"Wait window fence"); const DWORD wait=WaitForSingleObject(event,30000); CloseHandle(event);
     if (wait!=WAIT_OBJECT_0) throw std::runtime_error("Window bake timeout"); Check(device->GetDeviceRemovedReason(),"Window bake execution");
     Check(meshReadback->Map(0,nullptr,&mapped),"Map window mesh readback");
-    const std::string fieldPath="scripts/test_sdf_dynamic_gpu_artifacts/window_mesh_"+std::to_string(meshResolution)+(bvh?"_bvh.r16":"_brute.r16");
+    const std::string fieldPath="scripts/rendering/test_sdf_dynamic_gpu_artifacts/window_mesh_"+std::to_string(meshResolution)+(bvh?"_bvh.r16":"_brute.r16");
     std::ofstream field(fieldPath,std::ios::binary);
     if (!field) throw std::runtime_error("Cannot open window mesh evidence file");
     for (UINT z=0;z<meshResolution;++z) for (UINT y=0;y<meshResolution;++y) {

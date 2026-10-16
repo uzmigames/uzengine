@@ -56,7 +56,8 @@ static Napi::Value SetEditorMode(const Napi::CallbackInfo& info) {
         Napi::TypeError::New(env, "setEditorMode(enabled: boolean) expected").ThrowAsJavaScriptException();
         return env.Undefined();
     }
-    uz_set_editor_mode(info[0].As<Napi::Boolean>().Value() ? 1 : 0);
+    const int enabled = info[0].As<Napi::Boolean>().Value() ? 1 : 0;
+    UzNapiOnOwner(env, "setEditorMode", [enabled] { uz_set_editor_mode(enabled); });
     return env.Undefined();
 }
 
@@ -67,7 +68,7 @@ static Napi::Value SetContentRoot(const Napi::CallbackInfo& info) {
         return env.Undefined();
     }
     std::string path = info[0].As<Napi::String>().Utf8Value();
-    uz_set_content_root(path.c_str());
+    UzNapiOnOwner(env, "setContentRoot", [path] { uz_set_content_root(path.c_str()); });
     return env.Undefined();
 }
 

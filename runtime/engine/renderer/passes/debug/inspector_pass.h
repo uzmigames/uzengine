@@ -34,6 +34,7 @@ namespace uz {
 
 class IRHIDevice;
 class IRHICommandList;
+namespace rg { class RgStateRegistry; }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DisplayMode — how to interpret the texture data for visualization
@@ -220,6 +221,9 @@ public:
     PassInspector& operator=(const PassInspector&) = delete;
     PassInspector(PassInspector&&) noexcept = default;
     PassInspector& operator=(PassInspector&&) noexcept = default;
+
+    /// Uses graph-recorded texture states for readback, falling back to target metadata.
+    void SetStateRegistry(const rg::RgStateRegistry* states) { m_states = states; }
 
     // ── Per-frame lifecycle ──────────────────────────────────────────────
 
@@ -494,6 +498,7 @@ public:
     [[nodiscard]] std::vector<const RegisteredTarget*> GetGridTargets() const;
 
 private:
+    const rg::RgStateRegistry* m_states = nullptr;
     std::vector<RegisteredTarget> m_targets;   ///< Targets registered this frame.
     std::vector<RegisteredBufferTarget> m_bufferTargets; ///< Buffer targets registered this frame.
     std::string m_visTargetName;               ///< Currently selected vis target name (empty = off).

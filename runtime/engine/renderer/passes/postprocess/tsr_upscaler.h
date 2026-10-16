@@ -50,6 +50,7 @@ public:
     [[nodiscard]] UpscalerType GetType() const noexcept override { return UpscalerType::TSR; }
     /// Returns "TSR".
     [[nodiscard]] const char*  GetName() const noexcept override { return "TSR"; }
+    [[nodiscard]] bool IsAvailable() const noexcept override;
 
     /// TSR supports 50% to 200% screen percentage (2x upscale to 2x supersample).
     [[nodiscard]] float GetMinScreenPercentage() const noexcept override { return 50.f; }
@@ -59,13 +60,13 @@ public:
     // --- Lifecycle ---
 
     /// Stores pointers to the RHI device, pipeline library, and CB ring.
-    /// No GPU resource allocation here — intermediates are created lazily in
-    /// Execute() when the render resolution is first known.
+    /// Rejects the unimplemented shader and validates all three pipelines.
+    /// Intermediates are created lazily in Execute() when render size is known.
     ///
     /// @param device    The RHI device for resource creation.
     /// @param pipelines The pipeline library providing TSR compute pipelines.
     /// @param cbRing    The constant buffer ring allocator for per-frame CB uploads.
-    void Init(IRHIDevice* device, PipelineLibrary* pipelines, CBRingAllocator* cbRing) override;
+    [[nodiscard]] bool Init(IRHIDevice* device, PipelineLibrary* pipelines, CBRingAllocator* cbRing) override;
 
     /// Releases intermediate textures and pipeline references.
     /// Safe to call multiple times (subsequent calls are no-ops).
@@ -94,7 +95,7 @@ public:
     ///
     /// @param cmd   Command list to record compute dispatches on.
     /// @param input Per-frame textures, jitter, and resolution data.
-    void Execute(IRHICommandList* cmd, const UpscalerInput& input) override;
+    bool Execute(IRHICommandList* cmd, const UpscalerInput& input) override;
 
     // --- Settings ---
 

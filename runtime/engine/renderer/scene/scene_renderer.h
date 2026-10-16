@@ -48,6 +48,7 @@
 #include "postprocess/bloom_pass.h"
 #include "postprocess/lens_flare_pass.h"
 #include "postprocess/temporal_upscaler.h"
+#include "temporal_history_state.h"
 #include "postprocess/gtao_pass.h"
 #include "postprocess/hiz_pyramid_pass.h"
 #include "shadows/distance_field_shadow_config.h"
@@ -84,6 +85,47 @@
 #include <vector>
 
 namespace uz {
+
+struct UpscalerSelection {
+    UpscalerType requested = UpscalerType::TAA;
+    UpscalerType effective = UpscalerType::TAA;
+    const char* reason = "ok";
+};
+
+struct UpscalerProbe {
+    // Null means available; otherwise the reason this candidate cannot run.
+    std::function<const char*(UpscalerType)> available;
+    std::function<bool(UpscalerType)> init;
+};
+
+/// Pure selection policy, shared with the device-free tests. Failover keeps
+/// the user's request but never probes the producer that just failed.
+inline UpscalerSelection ResolveUpscalerSelection(
+    UpscalerType requested, const UpscalerProbe& probe,
+    UpscalerType failed = UpscalerType::None) {
+    UpscalerSelection selection{requested, UpscalerType::None, "ok"};
+    // TAA is the final producer in the chain, including when it was already
+    // the fallback for an unavailable vendor request.
+    if (failed == UpscalerType::TAA) return selection;
+    const UpscalerType candidates[] = {requested, UpscalerType::TAA, UpscalerType::None};
+    bool failedCandidate = false;
+    for (uint32_t i = 0; i < 3; ++i) {
+        const auto type = candidates[i];
+        if (type == UpscalerType::None) return selection;
+        if (type == failed) continue;
+        // TAA appears only once when it is itself requested.
+        if (i == 1 && requested == UpscalerType::TAA) continue;
+        const char* reason = probe.available(type);
+        if (!reason && !probe.init(type)) reason = "init failed";
+        if (!reason) {
+            selection.effective = type;
+            return selection;
+        }
+        if (!failedCandidate) selection.reason = reason;
+        failedCandidate = true;
+    }
+    return selection;
+}
 
 // Forward declarations
 class IRHIDevice;
@@ -173,6 +215,8 @@ public:
 
     /// Forwards to AutoExposure::ResetHistory (no-op when auto exposure is off).
     void ResetExposureHistory(IRHICommandList* cmdList);
+
+    void InvalidateTemporalHistory(TemporalReset why) { m_temporal.Invalidate(why); }
 
     /// Returns true if there are async texture decodes still in flight,
     /// decoded textures awaiting GPU upload, or copy-queue uploads pending
@@ -323,7 +367,7 @@ public:
     ///
     /// # Parameters
     /// - `pds`: Non-owning pointer to the PixelDebugSystem, or nullptr.
-    void SetPixelDebugSystem(PixelDebugSystem* pds) noexcept { m_pixelDebugSystem = pds; }
+    void SetPixelDebugSystem(PixelDebugSystem* pds) noexcept;
 
     /// Returns the current pixel debug system, or nullptr if not set.
     [[nodiscard]] PixelDebugSystem* GetPixelDebugSystem() const noexcept { return m_pixelDebugSystem; }
@@ -356,6 +400,10 @@ public:
 
     /// Returns the current render path.
     [[nodiscard]] RenderPath GetRenderPath() const { return m_renderPath; }
+
+    /// Returns the actual path tracer history counter since the last consumed
+    /// reset. A queued reset is consumed on the next path-traced frame.
+    [[nodiscard]] uint32_t GetPathTracerSamplesAccumulated() const { return m_ptAccumSamples; }
 
     /// Sets the GBuffer debug visualization mode.
     ///
@@ -579,7 +627,9 @@ public:
     [[nodiscard]] bool IsLensFlareEnabled() const { return m_lensFlareEnabled; }
 
     /// Sets the temporal upscaler type. Recreates the upscaler on change.
-    void SetUpscalerType(UpscalerType type);
+    const UpscalerSelection& SetUpscalerType(UpscalerType type);
+
+    [[nodiscard]] const UpscalerSelection& GetUpscalerSelection() const noexcept { return m_upscalerSelection; }
 
     /// Returns the current upscaler type.
     [[nodiscard]] UpscalerType GetUpscalerType() const { return m_upscalerType; }
@@ -888,6 +938,11 @@ public:
     /// Used by the animation subsystem to upload per-frame skinned vertex data
     /// into the mesh's vertex buffer after GPU skinning.
     [[nodiscard]] const GPUMesh* GetGPUMesh(uint32_t meshId) const;
+    /// Animation owns pose writes; the mesh keeps both buffers alive together.
+    [[nodiscard]] GPUMesh* GetGPUMesh(uint32_t meshId) {
+        return meshId < m_meshes.size() && m_meshes[meshId].IsValid()
+            ? &m_meshes[meshId] : nullptr;
+    }
 
     /// Queues an RHI buffer for destruction after the current frame's fence
     /// completes. Used by subsystems that create transient upload/staging
@@ -937,13 +992,6 @@ private:
     RHIBufferHandle m_vfxKillVolumeBuffer;    ///< GPU buffer for kill volume descriptors (16 × 32 bytes).
     RHIBufferHandle m_vfxDeathEventBuffer;    ///< GPU buffer for death events (4096 × 32 bytes).
     RHIBufferHandle m_vfxDeathEventCountBuffer; ///< Death event counter (single uint32).
-    /// End-of-frame resource states for imported textures.
-    /// Updated after each frame's render graph Compile() to provide correct
-    /// initial states for the next frame's imports.
-    RHIResourceState m_hdrEndState    = RHIResourceState::Undefined;
-    RHIResourceState m_depthEndState  = RHIResourceState::Undefined;
-    RHIResourceState m_albedoEndState = RHIResourceState::Undefined;
-    RHIResourceState m_normalEndState = RHIResourceState::Undefined;
     RHIBufferHandle m_decalCubeVB;
     RHIBufferHandle m_vfxZeroBuffer; ///< 4-byte upload buffer containing uint32 0. Used to zero-clear aliveCount.
     RHIBufferHandle m_decalCubeIB;

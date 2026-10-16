@@ -1,10 +1,12 @@
 <!-- doc-meta -->
 title: Shader Design - HLSL Path Tracer Compute
 date: 2026-04-07
-status: draft
+status: approved
 <!-- end-doc-meta -->
 
 # 3. Shader Design
+
+> Implementation note: the shipped tracer uses DXR-inline pixel shaders, not this compute/analytic design; [08 reconciliation](08-implementation-reconciliation.md) is authoritative.
 
 Reference algorithm: Shadertoy-style progressive Monte Carlo path tracer. One
 compute thread per pixel, analytic scene, progressive accumulation across frames.

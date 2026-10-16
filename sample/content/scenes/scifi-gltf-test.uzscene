@@ -1,0 +1,113 @@
+{
+  "name": "SciFi gltf-direct test",
+  "version": "1.0",
+  "entities": [
+    {
+      "name": "Sun",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            920
+          ],
+          "rotation": [
+            -30,
+            0,
+            60
+          ]
+        },
+        "light": {
+          "type": "directional",
+          "color": [
+            1,
+            0.96,
+            0.88
+          ],
+          "intensity": 10
+        }
+      }
+    },
+    {
+      "name": "SciFiHelmet",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            100
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            100,
+            100,
+            100
+          ]
+        },
+        "mesh": {
+          "asset": "meshes/scifi_helmet/SciFiHelmet.gltf"
+        }
+      }
+    },
+    {
+      "name": "MainCamera",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            -250,
+            130
+          ],
+          "rotation": [
+            0,
+            0,
+            -5
+          ]
+        },
+        "camera": {
+          "fov": 45,
+          "near": 1,
+          "far": 100000,
+          "active": true
+        }
+      }
+    },
+    {
+      "name": "Sky",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        },
+        "sky_atmosphere": {}
+      }
+    },
+    {
+      "name": "SkyLight",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        },
+        "sky_light": {
+          "intensity": 1.5,
+          "light_color": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -310,6 +310,8 @@ const char* FSR2Upscaler::GetName() const noexcept {
     return "FSR2";
 }
 
+bool FSR2Upscaler::IsAvailable() const noexcept { return true; }
+
 float FSR2Upscaler::GetMinScreenPercentage() const noexcept {
     // Ultra Performance mode = 3x upscale = render at 33.3% of display.
     return 33.3f;
@@ -324,37 +326,41 @@ float FSR2Upscaler::GetMaxScreenPercentage() const noexcept {
 // Lifecycle
 // -------------------------------------------------------------------------
 
-void FSR2Upscaler::Init(IRHIDevice* device, PipelineLibrary* /*pipelines*/,
+bool FSR2Upscaler::Init(IRHIDevice* device, PipelineLibrary* /*pipelines*/,
                          CBRingAllocator* /*cbRing*/) {
+    Shutdown();
     if (!device) {
         UZ_LOG(Renderer, Error, "FSR2: Init called with null device");
-        return;
+        return false;
     }
 
     // FSR2 DX12 backend requires a DX12 device.
     if (device->GetBackend() != RHIBackend::DX12) {
         UZ_LOG(Renderer, Error, "FSR2: only DX12 backend is supported");
-        return;
+        return false;
     }
 
+    if (!m_impl) m_impl = std::make_unique<Impl>();
     m_impl->device     = device;
     m_impl->dx12Device = static_cast<DX12Device*>(device);
 
     ID3D12Device* nativeDevice = m_impl->dx12Device->GetDevice();
     if (!nativeDevice) {
         UZ_LOG(Renderer, Error, "FSR2: failed to get native ID3D12Device");
-        return;
+        Shutdown();
+        return false;
     }
 
     // Allocate scratch memory for the FFX DX12 backend.
     if (!m_impl->AllocateScratchBuffer()) {
-        return;
+        Shutdown();
+        return false;
     }
 
     // Create the backend interface.
     if (!m_impl->CreateBackendInterface(nativeDevice)) {
-        m_impl->FreeScratchBuffer();
-        return;
+        Shutdown();
+        return false;
     }
 
     UZ_LOG(Renderer, Info, "FSR2: backend initialized (scratch={} bytes)",
@@ -362,6 +368,7 @@ void FSR2Upscaler::Init(IRHIDevice* device, PipelineLibrary* /*pipelines*/,
 
     // The FSR2 context is created lazily in Execute() when the display
     // resolution is first known, or in OnResize() when the resolution changes.
+    return true;
 }
 
 void FSR2Upscaler::Shutdown() {
@@ -370,6 +377,10 @@ void FSR2Upscaler::Shutdown() {
         m_impl->FreeScratchBuffer();
         m_impl->device     = nullptr;
         m_impl->dx12Device = nullptr;
+        m_impl->displayWidth = 0;
+        m_impl->displayHeight = 0;
+        m_impl->maxRenderWidth = 0;
+        m_impl->maxRenderHeight = 0;
         std::memset(&m_impl->backendInterface, 0, sizeof(FfxInterface));
     }
 }
@@ -387,7 +398,7 @@ void FSR2Upscaler::OnResize(uint32_t displayWidth, uint32_t displayHeight) {
     // Recreate the context at the new display resolution.
     // The backend interface persists -- only the effect context needs recreation.
     if (displayWidth > 0 && displayHeight > 0) {
-        m_impl->CreateContext(displayWidth, displayHeight);
+        if (!m_impl->CreateContext(displayWidth, displayHeight)) Shutdown();
     } else {
         m_impl->DestroyContext();
     }
@@ -397,12 +408,12 @@ void FSR2Upscaler::OnResize(uint32_t displayWidth, uint32_t displayHeight) {
 // Execution
 // -------------------------------------------------------------------------
 
-void FSR2Upscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
+bool FSR2Upscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     UZ_PROFILE_SCOPE("FSR2::Execute");
 
     if (!m_impl || !m_impl->dx12Device) {
         UZ_LOG(Renderer, Error, "FSR2: Execute called before Init");
-        return;
+        return false;
     }
 
     const auto outputW = static_cast<uint32_t>(input.outputWidth);
@@ -416,11 +427,12 @@ void FSR2Upscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
         if (outputW == 0 || outputH == 0) {
             UZ_LOG(Renderer, Warning, "FSR2: invalid output resolution {}x{}",
                    outputW, outputH);
-            return;
+            return false;
         }
 
         if (!m_impl->CreateContext(outputW, outputH)) {
-            return;
+            Shutdown();
+            return false;
         }
     }
 
@@ -436,7 +448,7 @@ void FSR2Upscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
                "(color={}, depth={}, velocity={}, output={})",
                sceneColorRes != nullptr, depthRes != nullptr,
                velocityRes != nullptr, outputRes != nullptr);
-        return;
+        return false;
     }
 
     // Get the native DX12 command list for the FFX dispatch.
@@ -444,7 +456,7 @@ void FSR2Upscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     ID3D12GraphicsCommandList* nativeCmdList = dx12Cmd->GetNative();
     if (!nativeCmdList) {
         UZ_LOG(Renderer, Error, "FSR2: failed to get native command list");
-        return;
+        return false;
     }
 
     FfxCommandList ffxCmdList = ffxGetCommandListDX12(nativeCmdList);
@@ -486,10 +498,11 @@ void FSR2Upscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     // Motion vector scale.
     // UzEngine's velocity buffer stores screen-space pixel displacement.
     // FSR2 internally computes: pixelOffset = MV * motionVectorScale.
-    // Since our MVs are already in pixel units, we set scale to (1, 1).
+    // Our MVs are curr - prev pixels; FSR2 expects prev - curr pixels.
+    // Negate both axes. SDK-enabled runtime verification is deferred.
     // @ref AMD 2022 "FidelityFX Super Resolution 2" -- motion vector setup.
-    dispatchDesc.motionVectorScale.x = 1.0f;
-    dispatchDesc.motionVectorScale.y = 1.0f;
+    dispatchDesc.motionVectorScale.x = -1.0f;
+    dispatchDesc.motionVectorScale.y = -1.0f;
 
     // Render resolution for this frame.
     dispatchDesc.renderSize.width  = static_cast<uint32_t>(input.renderWidth);
@@ -530,10 +543,11 @@ void FSR2Upscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     if (err != FFX_OK) {
         UZ_LOG(Renderer, Error, "FSR2: ffxFsr2ContextDispatch failed with error {}",
                static_cast<int32_t>(err));
-        return;
+        return false;
     }
 
     m_impl->frameIndex++;
+    return true;
 }
 
 } // namespace uz
@@ -551,17 +565,19 @@ FSR2Upscaler::~FSR2Upscaler() = default;
 
 UpscalerType FSR2Upscaler::GetType() const noexcept { return UpscalerType::FSR2; }
 const char* FSR2Upscaler::GetName() const noexcept { return "FSR2 (stub)"; }
+bool FSR2Upscaler::IsAvailable() const noexcept { return false; }
 float FSR2Upscaler::GetMinScreenPercentage() const noexcept { return 33.f; }
 float FSR2Upscaler::GetMaxScreenPercentage() const noexcept { return 100.f; }
 
-void FSR2Upscaler::Init(IRHIDevice*, PipelineLibrary*, CBRingAllocator*) {
+bool FSR2Upscaler::Init(IRHIDevice*, PipelineLibrary*, CBRingAllocator*) {
     UZ_LOG(Renderer, Warning,
            "FSR2 is not available — build with UZ_FSR2_ENABLED=1 and link ffx_fsr2.lib");
+    return false;
 }
 void FSR2Upscaler::Shutdown() {}
 void FSR2Upscaler::OnResize(uint32_t, uint32_t) {}
-void FSR2Upscaler::Execute(IRHICommandList*, const UpscalerInput&) {}
-
-#endif // UZ_FSR2_ENABLED
+bool FSR2Upscaler::Execute(IRHICommandList*, const UpscalerInput&) { return false; }
 
 } // namespace uz
+
+#endif // UZ_FSR2_ENABLED

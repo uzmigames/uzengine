@@ -3,11 +3,15 @@
 /// Validates struct sizes, alignment, field offsets, and ring allocator logic.
 
 #include "constant_buffers.h"
+#include "per_frame_params.h"
+#include "gbuffer_per_object_params.h"
+#include "instance_batcher.h"
 
 #include <gtest/gtest.h>
 
 #include <cstddef>
 #include <cstring>
+#include <type_traits>
 
 using namespace uz;
 
@@ -17,6 +21,19 @@ using namespace uz;
 
 TEST(PerFrameCB, SizeIs1024Bytes) {
     EXPECT_EQ(sizeof(PerFrameCB), 1024u);
+}
+
+TEST(PerFrameParams, IsPerFrameCB_WithHandlesAt1024) {
+    EXPECT_TRUE((std::is_base_of_v<PerFrameCB, PerFrameParams>));
+    EXPECT_TRUE(std::is_standard_layout_v<PerFrameCB>);
+    EXPECT_EQ(offsetof(PerFrameParams, irradianceCubemap), sizeof(PerFrameCB));
+    EXPECT_EQ(offsetof(PerFrameParams, irradianceCubemap), 1024u);
+    EXPECT_EQ(offsetof(PerFrameParams, prefilteredSpecular), 1032u);
+    EXPECT_EQ(offsetof(PerFrameParams, brdfLut), 1040u);
+
+    PerFrameParams params{};
+    EXPECT_EQ(static_cast<const void*>(static_cast<const PerFrameCB*>(&params)),
+              static_cast<const void*>(&params));
 }
 
 TEST(PerFrameCB, FieldOffsets) {
@@ -74,6 +91,47 @@ TEST(PerObjectCB, SizeIs256Bytes) {
     EXPECT_EQ(sizeof(PerObjectCB), 256u);
 }
 
+TEST(GBufferPerObjectParams, IsPerObjectCB_WithHandlesAt256) {
+    EXPECT_TRUE((std::is_base_of_v<PerObjectCB, GBufferPerObjectParams>));
+    EXPECT_TRUE(std::is_standard_layout_v<PerObjectCB>);
+    EXPECT_EQ(offsetof(GBufferPerObjectParams, albedoTexture), sizeof(PerObjectCB));
+    EXPECT_EQ(offsetof(GBufferPerObjectParams, albedoTexture), 256u);
+    EXPECT_EQ(offsetof(GBufferPerObjectParams, normalTexture), 264u);
+    EXPECT_EQ(offsetof(GBufferPerObjectParams, roughnessTexture), 272u);
+    EXPECT_EQ(offsetof(GBufferPerObjectParams, metallicTexture), 280u);
+    EXPECT_EQ(offsetof(GBufferPerObjectParams, aoTexture), 288u);
+    EXPECT_EQ(offsetof(GBufferPerObjectParams, emissiveTexture), 296u);
+
+    GBufferPerObjectParams params{};
+    EXPECT_EQ(static_cast<const void*>(static_cast<const PerObjectCB*>(&params)),
+              static_cast<const void*>(&params));
+    EXPECT_FLOAT_EQ(params.displacementScale, 0.0f);
+    EXPECT_EQ(params.heightmapSrvIndex, 0u);
+    EXPECT_FLOAT_EQ(params.pomMinLayers, 8.0f);
+    EXPECT_FLOAT_EQ(params.pomMaxLayers, 32.0f);
+    EXPECT_FLOAT_EQ(params.pomFadeStart, 1000.0f);
+    EXPECT_FLOAT_EQ(params.pomFadeEnd, 2000.0f);
+    EXPECT_FLOAT_EQ(params.pomSelfShadow, 0.0f);
+}
+
+TEST(PerObjectCB, PomRegionOffsets_224_To_248) {
+    EXPECT_EQ(offsetof(PerObjectCB, displacementScale), 224u);
+    EXPECT_EQ(offsetof(PerObjectCB, heightmapSrvIndex), 228u);
+    EXPECT_EQ(offsetof(PerObjectCB, pomMinLayers), 232u);
+    EXPECT_EQ(offsetof(PerObjectCB, pomMaxLayers), 236u);
+    EXPECT_EQ(offsetof(PerObjectCB, pomFadeStart), 240u);
+    EXPECT_EQ(offsetof(PerObjectCB, pomFadeEnd), 244u);
+    EXPECT_EQ(offsetof(PerObjectCB, pomSelfShadow), 248u);
+    EXPECT_EQ(offsetof(PerObjectCB, materialFlags), 252u);
+}
+
+TEST(InstanceData, Layout_128_WorldThenNormal) {
+    EXPECT_TRUE(std::is_standard_layout_v<InstanceData>);
+    EXPECT_EQ(sizeof(InstanceData), 128u);
+    EXPECT_EQ(offsetof(InstanceData, world), 0u);
+    EXPECT_EQ(offsetof(InstanceData, normalMatrix), 64u);
+}
+
 TEST(PerObjectCB, FieldOffsets) {
     // Scalars first (offset 0): 6 uint32 indices + alphaClipThreshold + opacitySrvIndex = 32 bytes
     EXPECT_EQ(offsetof(PerObjectCB, albedoIndex),    0u);
@@ -87,7 +145,7 @@ TEST(PerObjectCB, FieldOffsets) {
     // Matrices after scalars (offset 32)
     EXPECT_EQ(offsetof(PerObjectCB, model),         32u);
     EXPECT_EQ(offsetof(PerObjectCB, normalMatrix),  96u);
-    // Blend mode at end (offset 252)
+    // Material flags at end (offset 252)
     EXPECT_EQ(offsetof(PerObjectCB, materialFlags),    252u);
 }
 

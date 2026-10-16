@@ -137,6 +137,9 @@ public:
     /// is equivalent to calling `Detach()`.
     ///
     /// Marks this component (and all descendants) dirty after attachment.
+    /// Self-parenting and attachment beneath a descendant are rejected without
+    /// changing the hierarchy, transforms, or dirty flags. Valid attachment
+    /// preserves the local transform, not the world transform.
     ///
     /// # Arguments
     /// * `parent` - The new parent. May be null to detach from hierarchy.

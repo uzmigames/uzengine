@@ -50,6 +50,7 @@ run_py contact_shadows    scripts/rendering/test_contact_shadows.py    --out "$O
 run_py layered_reflections scripts/rendering/test_layered_reflections.py --out "$OUT/test-layered-reflections"
 run_py ddgi_dedup         scripts/rendering/test_ddgi_dedup.py         --out "$OUT/test-ddgi-dedup"
 run_py clustered_lights   scripts/rendering/test_clustered_lights.py   --out "$OUT/test-clustered-lights"
+run_py probe_shipped      scripts/rendering/test_probe_shipped.py      --out "$OUT/test-probe-shipped"
 run_py cbuffer_layouts    scripts/rendering/test_cbuffer_layouts.py
 
 echo "=== sweep done ($(date +%H:%M:%S))"

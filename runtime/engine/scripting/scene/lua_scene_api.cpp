@@ -140,25 +140,11 @@ static int SceneFind(lua_State* L) {
         return 1;
     }
 
-    // Iterate CName view to find first match.
-    // EnTT encodes generation in the upper bits of the entity integral value.
-    // We recover it via `registry.current(enttEntity)` which returns the current
-    // generation for that slot — matching what World::CreateEntity() stored.
+    // Iterate the CName view and return the first match as a full World handle
+    // (packed id + per-slot generation) via EntityFromEntt, so it survives slot recycle.
     for (auto [enttEntity, cname] : world->View<CName>().each()) {
         if (cname.name == name) {
-            // Extract the slot index using to_entity() (masks out version bits),
-            // matching what World::CreateEntity stores in Entity::id.
-            //
-            // Generation mapping: World::CreateEntity increments generations_[slot]
-            // starting from 0 BEFORE storing, so the first alive entity has generation=1.
-            // EnTT's registry::current() returns the version which starts at 0 for the
-            // first entity in a slot. Therefore: Entity::generation = entt_version + 1.
-            const uint32_t slot = static_cast<uint32_t>(entt::to_entity(enttEntity));
-            const uint32_t gen  = static_cast<uint32_t>(
-                world->GetRegistry().current(enttEntity)) + 1u;
-            Entity found;
-            found.id         = slot;
-            found.generation = gen;
+            const Entity found = world->EntityFromEntt(enttEntity);
             lua_pushlightuserdata(L, EntityToUserdata(found));
             return 1;
         }
@@ -271,13 +257,7 @@ static int SceneSetScale(lua_State* L) {
 {
     for (auto [enttEntity, sc] : world->View<SceneComponent>().each()) {
         if (&sc == targetSc) {
-            const uint32_t slot = static_cast<uint32_t>(entt::to_entity(enttEntity));
-            const uint32_t gen  = static_cast<uint32_t>(
-                world->GetRegistry().current(enttEntity)) + 1u;
-            Entity found;
-            found.id         = slot;
-            found.generation = gen;
-            return found;
+            return world->EntityFromEntt(enttEntity);
         }
     }
     return Entity::Invalid();

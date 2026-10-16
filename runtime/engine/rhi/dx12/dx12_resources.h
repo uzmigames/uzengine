@@ -83,6 +83,8 @@ struct DX12Buffer {
     /// structured/typed buffer access. `UINT32_MAX` if no SRV was created
     /// (e.g., vertex buffers that are only bound via VBV, not shader-read).
     uint32_t                     srvIndex = UINT32_MAX;
+    /// Lazily allocated raw alias; owned by this buffer alongside its structured SRV.
+    uint32_t                     rawSrvIndex = UINT32_MAX;
     /// Offset into the global CBV_SRV_UAV heap for read-write (UAV) access.
     /// `UINT32_MAX` if the buffer was not created with `RHIBufferUsage::Storage`.
     uint32_t                     uavIndex = UINT32_MAX;

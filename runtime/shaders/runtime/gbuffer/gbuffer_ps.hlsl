@@ -10,6 +10,8 @@ struct PSInput {
     float2 texcoord   : TEXCOORD0;
     float4 tangentWS  : TANGENT;
     float3 positionWS : TEXCOORD1;
+    noperspective float2 screenUV : TEXCOORD2;
+    float4 color : COLOR0;
 };
 
 struct GBufferOutput {
@@ -123,11 +125,11 @@ GBufferOutput main(PSInput input) {
 
     ComputeMaterialOutputs(
         uv, input.positionWS, normalize(input.normalWS),
-        float4(1,1,1,1), // vertexColor (not yet wired)
-        float3(0,0,0),   // cameraPosition (TODO: wire from PerFrameCB)
-        float3(0,0,0),   // objectPosition
-        input.positionCS.xy / float2(1920, 1080), // screenUV approximate
-        0.0,             // totalTime (TODO: wire from PerFrameCB)
+        input.color,          // linear RGBA, white without a stream
+        cameraPos.xyz,        // world cm
+        obj_model[3].xyz,     // object world translation, cm
+        input.screenUV,       // render-viewport UV, +y down, includes TAA jitter
+        timeParams.x,         // seconds since renderer start
         materialParams,
         albedo, metallic, roughness,
         graphNormal, emissive, opacity, ao);

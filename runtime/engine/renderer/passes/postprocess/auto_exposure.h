@@ -45,6 +45,7 @@ namespace uz {
 class IRHIDevice;
 class IRHICommandList;
 class ShaderManager;
+namespace rg { class RgStateRegistry; }
 
 /// Auto-exposure parameters (Eye Adaptation defaults).
 ///
@@ -134,6 +135,8 @@ public:
     AutoExposure(AutoExposure&&) = delete;
     AutoExposure& operator=(AutoExposure&&) = delete;
 
+    void SetStateRegistry(rg::RgStateRegistry* states) { m_states = states; }
+
     /// Initialize GPU resources and compile compute shaders.
     ///
     /// Creates the histogram buffer (64 x uint32, UAV+SRV), exposure buffer
@@ -197,6 +200,7 @@ private:
     [[nodiscard]] bool EnsureAveragePipeline();
 
     IRHIDevice*    m_device    = nullptr;
+    rg::RgStateRegistry* m_states = nullptr;
     ShaderManager* m_shaderMgr = nullptr;
 
     // ── GPU Buffers ──────────────────────────────────────────────────────

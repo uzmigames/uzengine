@@ -11,6 +11,7 @@
 #include "camera.h"
 #include "units.h"
 #include "render_graph_builder.h"
+#include "render_graph_states.h"
 #include "render_graph_resources.h"
 #include "profiler.h"
 #include "rhi.h"
@@ -33,6 +34,8 @@ static auto* cv_DOF             = UZ_CVAR_BOOL("r.DOF", false, "Depth of field (
 static auto* cv_CAS             = UZ_CVAR_BOOL("r.CAS", true, "Contrast adaptive sharpening (inert: pass not wired in the current post chain)");
 static auto* cv_TonemapOp       = UZ_CVAR_INT("r.TonemapOperator", 1,
     "Tonemap: 0=None, 1=Hill ACES, 2=Narkowicz ACES, 3=Reinhard, 4=Hable", 0, 4);
+static auto* cv_UpscalerForceExecuteFail = UZ_CVAR_BOOL("r.Upscaler.ForceExecuteFail", false,
+    "Diagnostic: force temporal Execute failure and display current HDR");
 static auto* cv_DOFFocusDist    = UZ_CVAR_FLOAT("r.DOF.FocusDistance", 0.f, "DOF focus distance (cm) (inert: DOF pass not wired)", 0.f, 100000.f);
 static auto* cv_DOFAperture     = UZ_CVAR_FLOAT("r.DOF.Aperture", 4.f, "DOF f-stop number (inert: DOF pass not wired)", 0.5f, 32.f);
 static auto* cv_DOFFocalRegion  = UZ_CVAR_FLOAT("r.DOF.FocalRegion", 0.f, "In-focus zone width (cm) (inert: DOF pass not wired)", 0.f, 10000.f);
@@ -258,25 +261,27 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
     // No CAS, no FXAA, no motion blur, no DOF.
     {
         // ── TAA resolve (jitter removal + temporal accumulation) ─────────
-        uint32_t tonemapInputSrv = m_hdrSceneColorSrv;
+        ctx.display = FrameContext::DisplaySource::Hdr(
+            m_hdrSceneColorSrv, m_hdrSceneColor, ctx.renderWidth, ctx.renderHeight);
 
         if (ctx.taaActive && m_upscaler && m_shadowDebugMode != 1) {
             const uint32_t writeIdx = ctx.taaWriteIdx;
+            ctx.display = FrameContext::DisplaySource::Temporal(
+                m_taaHistorySrv[writeIdx], m_taaHistory[writeIdx], m_taaHistoryUav[writeIdx],
+                ctx.vpWidth, ctx.vpHeight);
             const uint32_t readIdx  = ctx.taaReadIdx;
             const float jitterX = ctx.jitterX;
             const float jitterY = ctx.jitterY;
-            const bool firstFrame = !m_prevViewProjValid;
+            const bool firstFrame = ctx.temporal.firstFrame();
 
             rgBuilder.AddPass(m_upscaler->GetName(), [&, writeIdx, readIdx, jitterX, jitterY, firstFrame](rg::RgPassBuilder& pb) {
                 pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
+                pb.Read(ctx.velocityRes, RHIResourceState::ShaderResource);
+                pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);
 
                 pb.SetExecutionCallback([this, &ctx, writeIdx, readIdx, jitterX, jitterY, firstFrame](IRHICommandList* cmd, const rg::RgPassResources&) {
                     UZ_PROFILE_SCOPE("Upscaler::Execute");
 
-                    // History barrier states depend on whether this is the first frame.
-                    // First frame: textures are in Common state (never written).
-                    // Subsequent frames: write target is SRV (read by tonemap last frame),
-                    //                    read target is UAV (written by upscaler last frame) → need SRV.
                     // The clamp-box diagnostic allocates only while it is enabled.
                     const int clampFreezeFrame =
                         CVarRegistry::Get().GetInt("r.TAA.ClampFreezeAfterFrame", -1);
@@ -288,35 +293,22 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                         && static_cast<int>(ctx.frameIndex) > clampFreezeFrame;
                     if (clampBoxReady) {
                         // Written as a UAV until the freeze frame, read as an SRV after it.
-                        RHIBarrierDesc boxBarriers[2]{};
                         for (int i = 0; i < 2; ++i) {
-                            boxBarriers[i].texture     = m_taaClampBox[i];
-                            boxBarriers[i].buffer      = RHIBufferHandle::Invalid();
-                            boxBarriers[i].stateBefore =
-                                !m_taaClampBoxInitialised ? RHIResourceState::Common
-                                : (clampBoxRead ? RHIResourceState::UnorderedAccess
-                                                : RHIResourceState::ShaderResource);
-                            boxBarriers[i].stateAfter  = clampBoxRead
+                            const auto state = clampBoxRead
                                 ? RHIResourceState::ShaderResource
                                 : RHIResourceState::UnorderedAccess;
+                            if (!clampBoxRead && m_rgStates->Get(m_taaClampBox[i]) == state) {
+                                m_rgStates->UavBarrier(cmd, m_taaClampBox[i]);
+                            } else {
+                                m_rgStates->Transition(cmd, m_taaClampBox[i], state);
+                            }
                         }
-                        cmd->ResourceBarrier(boxBarriers, 2);
                         m_taaClampBoxInitialised = true;
                     }
 
                     {
-                        RHIBarrierDesc barriers[2]{};
-                        barriers[0].texture     = m_taaHistory[writeIdx];
-                        barriers[0].buffer      = RHIBufferHandle::Invalid();
-                        barriers[0].stateBefore = firstFrame ? RHIResourceState::Common : RHIResourceState::ShaderResource;
-                        barriers[0].stateAfter  = RHIResourceState::UnorderedAccess;
-
-                        barriers[1].texture     = m_taaHistory[readIdx];
-                        barriers[1].buffer      = RHIBufferHandle::Invalid();
-                        barriers[1].stateBefore = firstFrame ? RHIResourceState::Common : RHIResourceState::UnorderedAccess;
-                        barriers[1].stateAfter  = RHIResourceState::ShaderResource;
-
-                        cmd->ResourceBarrier(barriers, firstFrame ? 1 : 2);
+                        m_rgStates->Transition(cmd, m_taaHistory[writeIdx], RHIResourceState::UnorderedAccess);
+                        m_rgStates->Transition(cmd, m_taaHistory[readIdx], RHIResourceState::ShaderResource);
                     }
 
                     UpscalerInput input{};
@@ -359,38 +351,43 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                         cmd->ResourceBarrier(&uav, 1);
                     }
 
-                    m_upscaler->Execute(cmd, input);
+                    const bool wrote = cv_UpscalerForceExecuteFail->value < 0.5f
+                        && m_upscaler->Execute(cmd, input);
+                    ctx.ResolveDisplaySource(wrote, FrameContext::DisplaySource::Hdr(
+                        m_hdrSceneColorSrv, m_hdrSceneColor, ctx.renderWidth, ctx.renderHeight),
+                        m_upscalerFailStreak);
+                    if (wrote) {
+                        m_temporal.MarkWritten(writeIdx);
+                    } else {
+                        m_temporal.MarkFailed(writeIdx);
+                        const uint32_t warningBit = 1u << static_cast<uint32_t>(m_upscalerType);
+                        if ((m_temporalFailureWarnings & warningBit) == 0) {
+                            m_temporalFailureWarnings |= warningBit;
+                            UZ_LOG(Renderer, Warning, "Temporal history: {} recorded no history write (ExecuteFailed)",
+                                   m_upscaler->GetName());
+                        }
+                    }
 
+                    if (CVarRegistry::Get().GetBool("r.TAA.LogDecisions")) {
+                        UZ_LOG(Renderer, Info,
+                               "TemporalExecute: frame={} execute={} display={} failures={}",
+                               ctx.frameIndex, wrote ? "ok" : "failed",
+                               ctx.display.temporal ? "history" : "hdr", m_upscalerFailStreak);
+                    }
 
                     // Write target → SRV for tonemap to read
                     {
-                        RHIBarrierDesc barrier{};
-                        barrier.texture     = m_taaHistory[writeIdx];
-                        barrier.buffer      = RHIBufferHandle::Invalid();
-                        barrier.stateBefore = RHIResourceState::UnorderedAccess;
-                        barrier.stateAfter  = RHIResourceState::ShaderResource;
-                        cmd->ResourceBarrier(&barrier, 1);
+                        m_rgStates->Transition(cmd, m_taaHistory[writeIdx], RHIResourceState::ShaderResource);
                     }
                 });
             });
-
-            // Tonemap reads from TAA output (de-jittered + temporally stable)
-            tonemapInputSrv = m_taaHistorySrv[writeIdx];
 
             // Flip ping-pong for next frame
             m_taaHistoryIndex = 1 - m_taaHistoryIndex;
         }
 
-        // Region dump (diagnostics): the previous frame's matrix, taken before it is
-        // overwritten just below, so a capture can reproject a world point into the frame
-        // that came before it.
-        const Mat4 regionPrevViewProj = m_prevViewProj;
-
-        // Store unjittered viewProj for next frame's reprojection.
-        // MUST be inside the simplified block — the original code after `return`
-        // is never reached, so prevViewProj would never be set.
-        m_prevViewProj = ctx.unjitteredViewProj;
-        m_prevViewProjValid = true;
+        // The previous matrix was snapshotted before SetupFrameData advanced history.
+        const Mat4 regionPrevViewProj = ctx.temporal.prevViewProj;
 
         // ── SSR Post-TAA Composite ──────────────────────────────────────
         // Apply SSR AFTER TAA to prevent TAA neighborhood contamination.
@@ -402,37 +399,23 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
             && m_ssrResolvedOutput.IsValid()
             && m_ssrResolvedOutputSrv != UINT32_MAX) {
 
-            // Determine the target: TAA output if TAA active, else raw HDR
-            const uint32_t compositeTargetUav = ctx.taaActive
-                ? m_taaHistoryUav[1 - m_taaHistoryIndex]  // TAA just-written
-                : UINT32_MAX;  // will use raw HDR fallback
-
-            if (compositeTargetUav != UINT32_MAX || !ctx.taaActive) {
-                rgBuilder.AddPass("SSR_Composite", [&, compositeTargetUav, tonemapInputSrv](rg::RgPassBuilder& pb) {
+                rgBuilder.AddPass("SSR_Composite", [&](rg::RgPassBuilder& pb) {
                     pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);   // block B.5: after TAA, before the tonemap
-                    pb.SetExecutionCallback([this, &ctx, compositeTargetUav, tonemapInputSrv](IRHICommandList* cmd, const rg::RgPassResources&) {
+                    pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources&) {
                         UZ_PROFILE_SCOPE("SSR::Composite");
 
                         auto ssrCompositePSO = ctx.pipelines->GetSsrComposite();
                         if (!ssrCompositePSO.IsValid() || cv_SSRComposite->value < 0.5f) return;
 
                         // Determine which texture to composite onto
-                        RHITextureHandle targetTex = ctx.taaActive
-                            ? m_taaHistory[1 - m_taaHistoryIndex]  // TAA wrote here
-                            : m_hdrSceneColor;
-                        uint32_t targetUav = ctx.taaActive
-                            ? m_taaHistoryUav[1 - m_taaHistoryIndex]
-                            : UINT32_MAX;  // need HDR UAV — skip if not available
+                        RHITextureHandle targetTex = ctx.display.texture;
+                        uint32_t targetUav = ctx.display.uav;
 
                         if (targetUav == UINT32_MAX) return;  // no UAV for raw HDR
 
                         // TAA output is in SRV state — transition to UAV for R/W
                         {
-                            RHIBarrierDesc barrier{};
-                            barrier.texture     = targetTex;
-                            barrier.stateBefore = RHIResourceState::ShaderResource;
-                            barrier.stateAfter  = RHIResourceState::UnorderedAccess;
-                            cmd->ResourceBarrier(&barrier, 1);
+                            m_rgStates->Transition(cmd, targetTex, RHIResourceState::UnorderedAccess);
                         }
 
                         cmd->SetPipeline(ssrCompositePSO);
@@ -463,15 +446,10 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
 
                         // Back to SRV for tonemap/bloom
                         {
-                            RHIBarrierDesc barrier{};
-                            barrier.texture     = targetTex;
-                            barrier.stateBefore = RHIResourceState::UnorderedAccess;
-                            barrier.stateAfter  = RHIResourceState::ShaderResource;
-                            cmd->ResourceBarrier(&barrier, 1);
+                            m_rgStates->Transition(cmd, targetTex, RHIResourceState::ShaderResource);
                         }
                     });
                 });
-            }
         }
 
         // ── SSR CopyPrevColor (post-TAA, post-composite) ────────────────
@@ -480,45 +458,35 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
         // hdrSceneColor that cause micro-pixel TAA variation → stipple noise.
         // @ref UE5 — reads PrevViewInfo.TemporalAAHistory (prev TAA output)
         if (m_ssrEnabled && m_ssrPrevSceneColor.IsValid()) {
-            // Source: TAA output if available, else raw HDR
-            const RHITextureHandle copySource = ctx.taaActive
-                ? m_taaHistory[1 - m_taaHistoryIndex]
-                : m_hdrSceneColor;
-            const auto copySourceState = ctx.taaActive
-                ? RHIResourceState::ShaderResource  // TAA output is in SRV
-                : RHIResourceState::RenderTarget;   // HDR is in RT
+            const auto copySourceState = RHIResourceState::ShaderResource;
 
-            rgBuilder.AddPass("SSR_CopyPrevColor", [&, copySource, copySourceState](rg::RgPassBuilder& pb) {
+            rgBuilder.AddPass("SSR_CopyPrevColor", [&, copySourceState](rg::RgPassBuilder& pb) {
                 // Block B.5: declared so the graph schedules the copy after TAA (it declared nothing and ran
                 // first in the frame, copying the TAA history in the wrong state: every SSR hit was black).
                 pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
-                pb.SetExecutionCallback([this, copySource, copySourceState](IRHICommandList* cmd, const rg::RgPassResources&) {
+                pb.SetExecutionCallback([this, &ctx, copySourceState](IRHICommandList* cmd, const rg::RgPassResources&) {
                     UZ_PROFILE_SCOPE("SSR::CopyPrevColor");
+                    const RHITextureHandle copySource = ctx.display.texture;
 
-                    RHIBarrierDesc barriers[2]{};
+                    RHIBarrierDesc barriers[1]{};
                     barriers[0].texture     = copySource;
                     barriers[0].stateBefore = copySourceState;
                     barriers[0].stateAfter  = RHIResourceState::CopySrc;
-                    barriers[1].texture     = m_ssrPrevSceneColor;
-                    barriers[1].stateBefore = RHIResourceState::ShaderResource;
-                    barriers[1].stateAfter  = RHIResourceState::CopyDst;
-                    cmd->ResourceBarrier(barriers, 2);
+                    cmd->ResourceBarrier(barriers, 1);
+                    m_rgStates->Transition(cmd, m_ssrPrevSceneColor, RHIResourceState::CopyDst);
 
                     cmd->CopyTexture(copySource, m_ssrPrevSceneColor);
 
-                    RHIBarrierDesc restore[2]{};
+                    RHIBarrierDesc restore[1]{};
                     restore[0].texture     = copySource;
                     restore[0].stateBefore = RHIResourceState::CopySrc;
                     restore[0].stateAfter  = copySourceState;
-                    restore[1].texture     = m_ssrPrevSceneColor;
-                    restore[1].stateBefore = RHIResourceState::CopyDst;
-                    restore[1].stateAfter  = RHIResourceState::ShaderResource;
-                    cmd->ResourceBarrier(restore, 2);
+                    cmd->ResourceBarrier(restore, 1);
+                    m_rgStates->Transition(cmd, m_ssrPrevSceneColor, RHIResourceState::ShaderResource);
                 });
             });
 
             m_ssrHasPrevColor = true;
-            m_ssrPrevExposure = ctx.perFrame.exposure;
         }
 
         // ── Bloom pass (if enabled) ─────────────────────────────────────
@@ -530,26 +498,22 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
         // the close-up wobble of 2026-09-08 (r.Bloom=0 left it unchanged);
         // that cause was the jitter matrix — see frame/taa_jitter.h.
         if (m_showFlags.Get(ShowFlag::Bloom) && ctx.bloomEnabled && m_bloomPass && m_bloomPass->IsInitialized()) {
-            const uint32_t bloomInputSrv = tonemapInputSrv;
-            const bool bloomFromDisplayRes = (bloomInputSrv != m_hdrSceneColorSrv);
-            const uint32_t bloomW = static_cast<uint32_t>(bloomFromDisplayRes ? ctx.vpWidth  : ctx.renderWidth);
-            const uint32_t bloomH = static_cast<uint32_t>(bloomFromDisplayRes ? ctx.vpHeight : ctx.renderHeight);
-            rgBuilder.AddPass("Bloom", [&, bloomInputSrv, bloomW, bloomH](rg::RgPassBuilder& pb) {
+            rgBuilder.AddPass("Bloom", [&](rg::RgPassBuilder& pb) {
                 pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
-                pb.SetExecutionCallback([this, &ctx, bloomInputSrv, bloomW, bloomH](IRHICommandList* cmd, const rg::RgPassResources&) {
+                pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources&) {
                     UZ_PROFILE_SCOPE("Bloom::Execute");
-                    m_bloomPass->Execute(cmd, bloomInputSrv, bloomW, bloomH, ctx.perFrame.exposure);
+                    m_bloomPass->Execute(cmd, ctx.display.srv, static_cast<uint32_t>(ctx.display.width),
+                                        static_cast<uint32_t>(ctx.display.height), ctx.perFrame.exposure);
                 });
             });
         }
 
         // ── Tonemap pass (direct to backbuffer) ─────────────────────────
-        const uint32_t capturedTonemapSrv = tonemapInputSrv;
-        rgBuilder.AddPass("Tonemap", [&, capturedTonemapSrv](rg::RgPassBuilder& pb) {
+        rgBuilder.AddPass("Tonemap", [&](rg::RgPassBuilder& pb) {
             pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
             pb.Write(ctx.bbRes, RHIResourceState::RenderTarget);
 
-            pb.SetExecutionCallback([this, &ctx, capturedTonemapSrv](IRHICommandList* cmd, const rg::RgPassResources& res) {
+            pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& res) {
                 UZ_PROFILE_SCOPE("Tonemap::Execute");
 
                 auto bb = res.GetTexture(ctx.bbRes);
@@ -586,19 +550,19 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 uint32_t bloomIntensityBits = 0;
                 std::memcpy(&bloomIntensityBits, &bloomIntensity, sizeof(float));
 
-                uint32_t indices[6] = { capturedTonemapSrv, bloomSrvIdx, bloomIntensityBits, 0, 0,
+                uint32_t indices[6] = { ctx.display.srv, bloomSrvIdx, bloomIntensityBits, 0, 0,
                                         static_cast<uint32_t>(cv_TonemapOp->value) };
                 cmd->SetRootConstants(kSlotRootConstants, indices, 6);
 
                 static bool loggedOnce = false;
                 if (!loggedOnce) {
-                    UZ_LOG(Renderer, Info, "Tonemap: hdrSRV={}, taaActive={}, bloomEnabled={}",
-                           capturedTonemapSrv, ctx.taaActive, ctx.bloomEnabled);
+                    UZ_LOG(Renderer, Info, "Tonemap: hdrSRV={}, display={}, taaActive={}, bloomEnabled={}",
+                           ctx.display.srv, ctx.display.temporal ? "history" : "hdr", ctx.taaActive, ctx.bloomEnabled);
                     loggedOnce = true;
                 }
 
                 if (!ctx.bindless) {
-                    cmd->SetFragmentTexture(0, m_hdrSceneColor);
+                    cmd->SetFragmentTexture(0, ctx.display.texture);
                     if (m_bloomPass && m_bloomPass->GetBloomResultTexture().IsValid())
                         cmd->SetFragmentTexture(1, m_bloomPass->GetBloomResultTexture());
                 }

@@ -41,6 +41,7 @@
 
 namespace uz::rg {
 class RgBuilder;
+class RgStateRegistry;
 } // namespace uz::rg
 
 namespace uz {
@@ -85,6 +86,7 @@ struct HiZMipLevel {
 /// # Thread Safety
 /// NOT thread-safe. Must be populated from the render thread only.
 struct HiZPyramidPassDesc {
+    rg::RgStateRegistry* states = nullptr;
     /// Render graph resource ID for the depth prepass output (read, ShaderResource state).
     rg::RgResourceId  depthSource;
 

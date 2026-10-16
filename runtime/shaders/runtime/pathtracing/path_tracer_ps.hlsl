@@ -6,10 +6,10 @@
 ///
 /// @ref Engel 2006 "Cascaded Shadow Maps" (ShaderX5)
 ///
-/// Specular reflection uses a roughness-perturbed mirror model: mirror direction
-/// lerped toward a random hemisphere direction by roughness², then sampled from
-/// the sky cubemap with LOD = sqrt(roughness)*5. Simple, stable, no screen-space
-/// ray marching artifacts.
+/// Specular reflection is importance-sampled from the GGX visible-normal
+/// distribution (VNDF): a microfacet normal is sampled from the view, the view
+/// is reflected about it and the bounce is traced against the scene TLAS with
+/// throughput weight F*G2/G1. Replaces the former roughness-perturbed mirror.
 ///
 /// Per pixel:
 ///   1. Read GBuffer: normal, albedo, metallic, roughness, position.
@@ -37,6 +37,7 @@
 #include "../material/brdf.hlsli"
 
 #ifdef UZ_BINDLESS
+#include "../include/envmap_sampling.hlsli"
 cbuffer PathTracerRC : register(b0) {
     uint g_normalSrv;
     uint g_depthSrv;
@@ -50,6 +51,18 @@ cbuffer PathTracerRC : register(b0) {
     uint g_tlasSrv;       // Step 8: scene TLAS for real multi-bounce transport.
     uint g_materialTableSrv; // StructuredBuffer<GIMeshMaterial> by InstanceID (sentinel = GDF albedo).
     uint g_skyCubemapSrv;    // Atmosphere sky cubemap for bounce misses (sentinel = flat skylight).
+    uint g_maxBounces;
+    uint g_samplesPerFrame;
+    uint g_clampFireflyBits;
+    uint g_envIntensityBits;
+    uint g_rrEnabled;
+    uint g_rrMinBounce;
+    uint g_equirectSrv;      // Raw equirect HDRI (direct bilinear tap, higher-res than the cube capture); 0xFFFFFFFF = none.
+    uint g_envAliasSrv;
+    uint g_envLumMip0Srv;
+    uint g_envTotalLumBits;
+    uint g_envLumWidth;
+    uint g_envLumHeight;
 };
 // b2: TraceConstants (GDF clipmaps + sun/sky, the RadianceCacheTraceConstants
 // layout the DDGI writer binds) — provides hit normals + hit albedo for bounces.
@@ -58,6 +71,12 @@ cbuffer PathTracerRC : register(b0) {
 cbuffer PathTracerRC : register(b0) {
     uint g_sampleCount;
     uint g_frameIndex;
+    uint g_maxBounces;
+    uint g_samplesPerFrame;
+    uint g_clampFireflyBits;
+    uint g_envIntensityBits;
+    uint g_rrEnabled;
+    uint g_rrMinBounce;
 };
 Texture2D<float4>  t_normal   : register(t0);
 Texture2D<float>   t_depth    : register(t1);
@@ -93,8 +112,6 @@ static const float shadowPCFPenumbra = 2.0;
 // because shadow.hlsli references that name for the Poisson penumbra radius.
 #include "../lighting/shadow.hlsli"
 
-#define PT_SAMPLES_PER_FRAME 4
-
 // ─── RNG (Wang hash). @ref Wang 1997 ────────────────────────────────────────
 uint WangHash(inout uint seed) {
     seed = (seed ^ 61u) ^ (seed >> 16u);
@@ -121,6 +138,145 @@ float3 TangentToWorld(float3 v, float3 N, float3 T, float3 B) {
 float3 WorldToTangent(float3 v, float3 N, float3 T, float3 B) {
     return float3(dot(v, T), dot(v, B), dot(v, N));
 }
+
+/// Sky radiance for a world-space direction. The atmosphere/HDRI capture is a DX (+Y up)
+/// cubemap while the world is Z-up, so the read swizzles (x, z, y) exactly like the deferred
+/// WorldToCubemap / GITrace_SkyRadiance / SDF-reflection paths. LOD 0: the capture has one
+/// mip and the reference spreads roughness by jittering the direction, not by prefiltering.
+/// A sentinel SRV (no capture yet) returns the flat skylight colour.
+float3 PT_SkyRadiance(float3 dir) {
+#ifdef UZ_BINDLESS
+    // Prefer the raw equirect HDRI (4K source, one bilinear tap = Falcor-equivalent) over the
+    // captured 512-face sky cubemap (an extra equirect->cube resample) when it is available:
+    // this lifts the mirror / background resolution floor on smooth metals. The world is Z-up
+    // while the equirect mapping is Y-up, so swizzle (x, z, y) exactly as the cube capture did
+    // (DirectionToEquirect from equirect_to_cubemap_cs.hlsl, inlined).
+    if (g_equirectSrv != 0xFFFFFFFFu) {
+        Texture2D<float4> equirect = ResourceDescriptorHeap[g_equirectSrv];
+        float3 d = float3(dir.x, dir.z, dir.y);
+        float  u = atan2(d.z, d.x) * M_1_PI * 0.5 + 0.5;
+        float  v = 1.0 - (asin(clamp(d.y, -1.0, 1.0)) * M_1_PI + 0.5);
+        return equirect.SampleLevel(g_linearClamp, float2(u, v), 0.0).rgb
+             * asfloat(g_envIntensityBits);
+    }
+    return GITrace_SkyRadiance(dir, g_skyCubemapSrv) * asfloat(g_envIntensityBits);
+#else
+    return t_skyCube.SampleLevel(g_linearClamp, float3(dir.x, dir.z, dir.y), 0.0).rgb
+         * asfloat(g_envIntensityBits);
+#endif
+}
+
+#ifdef UZ_BINDLESS
+/// Cosine-weighted path from (rayO, rayDir); `throughput` holds the first vertex's lobe
+/// weight. Sun and environment next-event estimation at hits, MIS sky radiance on miss. Shared by the
+/// diffuse and specular lobes, so a mirrored surface receives sky and bounce light, not
+/// only directly-sun-lit faces. @ref Kajiya 1986
+float3 PT_TracePath(float3 rayO, float3 rayDir, float3 throughput, inout uint rngState) {
+    RaytracingAccelerationStructure tlas = ResourceDescriptorHeap[g_tlasSrv];
+    float3 sunL  = normalize(lightDir.xyz);
+    float3 sunCI = float3(lightColorR, lightColorG, lightColorB) * lightIntensity;
+    float3 L = float3(0, 0, 0);
+    const bool envNee = (g_envAliasSrv != 0xFFFFFFFFu);
+    const uint envTexelCount = g_envLumWidth * g_envLumHeight;
+    const float envTotalLum = asfloat(g_envTotalLumBits);
+    // The incoming primary diffuse/GGX ray has no paired NEE strategy. Only cosine
+    // continuations sampled at the vertices below receive an environment MIS weight.
+    float missWeight = 1.0;
+    [loop]
+    for (uint b = 0; b < min(g_maxBounces, 16u); ++b) {
+        RayDesc ray;
+        ray.Origin    = rayO;
+        ray.Direction = rayDir;
+        ray.TMin      = 1.0;
+        ray.TMax      = 1e7;
+        RayQuery<RAY_FLAG_FORCE_OPAQUE> q;
+        q.TraceRayInline(tlas, RAY_FLAG_NONE, 0xFF, ray);
+        q.Proceed();
+        if (q.CommittedStatus() != COMMITTED_TRIANGLE_HIT) {
+            L += throughput * PT_SkyRadiance(rayDir) * missWeight;
+            break;
+        }
+        float3 hitPos = rayO + rayDir * q.CommittedRayT();
+        uint   meshId = q.CommittedInstanceID();
+        uint primIndex = q.CommittedPrimitiveIndex();
+        float2 bary = q.CommittedTriangleBarycentrics();
+        float3 aHit, nHit;
+        if (GITrace_HitSurface(meshId, primIndex, bary, g_materialTableSrv, aHit, nHit)) {
+            // Row-vector multiplication applies the inverse transpose to the
+            // object-space normal, including nonuniform instance scale.
+            nHit = mul(nHit, (float3x3)q.CommittedWorldToObject3x4());
+            if (dot(nHit, nHit) > 1e-12) {
+                nHit = normalize(nHit);
+                if (dot(nHit, rayDir) > 0.0) nHit = -nHit;
+            } else {
+                nHit = GITrace_GdfNormal(hitPos, rayDir);
+            }
+        } else {
+            aHit = GITrace_HitAlbedo(meshId, hitPos, g_materialTableSrv);
+            nHit = GITrace_GdfNormal(hitPos, rayDir);
+        }
+        float ndl = max(dot(nHit, sunL), 0.0);
+        if (ndl > 0.0) {
+            RayDesc sray;
+            sray.Origin    = hitPos + nHit * 2.0;
+            sray.Direction = sunL;
+            sray.TMin      = 1.0;
+            sray.TMax      = 1e7;
+            RayQuery<RAY_FLAG_FORCE_OPAQUE
+                   | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> sq;
+            sq.TraceRayInline(tlas, RAY_FLAG_NONE, 0xFF, sray);
+            sq.Proceed();
+            if (sq.CommittedStatus() != COMMITTED_TRIANGLE_HIT) {
+                L += throughput * aHit * sunCI * ndl / PI;
+            }
+        }
+        // Preserve the existing finite-bounce estimator: the last vertex has no
+        // continuation, so it must not gain a new environment-lighting contribution.
+        if (envNee && b + 1u < min(g_maxBounces, 16u)) {
+            StructuredBuffer<AliasEntry> aliasTable = ResourceDescriptorHeap[g_envAliasSrv];
+            EnvSample es = SampleEnvironment(
+                Rand2(rngState), aliasTable, envTexelCount,
+                g_envLumMip0Srv, envTotalLum, g_skyCubemapSrv,
+                g_envLumWidth, g_envLumHeight, g_linearClamp);
+            float envNdl = dot(nHit, es.direction);
+            if (envNdl > 0.0 && es.pdf > 0.0) {
+                RayDesc eray;
+                eray.Origin    = hitPos + nHit * 2.0;
+                eray.Direction = es.direction;
+                eray.TMin      = 1.0;
+                eray.TMax      = 1e7;
+                RayQuery<RAY_FLAG_FORCE_OPAQUE
+                       | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> eq;
+                eq.TraceRayInline(tlas, RAY_FLAG_NONE, 0xFF, eray);
+                eq.Proceed();
+                if (eq.CommittedStatus() != COMMITTED_TRIANGLE_HIT) {
+                    float pdfB = envNdl / PI;
+                    float w = es.pdf / (es.pdf + pdfB);
+                    // Evaluate the same radiance as the miss strategy, including the
+                    // raw HDRI override and intensity, rather than mixing cube/raw reads.
+                    L += throughput * (aHit / PI) * PT_SkyRadiance(es.direction)
+                       * envNdl * w / es.pdf;
+                }
+            }
+        }
+        throughput *= aHit;
+        if (g_rrEnabled != 0u && b >= g_rrMinBounce) {
+            float p = saturate(max(throughput.r, max(throughput.g, throughput.b)));
+            if (Rand01(rngState) > p) break;
+            throughput /= max(p, 1e-3);
+        }
+        rayO   = hitPos + nHit * 2.0;
+        rayDir = normalize(nHit + RandUnitVector(rngState));
+        if (envNee) {
+            float pdfB = max(dot(nHit, rayDir), 0.0) / PI;
+            float pdfEnv = EvaluateEnvironmentPDF(
+                rayDir, g_envLumMip0Srv, envTotalLum, envTexelCount);
+            missWeight = pdfB / (pdfB + pdfEnv);
+        }
+    }
+    return L;
+}
+#endif
 
 
 
@@ -233,7 +389,7 @@ PSOutput main(float4 pos : SV_Position)
     // Half the samples: cosine-weighted diffuse hemisphere PATHS — real
     // multi-bounce transport against the scene TLAS (sun next-event
     // estimation at every hit, sky radiance only on miss). Half the samples:
-    // roughness-perturbed mirror specular (one traced bounce).
+    // VNDF-sampled GGX microfacet specular (one traced bounce).
     //
     // Cosine sampling: pdf = cosT/PI cancels the Lambert cosT and the BRDF's
     // 1/PI, so the per-bounce throughput multiplier is exactly the hit
@@ -242,6 +398,8 @@ PSOutput main(float4 pos : SV_Position)
     // Without a TLAS (r.RayTracing off / non-DXR device), falls back to the
     // occlusion-free sky sample — NOT a reference in that mode.
     float3 indirect = float3(0, 0, 0);
+    // Preserve the paired-lobe estimator; budgets below two still sample both lobes.
+    const uint samplesPerLobe = max(1u, min(g_samplesPerFrame, 16u) / 2u);
 
 #ifdef UZ_BINDLESS
     const bool ptHasTlas = (g_tlasSrv != kGITraceSentinelSrv);
@@ -249,129 +407,47 @@ PSOutput main(float4 pos : SV_Position)
     const bool ptHasTlas = false;
 #endif
 
-    // Diffuse half — path trace with sun NEE at each vertex.
-    const int  kPTBounces = 4;
+    // Diffuse lobe: cosine-weighted hemisphere paths (sun NEE + sky on miss). Zero for pure
+    // metals ((1-metallic)=0); their energy comes from the specular lobe below.
     [loop]
-    for (int kd = 0; kd < (PT_SAMPLES_PER_FRAME / 2); ++kd) {
-#ifdef UZ_BINDLESS
-        if (ptHasTlas) {
-            RaytracingAccelerationStructure tlas = ResourceDescriptorHeap[g_tlasSrv];
-            float3 throughput = (1.0 - F0) * (1.0 - metallic) * albedo;
-            float3 rayO   = P + N * 2.0;
-            float3 rayDir = normalize(N + RandUnitVector(rngState));
-            float3 sunL   = normalize(lightDir.xyz);
-            float3 sunCI  = float3(lightColorR, lightColorG, lightColorB)
-                          * lightIntensity;
-
-            [loop]
-            for (int b = 0; b < kPTBounces; ++b) {
-                RayDesc ray;
-                ray.Origin    = rayO;
-                ray.Direction = rayDir;
-                ray.TMin      = 1.0;
-                ray.TMax      = 1e7;
-                RayQuery<RAY_FLAG_FORCE_OPAQUE> q;
-                q.TraceRayInline(tlas, RAY_FLAG_NONE, 0xFF, ray);
-                q.Proceed();
-
-                if (q.CommittedStatus() != COMMITTED_TRIANGLE_HIT) {
-                    indirect += throughput * GITrace_SkyRadiance(rayDir, g_skyCubemapSrv);
-                    break;
-                }
-
-                float3 hitPos = rayO + rayDir * q.CommittedRayT();
-                uint   meshId = q.CommittedInstanceID();
-                float3 nHit   = GITrace_GdfNormal(hitPos, rayDir);
-                float3 aHit   = GITrace_HitAlbedo(meshId, hitPos, g_materialTableSrv);
-
-                // Sun next-event estimation at the hit (shadow ray).
-                float ndl = max(dot(nHit, sunL), 0.0);
-                if (ndl > 0.0) {
-                    RayDesc sray;
-                    sray.Origin    = hitPos + nHit * 2.0;
-                    sray.Direction = sunL;
-                    sray.TMin      = 1.0;
-                    sray.TMax      = 1e7;
-                    RayQuery<RAY_FLAG_FORCE_OPAQUE
-                           | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> sq;
-                    sq.TraceRayInline(tlas, RAY_FLAG_NONE, 0xFF, sray);
-                    sq.Proceed();
-                    if (sq.CommittedStatus() != COMMITTED_TRIANGLE_HIT) {
-                        indirect += throughput * aHit * sunCI * ndl / PI;
-                    }
-                }
-
-                // Continue the path: cosine bounce, throughput *= albedo.
-                throughput *= aHit;
-                rayO   = hitPos + nHit * 2.0;
-                rayDir = normalize(nHit + RandUnitVector(rngState));
-            }
-            continue;
-        }
-#endif
-        // Fallback (no TLAS): occlusion-free sky irradiance estimate.
+    for (uint kd = 0; kd < samplesPerLobe; ++kd) {
+        float3 w   = (1.0 - F0) * (1.0 - metallic) * albedo;
         float3 dir = normalize(N + RandUnitVector(rngState));
-        float3 env = skyCube.SampleLevel(g_linearClamp, dir, 0.0).rgb * skyTint;
-        indirect += (1.0 - F0) * (1.0 - metallic) * albedo * env;
+#ifdef UZ_BINDLESS
+        if (ptHasTlas) { indirect += PT_TracePath(P + N * 2.0, dir, w, rngState); continue; }
+#endif
+        // No TLAS: unoccluded sky irradiance — a smoke test, NOT a reference.
+        indirect += w * PT_SkyRadiance(dir);
     }
 
-    // Specular half — roughness-perturbed mirror reflection, one traced
-    // bounce (hit shaded with sun NEE + hit albedo; miss samples sky LOD).
-    // @ref Shirley 1992 "Nonuniform Random Point Sets via Warping"
+    // Specular lobe: GGX microfacet reflection, importance-sampled from the visible normal
+    // distribution (VNDF) so only microfacets visible from V are sampled — low variance at
+    // every roughness, the same estimator the deferred split-sum, SSR and env-MIS passes use.
+    // The VNDF reflection estimator's D(H) and cos cancel the sampling pdf exactly, leaving
+    // the throughput weight F(V,H) * G2(V,L) / G1(V) (height-correlated Smith). This replaces
+    // the old lerp(mirror, cosine) heuristic, which was only exact at alpha~0.
+    // @ref Dupuy & Benyoub 2023 "Sampling Visible GGX Normals with Spherical Caps"
+    // @ref Heitz 2018 "Sampling the GGX Distribution of Visible Normals"
+    const float3 Vt = WorldToTangent(V, N, T, B);  // view direction, tangent space (Z along N)
     [loop]
-    for (int ks = 0; ks < (PT_SAMPLES_PER_FRAME / 2); ++ks) {
-        float3 mirrorDir  = reflect(-V, N);
-        float3 diffuseDir = normalize(N + RandUnitVector(rngState));
-        // alpha = roughness² — low roughness → mirror, high roughness → diffuse spread.
-        float3 Lr    = normalize(lerp(mirrorDir, diffuseDir, alpha));
-        float  NdotL = max(0.0, dot(N, Lr));
-        if (NdotL > 0.0) {
-            float  VdotH = max(0.0, dot(V, normalize(V + Lr)));
-            float3 F     = F_Schlick(F0, VdotH);
-            float  skyLOD = sqrt(roughness) * 5.0;
+    for (uint ks = 0; ks < samplesPerLobe; ++ks) {
+        // Sample a visible microfacet normal H, then reflect V about it.
+        float3 Ht = SampleGGX_VNDF(alpha, Vt, Rand2(rngState));
+        float3 H  = normalize(TangentToWorld(Ht, N, T, B));
+        float3 Lr = reflect(-V, H);
+        float  NdotLr = dot(N, Lr);
+        if (NdotLr <= 0.0) continue;
+        float  VdotH = max(1e-4, dot(V, H));
+        float3 F  = F_Schlick(F0, VdotH);
+        float  g2 = G_SmithGGXCorrelated(alpha, NdotV, max(1e-4, NdotLr));
+        float  g1 = G1_SmithGGX(alpha * alpha, NdotV);
+        float3 w  = F * (g2 / max(g1, 1e-4));  // VNDF reflection weight (D and cos cancelled)
 #ifdef UZ_BINDLESS
-            if (ptHasTlas) {
-                RaytracingAccelerationStructure tlas = ResourceDescriptorHeap[g_tlasSrv];
-                RayDesc ray;
-                ray.Origin    = P + N * 2.0;
-                ray.Direction = Lr;
-                ray.TMin      = 1.0;
-                ray.TMax      = 1e7;
-                RayQuery<RAY_FLAG_FORCE_OPAQUE> q;
-                q.TraceRayInline(tlas, RAY_FLAG_NONE, 0xFF, ray);
-                q.Proceed();
-                if (q.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
-                    float3 hitPos = ray.Origin + Lr * q.CommittedRayT();
-                    float3 nHit   = GITrace_GdfNormal(hitPos, Lr);
-                    float3 aHit   = GITrace_HitAlbedo(q.CommittedInstanceID(), hitPos, g_materialTableSrv);
-                    float3 sunL   = normalize(lightDir.xyz);
-                    float3 sunCI  = float3(lightColorR, lightColorG, lightColorB)
-                                  * lightIntensity;
-                    float  ndlH   = max(dot(nHit, sunL), 0.0);
-                    float  sunVis = 1.0;
-                    if (ndlH > 0.0) {
-                        RayDesc sray;
-                        sray.Origin    = hitPos + nHit * 2.0;
-                        sray.Direction = sunL;
-                        sray.TMin      = 1.0;
-                        sray.TMax      = 1e7;
-                        RayQuery<RAY_FLAG_FORCE_OPAQUE
-                               | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> sq;
-                        sq.TraceRayInline(tlas, RAY_FLAG_NONE, 0xFF, sray);
-                        sq.Proceed();
-                        if (sq.CommittedStatus() == COMMITTED_TRIANGLE_HIT) sunVis = 0.0;
-                    }
-                    float3 hitRad = aHit * sunCI * ndlH * sunVis / PI;
-                    indirect += F * hitRad;
-                    continue;
-                }
-            }
+        if (ptHasTlas) { indirect += PT_TracePath(P + N * 2.0, Lr, w, rngState); continue; }
 #endif
-            float3 env = skyCube.SampleLevel(g_linearClamp, Lr, skyLOD).rgb * skyTint;
-            indirect += F * env;
-        }
+        indirect += w * PT_SkyRadiance(Lr);
     }
-    indirect /= float(PT_SAMPLES_PER_FRAME / 2);
+    indirect /= float(samplesPerLobe);
 
     // ── Emissive (GBuffer RT3) ─────────────────────────────────────────────
     // Emissive is additive over the path-traced lighting, exactly as the
@@ -382,7 +458,8 @@ PSOutput main(float4 pos : SV_Position)
     float3 newSample = directRadiance + indirect;
 
     // Firefly clamp. @ref Jensen 2001
-    newSample = clamp(newSample, 0.0, 64.0);
+    const float clampFirefly = asfloat(g_clampFireflyBits);
+    if (clampFirefly > 0.0) newSample = clamp(newSample, 0.0, clampFirefly);
 
     // ── Progressive accumulation (Step 6) ──────────────────────────────────
     // Read this pixel's history from the previous-frame ping-pong texture

@@ -152,6 +152,9 @@
     uint32_t         m_ptAccumSamples = 0;      ///< Accumulated sample count since last reset.
     float            m_ptPrevView[16] = {0};    ///< Previous view matrix (camera-cut detection).
     bool             m_ptHistoryValid = false;  ///< False on first frame / after reset.
+    bool             m_ptEnabledLastFrame = false; ///< Tracks the PT enable edge for TAA restoration.
+    float            m_ptSavedTaa = 0.f;        ///< r.TAA value before enabling path tracing.
+    uint32_t         m_ptResetGeneration = 0;   ///< Last manual reset command consumed by this renderer.
 
     // ── IBL (Image-Based Lighting from sky cubemap) ────────────────────
 
@@ -176,6 +179,7 @@
     // ── HDRI environment override ────────────────────────────────────────
     RHITextureHandle m_hdriCubemap;            ///< Cubemap converted from HDRI equirect (owned, must destroy).
     uint32_t m_hdriCubemapSrv = UINT32_MAX;    ///< SRV for the HDRI cubemap.
+    uint32_t m_hdriEquirectSrv = UINT32_MAX;   ///< SRV of the raw equirect HDRI (path tracer samples it directly; UINT32_MAX = none, fall back to the cubemap).
     bool m_hdriActive = false;                 ///< True when using external HDRI instead of procedural sky.
     bool m_prefilteredIsPmrem = false;         ///< The bound prefiltered cubemap is a PMREM (Three.js roughness curve), not the engine's linear bake.
 
@@ -211,12 +215,7 @@
     std::unique_ptr<VolumetricFogPass> m_volFogPass;   ///< 160×90×64 froxel fog pipeline (inject + scatter + composite).
 
     // ── Volumetric Clouds ───────────────────────────────────────────────
-    std::unique_ptr<CloudPass> m_cloudPass;           ///< GPU volumetric cloud pipeline (5 compute shaders).
-    IRHICommandList* m_cloudCmdList = nullptr;         ///< Dedicated command list for cloud compute dispatches.
-    uint32_t m_cloudOutputSrv = UINT32_MAX;           ///< SRV of the final cloud output for compositing.
-    std::unique_ptr<CloudPassInput> m_pendingCloudInput; ///< Deferred cloud input for pre-graph compute dispatch.
-    bool m_pendingCloudDispatch = false;               ///< True when cloud compute should run before render graph.
-    bool m_cloudOutputReady = false;                   ///< True after the first cloud compute dispatch has completed.
+    std::unique_ptr<CloudPass> m_cloudPass;           ///< Same-frame cloud raymarch and composite graph passes.
 
     // ── Distance Field Shadows ───────────────────────────────────────────
 
@@ -325,8 +324,10 @@
     uint32_t m_taaHistorySrv[2] = {UINT32_MAX, UINT32_MAX}; ///< SRV indices for history read.
     uint32_t m_taaHistoryUav[2] = {UINT32_MAX, UINT32_MAX}; ///< UAV indices for history write.
     uint32_t m_taaHistoryIndex = 0;            ///< Index of current write target (0 or 1).
+    TemporalHistoryState m_temporal;
+    PrevTransformCache m_prevTransforms;
+    uint32_t m_temporalFailureWarnings = 0;    ///< One failure warning per upscaler type.
     bool     m_taaEnabled = true;              ///< Enables jitter + temporal upscaler dispatch (DLSS/TSR/TAA).
-    Mat4     m_prevViewProj;                   ///< Previous frame's unjittered viewProj for reprojection.
 
     /// Region dump (diagnostics): writes `<dir>/region_<frame>.bin` from readback slot `slot`
     /// and validates the GPU frame stamps against the frame that slot holds. Every value the
@@ -361,7 +362,6 @@
     uint32_t         m_regionStampMismatches = 0;
     uint32_t         m_regionFilesWritten = 0;
     float            m_lastFrameExposure = 1.0f;
-    bool     m_prevViewProjValid = false;      ///< False on first frame (no valid previous viewProj).
 
     // ── CB Update Optimization (dirty flag skip) ────────────────────────
     ShadowDataCB m_prevShadowCB{};              ///< Cached previous frame shadow CB for memcmp skip.
@@ -374,6 +374,11 @@
 
     std::unique_ptr<ITemporalUpscaler> m_upscaler;         ///< Active temporal upscaler (TAA or TSR).
     UpscalerType m_upscalerType = UpscalerType::TAA;        ///< Default TAA. DLSS opt-in via r.AntiAliasingMethod=4.
+    UpscalerSelection m_upscalerSelection{};
+    bool m_upscalerSelectionInitialized = false;
+    bool m_forceReselect = false;
+    UpscalerType m_failedUpscaler = UpscalerType::None;
+    uint32_t m_upscalerFailStreak = 0;
 
     // ── Dynamic Resolution ───────────────────────────────────────────────────
 
@@ -441,7 +446,6 @@
     uint64_t         m_clusterListBytes = 0;        ///< Capacity; grows with the render resolution.
     uint32_t         m_clusterListSrv = UINT32_MAX; ///< Read by the deferred lighting (LightingCB::clusterListSrv).
     uint32_t         m_clusterListUav = UINT32_MAX; ///< Written by the cull pass.
-    RHIResourceState m_clusterListState = RHIResourceState::Common;
 
     // ── SSR (Screen-Space Reflections) ─────────────────────────────────────
 
@@ -483,7 +487,6 @@
     RHITextureHandle m_ssrPrevSceneColor;          ///< RGBA16F copy of prev frame's HDR.
     uint32_t m_ssrPrevSceneColorSrv = UINT32_MAX;  ///< SRV for SSR trace to read.
     bool     m_ssrHasPrevColor = false;            ///< False on first frame (skip SSR).
-    float    m_ssrPrevExposure = 1.0f;             ///< Previous frame's exposure for SSR color correction.
 
     /// Creates SSR output textures at the given resolution.
     /// Called from Init() and Resize().
@@ -653,6 +656,7 @@
     float m_screenPercentage = 100.f;      ///< Render scale (10-200, default 100 = native resolution).
     float m_totalTime = 0.f;
     bool m_statsOverlayInitialized = false;
+    bool m_fallbackTexturesInitialized = false;
     bool m_vfxEditorOverlayInitialized = false;
 
     // ── Screenshot ─────────────────────────────────────────────────────────
@@ -858,7 +862,7 @@
     /// Iterates the ECS World and populates a DrawList from entities with
     /// StaticMeshComponent + SceneComponent. Loads meshes/textures on demand.
     void SyncWorldToDrawList(World* world, IVFS* vfs, IRHICommandList* cmdList,
-                             DrawList& outDrawList);
+                              DrawList& outDrawList, uint32_t frameIndex);
 
     /// Flushes deferred mesh and texture load queues populated by `QueueMeshLoad`
     /// and `QueueTextureLoad`.  Called at the start of each `RenderFrame()`.
@@ -979,6 +983,7 @@
 
     /// Registers atmosphere, height fog, and volumetric cloud composite passes.
     void RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
+    void RegisterCloudShadowPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
 
     /// Copies current HDR scene color to SSGI prev-frame buffer.
     void RegisterSSGIPrevColorCopy(rg::RgBuilder& rgBuilder, FrameContext& ctx);

@@ -5,6 +5,7 @@
 /// compute shader and the deferred lighting Chebyshev sampler.
 
 #include "ddgi_system.h"
+#include "../render_graph/render_graph_states.h"
 #include "global_distance_field.h"
 #include <algorithm>
 
@@ -114,7 +115,6 @@ bool DDGISystem::CreateResources(IRHIDevice* device) {
             m_rayRadiance = {};
             m_rayInfo = {};
         }
-        m_rayBufferState = RHIResourceState::Common;
     }
 
     UZ_LOG(Renderer, Info,
@@ -140,6 +140,10 @@ static auto* cv_DdgiDirectionalSky = UZ_CVAR_BOOL("r.GI.DDGI.DirectionalSky", tr
 
 static auto* cv_DdgiDiagnostic = UZ_CVAR_BOOL("r.GI.DDGI.Diagnostic", false,
     "Read back and log the DDGI writer's per-probe mean ray radiance once after frame 120 (pairs with r.GI.RadianceCache.Diagnostic)");
+
+// Match RadianceCache's deferred readback: the host waits frame N-3's fence
+// before recording frame N, so a copy from F is complete at F + 4.
+static constexpr uint32_t kReadbackFrameLag = 4;
 
 static auto* cv_DdgiRayBuffers = UZ_CVAR_BOOL("r.GI.DDGI.RayBuffers", true,
     "Trace each probe ray once per frame (ddgi_probe_trace_cs) into ray buffers the atlas writer integrates "
@@ -305,22 +309,11 @@ void DDGISystem::DispatchUpdate(IRHICommandList* cmdList,
                         constAlloc.offsetBytes,
                         constAlloc.cpuPtr, sizeof(constants));
 
-    // Transition both atlases to UAV state. First dispatch comes from
-    // Common (initial CreateTexture state); subsequent frames come back
-    // from ShaderResource after deferred lighting reads them.
-    const RHIResourceState beforeState = m_firstDispatch
-        ? RHIResourceState::Common
-        : RHIResourceState::ShaderResource;
-    m_firstDispatch = false;
-
-    RHIBarrierDesc toUav[2]{};
-    toUav[0].texture     = m_irradAtlas;
-    toUav[0].stateBefore = beforeState;
-    toUav[0].stateAfter  = RHIResourceState::UnorderedAccess;
-    toUav[1].texture     = m_depthAtlas;
-    toUav[1].stateBefore = beforeState;
-    toUav[1].stateAfter  = RHIResourceState::UnorderedAccess;
-    cmdList->ResourceBarrier(toUav, 2);
+    // Transition both atlases to UAV. The registry supplies the before-state:
+    // the creation state (Common) on the first dispatch, and ShaderResource on
+    // later frames (the previous frame's toSrv below records it).
+    m_rgStates->Transition(cmdList, m_irradAtlas, RHIResourceState::UnorderedAccess);
+    m_rgStates->Transition(cmdList, m_depthAtlas, RHIResourceState::UnorderedAccess);
 
     // Border fill (H-55): the deferred lighting samples each 6x6 / 16x16 tile bilinearly and
     // reaches the 1-texel border for every normal within half a texel of a tile edge. The
@@ -336,14 +329,8 @@ void DDGISystem::DispatchUpdate(IRHICommandList* cmdList,
         cmdList->Dispatch((w + 7u) / 8u, (h + 7u) / 8u, 1);
     };
     auto uavSync = [&]() {
-        RHIBarrierDesc sync[2]{};
-        sync[0].texture     = m_irradAtlas;
-        sync[0].stateBefore = RHIResourceState::UnorderedAccess;
-        sync[0].stateAfter  = RHIResourceState::UnorderedAccess;
-        sync[1].texture     = m_depthAtlas;
-        sync[1].stateBefore = RHIResourceState::UnorderedAccess;
-        sync[1].stateAfter  = RHIResourceState::UnorderedAccess;
-        cmdList->ResourceBarrier(sync, 2);
+        m_rgStates->UavBarrier(cmdList, m_irradAtlas);
+        m_rgStates->UavBarrier(cmdList, m_depthAtlas);
     };
     if (!m_atlasCleared) {
         // Defined initial contents: the RHI has no UAV clear, so the fill shader writes zeros.
@@ -358,14 +345,8 @@ void DDGISystem::DispatchUpdate(IRHICommandList* cmdList,
     // UAV for the indirect term) and before the atlas passes, which read the buffers as SRVs.
     const uint32_t nRays = std::min<uint32_t>(constants.raysPerProbe, kMaxRaysPerProbe);
     if (useRayBuffers) {
-        RHIBarrierDesc toUavBuf[2]{};
-        toUavBuf[0].buffer = m_rayRadiance;
-        toUavBuf[1].buffer = m_rayInfo;
-        for (auto& b : toUavBuf) {
-            b.stateBefore = m_rayBufferState;
-            b.stateAfter  = RHIResourceState::UnorderedAccess;
-        }
-        cmdList->ResourceBarrier(toUavBuf, 2);
+        m_rgStates->Transition(cmdList, m_rayRadiance, RHIResourceState::UnorderedAccess);
+        m_rgStates->Transition(cmdList, m_rayInfo, RHIResourceState::UnorderedAccess);
 
         cmdList->SetPipeline(tracePipeline);
         // Root constants at b0 (ddgi_probe_trace_cs.hlsl): the atlas writer's first eight,
@@ -387,15 +368,8 @@ void DDGISystem::DispatchUpdate(IRHICommandList* cmdList,
         const uint32_t threads = kTotalProbes * nRays;
         cmdList->Dispatch((threads + 63u) / 64u, 1, 1);
 
-        RHIBarrierDesc toSrvBuf[2]{};
-        toSrvBuf[0].buffer = m_rayRadiance;
-        toSrvBuf[1].buffer = m_rayInfo;
-        for (auto& b : toSrvBuf) {
-            b.stateBefore = RHIResourceState::UnorderedAccess;
-            b.stateAfter  = RHIResourceState::ShaderResource;
-        }
-        cmdList->ResourceBarrier(toSrvBuf, 2);
-        m_rayBufferState = RHIResourceState::ShaderResource;
+        m_rgStates->Transition(cmdList, m_rayRadiance, RHIResourceState::ShaderResource);
+        m_rgStates->Transition(cmdList, m_rayInfo, RHIResourceState::ShaderResource);
     }
 
     auto dispatch = [&](uint32_t atlasMode, uint32_t tileSize) {
@@ -443,14 +417,8 @@ void DDGISystem::DispatchUpdate(IRHICommandList* cmdList,
     // UAV barrier between the two passes — both write to the same atlases
     // (the depth pass touches the depth atlas exclusively but we play it
     // safe across the irrad UAV as well).
-    RHIBarrierDesc uavBarrier[2]{};
-    uavBarrier[0].texture     = m_irradAtlas;
-    uavBarrier[0].stateBefore = RHIResourceState::UnorderedAccess;
-    uavBarrier[0].stateAfter  = RHIResourceState::UnorderedAccess;
-    uavBarrier[1].texture     = m_depthAtlas;
-    uavBarrier[1].stateBefore = RHIResourceState::UnorderedAccess;
-    uavBarrier[1].stateAfter  = RHIResourceState::UnorderedAccess;
-    cmdList->ResourceBarrier(uavBarrier, 2);
+    m_rgStates->UavBarrier(cmdList, m_irradAtlas);
+    m_rgStates->UavBarrier(cmdList, m_depthAtlas);
 
     // Irradiance border, from the interior just written.
     borderFill(m_irradUav, kIrradianceProbeSize, 0u, 0u);
@@ -464,14 +432,8 @@ void DDGISystem::DispatchUpdate(IRHICommandList* cmdList,
     borderFill(m_depthUav, kDepthProbeSize, 1u, 0u);
 
     // Transition back to SRV for deferred lighting reads.
-    RHIBarrierDesc toSrv[2]{};
-    toSrv[0].texture     = m_irradAtlas;
-    toSrv[0].stateBefore = RHIResourceState::UnorderedAccess;
-    toSrv[0].stateAfter  = RHIResourceState::ShaderResource;
-    toSrv[1].texture     = m_depthAtlas;
-    toSrv[1].stateBefore = RHIResourceState::UnorderedAccess;
-    toSrv[1].stateAfter  = RHIResourceState::ShaderResource;
-    cmdList->ResourceBarrier(toSrv, 2);
+    m_rgStates->Transition(cmdList, m_irradAtlas, RHIResourceState::ShaderResource);
+    m_rgStates->Transition(cmdList, m_depthAtlas, RHIResourceState::ShaderResource);
 
     m_firstUpdateComplete = true;
 }
@@ -491,15 +453,9 @@ void DDGISystem::QueueDiagnosticReadback(IRHICommandList* cmdList, uint32_t fram
         m_diagnosticComplete = true;
         return;
     }
-    RHIBarrierDesc barrier{};
-    barrier.buffer      = m_diagnosticStats;
-    barrier.stateBefore = RHIResourceState::UnorderedAccess;
-    barrier.stateAfter  = RHIResourceState::CopySrc;
-    cmdList->ResourceBarrier(&barrier, 1);
+    m_rgStates->Transition(cmdList, m_diagnosticStats, RHIResourceState::CopySrc);
     cmdList->CopyBuffer(m_diagnosticStats, 0, m_diagnosticReadback, 0, desc.sizeBytes);
-    barrier.stateBefore = RHIResourceState::CopySrc;
-    barrier.stateAfter  = RHIResourceState::UnorderedAccess;
-    cmdList->ResourceBarrier(&barrier, 1);
+    m_rgStates->Transition(cmdList, m_diagnosticStats, RHIResourceState::UnorderedAccess);
     m_diagnosticCopyFrame = frameIndex;
     UZ_LOG(Renderer, Info, "DDGI transport: queued diagnostic snapshot frame={} origin=({},{},{}) spacing={}",
            frameIndex, m_gridOrigin.x, m_gridOrigin.y, m_gridOrigin.z, m_probeSpacing);
@@ -517,8 +473,8 @@ void DDGISystem::QueueDiagnosticReadback(IRHICommandList* cmdList, uint32_t fram
 }
 
 void DDGISystem::ReadDiagnosticResults(uint32_t frameIndex) {
-    if (!m_diagnosticReadback.IsValid() || m_diagnosticComplete || frameIndex - m_diagnosticCopyFrame < 4) return;
-    m_device->WaitIdle();
+    if (!m_diagnosticReadback.IsValid() || m_diagnosticComplete || frameIndex - m_diagnosticCopyFrame < kReadbackFrameLag) return;
+    // Complete by the host's frame fence, without draining queues on the recording thread.
     m_diagnosticComplete = true;
     const auto* data = static_cast<const float*>(m_device->MapBuffer(m_diagnosticReadback));
     if (!data) {
@@ -580,7 +536,6 @@ void DDGISystem::DestroyResources() {
     m_rayInfo = {};
     m_rayRadianceSrv = m_rayRadianceUav = UINT32_MAX;
     m_rayInfoSrv = m_rayInfoUav = UINT32_MAX;
-    m_rayBufferState = RHIResourceState::Common;
     m_diagnosticStats = {};
     m_diagnosticReadback = {};
     m_diagnosticStatsUav = UINT32_MAX;

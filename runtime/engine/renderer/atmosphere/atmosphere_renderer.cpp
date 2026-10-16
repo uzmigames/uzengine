@@ -10,6 +10,7 @@
 #include "camera.h"
 #include "pipeline_library.h"
 #include "render_graph_builder.h"
+#include "render_graph_states.h"
 #include "sky_atmosphere_component.h"
 #include "sky_atmosphere_pass.h"
 #include "transmittance_lut_pass.h"
@@ -94,11 +95,8 @@ void AddAtmospherePasses(
         // ── Transmittance LUT — import every frame so RG can track state ──
         rg::RgResourceId lutRes;
         if (ctx.transmittanceLut.IsValid()) {
-            RHIResourceState lutImportState = *ctx.transmittanceLutFilled
-                ? RHIResourceState::ShaderResource
-                : RHIResourceState::UnorderedAccess;
-            lutRes = rgBuilder.ImportTexture("TransmittanceLUT",
-                ctx.transmittanceLut, lutImportState);
+            lutRes = rgBuilder.ImportTrackedTexture("TransmittanceLUT",
+                ctx.transmittanceLut);
         }
 
         if (*ctx.transmittanceLutDirty && ctx.transmittanceLut.IsValid()
@@ -242,8 +240,8 @@ void AddAtmospherePasses(
 
             if (ctx.bindless && ctx.skyCubemapUav != UINT32_MAX) {
                 // ── Compute shader path (SM6.6 bindless) ─────────────────
-                auto cubeRes = rgBuilder.ImportTexture(
-                    "SkyCubemap", ctx.skyCubemap, RHIResourceState::UnorderedAccess);
+                auto cubeRes = rgBuilder.ImportTrackedTexture(
+                    "SkyCubemap", ctx.skyCubemap);
 
                 SkyCubemapCaptureRootConstants cubeRC{};
                 cubeRC.bottomRadiusKm      = skyComp.bottomRadiusKm;
@@ -276,16 +274,19 @@ void AddAtmospherePasses(
                 if (ctx.scatteringLut3D.IsValid() && ctx.scatteringLut3DFilled
                         && *ctx.scatteringLut3DFilled
                         && ctx.scatteringLut3DSrv != UINT32_MAX) {
-                    cubePassDesc.scatteringLut3DDep = rgBuilder.ImportTexture(
-                        "ScatteringLUT3D_CubeCapture", ctx.scatteringLut3D,
-                        RHIResourceState::ShaderResource);
+                    cubePassDesc.scatteringLut3DDep = rgBuilder.ImportTrackedTexture(
+                        "ScatteringLUT3D_CubeCapture", ctx.scatteringLut3D);
                 }
 
                 AddSkyCubemapCapturePass(rgBuilder, cubePassDesc);
+                rgBuilder.AddPass("SkyCubemap_Readable", [cubeRes](rg::RgPassBuilder& pb) {
+                    pb.Read(cubeRes, RHIResourceState::ShaderResource);
+                    pb.SetExecutionCallback([](IRHICommandList*, const rg::RgPassResources&) {});
+                });
             } else {
                 // ── Pixel shader path (SM5, no bindless) ─────────────────
-                auto cubeRes = rgBuilder.ImportTexture(
-                    "SkyCubemap", ctx.skyCubemap, RHIResourceState::RenderTarget);
+                auto cubeRes = rgBuilder.ImportTrackedTexture(
+                    "SkyCubemap", ctx.skyCubemap);
 
                 SkyCubemapCapturePSRootConstants psRC{};
                 psRC.bottomRadiusKm      = skyComp.bottomRadiusKm;
@@ -306,7 +307,16 @@ void AddAtmospherePasses(
                 psPassDesc.transmittanceLutTex = ctx.transmittanceLut;
                 psPassDesc.rootConstants       = psRC;
                 AddSkyCubemapCapturePSPass(rgBuilder, psPassDesc);
+                rgBuilder.AddPass("SkyCubemap_Readable", [cubeRes](rg::RgPassBuilder& pb) {
+                    pb.Read(cubeRes, RHIResourceState::ShaderResource);
+                    pb.SetExecutionCallback([](IRHICommandList*, const rg::RgPassResources&) {});
+                });
             }
+            // The capture registered above runs in this frame's render graph; the path
+            // tracer is registered before the atmosphere passes, so it reads the cubemap from
+            // the next frame on. Marking it filled here (registration time) keeps frame 0 on
+            // the flat-skylight sentinel and never admits an uncaptured cubemap.
+            if (ctx.skyCubemapFilled != nullptr) *ctx.skyCubemapFilled = true;
         }
 
         // ── Build SkyAtmosphereCB ─────────────────────────────────────────
@@ -677,8 +687,7 @@ void AddAtmospherePasses(
             // otherwise import here (fallback for standalone atmosphere rendering).
             rg::RgResourceId apRes = ctx.apVolumeRes.IsValid()
                 ? ctx.apVolumeRes
-                : rgBuilder.ImportTexture("APVolume",
-                    ctx.apVolume, RHIResourceState::UnorderedAccess);
+                : rgBuilder.ImportTrackedTexture("APVolume", ctx.apVolume);
 
             APVolumeRootConstants apRC{};
             apRC.rayleighBetaX  = skyComp.rayleighScattering.x;
@@ -774,6 +783,7 @@ void PostFrameAtmosphereBake(
         return;
     }
 
+    ctx.states->Transition(cmdList, ctx.skyCubemap, RHIResourceState::ShaderResource);
     cmdList->End();
     cmdList->Execute();
     ctx.device->WaitIdle();

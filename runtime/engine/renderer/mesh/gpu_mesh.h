@@ -42,7 +42,12 @@ struct Mesh;
 /// handles are owned by the caller and must be explicitly destroyed.
 struct GPUMesh {
     RHIBufferHandle vertexBuffer;                       ///< GPU vertex buffer handle.
+    RHIBufferHandle prevVertexBuffer;                   ///< Previous GPU-skinned pose, owned with this mesh.
+    uint32_t        prevVbSrvIndex = 0;
+    bool            prevPoseValid = false;              ///< First dispatch uses current pose for zero deformation velocity.
     RHIBufferHandle indexBuffer;                        ///< GPU index buffer handle (invalid if non-indexed).
+    RHIBufferHandle colorBuffer;                        ///< Optional linear RGBA8 UNORM side stream.
+    uint32_t        colorSrvIndex = 0;                  ///< Zero means no color stream (white).
     uint32_t        vbSrvIndex  = UINT32_MAX;           ///< Bindless SRV descriptor index for vertex buffer (SM6.6). UINT32_MAX if not bindless.
     uint32_t        vertexStride = 48;                  ///< Vertex stride in bytes (48 = Vertex, 32 = VertexPacked).
     uint32_t        indexCount  = 0;                    ///< Number of indices for LOD0 (0 = non-indexed mesh).

@@ -207,18 +207,110 @@ $vfs = 'e:/UzmiEngine/uzengine/sample/content'
 
 No `D3D12 ERROR` lines. Exit code 0.
 
-### Visibility verified (post `phase0_vfx-mesh-particle-visibility-debug`)
+### Visibility status: sorted path blocked
 
-The pipeline produces visibly-rendered mesh particles. `--diag` JSON at
-frame 120 reports `hdr OK avg=4.30 max=8.97` (was `WARN_ZERO avg=0`
-before the fix). Screenshots:
+The predecessor's "Visibility verified" claim was incorrect. Its frame-120
+`hdr OK avg=4.30 max=8.97` proved nonzero HDR output, not correct particle
+placement: the apparent particles were camera-engulfing geometry produced
+by invalid attribute reads. Historical screenshots:
 
 | State    | Path                                       | Size     | Content                |
 |----------|--------------------------------------------|----------|------------------------|
 | Pre-fix  | `.sandbox/visibility-FIXED-v3.png` (37 KB) | 1280×720 | fully black            |
-| Post-fix | `.sandbox/post-fix-final.png` (262 KB)     | 1280×720 | lit mesh tetrahedra    |
+| Previous fix | `.sandbox/post-fix-final.png` (262 KB) | 1280×720 | previous fix's appearance - actually broken, camera-engulfing geometry |
 
-### Root cause (six fixes)
+![Previous fix's appearance - actually broken](../../../.sandbox/post-fix-final.png)
+
+The later diagnostic bisection recorded sane spawn/update attributes via
+full-buffer CopyBuffer readback. With `sort_mode: None`, it recorded
+`instCount=4..6 indirectInst=4..6` and discrete mesh tetrahedra with depth
+and lighting (`.sandbox/final-unsorted-frame60.png`). This is historical
+unsorted-path evidence, not verification of the committed `ViewDepth`
+asset, and was not rerun during the automated closeout.
+
+With `sort_mode: ViewDepth`, the recorded `sortedIndices[sortedSlot]`
+bindless reads return zero for every slot. Each thread therefore reads
+particle zero, which is unspawned under the LIFO free-list allocation;
+the dead-particle check returns and both instance counts stay zero.
+The sort dispatch/gating, descriptor binding, resource state, and actual
+GPU fetch remain to be inspected in RenderDoc or PIX. Neither tool is
+available in the automated headless environment. GPU screenshot runs
+hang here, so no new visual evidence or `visibility-fixed-v2.png` is
+claimed.
+
+### Incremental race fix and regression guard
+
+The post-dead-check sorted branch previously relied on
+`if (sortedSlot == 0)` to publish the instance count. When slot zero
+returned at the dead check, no other sorted thread published it.
+The shader now uses `InterlockedMax(instanceCount[0], sortedSlot + 1u)`
+from each surviving sorted thread, and atomic max publishes
+`indirectArgs.InstanceCount` from both paths. The unsorted path still
+uses `InterlockedAdd` to compact surviving particles.
+
+An explicit `UAV -> ShaderResource` barrier on `gpuBuf.sort.sortIndices`
+also landed at the end of `DispatchVFXSort`. It did not resolve the
+sorted-index read failure. These fixes are not proof of sorted visibility.
+
+`MeshGuard_SortedInstanceCount.PostDeadCheckSortedPathHasNoThreadZeroGate`
+in `runtime/tests/engine/renderer/frame_particles_mesh_guard_test.cpp`
+reads the HLSL source, removes comments, locates the dead check and sorted
+branch, and rejects the thread-zero gate inside that branch. It permits
+the separate initialization block before the dead check. This CPU-only
+source guard protects the incremental fix, not the unresolved GPU read.
+
+Automated verification on 2026-10-14: the requested MeshGuard /
+MeshAssetLookup / ParticleMeshPSO / Visibility filter passed 37/37 tests
+from 9 suites (exit 0), including the new guard (3 ms). The ReleaseFast
+build/full-test command, excluding `RuntimeViewportTest.*` because it
+hangs headless, compiled the executable and ran 7681 tests; 7661 passed.
+It exited 1 due to the three known pre-existing user VFX-editor WIP
+failures in `VfxEditorSlate` (`WorkbenchHasTwoColumns`,
+`TitleBarReflectsEmitterName`, `StatusBarBindingsReflectTelemetry`).
+Those tests and editor files were left untouched. Neither result is
+hardware visual verification.
+
+### Failure modes investigated
+
+1. **Render-graph state overriding inline transitions.** Still unconfirmed;
+   CPU readback cannot establish the state or descriptor seen by the mesh
+   dispatch. Inspect sort output and attribute states in a GPU capture.
+2. **UAV write visibility hazard.** Explicit UAV flushes, state transitions,
+   and split-submit/WaitIdle did not restore sorted rendering. Unsorted
+   attribute reads work, so the earlier claim that zero instance count
+   alone ruled out this hypothesis was too strong.
+3. **Per-emitter dispatch ordering.** No demonstrated match; the reproduction
+   uses one emitter. Capture sort execution and its downstream read before
+   assigning this as a cause.
+4. **Spawn writes incorrect initial positions.** Ruled out by full-capacity
+   readback: live slots have sensible positions, lifespans, and ages.
+   A separate world-position log is redundant, not completed.
+
+None of the four hypotheses is a confirmed explanation of the remaining
+sorted-index failure. The bisection isolates it to the sorted path, and
+the post-dead-check thread-zero count dependency was a separate confirmed
+defect.
+
+### Required follow-up
+
+Recommended task: `phase0_vfx-mesh-sortedindices-bindless-read`. Acceptance:
+
+- Capture RenderDoc/PIX evidence of the sort dispatch/gating, sort output,
+  `sortedIndicesSrvIndex` heap entry, resource state before mesh-instance
+  dispatch, and actual fetched indices; verify live indices map to live
+  particle slots rather than all mapping to unspawned slot zero.
+- Fix the evidenced cause and show nonzero matching mesh/indirect instance
+  counts for the unchanged `mesh_sort_shards.uzvfx` (`ViewDepth`, scale
+  `[3,3,3]`, velocity `[0,0,200]`).
+- Read screenshots at frames 30, 60, 90, and 120 showing identifiable
+  discrete particles against sky and ground, without camera engulfment or
+  black output. Verify the `.uzfx` editor-schema sister asset loads and
+  renders too.
+- Rerun the renderer regression filters and the hardware visual A/B from
+  `phase16_vfx-sort-pipeline-hardware-validation` item 1.2; link genuine
+  post-fix screenshots here before marking visibility verified.
+
+### Predecessor's six fixes (not sorted-path verification)
 
 The visible symptom — fully black HDR composite whenever a mesh emitter
 was active — turned out to be caused by `MeshRenderModule::CreateGPUBuffers`

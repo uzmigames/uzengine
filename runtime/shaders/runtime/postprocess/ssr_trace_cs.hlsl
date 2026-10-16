@@ -28,7 +28,7 @@ cbuffer SsrTraceRootCB : register(b0) {
     uint   hizMip0SrvIdx;       // 9 — Hi-Z mip 0 (half-res min-reduced depth)
     uint   hizMip1SrvIdx;       // 10 — Hi-Z mip 1 (quarter-res)
     uint   hizMipCount;         // 11 — number of Hi-Z mip levels available (0 = use full-res only)
-    float  exposureCorrection;  // 12 — currentExposure / prevExposure (1.0 when stable)
+    float  exposureCorrection;  // 12 — always 1.0: scene colour is linear, not pre-exposed
     uint   numSteps;            // 13 — ray march step count (r.SSR.NumSteps, default 16)
     float  startMipLevel;       // 14 — initial HZB mip level (r.SSR.StartMipLevel, default 1.0)
     float  slopeToleranceScale; // 15 — slope tolerance scale (r.SSR.SlopeToleranceScale, default 4.0)
@@ -380,8 +380,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
     float hitDist = length(hitWorldPos - worldPos);
 
     // Fetch scene color at hit point (prev-frame HDR copy).
-    // @ref AMD FidelityFX SSSR — exposure correction for auto-exposure changes.
-    // prevColor was captured at prevExposure; multiply by (current/prev) to normalize.
+    // Linear HDR is not pre-exposed, so exposureCorrection is always 1.0.
     float3 hitColor = colorTex.SampleLevel(linearClamp, hitUVZ.xy, 0).rgb * exposureCorrection;
 
     // Confidence: screen-edge fade × roughness fade × depth-thickness fade

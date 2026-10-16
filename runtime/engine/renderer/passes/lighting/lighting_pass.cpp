@@ -41,6 +41,10 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
         pb.Read(desc.depthGBuffer,    RHIResourceState::ShaderResource);
         pb.Read(desc.positionGBuffer, RHIResourceState::ShaderResource);
         pb.Read(desc.emissiveGBuffer, RHIResourceState::ShaderResource);
+        if (desc.brixDiffuseResource.IsValid()) {
+            pb.Read(desc.brixDiffuseResource, RHIResourceState::ShaderResource);
+            pb.Read(desc.brixSpecularResource, RHIResourceState::ShaderResource);
+        }
         // The lighting split targets are written as SV_Target1..3 below. Declaring them lets the
         // graph transition them to ShaderResource for whoever reads them next (the debug view).
         if (desc.debugDirectResource.IsValid()) {
@@ -51,9 +55,14 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
         if (desc.shadowAtlasResource.IsValid()) {
             pb.Read(desc.shadowAtlasResource, RHIResourceState::ShaderResource);
         }
+        if (desc.localShadowAtlasResource.IsValid()) {
+            pb.Read(desc.localShadowAtlasResource, RHIResourceState::ShaderResource);
+        }
         if (desc.apVolumeResource.IsValid()) {
             pb.Read(desc.apVolumeResource, RHIResourceState::ShaderResource);
         }
+        for (uint32_t i = 0; i < desc.cloudShadowCascadeCount; ++i)
+            pb.Read(desc.cloudShadowResources[i], RHIResourceState::ShaderResource);
 
         pb.SetExecutionCallback([desc](IRHICommandList* cmd, const rg::RgPassResources& res) {
             UZ_PROFILE_SCOPE("DeferredLighting::Execute");
@@ -148,7 +157,7 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
             if (desc.bindless) {
                 // SM6.6: push descriptor indices for G-Buffer SRVs.
                 // Must match GBufferIndices in deferred_lighting_ps.hlsl.
-                const uint32_t indices[9] = {
+                const uint32_t indices[11] = {
                     desc.albedoSrvIndex,
                     desc.normalSrvIndex,
                     desc.depthSrvIndex,
@@ -157,9 +166,14 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
                     desc.envMisSrvIndex,
                     desc.iblPrefilteredSrvIndex,
                     desc.iblIrradianceSrvIndex,
-                    desc.lightingDebugMode
+                    desc.lightingDebugMode,
+                    desc.cloudShadowBufferSrv,
+                    desc.cloudShadowCascadeCount
                 };
-                cmd->SetRootConstants(kSlotRootConstants, indices, 9);
+                static_assert(sizeof(indices) / sizeof(indices[0]) <= 24);
+                // Default path pushes the original nine DWORDs and uses the original PSO.
+                cmd->SetRootConstants(kSlotRootConstants, indices,
+                    desc.cloudShadowCascadeCount != 0 ? 11 : 9);
             } else {
                 // SM5: bind G-Buffer textures directly at fragment texture slots t0-t4, t10.
                 cmd->SetFragmentTexture(0, desc.albedoTexture);

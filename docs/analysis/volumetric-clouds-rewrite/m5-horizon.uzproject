@@ -1,0 +1,9 @@
+{
+  "name": "M5 two cloud layers at horizon", "version": "1.0",
+  "content_root": "../../../sample/content",
+  "default_scene": "../../docs/analysis/volumetric-clouds-rewrite/m5-horizon.uzscene",
+  "window": { "width": 1920, "height": 1080 },
+  "cvars": { "r.AutoExposure": 0, "r.Exposure": 1, "r.GTAO": 0, "r.Fog": 0,
+    "r.RadianceCache": 0, "r.GI.FinalGather": 0, "r.GI.Reflections": 0,
+    "r.SSGI": 0, "r.TAA": 1, "r.TechPanel.Show": 0 }
+}

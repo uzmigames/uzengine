@@ -13,7 +13,7 @@ $dxc = Join-Path $root 'runtime/thirdparty/dxc/bin/x64/dxc.exe'
 $include = Join-Path $root 'runtime/shaders/runtime/gi'
 $variants = @(
     @{Name='probe-only';Call='SdfReflectionIrradiance(scene,origin,direction)'},
-    @{Name='surface-gather';Call='GatherSdfDiffuse(scene,origin,direction,direction,uint2(id.x,0),frame,32)'}
+    @{Name='surface-gather';Call='GatherSdfDiffuse(scene,origin,direction,direction,uint2(id.x,0),frame,32,0u)'}
 )
 foreach ($variant in $variants) {
     $text = $wrapper.Replace('sdf_reflections.hlsli','sdf_diffuse_gather.hlsli').Replace($oldCall, $variant.Call)

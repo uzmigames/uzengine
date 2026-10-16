@@ -76,7 +76,7 @@ void TLASManager::Rebuild(const DrawCommand* drawCommands, uint32_t drawCount,
     for (uint32_t i = 0; i < drawCount && instanceCount < m_maxInstances; ++i) {
         const auto& cmd = drawCommands[i];
 
-        if (cmd.meshId >= meshCount) continue;
+        if (!IsGIOccluder(cmd) || cmd.meshId >= meshCount) continue;
         const auto& mesh = meshes[cmd.meshId];
         if (!mesh.IsValid()) continue;
 

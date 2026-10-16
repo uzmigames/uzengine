@@ -5,8 +5,8 @@
 /// shaders to output velocity for TAA integration.
 ///
 /// # Motion Vector Convention
-/// Output is in UV space: the difference between current and previous frame
-/// screen positions in [0,1] normalized coordinates. Positive X = rightward
+/// Output is current minus previous in render-resolution pixels.
+/// Positions use unjittered matrices. Positive X = rightward
 /// motion, positive Y = downward motion (DX UV convention with Y flipped).
 ///
 /// # Integration
@@ -40,22 +40,22 @@
 ///                  reconstructed to clip space). Must have valid w for perspective divide.
 /// @param prevCS    Previous frame clip-space position (computed in VS via prevViewProj).
 ///                  Must have valid w for perspective divide.
+/// @param renderSize Render-resolution dimensions in pixels.
 ///
 /// # Returns
-/// Screen-space velocity in UV space (currentUV - prevUV). Range is unbounded but
-/// typically small (< 0.1 for 60fps at moderate speeds). Zero when the particle
-/// is stationary or prevViewProj is identity.
+/// Screen-space velocity in render pixels: (currentUV - prevUV) * renderSize.
+/// Zero when the projected particle position is unchanged.
 ///
 /// # Edge Cases
-/// - If prevCS.w is zero or near-zero (degenerate projection), returns float2(0, 0)
+/// - If prevCS.w <= 1e-6 (behind the camera or degenerate), returns float2(0, 0)
 ///   to avoid inf/NaN propagation into the velocity buffer.
 /// - If currentCS.w is zero, the vertex would not be rasterized, so this case
 ///   does not arise in practice.
-float2 ComputeMotionVector(float4 currentCS, float4 prevCS) {
-    // Guard against degenerate previous-frame projection (w near zero).
+float2 ComputeMotionVector(float4 currentCS, float4 prevCS, float2 renderSize) {
+    // Guard against behind-camera or degenerate previous-frame projection.
     // This can happen on the first frame when prevViewProj is identity and
     // the particle is at the origin, or for particles behind the previous camera.
-    if (abs(prevCS.w) < 1e-6f) {
+    if (prevCS.w <= 1e-6f) {
         return float2(0.0f, 0.0f);
     }
 
@@ -69,7 +69,7 @@ float2 ComputeMotionVector(float4 currentCS, float4 prevCS) {
     float2 currentUV = currentNDC * float2(0.5f, -0.5f) + 0.5f;
     float2 prevUV    = prevNDC    * float2(0.5f, -0.5f) + 0.5f;
 
-    return currentUV - prevUV;
+    return (currentUV - prevUV) * renderSize;
 }
 
 #endif // VFX_MOTION_VECTORS_HLSLI

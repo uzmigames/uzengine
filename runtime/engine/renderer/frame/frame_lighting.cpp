@@ -21,6 +21,7 @@
 #include "gi/radiance_cache.h"
 #include "raytracing/rt_manager.h"
 #include "gpu_mesh.h"
+#include "vertex.h"
 #include <cstring>
 #include "world.h"
 #include "render_graph_builder.h"
@@ -84,6 +85,13 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
     // consume it unchanged.
     // @ref Kajiya 1986 "The Rendering Equation"
     if (cv_PathTracer->value >= 0.5f) {
+        const uint32_t resetGeneration = GetPathTracerResetGeneration();
+        const bool accumulate = CVarRegistry::Get().GetBool("r.PathTracer.Accumulate", true);
+        if (resetGeneration != m_ptResetGeneration || !accumulate) {
+            m_ptAccumSamples = 0;
+            m_ptHistoryValid = false;
+            m_ptResetGeneration = resetGeneration;
+        }
         // ── Camera-cut detection: reset accumulation when view changes ───
         // We compare the current view matrix (first 16 floats of viewProj
         // would also work but view is more stable across projection toggles).
@@ -104,17 +112,11 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         const uint32_t curr = m_ptAccumIdx;
         const uint32_t prev = curr ^ 1u;
 
-        // Import both accumulation textures into the render graph each frame
-        // so the graph tracks state across frames. They start as ShaderResource
-        // since the previous frame left them in RT then transitioned at end of pass.
-        const RHIResourceState currImportState = (m_ptAccumSamples == 0)
-            ? RHIResourceState::Common
-            : RHIResourceState::ShaderResource;
-        rg::RgResourceId accumCurrRes = rgBuilder.ImportTexture("PT_AccumCurr",
-            m_ptAccum[curr], currImportState);
-        // Prev is consumed only via the bindless SRV — no need to import as
-        // a render graph resource since we don't declare it as a Read (the
-        // shader reads it via ResourceDescriptorHeap[]).
+        // Track both ping-pong textures, including the previous accumulation's bindless read.
+        rg::RgResourceId accumCurrRes = rgBuilder.ImportTrackedTexture("PT_AccumCurr",
+            m_ptAccum[curr]);
+        rg::RgResourceId accumPrevRes = rgBuilder.ImportTrackedTexture("PT_AccumPrev",
+            m_ptAccum[prev]);
 
         // The reference path tracer consumes GDF clipmaps for bounce-hit
         // normals — keep the SDF GI chain (GDF composite + probe traces)
@@ -124,11 +126,13 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         PathTracerPassDesc ptDesc{};
         ptDesc.hdrTarget         = ctx.hdrRes;
         ptDesc.accumCurr         = accumCurrRes;
+        ptDesc.accumPrev         = accumPrevRes;
         ptDesc.normalGBuffer     = ctx.normalRes;
         ptDesc.depthGBuffer      = ctx.depthRes;
         ptDesc.albedoGBuffer     = ctx.albedoRes;
         ptDesc.positionGBuffer   = ctx.positionRes;
         ptDesc.emissiveGBuffer   = ctx.emissiveRes;
+        ptDesc.shadowAtlas       = ctx.shadowAtlasRes;
         ptDesc.perFrameAlloc     = ctx.perFrameAlloc;
         ptDesc.pipeline          = ctx.pipelines->GetPathTracer();
         ptDesc.normalSrvIndex    = m_gbuffer.normalSRV;
@@ -136,10 +140,37 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         ptDesc.albedoSrvIndex    = m_gbuffer.albedoSRV;
         ptDesc.positionSrvIndex  = m_gbuffer.positionWSSRV;
         ptDesc.emissiveSrvIndex  = m_gbuffer.emissiveSRV;
-        ptDesc.skyCubeSrvIndex   = m_hdriActive ? m_hdriCubemapSrv : m_skyCubemapSrv;
+        // One sky SRV for every PT sky read (RT-off fallback, specular miss, bounce miss):
+        // HDRI when active, else the atmosphere capture once filled, else the shader's flat-
+        // skylight sentinel. Set independent of the TLAS. The m_skyCubemapFilled guard keeps
+        // frame 0 (pre-capture, allocator-recycled memory) on the sentinel (phase0
+        // frame-allocation-layout-dependence).
+        const uint32_t ptSkySrv  = m_hdriActive ? m_hdriCubemapSrv
+                                 : (m_skyCubemapFilled ? m_skyCubemapSrv : UINT32_MAX);
+        ptDesc.skyCubeSrvIndex   = ptSkySrv;
+        ptDesc.skyCubemapSrv     = ptSkySrv;
+        // Raw equirect HDRI for direct env sampling (Falcor-equivalent single bilinear tap);
+        // UINT32_MAX = none, PT falls back to the sky cubemap.
+        ptDesc.equirectSrvIndex  = m_hdriActive ? m_hdriEquirectSrv : UINT32_MAX;
+        // Bind only the active HDRI's built sampler; otherwise retain the BSDF-only defaults.
+        if (m_hdriActive && m_envMapSampler && m_envMapSampler->IsReady()) {
+            ptDesc.envAliasSrv = m_envMapSampler->GetAliasSrv();
+            ptDesc.envLumMip0Srv = m_envMapSampler->GetLuminanceMip0Srv();
+            const float totalLuminance = m_envMapSampler->GetTotalLuminance();
+            std::memcpy(&ptDesc.envTotalLumBits, &totalLuminance, sizeof(uint32_t));
+            ptDesc.envLumWidth = m_envMapSampler->GetLuminanceWidth();
+            ptDesc.envLumHeight = m_envMapSampler->GetLuminanceHeight();
+        }
         ptDesc.accumPrevSrvIndex = m_ptAccumSrv[prev];
         ptDesc.sampleCount       = m_ptAccumSamples;
         ptDesc.frameIndex        = ctx.frameIndex;
+        auto& ptCvars = CVarRegistry::Get();
+        ptDesc.maxBounces        = static_cast<uint32_t>(ptCvars.GetInt("r.PathTracer.MaxBounces", 4));
+        ptDesc.samplesPerFrame   = static_cast<uint32_t>(ptCvars.GetInt("r.PathTracer.SamplesPerFrame", 4));
+        ptDesc.clampFirefly      = ptCvars.GetFloat("r.PathTracer.ClampFirefly", 64.f);
+        ptDesc.envIntensity      = ptCvars.GetFloat("r.PathTracer.EnvIntensity", 1.f);
+        ptDesc.rrEnabled         = ptCvars.GetBool("r.PathTracer.RussianRoulette", true) ? 1u : 0u;
+        ptDesc.rrMinBounce       = static_cast<uint32_t>(ptCvars.GetInt("r.PathTracer.RussianRouletteMinBounce", 2));
         ptDesc.shadowAlloc       = ctx.shadowAlloc;
         ptDesc.bindless          = ctx.bindless;
 
@@ -160,9 +191,6 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         if (m_rtManager && m_rtManager->IsReady() && m_rtManager->IsEnabled()
             && m_rtManager->GetTLASInstanceCount() > 0u) {
             ptDesc.tlasSrvIndex     = m_rtManager->GetTLASSRVIndex();
-            ptDesc.skyCubemapSrv    =
-                (m_skyCubemap.IsValid() && m_skyCubemapSrv != UINT32_MAX)
-                    ? m_skyCubemapSrv : UINT32_MAX;
             ptDesc.materialTableSrv = UpdateGIMaterialTable(ctx);
         }
         ptDesc.viewportWidth     = static_cast<float>(ctx.renderWidth);
@@ -171,7 +199,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
 
         // Advance ping-pong + sample counter for next frame.
         m_ptAccumIdx     = prev;
-        m_ptAccumSamples = std::min(m_ptAccumSamples + 1u, 65535u);
+        m_ptAccumSamples = accumulate ? std::min(m_ptAccumSamples + 1u, 65535u) : 0u;
 
         // Atmosphere fog/cloud passes still composite into hdrRes after PT.
         RegisterAtmosphereFogCloudPasses(rgBuilder, ctx);
@@ -224,10 +252,10 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
     // The atmosphere passes later in this frame fill the CURRENT frame's data.
     // Render graph handles UAV→SRV→UAV barriers automatically.
     if (m_apVolume.IsValid() && m_apVolumeSrv != UINT32_MAX) {
-        ctx.apVolumeRes = rgBuilder.ImportTexture("APVolume",
-            m_apVolume, RHIResourceState::UnorderedAccess);
+        ctx.apVolumeRes = rgBuilder.ImportTrackedTexture("APVolume", m_apVolume);
     }
 
+    RegisterCloudShadowPasses(rgBuilder, ctx);
     RegisterDeferredLightingPass(rgBuilder, ctx);
     RegisterAtmosphereFogCloudPasses(rgBuilder, ctx);
     RegisterSSGIPrevColorCopy(rgBuilder, ctx);
@@ -278,8 +306,8 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
 
 uint32_t SceneRenderer::UpdateGIMaterialTable(const FrameContext& ctx) {
     // Indexed by TLAS InstanceID (= meshId). Refreshed every frame from the
-    // draw list — a 2 KB Upload-heap memcpy. The albedo TEXTURE average is
-    // sampled in-shader at the mip tail; here we only record tint + SRV.
+    // draw list. Raw buffer aliases preserve the structured views used by
+    // raster vertex fetch while exposing byte-exact triangle attributes.
     const uint32_t meshCap = static_cast<uint32_t>(m_meshes.size());
     if (meshCap > 0
         && (!m_giMaterialTable.IsValid()
@@ -307,7 +335,7 @@ uint32_t SceneRenderer::UpdateGIMaterialTable(const FrameContext& ctx) {
             m_device->MapBuffer(m_giMaterialTable));
         if (entries) {
             for (uint32_t e = 0; e < meshCap; ++e) {
-                entries[e] = {1.f, 1.f, 1.f, UINT32_MAX};
+                entries[e] = {};
             }
             for (const auto& dc : ctx.drawList.GetCommands()) {
                 if (dc.meshId >= meshCap) continue;
@@ -320,6 +348,21 @@ uint32_t SceneRenderer::UpdateGIMaterialTable(const FrameContext& ctx) {
                     (dc.albedoSrvIndex != 0
                      && dc.albedoSrvIndex != UINT32_MAX)
                         ? dc.albedoSrvIndex : UINT32_MAX;
+                const auto& mesh = m_meshes[dc.meshId];
+                const bool packed = mesh.vertexStride == sizeof(VertexPacked);
+                if (mesh.vbSrvIndex != UINT32_MAX && mesh.IsIndexed()
+                    && (packed || mesh.vertexStride == sizeof(Vertex)
+                               || mesh.vertexStride == sizeof(SkinnedVertex))) {
+                    entry.vbSrv = m_device->GetBufferRawSRVIndex(mesh.vertexBuffer);
+                    entry.ibSrv = m_device->GetBufferRawSRVIndex(mesh.indexBuffer);
+                    entry.vertexStride = mesh.vertexStride;
+                    entry.uvOffset = packed ? offsetof(VertexPacked, texcoord)
+                                            : offsetof(Vertex, texcoord);
+                    entry.normalOffset = packed ? offsetof(VertexPacked, packedNormal)
+                                                : offsetof(Vertex, normal);
+                    entry.indexFormat = mesh.indexFormat == RHIIndexFormat::Uint16 ? 2u : 4u;
+                    entry.normalFormat = packed ? 1u : 0u;
+                }
             }
             m_device->UnmapBuffer(m_giMaterialTable);
         }
@@ -558,18 +601,11 @@ void SceneRenderer::RegisterPassInspectorTargets(FrameContext& ctx) {
                                         VisDisplayMode::HDR, 160, 90);
     }
 
-    // Cloud output (half-res RGBA16F) — register both ping-pong buffers for debugging
-    if (m_cloudPass && m_cloudPass->IsInitialized() && m_cloudOutputSrv != UINT32_MAX) {
+    // Cloud output (half-res RGBA16F).
+    if (m_cloudPass && m_cloudPass->IsInitialized() && m_cloudPass->GetCloudOutputSrv() != UINT32_MAX) {
         m_passInspector.RegisterTarget("cloud.output", m_cloudPass->GetCloudOutputTexture(),
-                                        m_cloudOutputSrv, VisDisplayMode::HDR,
-                                        rw / 2, rh / 2);
-        // DEBUG: also register both raw ping-pong textures
-        m_passInspector.RegisterTarget("cloud.raw0", m_cloudPass->GetDebugRaymarchOutput(0),
-                                        m_cloudPass->GetDebugRaymarchOutputSrv(0), VisDisplayMode::HDR,
-                                        rw / 2, rh / 2);
-        m_passInspector.RegisterTarget("cloud.raw1", m_cloudPass->GetDebugRaymarchOutput(1),
-                                        m_cloudPass->GetDebugRaymarchOutputSrv(1), VisDisplayMode::HDR,
-                                        rw / 2, rh / 2);
+                                        m_cloudPass->GetCloudOutputSrv(), VisDisplayMode::HDR,
+                                        (rw + 1) / 2, (rh + 1) / 2);
     }
 
     // HiZ pyramid mip 0 (half-res R32F depth min)

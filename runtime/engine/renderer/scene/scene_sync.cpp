@@ -85,8 +85,9 @@ namespace uz {
 
 void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
                                          IRHICommandList* cmdList,
-                                         DrawList& outDrawList) {
+                                         DrawList& outDrawList, uint32_t frameIndex) {
     if (!world) return;
+    m_prevTransforms.Sweep(frameIndex);
 
     uint32_t drawIndex = 0;
 
@@ -493,7 +494,15 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
             // bits[8:15]  = specular * 255 (range 0.0-1.0, 8-bit precision)
             // bits[16:23] = envMultiplier * 127.5 (range 0.0-2.0, 128 = 1.0)
             // @ref Lagarde 2014 "Moving Frostbite to Physically Based Rendering" — F0 = 0.08 * specular
-            const uint32_t specU8 = std::min(255u, static_cast<uint32_t>(mat->GetSpecular() * 255.0f));
+            float specular = mat->GetSpecular();
+            if (mat->GetShadingModel() == EShadingModel::ThinTranslucent) {
+                const float ior = std::max(1.0f, mat->GetScalarParam("IOR", 1.5f));
+                const float ratio = (ior - 1.0f) / (ior + 1.0f);
+                specular = ratio * ratio / 0.08f;
+                // ThinTranslucent reuses the POM thickness slot; no CB growth.
+                cmd.displacementScale = mat->GetScalarParam("ThicknessScale", 0.5f);
+            }
+            const uint32_t specU8 = std::min(255u, static_cast<uint32_t>(specular * 255.0f));
             const uint32_t envU8  = std::min(255u, static_cast<uint32_t>(mat->GetEnvMultiplier() * 127.5f));
             cmd.materialFlags |= (specU8 << 8) | (envU8 << 16);
 
@@ -655,6 +664,13 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
             }
         }
 
+        const bool previousDraw = cmd.mobility != EMobility::Movable
+            || m_prevTransforms.HasPrevious(cmd.entityId, frameIndex);
+        cmd.prevVertexBufferSrvIndex = gpuMesh.prevPoseValid && previousDraw ? gpuMesh.prevVbSrvIndex : 0;
+        const auto* wpo = graphForDraw ? graphForDraw->GetPBROutput().FindInput("WorldPositionOffset") : nullptr;
+        const bool materialHasWpo = wpo && wpo->IsConnected();
+        FillPreviousTransform(cmd, m_prevTransforms, frameIndex,
+            gpuMesh.prevVertexBuffer.IsValid(), materialHasWpo);
         outDrawList.Add(cmd);
         drawIndex++;
     }
