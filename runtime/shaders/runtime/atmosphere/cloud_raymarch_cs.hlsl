@@ -101,14 +101,14 @@ cbuffer CloudCB : register(b2) {
     uint    _temporalUpscale;
     uint    _fullWidth;
     uint    _fullHeight;
-    uint    _frontDepthUav;
+    uint    g_frontDepthUav;
     uint    g_cloudShadowBufferSrv;
     uint    g_cloudShadowCascadeCount;
 #else
     uint _temporalUpscale;
     uint _fullWidth;
     uint _fullHeight;
-    uint _frontDepthUav;
+    uint g_frontDepthUav;
     uint _cloudShadowBufferSrv;
     uint _cloudShadowCascadeCount;
 #endif
@@ -486,6 +486,8 @@ void main(uint3 DTid : SV_DispatchThreadID) {
 
 #ifdef UZ_BINDLESS
     RWTexture2D<float4> output = ResourceDescriptorHeap[g_outputUavIdx];
+    RWTexture2D<float> depthOutput = ResourceDescriptorHeap[g_frontDepthUav];
+    depthOutput[DTid.xy] = 0.0f;
 #else
     RWTexture2D<float4> output = g_OutputTex;
 #endif
@@ -504,6 +506,9 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     if (g_explicitLayers != 0) {
         float frontDepth;
         output[DTid.xy] = MarchCloudLayers(cameraSkyKm, rayDir, DTid.xy, frontDepth);
+#ifdef UZ_BINDLESS
+        depthOutput[DTid.xy] = frontDepth;
+#endif
         return;
     }
 
@@ -548,6 +553,7 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     /// @ref Hillaire 2020 — (S - S*T)/max(ext, eps)
     float3 luminance    = float3(0.0f, 0.0f, 0.0f);
     float  transmittance = 1.0f;
+    float weightedDepth = 0.0f;
 
     /// @ref Wolfe et al. 2022 "Spatiotemporal Blue Noise Masks"
     /// @constants kMaxIterations = 256, STBN extent = 128x128x64.
@@ -613,6 +619,7 @@ void main(uint3 DTid : SV_DispatchThreadID) {
         float3 Sint = (scatter - scatter * T_step) / max(ext, EXT_EPS);
 
         luminance    += transmittance * Sint;
+        weightedDepth += transmittance * (1.0f - T_step) * (t - stepLen * 0.5f);
         transmittance *= T_step;
     }
 
@@ -628,4 +635,7 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     luminance = lerp(luminance, skyColor * (1.0f - transmittance), apFactor);
 
     output[DTid.xy] = float4(luminance, transmittance);
+#ifdef UZ_BINDLESS
+    depthOutput[DTid.xy] = weightedDepth / max(1.0f - transmittance, EXT_EPS);
+#endif
 }

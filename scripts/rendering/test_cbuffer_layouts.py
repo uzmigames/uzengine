@@ -119,7 +119,8 @@ ENTRIES = [
                 'g_frameIndex': 'frameIndex', 'g_proceduralNoise': 'proceduralNoise',
                 'g_noiseXYScale': 'noiseXYScale', 'g_noiseZScale': 'noiseZScale',
                 'g_shapeOctaves': 'shapeOctaves', 'g_fbmDecay': 'fbmDecay', 'g_fbmLacunarity': 'fbmLacunarity',
-                'g_detailErosion': 'detailErosion', 'g_densityScale': 'densityScale', 'g_jitterScale': 'jitterScale'},
+                'g_detailErosion': 'detailErosion', 'g_densityScale': 'densityScale', 'g_jitterScale': 'jitterScale',
+                'g_frontDepthUav': 'frontDepthUav'},
         'before': 'cloud_raymarch_cs.before.hlsl',
     },
     {
@@ -312,6 +313,12 @@ TIER_A += [
 ]
 ENTRIES.append({**next(e for e in ENTRIES if e['struct'] == 'CloudCB'),
                 'shader': 'atmosphere/cloud_raymarch_upscale_cs.hlsl', 'before': None})
+TIER_A += [
+    layout_entry('atmosphere/cloud_composite_ps.hlsl', 'PerFrameCB', PARAMS + 'constant_buffers.h'),
+    layout_entry('atmosphere/cloud_composite_ps.hlsl', 'CloudCompositeCB',
+                 PASSES + 'atmosphere/cloud_pass.cpp', 'CloudCB',
+                 {'g_invViewProj': 'invViewProj', 'g_cameraPos': 'cameraPos'}),
+]
 
 TIER_B = [
     *[layout_entry(shader, 'VFXBillboardConstants', PASSES + 'vfx/particle_render_pass.h',

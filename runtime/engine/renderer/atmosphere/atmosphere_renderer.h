@@ -46,6 +46,7 @@ struct AtmosphereFrameContext {
     PipelineLibrary*  pipelines      = nullptr;
     const Vec3*       sunDir         = nullptr;
     const Vec3*       sunColor       = nullptr;
+    Vec3*             skySunIlluminance = nullptr; ///< Optional output: exact RGB source used by the sky.
     bool              bindless       = false;
     float             vpWidth        = 0.f;
     float             vpHeight       = 0.f;

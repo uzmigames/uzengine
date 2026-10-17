@@ -173,6 +173,8 @@ void AddAtmospherePasses(
             }
         }
 
+        if (ctx.skySunIlluminance) *ctx.skySunIlluminance = skySunColor;
+
         // ── Sky Cubemap Capture (for IBL) ─────────────────────────────────
         // Two paths: compute shader (bindless, SM6.6) or pixel shader (SM5).
         // The compute path dispatches all 6 faces in a single call via

@@ -132,15 +132,16 @@ Two shader variants capture the procedural sky into a 6-face RGBA16F cubemap for
 
 The captured cubemap is passed to `IBLBaker::BakeEnvironment()` after graph execution.
 
-### Volumetric Clouds (M0-M5)
+### Volumetric Clouds (M0-M6, aerial perspective)
 
 `VolumetricCloudsComponent` supplies the first cloud entity's settings to
 `CloudPass`. All cloud producers and consumers are tracked render-graph passes
 using the current frame's camera; there is no deferred previous-frame dispatch.
 The default path registers `Cloud_Raymarch` after lighting, reads scene depth
 and disk-loaded shape/detail/STBN resources, writes half-resolution RGBA16F
-(premultiplied radiance, transmittance), then `Cloud_Composite` blends it into
-HDR scene color. Depth clips cloud rays against opaque geometry.
+(premultiplied radiance, transmittance) and R32F opacity-weighted cloud distance,
+then `Cloud_Composite` blends it into HDR scene color. Depth clips cloud rays
+against opaque geometry.
 
 The march intersects spherical cloud shells in kilometers, clamps distance by
 `tracingMaxDistanceKm`, and uses a counted **256-iteration** upper bound.
@@ -156,9 +157,25 @@ Self-shadow light marches have at most eight samples. Up to eight Oz/Kulla
 scattering orders attenuate scattering/extinction/eccentricity by 0.5, with
 height-dependent sky illumination and optional powder (default scale zero).
 Dual-lobe HG is the default phase; HG/Draine is a compile-time option.
-Cloud aerial perspective remains exponential sky-color haze, not the planned
-camera-to-cloud atmosphere LUT integration. Silver-lining acceptance remains
-open; brighter multi-scatter interiors are shipped.
+`r.Clouds.AerialPerspective=true` replaces the legacy exponential haze and
+screen-position tint with camera-to-cloud atmospheric transport. The existing
+Bruneton transmittance LUT supplies RGB segment attenuation; an eight-step
+Rayleigh/Mie source integration uses the same atmosphere parameters and solar
+LUT as the engine's aerial-perspective volume. Composition is
+`cloudRadiance * atmosphereTransmittance + inscatter * (1 - cloudTransmittance)`.
+Cloud transmittance is unchanged. Both raymarch modes and explicit layers
+write their opacity-weighted average distance in kilometers. Ground-facing
+segments use the reciprocal-direction LUT ratio rather than sampling through
+the planet. Paths are clipped to the atmosphere shell.
+
+Cloud atmospheric transport is independent of the default-off geometry
+`r.AerialPerspective` switch: a cloud-only copy of the existing PerFrameCB
+contract is populated from the enabled sky component. It does not change
+geometry/sky constants, allocate another LUT, grow CloudCB, or change the
+24-DWORD root signature. Disabling the cloud switch restores legacy haze
+for A/B comparisons. No active procedural atmosphere (including HDRI override)
+uses the legacy cloud appearance. Cloud scenes intentionally change when the
+physical path is active; cloud-free scenes register no cloud composite.
 
 `r.Clouds.TemporalUpscale=false` keeps the default half-resolution path.
 Enabling it selects the quarter-resolution raymarch and a rotating 4x4 Bayer
@@ -201,7 +218,7 @@ defaults exactly match the former shader constants:
 | `HeightTopEnd`, `HeightTopStart` | 1, 0.3 |
 | `HeightStratusEnd`, `HeightStratusStart`, `HeightCumulusStart` | 0.35, 0.1, 0.8 |
 | `LightMarchHeightScale` | 2 (maximum self-shadow distance in layer heights) |
-| `AerialPerspectiveDensity` | 0.04 |
+| `AerialPerspectiveDensity` | 0.04 (legacy path only) |
 
 Keep height-ramp endpoints distinct when authoring overrides. Noise/weather
 retain the existing s3 wrap sampler; shadow sampling retains s2, never s0.

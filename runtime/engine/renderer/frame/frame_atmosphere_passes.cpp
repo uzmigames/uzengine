@@ -95,6 +95,8 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
     if (m_shadowDebugMode == 1) return;
 
     AtmosphereFrameContext atmoCtx{};
+    Vec3 cloudSunIlluminance{};
+    atmoCtx.skySunIlluminance   = &cloudSunIlluminance;
     atmoCtx.device              = m_device;
     atmoCtx.world               = ctx.world;
     atmoCtx.cbRing              = m_cbRing.get();
@@ -266,6 +268,37 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
             // Use UNJITTERED invViewProj — jittered matrix causes cloud noise
             // to shift every frame (TSR subpixel jitter), creating false movement.
             CloudPassInput cloudInput{};
+            // Clouds need atmospheric transport even when geometry AP is disabled.
+            // Copy the existing per-frame contract only for this cloud composite;
+            // never change the shipped geometry/sky constants or their global gate.
+            PerFrameCB cloudPerFrame = ctx.perFrame;
+            cloudPerFrame.lightColor = {cloudSunIlluminance.x, cloudSunIlluminance.y,
+                                        cloudSunIlluminance.z, 0.0f};
+            cloudPerFrame.aerialPerspectiveEnabled = 0;
+            if (m_showFlags.Get(ShowFlag::Atmosphere) && !m_hdriActive
+                && m_transmittanceLutFilled && m_transmittanceLutSrv != UINT32_MAX) {
+                auto skyView = ctx.world->GetRegistry().view<SkyAtmosphereComponent>();
+                for (auto skyEntity : skyView) {
+                    const auto& sky = skyView.get<SkyAtmosphereComponent>(skyEntity);
+                    if (!sky.enabled) continue;
+                    cloudPerFrame.aerialPerspectiveEnabled = 1;
+                    cloudPerFrame.transmittanceLutSrvIndex = m_transmittanceLutSrv;
+                    cloudPerFrame.apBottomRadiusKm = sky.bottomRadiusKm;
+                    cloudPerFrame.apTopRadiusKm = sky.bottomRadiusKm + sky.atmosphereHeightKm;
+                    cloudPerFrame.apRayleighBetaX = sky.rayleighScattering.x;
+                    cloudPerFrame.apRayleighBetaY = sky.rayleighScattering.y;
+                    cloudPerFrame.apRayleighBetaZ = sky.rayleighScattering.z;
+                    cloudPerFrame.apRayleighScaleH = sky.rayleighScaleHeightKm;
+                    cloudPerFrame.apMieBeta = sky.mieScattering;
+                    cloudPerFrame.apMieScaleH = sky.mieScaleHeightKm;
+                    cloudPerFrame.apMieAnisotropy = sky.mieAnisotropy;
+                    cloudPerFrame.apRayleighScale = sky.rayleighScatteringScale;
+                    cloudPerFrame.apMieScale = sky.mieScatteringScale;
+                    break;
+                }
+            }
+            const auto cloudFrameAlloc = m_cbRing->Allocate(sizeof(PerFrameCB));
+            std::memcpy(cloudFrameAlloc.cpuPtr, &cloudPerFrame, sizeof(PerFrameCB));
             cloudInput.layers = cloudComp.layers;
             cloudInput.layerCount = cloudComp.layerCount;
             cloudInput.useExplicitLayers = cloudComp.useExplicitLayers;
@@ -319,6 +352,8 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
             cloudInput.depthSrv          = m_gbuffer.depthSRV;
             cloudInput.velocitySrv       = m_gbuffer.velocitySRV;
             cloudInput.velocityRes       = ctx.velocityRes;
+            cloudInput.transmittanceLut  = m_transmittanceLut;
+            cloudInput.aerialPerspectiveAvailable = cloudPerFrame.aerialPerspectiveEnabled != 0;
             cloudInput.globalCoverage    = cloudComp.coverage;
 
             // ── Additional tracing/quality parameters from VolumetricCloudsComponent ──
@@ -341,7 +376,7 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
 
             m_cloudPass->SetVFS(ctx.vfs);
             m_cloudPass->RegisterPasses(rgBuilder, m_rgStates.get(), ctx.cmdList,
-                ctx.hdrRes, ctx.depthRes, ctx.perFrameAlloc, *m_cbRing, ctx.pipelines,
+                ctx.hdrRes, ctx.depthRes, cloudFrameAlloc, *m_cbRing, ctx.pipelines,
                 ctx.bindless, ctx.renderWidth, ctx.renderHeight, cloudInput);
 
             break;  // First VolumetricCloudsComponent only (singleton semantics)
