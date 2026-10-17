@@ -165,6 +165,7 @@ class TrailSystem;
 class PixelDebugSystem;
 class RTManager;
 class RTUVTestPass;
+class PipelinePathTracerPass;
 class MaterialPipeline;
 class MaterialManager;
 struct ParticleEmitter;

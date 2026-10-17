@@ -43,6 +43,7 @@
 #include "cvar.h"
 #include "raytracing/rt_manager.h"
 #include "passes/raytracing/rt_uv_test_pass.h"
+#include "passes/pathtracing/pipeline_path_tracer_pass.h"
 #include "passes/debug/pixel_debug.h"
 #include "material_pipeline.h"
 #include "engine/material/material_manager.h"
@@ -1426,6 +1427,7 @@ void SceneRenderer::Shutdown() {
     m_materialManager.reset();
 
     // Destroy RT infrastructure
+    m_pipelinePathTracer.reset();
     if (m_rtUVTestPass) {
         m_rtUVTestPass->Shutdown(m_device);
         m_rtUVTestPass.reset();

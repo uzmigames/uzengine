@@ -1409,6 +1409,12 @@ int main(int argc, char** argv) {
     g_argv.assign(argv, argv + argc);
     uz::Config config = uz::BuildConfig(argc, argv);
 
+    // --path-trace: enable the opt-in DXR reference renderer before renderer init.
+    if (config.GetBool("path-trace", false)) {
+        config.AddPendingCvarOverride("r.RayTracing", 1.0f);
+        config.AddPendingCvarOverride("r.PathTracer.Pipeline", 1.0f);
+    }
+
     // --rt-test: enable RT and the UV test pass via CVar overrides
     if (config.GetBool("rt-test", false)) {
         config.AddPendingCvarOverride("r.RayTracing", 1.0f);

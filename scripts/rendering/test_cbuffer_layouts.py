@@ -226,6 +226,7 @@ for shader in (
     'postprocess/ssr_temporal_cs.hlsl', 'postprocess/ssr_trace_cs.hlsl',
     'postprocess/svgf_atrous_cs.hlsl', 'postprocess/svgf_filter_moments_cs.hlsl',
     'postprocess/velocity_object_vs.hlsl', 'pathtracing/path_tracer_ps.hlsl',
+    'pathtracing/pathtracer_shared.hlsli',
     'lighting/cluster_assign_cs.hlsl', 'lighting/env_mis_temporal_cs.hlsl',
     'debug/debug_view_ps.hlsl', 'atmosphere/height_fog_ps.hlsl',
     'atmosphere/skybox_cubemap_ps.hlsl', 'atmosphere/sky_atmosphere_ps.hlsl',
@@ -321,6 +322,8 @@ TIER_A += [
 ]
 
 TIER_B = [
+    layout_entry('pathtracing/pathtracer_shared.hlsli', 'PathTracerRoot',
+                 PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'PipelinePathRoot'),
     *[layout_entry(shader, 'VFXBillboardConstants', PASSES + 'vfx/particle_render_pass.h',
                    'ParticleBillboardIndices')
       for shader in ('vfx/particle_billboard_vs.hlsl', 'vfx/particle_billboard_ps.hlsl')],
@@ -364,6 +367,10 @@ TIER_B = [
 ]
 
 TIER_C = [
+    layout_entry('pathtracing/pathtracer_shared.hlsli', 'PathDirectionalLight',
+                 PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'PipelinePathDirectionalLight'),
+    layout_entry('pathtracing/pathtracer_shared.hlsli', 'MaterialData',
+                 PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'PipelinePathMaterial'),
     layout_entry('gbuffer/mesh_vs.hlsl', 'Vertex', 'runtime/engine/renderer/mesh/vertex.h'),
     layout_entry('gbuffer/mesh_vs.hlsl', 'VertexPacked', 'runtime/engine/renderer/mesh/vertex.h'),
     layout_entry('gi/global_sdf_composite_cs.hlsl', 'MeshSdf',
