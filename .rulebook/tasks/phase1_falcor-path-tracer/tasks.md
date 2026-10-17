@@ -100,7 +100,7 @@ the stage-2 implementation and remaining gates are recorded below.
 - [x] 4.2 Russian roulette uses `clamp(max(throughput), 0.05, 1)` with reciprocal survival weighting. Reuse `r.PathTracer.RussianRoulette` (default true) and `r.PathTracer.RussianRouletteMinBounce` (default 2); both are included in accumulation invalidation. Evidence: shared scalar survival/unbiasedness test and logged RR settings below.
 - [x] 4.3 NEE executes at every surface vertex, with four visibility samples per scene directional light, accumulated through current path throughput. Scene directional radiance is integrated source intensity, so normalized source/visibility sampling carries a 1/4 sample weight; no MIS is applied to these directional lights. Evidence: closest-hit code, lit indirect surfaces and successful multi-bounce/shadow dispatch below.
 - [x] 4.4 Preserve stage-1 `--path-trace` activation and HDR pass selection; its output now resolves the persistent accumulated mean. Add `--pt-bounces <N>` before CVar flush and consume the existing bounce/RR CVars. Evidence: manifests and logs record bounces 1 versus 4; the no-flag raster capture is PNG-byte-identical to frame 95 of the required baseline.
-- [ ] 4.5 Cornell accuracy/demo gate remains OPEN. Captures at frame 200 with one/four bounces and a deferred control were run, but the existing shared TLAS writer drops instance translations: `tlas_manager.cpp:101-107` copies `_14/_24/_34` into the DXR affine translation column, while engine row-vector matrices store translation in `_41/_42/_43` (`Mat4::Translation` uses `XMMatrixTranslation`). The Cornell walls therefore overlap at the origin, unlike the correctly framed deferred room; green indirect light appears but this is not the requested red/green-room quality proof. Fix the shared TLAS affine conversion in its owning task, then rerun the correctly translated Cornell scene through 200 samples and a trustworthy FLIP comparison. No shared RT infrastructure or raster path was changed here.
+- [x] 4.5 Cornell red/green indirect-light demo passes the current acceptance gate after independently confirming and correcting the shared TLAS affine conversion. Frame 200 shows separate walls and both colored indirect tints on white surfaces; matched one-bounce controls are black in those same regions. Quantified hardware evidence is below. This is the requested geometry/color-bleed gate, not an independent FLIP/ground-truth accuracy claim.
 
 ### Stage-2 implementation and hardware evidence (2026-10-17)
 
@@ -231,11 +231,130 @@ accounts for the next-ray origin/direction. Clangd is not installed, so LSP
 diagnostics are unavailable; the actual C++ build, DXC libraries and tests ran.
 Final process cleanup exits 0 and reports `NO_ENGINE_TEST_ZIG_PROCESSES`;
 no uzengine, test_runtime or zig process remains. No commit or archive was
-created. The full rulebook task is NOT complete:
-item 4.5 needs the separate shared-TLAS fix and a valid Cornell/FLIP quality
-gate; the original documentation tail remains open.
+created. At the end of that stage, item 4.5 and the documentation tail remained
+open. The follow-up below supersedes that status using the current request's
+explicit Cornell geometry/color-bleed acceptance gate.
 
 ## 1. Tail (mandatory — enforced by rulebook v5.3.0)
-- [ ] 1.1 Update or create documentation covering the implementation
-- [ ] 1.2 Write tests covering the new behavior
-- [ ] 1.3 Run tests and confirm they pass
+- [x] 1.1 Document stage-1/stage-2 implementation, CLI activation, private RT PSO/signature, shared TLAS, history/reset, multi-bounce/NEE/RR and actual CVar scope in `docs/specs/rendering/pipeline-path-tracer.md`.
+- [x] 1.2 Existing nine pipeline tests cover stages 1/2. Add two `TLASInstanceTransform` CPU tests exercising the production conversion: nonzero translation column and rotated/nonuniformly scaled world points.
+- [x] 1.3 Layout tests pass; the required full gtest run has 7,818 pass (baseline 7,816 plus two TLAS tests), 17 skip, and only the same three pre-existing VfxEditorSlate failures. Both new tests and all nine pipeline tests pass; the full suite is not claimed all-green.
+
+### Shared-TLAS follow-up and Cornell acceptance (2026-10-17)
+
+The convention bug is real, independently checked before editing. `Mat4` stores
+`XMFLOAT4X4` row-major; `Mat4::Translation` delegates to `XMMatrixTranslation`,
+`getTranslation()` returns `_41/_42/_43`, and point multiplication uses
+`XMVector3Transform`. DXR's instance descriptor is three row-major float4 rows
+acting on column vectors, so its translation is `[0][3]/[1][3]/[2][3]`.
+The writer now transposes the complete affine transform, not only translation:
+leaving the old 3x3 basis would still rotate instances incorrectly.
+The same small production helper is called by both CPU regression tests.
+
+`cd runtime && zig build -Doptimize=ReleaseFast` exits 0, with 147 embedded
+shaders verified (`E:/UzmiEngine/pt-tlas-build.log`). The Cornell render log
+records successful RT-PSO creation, three `lib_6_6` libraries, six TLAS instances,
+four surface bounces, two directional lights, and 200 accumulated samples.
+No `compile failed` occurs in the accepted Cornell captures.
+
+The shipped `sample/projects/cornell_box.uzproject` and its setup script are
+used unchanged. The reproducible camera override is
+`--camera-pos 0,-700,250 --camera-look 0,100,250`; hidden HWND captures avoid
+desktop resizing. Both runs request 210 frames, screenshot frame 200, a
+180-second timeout, `r.AutoExposure=0`, `r.Exposure=1`, `--path-trace` and
+`--pt-bounces 4` or `1`. Both exit 0. Accepted captures:
+
+- `E:/UzmiEngine/pt-tlas-cornell-v2-4/frames/f_200.png`
+- `E:/UzmiEngine/pt-tlas-cornell-v2-1/frames/f_200.png`
+
+Both PNGs were read. The four-bounce image has distinct side/back/ceiling walls
+and the translated sphere; the one-bounce room interior is black except for a
+thin directly lit edge. This camera shows the green wall on screen-left and
+red on screen-right. Half-open pixel regions on the WHITE back wall:
+
+| Region (x0,y0,x1,y1) | Four-bounce mean RGB, 8-bit codes | One-bounce mean RGB |
+| --- | --- | --- |
+| Green-adjacent (835,405,900,520) | 201.318, 208.315, 193.881 | 0, 0, 0 |
+| Red-adjacent (1020,405,1085,520) | 203.658, 190.575, 182.967 | 0, 0, 0 |
+
+Green exceeds red by 6.997 codes beside the green wall; red exceeds green by
+13.083 codes beside the red wall. The nearby white ceiling also carries both
+tints: green-side (720,60,800,160) is (220.978,223.891,215.757), red-side
+(1120,60,1200,160) is (223.477,217.218,213.224); both one-bounce regions are zero.
+These are indirect-light measurements on white materials, not colored-wall
+pixels or an independent reference-renderer accuracy score. No FLIP pass is
+claimed; the earlier broken FLIP experiment is not reused.
+
+`npm run test:layouts` exits 0: 167 declarations, 106 mapped, 61 explicit
+exclusions; Tier A 88/88, B 28/28, C 6/6
+(`E:/UzmiEngine/pt-tlas-layouts.log`). The required
+`GTEST_FILTER='-RuntimeViewportTest.*' zig build test -Doptimize=ReleaseFast`
+runs 7,838 tests in 40.417 seconds: 7,818 pass, 17 skip, and exactly
+`VfxEditorSlate.WorkbenchHasTwoColumns`, `TitleBarReflectsEmitterName`,
+`StatusBarBindingsReflectTelemetry` fail as before. Exit 1 is solely these
+existing failures (`E:/UzmiEngine/pt-tlas-gtests.log`); no TDR occurred.
+Clangd is unavailable, so compiler/tests supply the C++ verification.
+
+#### Raster safety and shared consumers
+
+Default reflection-reference frame 95
+(`E:/UzmiEngine/pt-tlas-default/frames/f_95.png`) versus the required
+`E:/UzmiEngine/f005-after/frames/f_95.png` has maximum RGB code delta 0,
+MAE 0, zero differing pixels and identical PNG bytes. This uses the original
+visible-window flags, without path tracing, and exits 0.
+
+The shared-TLAS runtime consumers checked are:
+
+- `PipelinePathTracerPass` / DXR closest-hit: the Cornell one/four-bounce
+  captures above and the headful GBV reference below.
+- Legacy inline-RayQuery `PathTracer` (`r.PathTracer.Enable=1`,
+  `r.RayTracing=1`): framed Cornell before/after frame 95 captures in
+  `E:/UzmiEngine/pt-tlas-before-framed-inline/` and
+  `E:/UzmiEngine/pt-tlas-after-framed-inline/`. Both exit 0. The before image's
+  false central black cross and incorrect secondary occlusion disappear; the
+  after image preserves the sphere and separately placed walls. Max code delta
+  165, MAE 28.833976 (an intended correction, not image equality).
+- DDGI ray-buffer trace / atlas update, consumed by deferred GI
+  (`r.RayTracing=1`, `r.RayTracing.GI=1`, `r.RadianceCache=1`): matching framed
+  Cornell before/after captures in `pt-tlas-before-framed-ddgi/` and
+  `pt-tlas-after-framed-ddgi/`, both under `E:/UzmiEngine/`, exit 0. Geometry
+  stays correctly placed; corrected probe visibility changes indirect energy
+  (max delta 74, MAE 49.224701). A further 140-frame diagnostic run in
+  `pt-tlas-ddgi-diagnostic/` proves actual dispatch/readback: snapshot frame 120,
+  read frame 124, 4,096 probes, mean radiance 1.1832176724, sky fraction
+  0.9922943115, `rayBuffers=1`, six TLAS instances and 139 skipped static rebuilds.
+
+The SDF-only radiance-cache trace uses the GDF rather than the TLAS. The optional
+RT UV debug pass was source-reviewed as another TLAS consumer but was not
+runtime-tested; it is not enabled in these scenes. No claim is made about an
+independent RT UV image or the alternative per-texel DDGI mode.
+
+#### Headful GPU validation
+
+`E:/UzmiEngine/pt-tlas-gbv-reference/` uses the shipped reflection-reference
+project, `--gpu-validation --path-trace`, 40 requested frames, screenshot 35,
+and a 180-second timeout. Neither `--headless` nor `--hidden` is passed.
+The command exits 0 after 44 rendered frames; the log explicitly enables GPU
+validation and records `DispatchRays 1920x1080`, five TLAS instances and four
+surface bounces. Debug IDs 527/538/607/942 are all absent (0 each).
+Only the permitted initialization ID 1422 occurs; no shader compile fails.
+
+An initial headful Cornell pipeline run exits 0 but is NOT accepted as clean
+GBV evidence: its existing reflection-probe capture emits IDs 538 and 527 for
+`ProbeCaptureCubemap`, unrelated to TLAS descriptor placement. A Cornell DDGI
+GBV attempt was stopped within three minutes when first-frame instrumentation
+was slow; its incomplete results are not accepted. Validation switched to the
+probe-free shipped reference scene rather than changing unrelated shared
+resource-state infrastructure.
+
+The TLAS-disabled headful Cornell control in
+`E:/UzmiEngine/pt-tlas-gbv-cornell-raster-control/` explicitly sets
+`r.RayTracing=0` and reproduces all six `ProbeCaptureCubemap` subresource errors
+for both IDs 538 and 527. This isolates those barriers from the changed TLAS
+writer: the control does not build or use a TLAS.
+The bounded control exits 0, captures frame 5 and completes 13 frames including
+preload. No commit or archive was created; the five changed files are the TLAS
+writer/header, `test_tlas_transform.cpp`, the implementation document and this
+checklist. No Cornell scene or user VFX-editor files were changed.
+Final process cleanup exits 0 and reports `NO_ENGINE_TEST_ZIG_PROCESSES`.
+All 21 checklist items are complete under the acceptance scope documented above.

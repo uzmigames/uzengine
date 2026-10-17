@@ -94,17 +94,10 @@ void TLASManager::Rebuild(const DrawCommand* drawCommands, uint32_t drawCount,
         uint8_t* inst = mapped + instanceCount * 64;
         std::memset(inst, 0, 64);
 
-        // Transform: DXR expects a 3x4 row-major affine matrix.
-        // Mat4 wraps XMFLOAT4X4 (row-major in memory: _RC notation).
-        // DXR instance transform is row-major 3x4, so we copy rows 0-2 directly.
-        const auto& xm = cmd.worldMatrix.m;
-        auto* t = reinterpret_cast<float*>(inst);
-        // Row 0
-        t[0]  = xm._11; t[1]  = xm._12; t[2]  = xm._13; t[3]  = xm._14;
-        // Row 1
-        t[4]  = xm._21; t[5]  = xm._22; t[6]  = xm._23; t[7]  = xm._24;
-        // Row 2
-        t[8]  = xm._31; t[9]  = xm._32; t[10] = xm._33; t[11] = xm._34;
+        // Mat4 uses row vectors (translation in _41/_42/_43). DXR's 3x4
+        // multiplies column vectors, so transpose the entire affine transform,
+        // including the rotation/scale basis, not just its translation.
+        WriteInstanceTransform(reinterpret_cast<float*>(inst), cmd.worldMatrix);
 
         // InstanceID (24 bits) | InstanceMask (8 bits) at byte offset 48
         uint32_t idAndMask = (cmd.meshId & 0x00FFFFFF) | (0xFF << 24);
