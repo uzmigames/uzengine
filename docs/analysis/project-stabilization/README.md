@@ -4,6 +4,12 @@ Date: 2026-10-10. Status: **stage-0 baseline complete; renderer/editor correctio
 Latest reconciliation: [current backlog, shipped mitigations and hierarchy rejection](10-backlog-reconciliation.md).
 Rulebook task: [phase0_project-stabilization-audit](../../../.rulebook/tasks/phase0_project-stabilization-audit/proposal.md).
 
+2026-10-17 update: the [revision ledger](14-closed-findings-ledger.md) now records
+the landed scoped corrections and their explicit deferrals. [Fresh verification](16-audit-closure-2026-10-17.md)
+covers the remaining F-003 graph contracts; the matched Falcor sequence matrix
+remains open. The original observations below are historical, not current
+claims that those implementations are absent.
+
 The review identifies 22 findings: **11 P1, 10 P2 and 1 P3**. The first work should
 make builds and validation trustworthy, then correct state/lifetime contracts,
 temporal inputs and material context. Performance and module cleanup follow a
@@ -33,6 +39,8 @@ not all reproduced runtime failures or proven causes of the user's rendering bug
 | [12 — Rendering correctness design](12-rendering-correctness-design.md) | F-001/F-002/F-004/F-007 turnkey implementation specs (2026-10-15) |
 | [13 — Remaining stabilization design](13-remaining-stabilization-design.md) | F-005/F-018/F-022 turnkey implementation specs (2026-10-15) |
 | [14 — Closed-findings ledger](14-closed-findings-ledger.md) | Each finding -> revision/evidence or design doc (living, item 6.1) |
+| [15 — Finding-to-test inventory](15-finding-test-inventory.md) | Regression coverage, negative controls and explicit gaps (item 6.2) |
+| [16 — Audit closure verification](16-audit-closure-2026-10-17.md) | F-003 residual correction, fresh gate results and unavailable Falcor matrix |
 
 ## Finding register
 

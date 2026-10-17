@@ -1,4 +1,4 @@
-/// Render Graph Resource Pool — Transient texture/buffer pooling and aliasing.
+/// Render Graph Resource Pool — Transient texture/buffer reuse between graphs.
 ///
 /// Physical GPU resources (textures and buffers) are expensive to create and destroy
 /// every frame. The resource pool maintains a cache of previously allocated resources
@@ -6,14 +6,13 @@
 /// across frames.
 ///
 /// # Transient Resource Aliasing
-/// Resources whose lifetimes do not overlap in the topologically sorted pass order
-/// can share the same physical allocation. The pool assigns physical resources based
-/// on descriptor compatibility and lifetime intervals computed by the compiler.
+/// Each live virtual resource acquires a distinct physical handle for the whole graph.
+/// Compatible allocations are reused between graph executions, not aliased within one.
 ///
 /// # Lifetime
 /// The pool is persistent (survives across frames). Physical resources are created
-/// on first use and returned to the pool after the GPU finishes the frame (signaled
-/// by fence). The pool can be trimmed to release unused resources.
+/// on first use and returned after command recording. Reuse requires the same ordered
+/// queue; destruction/Trim requires the caller to wait for GPU completion.
 
 #pragma once
 
@@ -22,6 +21,7 @@
 
 #include "../../rhi/rhi.h"
 #include "render_graph_types.h"
+#include "render_graph_states.h"
 
 namespace uz::rg {
 
@@ -32,14 +32,12 @@ namespace uz::rg {
 /// Manages a pool of physical RHI textures and buffers for reuse across frames.
 ///
 /// During `Execute()`, the render graph acquires physical resources from the pool
-/// (creating new ones if none are available). After the GPU completes the frame,
-/// resources are returned to the pool for reuse by future frames.
+/// (creating new ones if none are available). After recording, resources are returned
+/// for reuse on the same ordered queue. This is not a fence-based retirement queue.
 ///
 /// # Aliasing
-/// The pool supports transient resource aliasing: if two virtual resources have
-/// non-overlapping lifetimes and compatible descriptors, they can share the same
-/// physical allocation. The compiler computes aliasing assignments; the pool
-/// simply provides and recycles the physical handles.
+/// There is no within-graph aliasing: all resources are acquired before any pass
+/// records and released after the last pass. Reuse preserves physical resource states.
 ///
 /// # Thread Safety
 /// Not thread-safe. Only the render graph's `Execute()` path should call into the pool.
@@ -111,6 +109,9 @@ public:
     /// Returns the number of buffers currently cached (not acquired).
     [[nodiscard]] uint32_t GetCachedBufferCount() const;
 
+    /// Physical transient states survive graph destruction; buffer states decay on submit.
+    RgStateRegistry& GetStates() { return m_states; }
+
 private:
     /// Hash key combining descriptor fields for cache lookup.
     struct TextureKey {
@@ -154,6 +155,7 @@ private:
     [[nodiscard]] static BufferKey MakeKey(const RgBufferDesc& desc);
 
     IRHIDevice* m_device = nullptr;
+    RgStateRegistry m_states;
 
     /// Pool of available textures, keyed by descriptor hash.
     std::unordered_map<TextureKey, std::vector<RHITextureHandle>, TextureKeyHash> m_texturePool;

@@ -107,23 +107,15 @@ void SceneRenderer::RegisterLightCullPass(rg::RgBuilder& rgBuilder, FrameContext
 
     const CBAllocation perFrame = ctx.perFrameAlloc;
     const CBAllocation lighting = ctx.lightingAlloc;
-    const RHIBufferHandle buffer = m_clusterListBuffer;
+    const auto clusterRes = rgBuilder.ImportTrackedBuffer("LightClusterList", m_clusterListBuffer);
     const uint32_t groups = (clusters + 63u) / 64u;
-    const auto depthRes = ctx.depthRes;
     rgBuilder.AddPass("LightCull", [=, this](rg::RgPassBuilder& pb) {
-        // The graph orders passes only through declared resources and this pass reads constant
-        // buffers alone: the depth read it does not perform places it after the GBuffer and, with
-        // the lighting pass's own depth read, before the lighting (block B.5's lesson).
-        pb.Read(depthRes, RHIResourceState::ShaderResource);
+        pb.Write(clusterRes, RHIResourceState::UnorderedAccess);
         pb.SetExecutionCallback([=, this](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
-            m_rgStates->Transition(cmd, buffer, RHIResourceState::UnorderedAccess);
-
             cmd->SetPipeline(pipeline);
             cmd->SetRootCBV(kSlotPerFrame, perFrame.bufferHandle, perFrame.offsetBytes, perFrame.cpuPtr, sizeof(PerFrameCB));
             cmd->SetRootCBV(kSlotPerObject, lighting.bufferHandle, lighting.offsetBytes, lighting.cpuPtr, sizeof(LightingCB));
             cmd->Dispatch(groups, 1, 1);
-
-            m_rgStates->Transition(cmd, buffer, RHIResourceState::ShaderResource);
         });
     });
 }
@@ -188,6 +180,10 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
 
     if (!debugActive) {
         LightingPassDesc lightDesc{};
+        const auto* lightingCB = reinterpret_cast<const LightingCB*>(ctx.lightingAlloc.cpuPtr);
+        if (lightingCB && lightingCB->clusterListSrv != UINT32_MAX && m_clusterListBuffer.IsValid()) {
+            lightDesc.clusterListResource = rgBuilder.ImportTrackedBuffer("LightClusterList", m_clusterListBuffer);
+        }
         lightDesc.backbuffer          = ctx.hdrRes;
         lightDesc.albedoGBuffer       = ctx.albedoRes;
         lightDesc.normalGBuffer       = ctx.normalRes;

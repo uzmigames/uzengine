@@ -110,6 +110,7 @@ public:
 
     /// Drops a texture record. Memory only: a destroyed handle's key is never reused (generations).
     void Forget(RHITextureHandle h);
+    void Forget(RHIBufferHandle h);
 
     // ── RgBuilder ───────────────────────────────────────────────────────
 

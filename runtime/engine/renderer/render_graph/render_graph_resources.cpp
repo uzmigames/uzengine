@@ -17,7 +17,7 @@ namespace uz::rg {
 // ─────────────────────────────────────────────────────────────────────────────
 
 RgResourcePool::RgResourcePool(IRHIDevice* device)
-    : m_device(device)
+    : m_device(device), m_states(device)
 {
     UZ_CHECK(device != nullptr);
 }
@@ -163,6 +163,7 @@ void RgResourcePool::Trim()
 
     for (auto& [key, handles] : m_texturePool) {
         for (auto h : handles) {
+            m_states.Forget(h);
             m_device->DestroyTexture(h);
             ++textureCount;
         }
@@ -171,6 +172,7 @@ void RgResourcePool::Trim()
 
     for (auto& [key, handles] : m_bufferPool) {
         for (auto h : handles) {
+            m_states.Forget(h);
             m_device->DestroyBuffer(h);
             ++bufferCount;
         }

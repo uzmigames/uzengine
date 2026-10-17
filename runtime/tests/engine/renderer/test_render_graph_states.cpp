@@ -22,6 +22,7 @@
 #include "ddgi_system.h"
 #include "cb_ring_allocator.h"
 #include "cvar.h"
+#include "lighting_pass.h"
 #include "../../rhi/rhi.h"
 
 namespace {
@@ -155,7 +156,7 @@ public:
     explicit D3D12TruthCommandList(const GenerationalMockDevice* device, bool countsSubmits = true)
         : device_(device), countsSubmits_(countsSubmits) {}
 
-    /// Only watched resources are checked (graph transients start without a barrier by design).
+    /// Only watched resources are checked.
     void Watch(uz::RHITextureHandle h, std::string name) { textureNames_[RgStateRegistry::Key(h)] = std::move(name); }
     void Watch(uz::RHIBufferHandle h, std::string name) { bufferNames_[RgStateRegistry::Key(h)] = std::move(name); }
 
@@ -174,6 +175,7 @@ public:
             barriers.push_back(d);
             const bool uav = d.stateBefore == RHIResourceState::UnorderedAccess
                           && d.stateAfter == RHIResourceState::UnorderedAccess;
+            if (uav && omitUavBarriers) continue;
             if (d.texture.IsValid()) {
                 const uint64_t key = RgStateRegistry::Key(d.texture);
                 const auto name = textureNames_.find(key);
@@ -186,6 +188,8 @@ public:
                 }
             } else if (d.buffer.IsValid()) {
                 const uint64_t key = RgStateRegistry::Key(d.buffer);
+                pendingUavWrites_.erase(key);
+                pendingUavReads_.erase(key);
                 const auto name = bufferNames_.find(key);
                 if (name == bufferNames_.end()) continue;
                 const RHIResourceState actual = Actual(d.buffer);
@@ -227,10 +231,20 @@ public:
         mismatches.push_back({name->second, required, actual, required});
     }
 
+    void AccessUav(uz::RHIBufferHandle h, bool write) {
+        Access(h, RHIResourceState::UnorderedAccess);
+        const auto key = RgStateRegistry::Key(h);
+        if (pendingUavWrites_.count(key) || (write && pendingUavReads_.count(key))) ++uavOrderingErrors;
+        if (write) pendingUavWrites_.insert(key);
+        else pendingUavReads_.insert(key);
+    }
+
     /// A submit: every buffer, and every texture promoted implicitly since the last one, decays to Common.
     void Execute() override {
         ++submits_;
         bufferStates_.clear();
+        pendingUavWrites_.clear();
+        pendingUavReads_.clear();
         for (uint64_t key : promoted_) textureStates_.erase(key);
         promoted_.clear();
     }
@@ -246,6 +260,8 @@ public:
     std::vector<Mismatch> mismatches;
     uint32_t bufferCopies = 0;
     uint64_t copiedBytes = 0;
+    bool omitUavBarriers = false;
+    uint32_t uavOrderingErrors = 0;
 
     // ── No-op stubs ──────────────────────────────────────────────────────
     void Begin() override {}
@@ -286,6 +302,8 @@ private:
     std::unordered_map<uint64_t, std::string> textureNames_, bufferNames_;
     std::unordered_map<uint64_t, RHIResourceState> textureStates_, bufferStates_;
     std::unordered_set<uint64_t> promoted_;
+    std::unordered_set<uint64_t> pendingUavWrites_;
+    std::unordered_set<uint64_t> pendingUavReads_;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -921,6 +939,212 @@ TEST(DDGIDiagnosticReadback, MapsOnlyAfterFourFramesWithoutWaitingIdle) {
     EXPECT_EQ(device.readbackMaps, 1u);
     EXPECT_EQ(cmd.bufferCopies, 1u);
     EXPECT_EQ(device.idleWaits, 0u);
+}
+
+TEST(RenderGraphResidual, DependentUavAccessesRequireOrderingAndOmissionIsDetected) {
+    for (const bool omit : {false, true}) {
+        GenerationalMockDevice device;
+        uz::rg::RgResourcePool pool(&device);
+        D3D12TruthCommandList cmd(&device);
+        RgStateRegistry states(&device);
+        states.BindCommandList(&cmd);
+        const auto buffer = device.CreateBuffer({});
+        cmd.Watch(buffer, "DependentUav");
+        cmd.omitUavBarriers = omit;
+        uz::rg::RgBuilder rg(&device, &pool, &states);
+        const auto id = rg.ImportTrackedBuffer("DependentUav", buffer);
+        for (uint32_t pass = 0; pass < 3; ++pass) {
+            rg.AddPass("Uav", [&, pass](uz::rg::RgPassBuilder& pb) {
+                if (pass < 2) pb.Write(id, RHIResourceState::UnorderedAccess);
+                else pb.Read(id, RHIResourceState::UnorderedAccess);
+                if (pass == 1) pb.Read(id, RHIResourceState::UnorderedAccess);
+                pb.SetExecutionCallback([&, pass](uz::IRHICommandList*, const uz::rg::RgPassResources&) {
+                    cmd.AccessUav(buffer, pass < 2);
+                });
+            });
+        }
+        rg.Compile();
+        rg.Execute(&cmd);
+        EXPECT_TRUE(cmd.mismatches.empty());
+        EXPECT_EQ(cmd.uavOrderingErrors, omit ? 2u : 0u);
+    }
+}
+
+TEST(RenderGraphResidual, ReadOnlyUavAccessesDoNotNeedAnOrderingBarrier) {
+    GenerationalMockDevice device;
+    uz::rg::RgResourcePool pool(&device);
+    D3D12TruthCommandList cmd(&device);
+    uz::rg::RgBuilder rg(&device, &pool);
+    const auto buffer = device.CreateBuffer({});
+    const auto id = rg.ImportBuffer("ReadOnly", buffer, RHIResourceState::Common);
+    Pass(rg, "Read1", {RB(id, RHIResourceState::UnorderedAccess)});
+    Pass(rg, "Read2", {RB(id, RHIResourceState::UnorderedAccess)});
+    rg.Compile();
+    rg.Execute(&cmd);
+    ASSERT_EQ(cmd.barriers.size(), 1u);
+    EXPECT_EQ(cmd.barriers[0].stateBefore, RHIResourceState::Common);
+}
+
+TEST(RenderGraphResidual, ReadWriteUavPassOrdersAfterAReadRegardlessOfDeclarationOrder) {
+    for (const bool writeFirst : {false, true}) {
+        for (const bool omit : {false, true}) {
+            GenerationalMockDevice device;
+            uz::rg::RgResourcePool pool(&device);
+            D3D12TruthCommandList cmd(&device);
+            cmd.omitUavBarriers = omit;
+            uz::rg::RgBuilder rg(&device, &pool);
+            const auto buffer = device.CreateBuffer({});
+            cmd.Watch(buffer, "ReadThenWriteUav");
+            const auto id = rg.ImportBuffer("ReadThenWriteUav", buffer, RHIResourceState::Common);
+            rg.AddPass("Read", [&](uz::rg::RgPassBuilder& pb) {
+                pb.Read(id, RHIResourceState::UnorderedAccess);
+                pb.SetExecutionCallback([&](uz::IRHICommandList*, const uz::rg::RgPassResources&) {
+                    cmd.AccessUav(buffer, false);
+                });
+            });
+            rg.AddPass("ReadWrite", [&](uz::rg::RgPassBuilder& pb) {
+                if (writeFirst) pb.Write(id, RHIResourceState::UnorderedAccess);
+                pb.Read(id, RHIResourceState::UnorderedAccess);
+                if (!writeFirst) pb.Write(id, RHIResourceState::UnorderedAccess);
+                pb.SetExecutionCallback([&](uz::IRHICommandList*, const uz::rg::RgPassResources&) {
+                    cmd.AccessUav(buffer, true);
+                });
+            });
+            rg.Compile();
+            rg.Execute(&cmd);
+            EXPECT_TRUE(cmd.mismatches.empty());
+            EXPECT_EQ(cmd.uavOrderingErrors, omit ? 1u : 0u) << writeFirst;
+        }
+    }
+}
+
+void CheckTransientTexture(uz::RHITextureUsage usage, RHIResourceState writeState) {
+    GenerationalMockDevice device;
+    uz::rg::RgResourcePool pool(&device);
+    D3D12TruthCommandList cmd(&device);
+    uz::rg::RgTextureDesc desc{};
+    desc.usage = usage | uz::RHITextureUsage::ShaderResource;
+    desc.format = writeState == RHIResourceState::DepthStencilWrite
+        ? uz::RHIFormat::D32Float : uz::RHIFormat::RGBA16Float;
+    // Watch the fresh physical allocation before the graph emits its very first barrier.
+    const auto fresh = pool.AcquireTexture(desc, "Transient");
+    cmd.Watch(fresh, "Transient");
+    pool.ReleaseTexture(fresh, desc);
+    uz::RHITextureHandle previous{};
+    for (uint32_t frame = 0; frame < 2; ++frame) {
+        uz::rg::RgBuilder rg(&device, &pool);
+        const auto id = rg.CreateTexture("Transient", desc);
+        rg.AddPass("Write", [&](uz::rg::RgPassBuilder& pb) {
+            pb.Write(id, writeState);
+            pb.SetExecutionCallback([&](uz::IRHICommandList*, const uz::rg::RgPassResources& res) {
+                const auto handle = res.GetTexture(id);
+                if (frame != 0) EXPECT_EQ(handle, previous);
+                previous = handle;
+                cmd.Watch(handle, "Transient");
+                cmd.Access(handle, writeState);
+            });
+        });
+        Pass(rg, "Read", {R(id, RHIResourceState::ShaderResource)});
+        rg.Compile();
+        cmd.barriers.clear();
+        rg.Execute(&cmd);
+        EXPECT_TRUE(cmd.mismatches.empty());
+        if (frame != 0) {
+            ASSERT_FALSE(cmd.barriers.empty());
+            EXPECT_EQ(cmd.barriers.front().stateBefore, RHIResourceState::ShaderResource);
+            EXPECT_EQ(cmd.barriers.front().stateAfter, writeState);
+        }
+        cmd.Execute();
+    }
+}
+
+TEST(RenderGraphResidual, TransientRenderTargetFirstUseAndReuseHaveTrueStates) {
+    CheckTransientTexture(uz::RHITextureUsage::RenderTarget, RHIResourceState::RenderTarget);
+}
+
+TEST(RenderGraphResidual, TransientUavTextureFirstUseAndReuseHaveTrueStates) {
+    CheckTransientTexture(uz::RHITextureUsage::UnorderedAccess, RHIResourceState::UnorderedAccess);
+}
+
+TEST(RenderGraphResidual, TransientDepthFirstUseAndReuseHaveTrueStates) {
+    CheckTransientTexture(uz::RHITextureUsage::DepthStencil, RHIResourceState::DepthStencilWrite);
+}
+
+TEST(RenderGraphResidual, TransientBufferReuseTracksSameListAndDecayOnSubmit) {
+    GenerationalMockDevice device;
+    uz::rg::RgResourcePool pool(&device);
+    D3D12TruthCommandList cmd(&device);
+    uz::rg::RgBufferDesc desc{64, 4, uz::RHIBufferUsage::UnorderedAccess};
+    for (uint32_t graph = 0; graph < 3; ++graph) {
+        uz::rg::RgBuilder rg(&device, &pool);
+        const auto id = rg.CreateBuffer("TransientBuffer", desc);
+        const auto state = graph == 1 ? RHIResourceState::ShaderResource : RHIResourceState::UnorderedAccess;
+        rg.AddPass("Access", [&](uz::rg::RgPassBuilder& pb) {
+            pb.Read(id, state);
+            pb.SetExecutionCallback([&](uz::IRHICommandList*, const uz::rg::RgPassResources& res) {
+                const auto handle = res.GetBuffer(id);
+                cmd.Watch(handle, "TransientBuffer");
+                cmd.Access(handle, state);
+            });
+        });
+        rg.Compile();
+        cmd.barriers.clear();
+        rg.Execute(&cmd);
+        ASSERT_EQ(cmd.barriers.size(), 1u);
+        EXPECT_EQ(cmd.barriers[0].stateBefore, graph == 1
+            ? RHIResourceState::UnorderedAccess : RHIResourceState::Common);
+        EXPECT_TRUE(cmd.mismatches.empty());
+        if (graph == 1) cmd.Execute();
+    }
+}
+
+TEST(RenderGraphResidual, ConcurrentTransientsNeverAliasWithinOneGraph) {
+    GenerationalMockDevice device;
+    uz::rg::RgResourcePool pool(&device);
+    D3D12TruthCommandList cmd(&device);
+    uz::rg::RgBuilder rg(&device, &pool);
+    const auto a = rg.CreateTexture("A", {});
+    const auto b = rg.CreateTexture("B", {});
+    rg.AddPass("Both", [&](uz::rg::RgPassBuilder& pb) {
+        pb.Read(a, RHIResourceState::ShaderResource);
+        pb.Read(b, RHIResourceState::ShaderResource);
+        pb.SetExecutionCallback([&](uz::IRHICommandList*, const uz::rg::RgPassResources& res) {
+            EXPECT_NE(res.GetTexture(a), res.GetTexture(b));
+        });
+    });
+    rg.Compile();
+    rg.Execute(&cmd);
+}
+
+TEST(RenderGraphResidual, DeferredLightingConsumesTheClusterBufferEdge) {
+    GenerationalMockDevice device;
+    uz::rg::RgResourcePool pool(&device);
+    RgStateRegistry states(&device);
+    D3D12TruthCommandList cmd(&device);
+    states.BindCommandList(&cmd);
+    uz::rg::RgBuilder rg(&device, &pool, &states);
+    const auto cluster = device.CreateBuffer({});
+    const auto id = rg.ImportTrackedBuffer("Clusters", cluster);
+    Pass(rg, "LightCull", {WB(id, RHIResourceState::UnorderedAccess)});
+    uz::LightingPassDesc desc{};
+    desc.clusterListResource = id;
+    const auto texture = device.CreateTexture(ColorDesc());
+    desc.backbuffer = rg.ImportTrackedTexture("Output", texture);
+    const auto input = device.CreateTexture(ColorDesc());
+    desc.albedoGBuffer = desc.normalGBuffer = desc.depthGBuffer =
+        desc.positionGBuffer = desc.emissiveGBuffer = rg.ImportTrackedTexture("Input", input);
+    uz::AddLightingPass(rg, desc);
+    rg.Compile();
+    rg.Execute(&cmd);
+    EXPECT_EQ(rg.GetFinalState(id), RHIResourceState::ShaderResource);
+    EXPECT_TRUE(cmd.mismatches.empty());
+    bool found = false;
+    for (const auto& barrier : cmd.barriers) {
+        found |= barrier.buffer == cluster
+            && barrier.stateBefore == RHIResourceState::UnorderedAccess
+            && barrier.stateAfter == RHIResourceState::ShaderResource;
+    }
+    EXPECT_TRUE(found);
 }
 
 } // namespace
