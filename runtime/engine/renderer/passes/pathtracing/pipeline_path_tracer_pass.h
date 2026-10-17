@@ -43,8 +43,32 @@ struct PipelinePathRoot {
     uint32_t maxBounces;
     uint32_t rrEnabled;
     uint32_t rrMinBounce;
+    uint32_t restirEnabled, restirMode;
+    uint32_t restirSurfaceUav, restirInitialUav, restirCurrentUav, restirPreviousUav;
+    uint32_t restirWidth, restirHeight, restirHistory, neeSamples, restirTemporal, restirLightCount;
 };
-static_assert(sizeof(PipelinePathRoot) == 48);
+static_assert(sizeof(PipelinePathRoot) == 96);
+
+struct RestirLightSample {
+    uint32_t lightIndex;
+    float position[3], normal[3], emission[3], pdf;
+};
+struct RestirReservoir {
+    RestirLightSample sample;
+    float weightSum;
+    uint32_t M;
+    float W;
+    float surfacePosition[3], surfaceNormal[3];
+};
+struct RestirSurface {
+    float position[3]; uint32_t valid;
+    float normal[3], roughness;
+    float view[3], metallic;
+    float albedo[3], padding;
+};
+static_assert(sizeof(RestirLightSample) == 44);
+static_assert(sizeof(RestirReservoir) == 80);
+static_assert(sizeof(RestirSurface) == 64);
 
 struct PipelinePathDirectionalLight {
     float direction[3];

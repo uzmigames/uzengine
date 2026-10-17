@@ -1,8 +1,13 @@
 #include "pathtracer_shared.hlsli"
+#include "../include/restir_di.hlsli"
 
 [shader("raygeneration")]
 void main() {
     uint2 pixel = DispatchRaysIndex().xy;
+    if (restirMode != 0u) {
+        RWStructuredBuffer<RestirSurface> surfaces = ResourceDescriptorHeap[restirSurfaceUav];
+        surfaces[pixel.y * restirWidth + pixel.x] = (RestirSurface)0;
+    }
     float2 jitter = float2(Halton(sampleIndex + 1u, 2u),
                            Halton(sampleIndex + 1u, 3u)) - 0.5;
     float2 uv = (float2(pixel) + 0.5 + jitter) / float2(DispatchRaysDimensions().xy);
@@ -24,6 +29,7 @@ void main() {
         // @constants maxBounces is the configured number of surface vertices.
         for (uint bounce = 0u; bounce < maxBounces; ++bounce) {
             TraceRay(tScene, RAY_FLAG_FORCE_OPAQUE, 0xff, 0, 0, 0, ray, payload);
+            if (restirMode != 0u) return;
             if (payload.terminated) break;
             ray.Origin = payload.nextOrigin;
             ray.Direction = payload.nextDirection;
@@ -32,6 +38,7 @@ void main() {
         payload.radiance = PathEnvironment(ray.Direction);
         payload.terminated = true;
     }
+    if (restirMode != 0u) return;
     // Fused resolve: no extra dispatch, half-float history, or sample intermediate.
     // @ref Kahan 1965 "Pracniques: Further Remarks on Reducing Truncation Errors"
     // @constants 1 = one new sample; zero history is overwritten without reading it.

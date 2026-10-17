@@ -322,7 +322,7 @@ TIER_A += [
 ]
 
 TIER_B = [
-    # Stage 2 private DXR root: 48 bytes / 12 DWORDs, including history UAVs,
+    # Private DXR/ReSTIR root: 96 bytes / 24 DWORDs, including history UAVs,
     # sample count and bounce/RR controls. Shared graphics and PerFrameCB do not grow.
     layout_entry('pathtracing/pathtracer_shared.hlsli', 'PathTracerRoot',
                  PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'PipelinePathRoot'),
@@ -369,6 +369,13 @@ TIER_B = [
 ]
 
 TIER_C = [
+    layout_entry('include/restir_di.hlsli', 'LightSample',
+                 PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'RestirLightSample'),
+    {**layout_entry('include/restir_di.hlsli', 'Reservoir',
+                   PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'RestirReservoir'),
+     'hlsl_structs': ('LightSample',), 'extra_structs': ('RestirLightSample',)},
+    layout_entry('include/restir_di.hlsli', 'RestirSurface',
+                 PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'RestirSurface'),
     layout_entry('pathtracing/pathtracer_shared.hlsli', 'PathDirectionalLight',
                  PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'PipelinePathDirectionalLight'),
     layout_entry('pathtracing/pathtracer_shared.hlsli', 'MaterialData',
@@ -588,7 +595,7 @@ def members(text):
     return result
 
 
-def reflect_declaration(shader_path, name, workdir, kind='cbuffer'):
+def reflect_declaration(shader_path, name, workdir, kind='cbuffer', extra_structs=()):
     source_text = Path(shader_path).read_text(encoding='utf-8')
     try:
         text = declaration(source_text, kind, name)
@@ -614,6 +621,15 @@ def reflect_declaration(shader_path, name, workdir, kind='cbuffer'):
             raise ValueError(f'{shader_path}: DXC preprocessing failed:\n{out.stderr}')
         text = re.sub(r'^\s*#.*$', '', Path(preprocessed).read_text(encoding='utf-8'), flags=re.M)
     field_names = members(text)
+    dependencies = []
+    for dependency in extra_structs:
+        definition = declaration(source_text, 'struct', dependency)
+        first_member = members(definition)[0][1]
+        nested = re.findall(r'\b' + re.escape(dependency) + r'\s+(\w+)\s*;', text)
+        field_names = [(field, expr + '.' + first_member if field in nested else expr)
+                       for field, expr in field_names]
+        dependencies.append(definition)
+    text = '\n'.join(dependencies) + '\n' + text
     if kind == 'struct':
         text += f'\nStructuredBuffer<{name}> elements : register(t0);\n'
         expression = ' + '.join('float(elements[id].' + expr + ')' for _, expr in field_names)
@@ -654,8 +670,10 @@ def compare_isolated(entry, shader_path, workdir):
 
 
 def compare_size(entry, workdir, kind='cbuffer'):
-    _, _, reflected = reflect_declaration(os.path.join(SHADERS, entry['shader']), entry['name'], workdir, kind)
-    cpp = cpp_offsets(os.path.join(REPO, entry['header']), entry['struct'], ['__size'], workdir)
+    _, _, reflected = reflect_declaration(os.path.join(SHADERS, entry['shader']), entry['name'], workdir, kind,
+                                         entry.get('hlsl_structs', ()))
+    cpp = cpp_offsets(os.path.join(REPO, entry['header']), entry['struct'], ['__size'], workdir,
+                      entry.get('extra_structs', ()))
     return reflected, cpp['__size']
 
 

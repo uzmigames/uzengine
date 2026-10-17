@@ -1,4 +1,5 @@
 #include "pathtracer_shared.hlsli"
+#include "../include/restir_di.hlsli"
 
 [shader("closesthit")]
 void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr) {
@@ -69,6 +70,42 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
         emission *= tex.SampleLevel(linearWrap, uv, 0).rgb;
     }
     float3 direct = 0.0;
+    if (restirMode != 0u) {
+        RestirSurface surface;
+        surface.position = P; surface.valid = 1u;
+        surface.normal = N; surface.roughness = roughness;
+        surface.view = V; surface.metallic = metallic;
+        surface.albedo = albedo; surface.padding = 0.0;
+        RWStructuredBuffer<RestirSurface> surfaces = ResourceDescriptorHeap[restirSurfaceUav];
+        uint2 pixel = DispatchRaysIndex().xy;
+        surfaces[pixel.y * restirWidth + pixel.x] = surface;
+        payload.terminated = true;
+        return;
+    }
+    if (restirEnabled != 0u && payload.bounceCount == 0u) {
+        RWStructuredBuffer<Reservoir> reservoirs = ResourceDescriptorHeap[restirCurrentUav];
+        uint2 pixel = DispatchRaysIndex().xy;
+        Reservoir r = reservoirs[pixel.y * restirWidth + pixel.x];
+        if (r.W > 0.0) {
+            ShadowPayload shadow;
+            shadow.hit = true;
+            RayDesc ray;
+            ray.Origin = P + N * 0.05;
+            float distance;
+            ray.Direction = RestirDirection(P, r.sample, distance);
+            ray.TMin = 0.01; ray.TMax = max(distance - 0.05, 0.01);
+            TraceRay(tScene, RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH
+                     | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER, 0xff, 0, 0, 1, ray, shadow);
+            if (!shadow.hit) {
+                RestirSurface surface;
+                surface.position = P; surface.valid = 1u;
+                surface.normal = N; surface.roughness = roughness;
+                surface.view = V; surface.metallic = metallic;
+                surface.albedo = albedo; surface.padding = 0.0;
+                direct = RestirContribution(surface, r.sample) * r.W;
+            }
+        }
+    } else {
     // Next-event estimation at every vertex; scene lights store integrated
     // directional irradiance, so normalized source sampling averages visibility.
     StructuredBuffer<PathDirectionalLight> lights = ResourceDescriptorHeap[directionalLightsSrv];
@@ -77,8 +114,7 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
         float3 L = normalize(light.direction);
         float3 T, B;
         PathBasis(L, T, B);
-        [unroll]
-        for (uint sample = 0u; sample < 4u; ++sample) {
+        for (uint sample = 0u; sample < neeSamples; ++sample) {
             float2 u = PathSample(sample + 1u + lightIndex * 4u + payload.bounceCount * 64u);
             float radius = sqrt(u.x) * tan(light.angularRadius);
             float phi = 2.0 * PI * u.y;
@@ -94,8 +130,9 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
                      | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER, 0xff, 0, 0, 1, ray, shadow);
             if (!shadow.hit)
                 direct += EvaluatePBR(N, V, shadowDirection, albedo, roughness, metallic)
-                        * light.radiance * 0.25;
+                        * light.radiance / float(neeSamples);
         }
+    }
     }
     payload.radiance += payload.throughput * (emission + direct);
     payload.bounceCount++;

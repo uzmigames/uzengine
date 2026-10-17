@@ -48,7 +48,7 @@ TEST(PipelinePathTracerStage1, DirectionalLightStructuredBufferLayout) {
 
 TEST(PipelinePathTracerStage2, PrivateRootContainsHistoryAndTransportSettings) {
     using R = uz::PipelinePathRoot;
-    EXPECT_EQ(sizeof(R), 48u);
+    EXPECT_EQ(sizeof(R), 96u);
     EXPECT_EQ(offsetof(R, accumulationUav), 24u);
     EXPECT_EQ(offsetof(R, compensationUav), 28u);
     EXPECT_EQ(offsetof(R, accumulatedFrames), 32u);

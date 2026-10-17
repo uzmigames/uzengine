@@ -5,6 +5,7 @@
 #include "../common/sampling.hlsli"
 #include "pathtracer_math.hlsli"
 
+#ifndef RESTIR_COMPUTE
 struct [raypayload] PathPayload {
     float3 radiance : read(caller, closesthit, miss) : write(caller, closesthit, miss);
     float3 throughput : read(caller, closesthit, miss) : write(caller, closesthit);
@@ -20,9 +21,10 @@ struct [raypayload] ShadowPayload {
 
 RaytracingAccelerationStructure tScene : register(t0);
 RWTexture2D<float4> uRadiance : register(u0);
+#endif
 SamplerState linearWrap : register(s0);
 
-// Twelve DWORDs, below the shared graphics/RT ceiling of 24. The dedicated
+// Twenty-four DWORDs in the pass-private signature. The dedicated
 // RT signature adds t0 without changing the graphics signature or any CB.
 cbuffer PathTracerRoot : register(b0) {
     uint materialTableSrv;
@@ -37,6 +39,18 @@ cbuffer PathTracerRoot : register(b0) {
     uint maxBounces;
     uint rrEnabled;
     uint rrMinBounce;
+    uint restirEnabled;
+    uint restirMode;
+    uint restirSurfaceUav;
+    uint restirInitialUav;
+    uint restirCurrentUav;
+    uint restirPreviousUav;
+    uint restirWidth;
+    uint restirHeight;
+    uint restirHistory;
+    uint neeSamples;
+    uint restirTemporal;
+    uint restirLightCount;
 };
 
 // Prefix of the existing PerFrameCB, including its inverse camera matrix.
@@ -86,6 +100,7 @@ float Halton(uint index, uint base) {
     return result;
 }
 
+#ifndef RESTIR_COMPUTE
 float2 PathSample(uint dimension) {
     uint2 pixel = DispatchRaysIndex().xy;
     uint seed = pixel.x * 1973u + pixel.y * 9277u + dimension * 26699u;
@@ -95,6 +110,7 @@ float2 PathSample(uint dimension) {
     return frac(float2(Halton(sampleIndex + 1u, 2u),
                        Halton(sampleIndex + 1u, 3u)) + rotation);
 }
+#endif
 
 void PathBasis(float3 N, out float3 T, out float3 B) {
     T = normalize(cross(abs(N.z) < 0.999 ? float3(0, 0, 1) : float3(0, 1, 0), N));
@@ -135,6 +151,7 @@ float3 SampleGGX(float3 N, float3 V, float roughness, float metallic,
 // @ref Veach 1997 "Robust Monte Carlo Methods for Light Transport Simulation"
 // @constants 0.5 = equal diffuse/specular mixture for dielectrics, 1 for metals.
 // Evaluate BOTH densities at the sampled direction, not only the selected lobe.
+#ifndef RESTIR_COMPUTE
 float3 SamplePathBRDF(float3 N, float3 V, float3 albedo, float roughness,
                       float metallic, uint dimension, out float3 weight) {
     float specularProbability = lerp(0.5, 1.0, metallic);
@@ -168,4 +185,5 @@ float3 PathEnvironment(float3 direction) {
     // Engine world is Z up; its cubemaps use Y up.
     return tEnvMap.SampleLevel(linearWrap, direction.xzy, 0).rgb * tint;
 }
+#endif
 #endif
