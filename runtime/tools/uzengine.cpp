@@ -1414,6 +1414,9 @@ int main(int argc, char** argv) {
         config.AddPendingCvarOverride("r.RayTracing", 1.0f);
         config.AddPendingCvarOverride("r.PathTracer.Pipeline", 1.0f);
     }
+    if (!config.GetString("pt-bounces", "").empty())
+        config.AddPendingCvarOverride("r.PathTracer.MaxBounces",
+            static_cast<float>(config.GetInt("pt-bounces", 4)));
 
     // --rt-test: enable RT and the UV test pass via CVar overrides
     if (config.GetBool("rt-test", false)) {

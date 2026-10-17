@@ -101,7 +101,8 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         if (!m_pipelinePathTracer->AddPass(rgBuilder, ctx.hdrRes, ctx.perFrameAlloc,
                 *m_rtManager, ctx.cmdList, ctx.drawList.GetCommands(), m_meshes, skySrv,
                 ctx.frameIndex, static_cast<uint32_t>(ctx.renderWidth),
-                static_cast<uint32_t>(ctx.renderHeight), ctx.world)) {
+                static_cast<uint32_t>(ctx.renderHeight), ctx.world,
+                ctx.unjitteredViewProj, ctx.updateFlags.flags & ~SceneUpdateFlags::kCamera)) {
             UZ_LOG(Renderer, Error, "PipelinePathTracer: failed to register single-bounce pass");
             return;
         }

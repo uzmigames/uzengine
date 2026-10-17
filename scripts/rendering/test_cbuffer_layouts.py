@@ -322,6 +322,8 @@ TIER_A += [
 ]
 
 TIER_B = [
+    # Stage 2 private DXR root: 48 bytes / 12 DWORDs, including history UAVs,
+    # sample count and bounce/RR controls. Shared graphics and PerFrameCB do not grow.
     layout_entry('pathtracing/pathtracer_shared.hlsli', 'PathTracerRoot',
                  PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'PipelinePathRoot'),
     *[layout_entry(shader, 'VFXBillboardConstants', PASSES + 'vfx/particle_render_pass.h',

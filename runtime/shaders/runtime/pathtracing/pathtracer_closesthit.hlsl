@@ -69,8 +69,8 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
         emission *= tex.SampleLevel(linearWrap, uv, 0).rgb;
     }
     float3 direct = 0.0;
-    // Every scene directional light gets its own shadow rays. No surface
-    // bounce recursion in stage 1.
+    // Next-event estimation at every vertex; scene lights store integrated
+    // directional irradiance, so normalized source sampling averages visibility.
     StructuredBuffer<PathDirectionalLight> lights = ResourceDescriptorHeap[directionalLightsSrv];
     for (uint lightIndex = 0u; lightIndex < directionalLightCount; ++lightIndex) {
         PathDirectionalLight light = lights[lightIndex];
@@ -79,7 +79,7 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
         PathBasis(L, T, B);
         [unroll]
         for (uint sample = 0u; sample < 4u; ++sample) {
-            float2 u = PathSample(sample + 1u + lightIndex * 4u);
+            float2 u = PathSample(sample + 1u + lightIndex * 4u + payload.bounceCount * 64u);
             float radius = sqrt(u.x) * tan(light.angularRadius);
             float phi = 2.0 * PI * u.y;
             float3 shadowDirection = normalize(L + radius * (cos(phi) * T + sin(phi) * B));
@@ -98,10 +98,24 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
         }
     }
     payload.radiance += payload.throughput * (emission + direct);
-    float pdf;
-    float3 nextDirection = SampleGGX(N, V, roughness, metallic, PathSample(5u), pdf);
-    float3 brdfWeight = EvaluatePBR(N, V, nextDirection, albedo, roughness, metallic);
-    payload.throughput *= brdfWeight / max(pdf, 1e-8);
     payload.bounceCount++;
-    payload.terminated = true; // Next surface TraceRay belongs to stage 4.
+    payload.terminated = true;
+    if (!PathCanContinue(payload.bounceCount, maxBounces)) return;
+    float3 weight;
+    uint dimension = 32u + payload.bounceCount * 64u;
+    float3 nextDirection = SamplePathBRDF(N, V, albedo, roughness, metallic, dimension, weight);
+    payload.throughput *= weight;
+    if (!all(isfinite(payload.throughput)) || max(payload.throughput.x,
+        max(payload.throughput.y, payload.throughput.z)) <= 0.0) return;
+    // @ref Veach 1997 "Robust Monte Carlo Methods for Light Transport Simulation"
+    // @constants 0.05 = lower survival bound, 1 = no artificial termination.
+    if (rrEnabled != 0u && payload.bounceCount >= rrMinBounce) {
+        float survival = PathSurvivalProbability(max(payload.throughput.x,
+                               max(payload.throughput.y, payload.throughput.z)));
+        if (PathSample(dimension + 2u).x >= survival) return;
+        payload.throughput /= survival;
+    }
+    payload.nextOrigin = P + N * 0.05;
+    payload.nextDirection = nextDirection;
+    payload.terminated = false;
 }

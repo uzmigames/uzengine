@@ -37,8 +37,14 @@ struct PipelinePathRoot {
     uint32_t hasGeometry;
     uint32_t directionalLightsSrv;
     uint32_t directionalLightCount;
+    uint32_t accumulationUav;
+    uint32_t compensationUav;
+    uint32_t accumulatedFrames;
+    uint32_t maxBounces;
+    uint32_t rrEnabled;
+    uint32_t rrMinBounce;
 };
-static_assert(sizeof(PipelinePathRoot) == 24);
+static_assert(sizeof(PipelinePathRoot) == 48);
 
 struct PipelinePathDirectionalLight {
     float direction[3];
@@ -51,15 +57,16 @@ static_assert(sizeof(PipelinePathDirectionalLight) == 32);
 class PipelinePathTracerPass {
 public:
     static constexpr uint32_t kRootDwords = sizeof(PipelinePathRoot) / sizeof(uint32_t);
-    static constexpr uint32_t kPayloadBytes = 32;
-    static constexpr uint32_t kRecursionDepth = 2; // primary + nested shadow, not two surface bounces
+    static constexpr uint32_t kPayloadBytes = 56;
+    static constexpr uint32_t kRecursionDepth = 2; // iterative surface loop + nested shadow
     PipelinePathTracerPass();
     ~PipelinePathTracerPass();
     bool Init(IRHIDevice* device);
     bool AddPass(rg::RgBuilder& builder, rg::RgResourceId hdr, CBAllocation perFrame,
                  RTManager& rt, IRHICommandList* buildCmd, std::span<const DrawCommand> draws,
                  std::span<const GPUMesh> meshes, uint32_t envSrv,
-                 uint32_t frameIndex, uint32_t width, uint32_t height, World* world);
+                 uint32_t frameIndex, uint32_t width, uint32_t height, World* world,
+                 const Mat4& unjitteredViewProj, uint32_t sceneDirtyFlags);
 private:
     struct Impl;
     std::unique_ptr<Impl> m_impl;

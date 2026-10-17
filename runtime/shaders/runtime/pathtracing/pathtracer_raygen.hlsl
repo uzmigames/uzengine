@@ -19,10 +19,34 @@ void main() {
     payload.bounceCount = 0u;
     payload.terminated = false;
     if (hasGeometry != 0u) {
-        TraceRay(tScene, RAY_FLAG_FORCE_OPAQUE, 0xff, 0, 0, 0, ray, payload);
+        // Iteration keeps the DXR stack at primary + nested shadow regardless of N.
+        // @ref Kajiya 1986 "The Rendering Equation"
+        // @constants maxBounces is the configured number of surface vertices.
+        for (uint bounce = 0u; bounce < maxBounces; ++bounce) {
+            TraceRay(tScene, RAY_FLAG_FORCE_OPAQUE, 0xff, 0, 0, 0, ray, payload);
+            if (payload.terminated) break;
+            ray.Origin = payload.nextOrigin;
+            ray.Direction = payload.nextDirection;
+        }
     } else {
         payload.radiance = PathEnvironment(ray.Direction);
         payload.terminated = true;
     }
-    uRadiance[pixel] = float4(payload.radiance, 1.0);
+    // Fused resolve: no extra dispatch, half-float history, or sample intermediate.
+    // @ref Kahan 1965 "Pracniques: Further Remarks on Reducing Truncation Errors"
+    // @constants 1 = one new sample; zero history is overwritten without reading it.
+    RWTexture2D<float4> accumulated = ResourceDescriptorHeap[accumulationUav];
+    RWTexture2D<float4> compensation = ResourceDescriptorHeap[compensationUav];
+    precise float3 mean = payload.radiance;
+    float3 correction = 0.0;
+    if (accumulatedFrames != 0u) {
+        float3 previous = accumulated[pixel].rgb;
+        correction = compensation[pixel].rgb;
+        mean.x = PathAccumulate(payload.radiance.x, previous.x, correction.x, accumulatedFrames);
+        mean.y = PathAccumulate(payload.radiance.y, previous.y, correction.y, accumulatedFrames);
+        mean.z = PathAccumulate(payload.radiance.z, previous.z, correction.z, accumulatedFrames);
+    }
+    accumulated[pixel] = float4(mean, 1.0);
+    compensation[pixel] = float4(correction, 0.0);
+    uRadiance[pixel] = float4(mean, 1.0);
 }

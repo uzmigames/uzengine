@@ -11,6 +11,8 @@
 #include "light_component.h"
 #include "scene_component.h"
 #include "color_utils.h"
+#include "cvar.h"
+#include "path_tracer_pass.h"
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -39,6 +41,10 @@ struct PipelinePathTracerPass::Impl {
 #endif
     bool ready = false;
     bool logged = false;
+    RHITextureHandle accumulation, compensation;
+    uint32_t width = 0, height = 0, samples = 0, lastFrame = UINT32_MAX;
+    uint32_t resetGeneration = 0;
+    uint64_t previousSignature = 0;
 
     ~Impl() {
         if (!device) return;
@@ -48,6 +54,8 @@ struct PipelinePathTracerPass::Impl {
         for (auto buffer : lights)
             if (buffer.IsValid()) device->DestroyBuffer(buffer);
         if (sbt.IsValid()) device->DestroyBuffer(sbt);
+        if (accumulation.IsValid()) device->DestroyTexture(accumulation);
+        if (compensation.IsValid()) device->DestroyTexture(compensation);
     }
 };
 
@@ -188,7 +196,7 @@ bool PipelinePathTracerPass::Init(IRHIDevice* device) {
     p.ready = true;
     UZ_LOG(Renderer, Info,
            "PipelinePathTracer: RT-PSO CreateStateObject succeeded; 3 lib_6_6 libraries, "
-           "32-byte PathPayload, 4-byte ShadowPayload, depth=2 (primary+shadow), SBT ready");
+           "56-byte PathPayload, 4-byte ShadowPayload, depth=2 (iterative+shadow), SBT ready");
     return true;
 #else
     return false;
@@ -198,7 +206,8 @@ bool PipelinePathTracerPass::Init(IRHIDevice* device) {
 bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hdr,
         CBAllocation perFrame, RTManager& rt, IRHICommandList* buildCmd,
         std::span<const DrawCommand> draws, std::span<const GPUMesh> meshes,
-        uint32_t envSrv, uint32_t frameIndex, uint32_t width, uint32_t height, World* world) {
+        uint32_t envSrv, uint32_t frameIndex, uint32_t width, uint32_t height, World* world,
+        const Mat4& unjitteredViewProj, uint32_t sceneDirtyFlags) {
     auto& p = *m_impl;
     if (!p.ready || !rt.IsEnabled()) return false;
     std::vector<PipelinePathMaterial> entries;
@@ -314,6 +323,59 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
     p.device->UnmapBuffer(p.lights[slot]);
     const uint32_t lightSrv = p.device->GetBufferSRVIndex(p.lights[slot]);
 
+    // Hash only transport inputs, never timeParams or the raster TAA jitter.
+    uint64_t signature = 14695981039346656037ull;
+    auto hash = [&](const void* data, size_t size) {
+        const auto* bytes = static_cast<const uint8_t*>(data);
+        for (size_t i = 0; i < size; ++i) signature = (signature ^ bytes[i]) * 1099511628211ull;
+    };
+    hash(&unjitteredViewProj, sizeof(unjitteredViewProj));
+    hash(&envSrv, sizeof(envSrv));
+    for (const auto& draw : draws) {
+        hash(&draw.worldMatrix, sizeof(draw.worldMatrix));
+        hash(&draw.meshId, sizeof(draw.meshId));
+    }
+    hash(entries.data(), entries.size() * sizeof(PipelinePathMaterial));
+    hash(directionalLights.data(), directionalLights.size() * sizeof(PipelinePathDirectionalLight));
+    const auto& cv = CVarRegistry::Get();
+    const uint32_t maxBounces = std::clamp(cv.GetInt("r.PathTracer.MaxBounces", 4), 1, 16);
+    const uint32_t rrEnabled = cv.GetBool("r.PathTracer.RussianRoulette", true);
+    const uint32_t rrMinBounce = std::clamp(cv.GetInt("r.PathTracer.RussianRouletteMinBounce", 2), 0, 16);
+    hash(&maxBounces, sizeof(maxBounces));
+    hash(&rrEnabled, sizeof(rrEnabled));
+    hash(&rrMinBounce, sizeof(rrMinBounce));
+    const auto* pf = static_cast<const PerFrameCB*>(perFrame.cpuPtr);
+    hash(&pf->skyLightIntensity, sizeof(float) * 4);
+    if (p.width != width || p.height != height) {
+        p.device->WaitIdle();
+        if (p.accumulation.IsValid()) p.device->DestroyTexture(p.accumulation);
+        if (p.compensation.IsValid()) p.device->DestroyTexture(p.compensation);
+        RHITextureDesc desc{};
+        desc.width = width; desc.height = height;
+        desc.format = RHIFormat::RGBA32Float;
+        desc.usage = RHITextureUsage::ShaderResource | RHITextureUsage::UnorderedAccess;
+        desc.debugName = "PipelinePathTracer_Accumulation";
+        p.accumulation = p.device->CreateTexture(desc);
+        desc.debugName = "PipelinePathTracer_Compensation";
+        p.compensation = p.device->CreateTexture(desc);
+        p.width = width; p.height = height; p.samples = 0;
+    }
+    if (!p.accumulation.IsValid() || !p.compensation.IsValid()) return false;
+    const uint32_t resetGeneration = GetPathTracerResetGeneration();
+    if (signature != p.previousSignature || sceneDirtyFlags != 0 ||
+        frameIndex != p.lastFrame + 1 || resetGeneration != p.resetGeneration ||
+        !cv.GetBool("r.PathTracer.Accumulate", true)) {
+        if (p.samples > 0)
+            UZ_LOG(Renderer, Info, "PipelinePathTracer: accumulation reset after {} samples", p.samples);
+        p.samples = 0;
+    }
+    p.previousSignature = signature;
+    p.lastFrame = frameIndex;
+    p.resetGeneration = resetGeneration;
+    const uint32_t accumulatedFrames = p.samples++;
+    const auto accumulation = builder.ImportTrackedTexture("PipelinePathTracer_Accumulation", p.accumulation);
+    const auto compensation = builder.ImportTrackedTexture("PipelinePathTracer_Compensation", p.compensation);
+
     rg::RgTextureDesc radianceDesc{};
     radianceDesc.width = width; radianceDesc.height = height;
     radianceDesc.format = RHIFormat::RGBA16Float;
@@ -323,6 +385,8 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
     const uint32_t tlasSrv = rt.GetTLASSRVIndex();
     builder.AddPass("PipelinePathTracer", [=, this](rg::RgPassBuilder& pb) {
         pb.Write(radiance, RHIResourceState::UnorderedAccess);
+        pb.Write(accumulation, RHIResourceState::UnorderedAccess);
+        pb.Write(compensation, RHIResourceState::UnorderedAccess);
         pb.SetExecutionCallback([=, this](IRHICommandList* cmd, const rg::RgPassResources& res) {
 #ifdef _WIN32
             auto& state = *m_impl;
@@ -336,8 +400,11 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
             auto& heap = dx->GetDescriptorAllocator(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
             native->SetComputeRootSignature(state.root.Get());
             const PipelinePathRoot constants{
-                materialSrv, envSrv, frameIndex, instanceCount > 0 ? 1u : 0u,
-                lightSrv, lightCount
+                materialSrv, envSrv, accumulatedFrames, instanceCount > 0 ? 1u : 0u,
+                lightSrv, lightCount,
+                state.device->GetTextureUAVIndex(res.GetTexture(accumulation)),
+                state.device->GetTextureUAVIndex(res.GetTexture(compensation)),
+                accumulatedFrames, maxBounces, rrEnabled, rrMinBounce
             };
             native->SetComputeRoot32BitConstants(0, kRootDwords, &constants, 0);
             native->SetComputeRootConstantBufferView(1,
@@ -353,13 +420,16 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
             dispatch.HitGroupTable = {address + 128, 32, 32};
             dispatch.Width = width; dispatch.Height = height; dispatch.Depth = 1;
             native->DispatchRays(&dispatch);
+            if (accumulatedFrames == 0 || accumulatedFrames == 15 || accumulatedFrames == 95 || accumulatedFrames == 199)
+                UZ_LOG(Renderer, Info, "PipelinePathTracer: accumulation samples={}, maxBounces={}, RR={} from {}",
+                       accumulatedFrames + 1, maxBounces, rrEnabled, rrMinBounce);
             // Restore compute root signature before any later RHI compute
             // pass; graphics roots and the RHI's pipeline tracking were untouched.
             native->SetComputeRootSignature(dx->GetRootSignature());
             if (!state.logged && instanceCount > 0) {
                 UZ_LOG(Renderer, Info, "PipelinePathTracer: DispatchRays {}x{}, {} TLAS instances, "
-                       "single surface bounce + shadow rays, {} directional lights, env SRV={}",
-                       width, height, instanceCount, lightCount, envSrv);
+                       "{} surface bounces + shadow rays, {} directional lights, env SRV={}",
+                       width, height, instanceCount, maxBounces, lightCount, envSrv);
                 state.logged = true;
             }
 #endif

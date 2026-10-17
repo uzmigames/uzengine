@@ -3,12 +3,15 @@
 
 #include "../material/brdf.hlsli"
 #include "../common/sampling.hlsli"
+#include "pathtracer_math.hlsli"
 
 struct [raypayload] PathPayload {
     float3 radiance : read(caller, closesthit, miss) : write(caller, closesthit, miss);
     float3 throughput : read(caller, closesthit, miss) : write(caller, closesthit);
     uint bounceCount : read(caller, closesthit) : write(caller, closesthit);
     bool terminated : read(caller) : write(caller, closesthit, miss);
+    float3 nextOrigin : read(caller) : write(closesthit);
+    float3 nextDirection : read(caller) : write(closesthit);
 };
 
 struct [raypayload] ShadowPayload {
@@ -19,7 +22,7 @@ RaytracingAccelerationStructure tScene : register(t0);
 RWTexture2D<float4> uRadiance : register(u0);
 SamplerState linearWrap : register(s0);
 
-// Six DWORDs, below the shared graphics/RT ceiling of 24. The dedicated
+// Twelve DWORDs, below the shared graphics/RT ceiling of 24. The dedicated
 // RT signature adds t0 without changing the graphics signature or any CB.
 cbuffer PathTracerRoot : register(b0) {
     uint materialTableSrv;
@@ -28,6 +31,12 @@ cbuffer PathTracerRoot : register(b0) {
     uint hasGeometry;
     uint directionalLightsSrv;
     uint directionalLightCount;
+    uint accumulationUav;
+    uint compensationUav;
+    uint accumulatedFrames;
+    uint maxBounces;
+    uint rrEnabled;
+    uint rrMinBounce;
 };
 
 // Prefix of the existing PerFrameCB, including its inverse camera matrix.
@@ -120,6 +129,35 @@ float3 SampleGGX(float3 N, float3 V, float roughness, float metallic,
     float3 L = reflect(-V, H);
     pdf = D_GGX(alpha, saturate(dot(N, H)))
         * G1_SmithGGX(alpha * alpha, localV.z) / (4.0 * localV.z);
+    return L;
+}
+
+// @ref Veach 1997 "Robust Monte Carlo Methods for Light Transport Simulation"
+// @constants 0.5 = equal diffuse/specular mixture for dielectrics, 1 for metals.
+// Evaluate BOTH densities at the sampled direction, not only the selected lobe.
+float3 SamplePathBRDF(float3 N, float3 V, float3 albedo, float roughness,
+                      float metallic, uint dimension, out float3 weight) {
+    float specularProbability = lerp(0.5, 1.0, metallic);
+    float2 u = PathSample(dimension);
+    float pdf;
+    float3 L;
+    if (PathSample(dimension + 1u).x < specularProbability) {
+        L = SampleGGX(N, V, roughness, metallic, u, pdf);
+    } else {
+        float3 T, B;
+        PathBasis(N, T, B);
+        float3 local = SampleCosineHemisphere(u, pdf);
+        L = T * local.x + B * local.y + N * local.z;
+    }
+    float NoL = saturate(dot(N, L));
+    if (NoL <= 0.0) { weight = 0.0; return L; }
+    float3 H = normalize(V + L);
+    float alpha = RoughnessToAlpha(roughness);
+    float NoV = max(dot(N, V), 1e-6);
+    float specularPdf = D_GGX(alpha, saturate(dot(N, H)))
+                      * G1_SmithGGX(alpha * alpha, NoV) / (4.0 * NoV);
+    pdf = specularProbability * specularPdf + (1.0 - specularProbability) * NoL / PI;
+    weight = EvaluatePBR(N, V, L, albedo, roughness, metallic) / max(pdf, 1e-8);
     return L;
 }
 
