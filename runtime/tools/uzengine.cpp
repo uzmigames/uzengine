@@ -1421,6 +1421,8 @@ int main(int argc, char** argv) {
         config.AddPendingCvarOverride("r.ReSTIR.DI", 1.0f);
     if (config.GetBool("volume", false))
         config.AddPendingCvarOverride("r.PathTracer.Volume", 1.0f);
+    if (config.GetBool("layered", false))
+        config.AddPendingCvarOverride("r.PathTracer.LayeredMaterial", 1.0f);
     if (config.GetBool("nrd", false) || config.GetString("denoiser", "") == "nrd")
         config.AddPendingCvarOverride("r.NRD", 1.0f);
 

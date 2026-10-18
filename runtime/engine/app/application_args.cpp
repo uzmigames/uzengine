@@ -150,6 +150,8 @@ void Application::ParseArgs(int argc, char* argv[]) {
             m_cvarOverrides.emplace_back("r.PathTracer.Pipeline", 1.0f);
         } else if (std::strcmp(argv[i], "--volume") == 0) {
             m_cvarOverrides.emplace_back("r.PathTracer.Volume", 1.0f);
+        } else if (std::strcmp(argv[i], "--layered") == 0) {
+            m_cvarOverrides.emplace_back("r.PathTracer.LayeredMaterial", 1.0f);
         } else if (std::strcmp(argv[i], "--restir-di") == 0) {
             m_cvarOverrides.emplace_back("r.ReSTIR.DI", 1.0f);
         } else if (std::strcmp(argv[i], "--light-bvh") == 0) {

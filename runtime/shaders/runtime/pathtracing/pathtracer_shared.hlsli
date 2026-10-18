@@ -88,6 +88,9 @@ struct MaterialData {
     float2 uvScale; float2 uvOffsetValue;
     float3 emission; uint emissiveSrv;
     uint lightSourceIndex;
+    float coatWeight;
+    float coatRoughness;
+    float coatIOR;
 };
 
 struct PathDirectionalLight {

@@ -38,6 +38,14 @@ static auto* cv_NeeSamples = UZ_CVAR_INT("r.PathTracer.NEESamples", 4,
     "Directional visibility samples per vertex (1 for equal-ray ReSTIR comparison)", 1, 32);
 static auto* cv_Nrd = UZ_CVAR_BOOL("r.NRD", false,
     "Opt-in stage-1 diffuse temporal/a-trous denoiser for the DXR path tracer");
+static auto* cv_Layered = UZ_CVAR_BOOL("r.PathTracer.LayeredMaterial", false,
+    "Opt-in DXR dielectric coat over the unchanged base BRDF");
+static auto* cv_CoatWeight = UZ_CVAR_FLOAT("r.PathTracer.Coat.Weight", 1.f,
+    "Global stage-1 coat coverage; zero exactly preserves base transport", 0.f, 1.f);
+static auto* cv_CoatRoughness = UZ_CVAR_FLOAT("r.PathTracer.Coat.Roughness", 0.1f,
+    "Global coat perceptual GGX roughness (engine alpha floor applies)", 0.f, 1.f);
+static auto* cv_CoatIOR = UZ_CVAR_FLOAT("r.PathTracer.Coat.IOR", 1.5f,
+    "Global coat index of refraction", 1.f, 3.f);
 static auto* cv_Volume = UZ_CVAR_BOOL("r.PathTracer.Volume", false,
     "Opt-in homogeneous spherical participating medium in DXR transport");
 static auto* cv_VolumeA = UZ_CVAR_FLOAT("r.PathTracer.Volume.SigmaA", 0.001f,
@@ -328,6 +336,9 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
         mat.metallicSrv = srv(draw.metallicSrvIndex);
         mat.materialFlags = draw.materialFlags;
         mat.lightSourceIndex = uint32_t(&draw - draws.data());
+        mat.coatWeight = cv_Layered->value >= 0.5f ? cv_CoatWeight->value : 0.f;
+        mat.coatRoughness = cv_CoatRoughness->value;
+        mat.coatIOR = cv_CoatIOR->value;
         mat.roughnessMultiplier = draw.roughnessMultiplier;
         mat.metallicMultiplier = draw.metallicMultiplier;
         mat.uvScale[0] = draw.uvScaleX; mat.uvScale[1] = draw.uvScaleY;
@@ -499,7 +510,10 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
         && volume.volumeRadius > 0.f && volume.volumeSigmaA + volume.volumeSigmaS > 0.f;
     // Surface-only reservoir validation and diffuse denoiser guides do not
     // describe stochastic medium vertices. Use ordinary unbiased NEE here.
-    const uint32_t restirEnabled = cv_RestirDI->value >= 0.5f && !volume.volumeEnabled;
+    // Stage-1 reservoirs contain only the base material. Coated vertices use
+    // matched layered NEE instead of reusing an incompatible base-only target.
+    const bool layered = cv_Layered->value >= 0.5f && cv_CoatWeight->value > 0.f;
+    const uint32_t restirEnabled = cv_RestirDI->value >= 0.5f && !volume.volumeEnabled && !layered;
     const uint32_t restirTemporal = cv_RestirTemporal->value >= 0.5f;
     const uint32_t neeSamples = std::clamp(cv.GetInt("r.PathTracer.NEESamples", 4), 1, 32);
     hash(&maxBounces, sizeof(maxBounces));
@@ -711,6 +725,9 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
             if (accumulatedFrames == 0 && volume.volumeEnabled)
                 UZ_LOG(Renderer, Info, "PathVolume: homogeneous sphere sigmaA={} sigmaS={} g={} radius={}; exponential free flight, HG + NEE; surface ReSTIR/NRD bypassed",
                     volume.volumeSigmaA,volume.volumeSigmaS,volume.volumeG,volume.volumeRadius);
+            if (accumulatedFrames == 0 && layered)
+                UZ_LOG(Renderer, Info, "PathLayered: coat weight={} roughness={} IOR={}; two interface transmissions; base-only ReSTIR bypassed",
+                    cv_CoatWeight->value,cv_CoatRoughness->value,cv_CoatIOR->value);
             native->SetComputeRootConstantBufferView(1,
                 state.device->GetBufferGPUAddress(perFrame.bufferHandle) + perFrame.offsetBytes);
             native->SetComputeRootDescriptorTable(2, heap.GpuHandle(tlasSrv));

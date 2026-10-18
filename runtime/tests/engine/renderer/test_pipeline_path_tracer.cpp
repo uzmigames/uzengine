@@ -7,7 +7,7 @@
 
 TEST(PipelinePathTracerStage1, MaterialStructuredBufferLayout) {
     using M = uz::PipelinePathMaterial;
-    EXPECT_EQ(sizeof(M), 100u);
+    EXPECT_EQ(sizeof(M), 112u);
     EXPECT_EQ(offsetof(M, albedoSrv), 12u);
     EXPECT_EQ(offsetof(M, vbSrv), 16u);
     EXPECT_EQ(offsetof(M, normalOffset), 32u);
@@ -15,6 +15,9 @@ TEST(PipelinePathTracerStage1, MaterialStructuredBufferLayout) {
     EXPECT_EQ(offsetof(M, uvScale), 64u);
     EXPECT_EQ(offsetof(M, emission), 80u);
     EXPECT_EQ(offsetof(M, emissiveSrv), 92u);
+    EXPECT_EQ(offsetof(M, coatWeight), 100u);
+    EXPECT_EQ(offsetof(M, coatRoughness), 104u);
+    EXPECT_EQ(offsetof(M, coatIOR), 108u);
 }
 
 TEST(PipelinePathTracerStage1, MaterialDefaultsDoNotSampleMissingDescriptors) {

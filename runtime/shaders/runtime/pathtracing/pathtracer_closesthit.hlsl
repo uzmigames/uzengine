@@ -1,4 +1,5 @@
 #include "pathtracer_shared.hlsli"
+#include "layered_bsdf.hlsli"
 #include "../include/restir_di.hlsli"
 #include "../include/light_bvh.hlsli"
 
@@ -184,9 +185,9 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
                 if (cosine <= 0.0) continue;
                 float lightPdf = LightBVHSolidAnglePDF(chosen.selectionPdf,light.area,d2,cosine);
                 value *= LightBVHBalanceWeight(float(neeSamples)*lightPdf,
-                    PathBRDFPDF(N,V,L,roughness,metallic));
+                    PathLayeredPDF(N,V,L,roughness,metallic,mat));
             }
-            float3 brdf = EvaluatePBR(N,V,L,albedo,roughness,metallic);
+            float3 brdf = EvaluatePathLayered(N,V,L,albedo,roughness,metallic,mat);
             if (any(brdf > 0.0) && distance > .1) {
                 ShadowPayload shadow; shadow.hit = true;
                 RayDesc ray;
@@ -207,7 +208,8 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
                     value *= PathVolumeShadow(P,L,distance);
                     direct += brdf*value/float(neeSamples);
                     if (nrdEnabled != 0u)
-                        diffuseDirect += NrdDiffuseBRDF(N,V,L,albedo,metallic)*value/float(neeSamples);
+                        diffuseDirect += NrdDiffuseBRDF(N,V,L,albedo,metallic)
+                            * PathLayerTransmission(mat,N,V,L)*value/float(neeSamples);
                 }
             }
         }
@@ -235,10 +237,11 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
             TraceRay(tScene, RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH
                      | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER, 0xff, 0, 0, 1, ray, shadow);
             if (!shadow.hit) {
-                direct += EvaluatePBR(N, V, shadowDirection, albedo, roughness, metallic)
+                direct += EvaluatePathLayered(N, V, shadowDirection, albedo, roughness, metallic, mat)
                         * light.radiance * PathVolumeShadow(P,shadowDirection,1e7) / float(neeSamples);
                 if (nrdEnabled != 0u)
                     diffuseDirect += NrdDiffuseBRDF(N,V,shadowDirection,albedo,metallic)
+                                   * PathLayerTransmission(mat,N,V,shadowDirection)
                                    * light.radiance / float(neeSamples);
             }
         }
@@ -258,16 +261,17 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
     // of its angular variates. Fixed rotations of the same Halton base leave
     // a persistent (non-converging) correlation even with BVH disabled.
     uint dimension = HashPCG((32u + payload.bounceCount * 64u) ^ HashPCG(sampleIndex));
-    float3 nextDirection = SamplePathBRDF(N, V, albedo, roughness, metallic, dimension, weight);
+    float3 nextDirection = SamplePathLayered(N, V, albedo, roughness, metallic, dimension, mat, weight);
     if (nrdEnabled != 0u && payload.bounceCount == 1u) {
         RWTexture2D<float4> fraction = ResourceDescriptorHeap[nrdFractionUav];
-        float3 full = EvaluatePBR(N,V,nextDirection,albedo,roughness,metallic);
+        float3 full = EvaluatePathLayered(N,V,nextDirection,albedo,roughness,metallic,mat);
         fraction[DispatchRaysIndex().xy] = float4(
-            NrdDiffuseBRDF(N,V,nextDirection,albedo,metallic) / max(full,1e-20), 1.0);
+            NrdDiffuseBRDF(N,V,nextDirection,albedo,metallic)
+                * PathLayerTransmission(mat,N,V,nextDirection) / max(full,1e-20), 1.0);
     }
     payload.previousPosition = P;
     payload.previousNormal = N;
-    payload.previousBsdfPdf = PathBRDFPDF(N,V,nextDirection,roughness,metallic);
+    payload.previousBsdfPdf = PathLayeredPDF(N,V,nextDirection,roughness,metallic,mat);
     payload.throughput *= weight;
     if (!all(isfinite(payload.throughput)) || max(payload.throughput.x,
         max(payload.throughput.y, payload.throughput.z)) <= 0.0) return;

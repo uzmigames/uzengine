@@ -37,6 +37,48 @@ inline bool PathCanContinue(uint completedBounces, uint maxBounces) {
     return completedBounces < maxBounces;
 }
 
+// @ref Schlick 1994 "An Inexpensive BRDF Model for Physically-Based Rendering"
+// Air-to-coat interface; the CVar boundary restricts IOR to [1,3].
+inline float PathCoatFresnel(float cosine, float ior) {
+    if (ior == 1.0f) return 0.0f;
+    float r = (ior - 1.0f) / (ior + 1.0f);
+    float x = 1.0f - cosine;
+    return r*r + (1.0f-r*r)*x*x*x*x*x;
+}
+
+// Both interface crossings attenuate the existing base; neither amplifies it.
+inline float PathCoatTransmission(float weight, float NoV, float NoL, float ior) {
+    if (weight == 0.0f) return 1.0f;
+    return (1.0f-weight*PathCoatFresnel(NoV,ior))
+         * (1.0f-weight*PathCoatFresnel(NoL,ior));
+}
+
+// @ref Heitz 2014 "Understanding the Masking-Shadowing Function"
+// GGX dielectric coat, f*cos(theta), using the engine's correlated visibility.
+inline float PathCoatReflection(float weight, float roughness, float ior,
+                                float NoV, float NoL, float NoH, float VoH) {
+    if (weight == 0.0f || NoV <= 0.0f || NoL <= 0.0f) return 0.0f;
+    float alpha = roughness*roughness;
+    if (alpha < 0.0064f) alpha = 0.0064f; // engine kMinGGXAlpha
+    float a2 = alpha*alpha;
+    float d = (NoH*a2-NoH)*NoH+1.0f;
+    float visibilityDenominator = NoL*sqrt(NoV*NoV*(1.0f-a2)+a2)
+                               + NoV*sqrt(NoL*NoL*(1.0f-a2)+a2);
+    if (visibilityDenominator < 1e-7f) visibilityDenominator = 1e-7f;
+    return weight*PathCoatFresnel(VoH,ior)*a2/(3.14159265359f*d*d)
+         * 0.5f/visibilityDenominator*NoL;
+}
+
+inline float PathCoatCompose(float base, float coat, float transmission) {
+    if (transmission == 1.0f && coat == 0.0f) return base;
+    return coat + transmission*base;
+}
+
+inline float PathCoatMixturePDF(float probability, float coatPDF, float basePDF) {
+    if (probability == 0.0f) return basePDF;
+    return probability*coatPDF+(1.0f-probability)*basePDF;
+}
+
 inline float PathVolumeTransmittance(float sigmaT, float distance) {
     return exp(-sigmaT * distance);
 }
