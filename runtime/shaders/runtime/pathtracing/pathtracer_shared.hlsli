@@ -4,6 +4,7 @@
 #include "../material/brdf.hlsli"
 #include "../common/sampling.hlsli"
 #include "pathtracer_math.hlsli"
+#include "nrd_signal.hlsli"
 
 #ifndef RESTIR_COMPUTE
 struct [raypayload] PathPayload {

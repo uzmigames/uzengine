@@ -2,6 +2,8 @@
 
 [shader("miss")]
 void main(inout PathPayload payload) {
+    if (nrdEnabled != 0u)
+        NrdAddDiffuse(NrdFraction() * payload.throughput * PathEnvironment(WorldRayDirection()));
     payload.radiance += payload.throughput * PathEnvironment(WorldRayDirection());
     payload.terminated = true;
 }

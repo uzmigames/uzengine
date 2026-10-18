@@ -4,6 +4,14 @@
 [shader("raygeneration")]
 void main() {
     uint2 pixel = DispatchRaysIndex().xy;
+    if (nrdEnabled != 0u && restirMode == 0u) {
+        RWTexture2D<float4> diffuse = ResourceDescriptorHeap[nrdDiffuseUav];
+        RWTexture2D<float4> fraction = ResourceDescriptorHeap[nrdFractionUav];
+        RWTexture2D<float4> albedo = ResourceDescriptorHeap[nrdAlbedoUav];
+        diffuse[pixel] = 0.0;
+        fraction[pixel] = 0.0;
+        albedo[pixel] = 1.0;
+    }
     if (restirMode != 0u) {
         RWStructuredBuffer<RestirSurface> surfaces = ResourceDescriptorHeap[restirSurfaceUav];
         surfaces[pixel.y * restirWidth + pixel.x] = (RestirSurface)0;
@@ -58,5 +66,5 @@ void main() {
     }
     accumulated[pixel] = float4(mean, 1.0);
     compensation[pixel] = float4(correction, 0.0);
-    uRadiance[pixel] = float4(mean, 1.0);
+    uRadiance[pixel] = float4(nrdEnabled != 0u ? payload.radiance : mean, 1.0);
 }

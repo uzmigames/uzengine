@@ -1419,6 +1419,8 @@ int main(int argc, char** argv) {
             static_cast<float>(config.GetInt("pt-bounces", 4)));
     if (config.GetBool("restir-di", false))
         config.AddPendingCvarOverride("r.ReSTIR.DI", 1.0f);
+    if (config.GetBool("nrd", false) || config.GetString("denoiser", "") == "nrd")
+        config.AddPendingCvarOverride("r.NRD", 1.0f);
 
     // --rt-test: enable RT and the UV test pass via CVar overrides
     if (config.GetBool("rt-test", false)) {

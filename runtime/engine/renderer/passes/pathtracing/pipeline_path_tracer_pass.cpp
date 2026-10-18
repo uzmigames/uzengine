@@ -36,6 +36,8 @@ static auto* cv_RestirReadback = UZ_CVAR_BOOL("r.ReSTIR.Readback", false,
     "Diagnostic reservoir GPU readback (synchronizes the GPU)");
 static auto* cv_NeeSamples = UZ_CVAR_INT("r.PathTracer.NEESamples", 4,
     "Directional visibility samples per vertex (1 for equal-ray ReSTIR comparison)", 1, 32);
+static auto* cv_Nrd = UZ_CVAR_BOOL("r.NRD", false,
+    "Opt-in stage-1 diffuse temporal/a-trous denoiser for the DXR path tracer");
 
 namespace uz {
 struct PipelinePathTracerPass::Impl {
@@ -46,6 +48,7 @@ struct PipelinePathTracerPass::Impl {
     std::array<RHIBufferHandle, 3> lights{};
     std::array<uint32_t, 3> lightCapacity{};
     LightBVH lightBVH;
+    std::unique_ptr<NrdDenoiser> denoiser;
     std::array<RHIBufferHandle, 3> bvhNodes{}, bvhLights{}, bvhConfigs{};
     std::array<uint32_t, 3> bvhNodeCapacity{}, bvhLightCapacity{}, bvhConfigCapacity{};
     bool bvhLogged = false;
@@ -111,7 +114,7 @@ bool PipelinePathTracerPass::Init(IRHIDevice* device) {
     ranges[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
     ranges[1].NumDescriptors = 1;
     ranges[1].BaseShaderRegister = 0;
-    D3D12_ROOT_PARAMETER params[4]{};
+    D3D12_ROOT_PARAMETER params[5]{};
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
     params[0].Constants = {0, 0, kRootDwords};
     params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
@@ -121,6 +124,8 @@ bool PipelinePathTracerPass::Init(IRHIDevice* device) {
         params[2 + i].DescriptorTable.NumDescriptorRanges = 1;
         params[2 + i].DescriptorTable.pDescriptorRanges = &ranges[i];
     }
+    params[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    params[4].Constants = {2, 0, sizeof(NrdSignalRoot) / sizeof(uint32_t)};
     D3D12_STATIC_SAMPLER_DESC sampler{};
     sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
     sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
@@ -128,7 +133,7 @@ bool PipelinePathTracerPass::Init(IRHIDevice* device) {
     sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
     sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     D3D12_ROOT_SIGNATURE_DESC rootDesc{};
-    rootDesc.NumParameters = 4;
+    rootDesc.NumParameters = 5;
     rootDesc.pParameters = params;
     rootDesc.NumStaticSamplers = 1;
     rootDesc.pStaticSamplers = &sampler;
@@ -255,7 +260,8 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
         CBAllocation perFrame, RTManager& rt, IRHICommandList* buildCmd,
         std::span<const DrawCommand> draws, std::span<const GPUMesh> meshes,
         uint32_t envSrv, uint32_t frameIndex, uint32_t width, uint32_t height, World* world,
-        const Mat4& unjitteredViewProj, uint32_t sceneDirtyFlags) {
+        const Mat4& unjitteredViewProj, uint32_t sceneDirtyFlags,
+        const NrdInputs& denoiserGuides) {
     auto& p = *m_impl;
     if (!p.ready || !rt.IsEnabled()) return false;
     if (p.readbackPending) {
@@ -534,6 +540,20 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
     radianceDesc.format = RHIFormat::RGBA16Float;
     radianceDesc.usage = RHITextureUsage::ShaderResource | RHITextureUsage::UnorderedAccess;
     const auto radiance = builder.CreateTexture("PipelinePathTracer_Radiance", radianceDesc);
+    const bool denoise = cv_Nrd->value >= 0.5f;
+    rg::RgResourceId diffuse, fraction, signalAlbedo;
+    if (denoise) {
+        if (!p.denoiser) {
+            p.denoiser = std::make_unique<NrdDenoiser>();
+            if (!p.denoiser->Init(p.device)) {
+                p.denoiser.reset();
+                return false;
+            }
+        }
+        diffuse = builder.CreateTexture("NRD_DiffuseRadiance", radianceDesc);
+        fraction = builder.CreateTexture("NRD_PrimaryDiffuseFraction", radianceDesc);
+        signalAlbedo = builder.CreateTexture("NRD_PrimaryAlbedo", radianceDesc);
+    }
     const uint32_t materialSrv = p.device->GetBufferSRVIndex(p.materials[slot]);
     const uint32_t tlasSrv = rt.GetTLASSRVIndex();
     rg::RgResourceId surface, initial, current, previous;
@@ -575,6 +595,8 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
                 constants.restirMode = 1;
                 native->SetComputeRootSignature(m_impl->root.Get());
                 native->SetComputeRoot32BitConstants(0, kRootDwords, &constants, 0);
+                const NrdSignalRoot signal{};
+                native->SetComputeRoot32BitConstants(4, sizeof(signal) / 4, &signal, 0);
                 native->SetComputeRootConstantBufferView(1, m_impl->device->GetBufferGPUAddress(perFrame.bufferHandle) + perFrame.offsetBytes);
                 auto& heap = dx->GetDescriptorAllocator(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
                 native->SetComputeRootDescriptorTable(2, heap.GpuHandle(tlasSrv));
@@ -622,6 +644,11 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
         pb.Write(radiance, RHIResourceState::UnorderedAccess);
         pb.Write(accumulation, RHIResourceState::UnorderedAccess);
         pb.Write(compensation, RHIResourceState::UnorderedAccess);
+        if (denoise) {
+            pb.Write(diffuse, RHIResourceState::UnorderedAccess);
+            pb.Write(fraction, RHIResourceState::UnorderedAccess);
+            pb.Write(signalAlbedo, RHIResourceState::UnorderedAccess);
+        }
         pb.SetExecutionCallback([=, this](IRHICommandList* cmd, const rg::RgPassResources& res) {
 #ifdef _WIN32
             auto& state = *m_impl;
@@ -639,6 +666,14 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
             constants.compensationUav = state.device->GetTextureUAVIndex(res.GetTexture(compensation));
             constants.accumulatedFrames = accumulatedFrames;
             native->SetComputeRoot32BitConstants(0, kRootDwords, &constants, 0);
+            NrdSignalRoot signal{};
+            signal.enabled = denoise;
+            if (denoise) {
+                signal.diffuseUav = state.device->GetTextureUAVIndex(res.GetTexture(diffuse));
+                signal.fractionUav = state.device->GetTextureUAVIndex(res.GetTexture(fraction));
+                signal.albedoUav = state.device->GetTextureUAVIndex(res.GetTexture(signalAlbedo));
+            }
+            native->SetComputeRoot32BitConstants(4, sizeof(signal) / 4, &signal, 0);
             native->SetComputeRootConstantBufferView(1,
                 state.device->GetBufferGPUAddress(perFrame.bufferHandle) + perFrame.offsetBytes);
             native->SetComputeRootDescriptorTable(2, heap.GpuHandle(tlasSrv));
@@ -691,11 +726,21 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
             });
         });
     }
+    auto resolved = radiance;
+    if (denoise) {
+        auto inputs = denoiserGuides;
+        inputs.raw = radiance; inputs.diffuse = diffuse; inputs.albedo = signalAlbedo;
+        inputs.width = width; inputs.height = height; inputs.frameIndex = frameIndex;
+        inputs.perFrame = perFrame;
+        inputs.reset = inputs.reset || accumulatedFrames == 0;
+        resolved = p.denoiser->Denoise(builder, inputs);
+        if (!resolved.IsValid()) return false;
+    }
     builder.AddPass("PipelinePathTracer_Resolve", [=](rg::RgPassBuilder& pb) {
-        pb.Read(radiance, RHIResourceState::CopySrc);
+        pb.Read(resolved, RHIResourceState::CopySrc);
         pb.Write(hdr, RHIResourceState::CopyDst);
         pb.SetExecutionCallback([=](IRHICommandList* cmd, const rg::RgPassResources& res) {
-            cmd->CopyTexture(res.GetTexture(radiance), res.GetTexture(hdr));
+            cmd->CopyTexture(res.GetTexture(resolved), res.GetTexture(hdr));
         });
     });
     return true;

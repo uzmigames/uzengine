@@ -1079,7 +1079,9 @@ void SceneRenderer::ApplyCVars() {
     // ── Render Pass Toggles ─────────────────────────────────────────────
     // Apply PT's TAA override before frame setup computes jitter or schedules AA.
     const bool ptEnabled = m_renderPath == RenderPath::Deferred
-                        && cvars.GetBool("r.PathTracer.Enable", false);
+                        && (cvars.GetBool("r.PathTracer.Enable", false)
+                            || (cvars.GetBool("r.PathTracer.Pipeline", false)
+                                && cvars.GetBool("r.NRD", false)));
     if (ptEnabled && !m_ptEnabledLastFrame) {
         m_ptSavedTaa = cvars.GetFloat("r.TAA", 0.f);
         m_ptAccumSamples = 0;

@@ -322,6 +322,12 @@ TIER_A += [
 ]
 
 TIER_B = [
+    layout_entry('pathtracing/nrd_common.hlsli', 'NrdRoot',
+                 PASSES + 'pathtracing/nrd_denoiser.h'),
+    layout_entry('pathtracing/nrd_signal.hlsli', 'NrdSignalRoot',
+                 PASSES + 'pathtracing/nrd_denoiser.h', aliases={
+                     'nrdEnabled': 'enabled', 'nrdDiffuseUav': 'diffuseUav',
+                     'nrdFractionUav': 'fractionUav', 'nrdAlbedoUav': 'albedoUav'}),
     # Private DXR/ReSTIR root: 96 bytes / 24 DWORDs, including history UAVs,
     # sample count and bounce/RR controls. Shared graphics and PerFrameCB do not grow.
     layout_entry('pathtracing/pathtracer_shared.hlsli', 'PathTracerRoot',

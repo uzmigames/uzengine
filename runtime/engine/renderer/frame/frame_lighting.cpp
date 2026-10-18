@@ -98,11 +98,17 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         RegisterAtmosphereFogCloudPasses(rgBuilder, ctx);
         const uint32_t skySrv = m_hdriActive ? m_hdriCubemapSrv
                              : (m_skyCubemapFilled ? m_skyCubemapSrv : UINT32_MAX);
+        NrdInputs denoiserGuides{};
+        denoiserGuides.depth = ctx.depthRes;
+        denoiserGuides.normal = ctx.normalRes;
+        denoiserGuides.velocity = ctx.velocityRes;
+        denoiserGuides.reset = !ctx.temporal.matrixValid;
         if (!m_pipelinePathTracer->AddPass(rgBuilder, ctx.hdrRes, ctx.perFrameAlloc,
                 *m_rtManager, ctx.cmdList, ctx.drawList.GetCommands(), m_meshes, skySrv,
                 ctx.frameIndex, static_cast<uint32_t>(ctx.renderWidth),
                 static_cast<uint32_t>(ctx.renderHeight), ctx.world,
-                ctx.unjitteredViewProj, ctx.updateFlags.flags & ~SceneUpdateFlags::kCamera)) {
+                ctx.unjitteredViewProj, ctx.updateFlags.flags & ~SceneUpdateFlags::kCamera,
+                denoiserGuides)) {
             UZ_LOG(Renderer, Error, "PipelinePathTracer: failed to register single-bounce pass");
             return;
         }

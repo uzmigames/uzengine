@@ -2,6 +2,7 @@
 
 #include "constant_buffers.h"
 #include "render_graph_types.h"
+#include "nrd_denoiser.h"
 #include <cstddef>
 #include <memory>
 #include <span>
@@ -91,7 +92,8 @@ public:
                  RTManager& rt, IRHICommandList* buildCmd, std::span<const DrawCommand> draws,
                  std::span<const GPUMesh> meshes, uint32_t envSrv,
                  uint32_t frameIndex, uint32_t width, uint32_t height, World* world,
-                 const Mat4& unjitteredViewProj, uint32_t sceneDirtyFlags);
+                 const Mat4& unjitteredViewProj, uint32_t sceneDirtyFlags,
+                 const NrdInputs& denoiserGuides);
 private:
     struct Impl;
     std::unique_ptr<Impl> m_impl;

@@ -71,6 +71,11 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
         emission *= tex.SampleLevel(linearWrap, uv, 0).rgb;
     }
     float3 direct = 0.0;
+    float3 diffuseDirect = 0.0;
+    if (nrdEnabled != 0u && payload.bounceCount == 0u && restirMode == 0u) {
+        RWTexture2D<float4> outputAlbedo = ResourceDescriptorHeap[nrdAlbedoUav];
+        outputAlbedo[DispatchRaysIndex().xy] = float4(albedo, 1.0);
+    }
     StructuredBuffer<PathDirectionalLight> sceneLights = ResourceDescriptorHeap[directionalLightsSrv];
     uint bvhConfigIndex = sceneLights[0].padding;
     if (restirMode != 0u) {
@@ -106,6 +111,11 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
                 surface.view = V; surface.metallic = metallic;
                 surface.albedo = albedo; surface.padding = 0.0;
                 direct = RestirContribution(surface, r.sample) * r.W;
+                if (nrdEnabled != 0u) {
+                    float3 full = EvaluatePBR(N, V, ray.Direction, albedo, roughness, metallic);
+                    diffuseDirect = direct * NrdDiffuseBRDF(N, V, ray.Direction, albedo, metallic)
+                                  / max(full, 1e-20);
+                }
             }
         }
     } else {
@@ -193,7 +203,11 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
                 }
                 TraceRay(tScene,RAY_FLAG_FORCE_OPAQUE|RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH
                     |RAY_FLAG_SKIP_CLOSEST_HIT_SHADER,0xff,0,0,1,ray,shadow);
-                if (!shadow.hit) direct += brdf*value/float(neeSamples);
+                if (!shadow.hit) {
+                    direct += brdf*value/float(neeSamples);
+                    if (nrdEnabled != 0u)
+                        diffuseDirect += NrdDiffuseBRDF(N,V,L,albedo,metallic)*value/float(neeSamples);
+                }
             }
         }
     } else {
@@ -219,14 +233,21 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
             ray.TMax = 1e7;
             TraceRay(tScene, RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH
                      | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER, 0xff, 0, 0, 1, ray, shadow);
-            if (!shadow.hit)
+            if (!shadow.hit) {
                 direct += EvaluatePBR(N, V, shadowDirection, albedo, roughness, metallic)
                         * light.radiance / float(neeSamples);
+                if (nrdEnabled != 0u)
+                    diffuseDirect += NrdDiffuseBRDF(N,V,shadowDirection,albedo,metallic)
+                                   * light.radiance / float(neeSamples);
+            }
         }
     }
     }
     }
     payload.radiance += payload.throughput * (emission + direct);
+    if (nrdEnabled != 0u)
+        NrdAddDiffuse(payload.bounceCount == 0u ? diffuseDirect
+            : NrdFraction() * payload.throughput * (emission + direct));
     payload.bounceCount++;
     payload.terminated = true;
     if (!PathCanContinue(payload.bounceCount, maxBounces)) return;
@@ -237,6 +258,12 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
     // a persistent (non-converging) correlation even with BVH disabled.
     uint dimension = HashPCG((32u + payload.bounceCount * 64u) ^ HashPCG(sampleIndex));
     float3 nextDirection = SamplePathBRDF(N, V, albedo, roughness, metallic, dimension, weight);
+    if (nrdEnabled != 0u && payload.bounceCount == 1u) {
+        RWTexture2D<float4> fraction = ResourceDescriptorHeap[nrdFractionUav];
+        float3 full = EvaluatePBR(N,V,nextDirection,albedo,roughness,metallic);
+        fraction[DispatchRaysIndex().xy] = float4(
+            NrdDiffuseBRDF(N,V,nextDirection,albedo,metallic) / max(full,1e-20), 1.0);
+    }
     payload.previousPosition = P;
     payload.previousNormal = N;
     payload.previousBsdfPdf = PathBRDFPDF(N,V,nextDirection,roughness,metallic);
