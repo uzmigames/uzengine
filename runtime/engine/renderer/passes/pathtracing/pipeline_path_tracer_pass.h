@@ -51,6 +51,13 @@ struct PipelinePathRoot {
 };
 static_assert(sizeof(PipelinePathRoot) == 96);
 
+struct PathVolumeRoot {
+    float volumeSigmaA = 0, volumeSigmaS = 0, volumeG = 0, volumeRadius = 0;
+    float volumeCenterX = 0, volumeCenterY = 0, volumeCenterZ = 0;
+    uint32_t volumeEnabled = 0;
+};
+static_assert(sizeof(PathVolumeRoot) == 32);
+
 struct RestirLightSample {
     uint32_t lightIndex;
     float position[3], normal[3], emission[3], pdf;

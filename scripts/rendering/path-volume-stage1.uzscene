@@ -1,0 +1,37 @@
+{
+  "name": "Homogeneous path transport analytic reference",
+  "version": "1.0",
+  "entities": [
+    {
+      "name": "Camera",
+      "components": {
+        "transform": {"position": [0, -300, 150]},
+        "camera": {"fov": 40, "near": 5, "far": 5000, "active": true,
+                   "look_at": [0, 0, 150]}
+      }
+    },
+    {
+      "name": "Backlight",
+      "components": {
+        "transform": {"rotation": [0, -90, 0]},
+        "light": {"type": "directional", "color": [1, 1, 1],
+                  "intensity": 10, "cast_shadows": true, "light_source_angle": 0}
+      }
+    },
+    {
+      "name": "Black sky",
+      "components": {"sky_light": {"intensity": 0, "light_color": [0, 0, 0]}}
+    },
+    {
+      "name": "Constant radiance backdrop",
+      "components": {
+        "transform": {"position": [0, 200, -850], "scale": [2000, 1, 2000]},
+        "mesh": {"asset": "builtin:cube"},
+        "material": {"baseColorR": 0, "baseColorG": 0, "baseColorB": 0,
+                     "metallicMultiplier": 1, "roughnessMultiplier": 1,
+                     "emissiveColorR": 1, "emissiveColorG": 1, "emissiveColorB": 1,
+                     "emissiveIntensity": 0.2}
+      }
+    }
+  ]
+}

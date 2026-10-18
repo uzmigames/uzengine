@@ -1,5 +1,92 @@
 #include "pathtracer_shared.hlsli"
 #include "../include/restir_di.hlsli"
+#include "../include/light_bvh.hlsli"
+
+float3 PathVolumeDirect(float3 P, float3 incoming, uint bounce) {
+    float3 direct = 0.0;
+    StructuredBuffer<PathDirectionalLight> lights = ResourceDescriptorHeap[directionalLightsSrv];
+    uint configIndex = lights[0].padding;
+    if (configIndex != 0u) {
+        StructuredBuffer<LightBVHConfig> configurations = ResourceDescriptorHeap[configIndex-1u];
+        LightBVHConfig config = configurations[0];
+        StructuredBuffer<LightBVHNode> nodes = ResourceDescriptorHeap[config.nodesSrv];
+        StructuredBuffer<LightBVHLight> emitters = ResourceDescriptorHeap[config.lightsSrv];
+        for (uint sample = 0u; sample < neeSamples; ++sample) {
+            uint dimension = HashPCG((512u+sample*4u+bounce*128u)^HashPCG(sampleIndex));
+            float2 u = PathSample(dimension);
+            float triangleV = frac(Halton(sampleIndex+1u,5u)
+                +PathSample(dimension+1u).x-Halton(sampleIndex+1u,2u));
+            // A medium has no surface hemisphere. Zero normal preserves
+            // support over the complete sphere, including behind the ray.
+            LightBVHSample chosen = SampleLightBVH(P,0.0,float3(u,triangleV),config,nodes,emitters);
+            LightBVHLight light = emitters[chosen.lightId];
+            if (light.type == 0u && !PathCanContinue(bounce+1u,maxBounces)) continue;
+            float distance = 1e7;
+            float3 L, value = light.emission/chosen.selectionPdf;
+            if (light.type == 1u) {
+                L = normalize(light.v0);
+                float3 T,B; PathBasis(L,T,B);
+                float2 disk = PathSample(dimension+2u);
+                float radius = sqrt(disk.x)*tan(light.angularRadius);
+                float phi = 2.0*PI*disk.y;
+                L = normalize(L+radius*(cos(phi)*T+sin(phi)*B));
+            } else {
+                float3 delta = chosen.samplePos-P;
+                float d2 = dot(delta,delta);
+                distance = sqrt(d2);
+                L = delta/max(distance,1e-10);
+                float cosine = abs(dot(light.normal,-L));
+                if (cosine <= 0.0 || distance <= .01) continue;
+                float lightPdf = LightBVHSolidAnglePDF(chosen.selectionPdf,light.area,d2,cosine);
+                value = light.emission*cosine/max(d2*chosen.pdf,1e-20);
+                value *= LightBVHBalanceWeight(float(neeSamples)*lightPdf,
+                    PathVolumePhase(dot(incoming,L),volumeG));
+                if (light.emissiveSrv != 0xffffffffu) {
+                    Texture2D<float4> tex = ResourceDescriptorHeap[NonUniformResourceIndex(light.emissiveSrv)];
+                    value *= tex.SampleLevel(linearWrap,chosen.uv,0).rgb;
+                }
+            }
+            RayDesc shadowRay;
+            shadowRay.Origin = P; shadowRay.Direction = L;
+            shadowRay.TMin = .001; shadowRay.TMax = max(distance-.01,.001);
+            ShadowPayload shadow; shadow.hit = false;
+            if (hasGeometry != 0u) {
+                shadow.hit = true;
+                TraceRay(tScene,RAY_FLAG_FORCE_OPAQUE|RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH
+                    |RAY_FLAG_SKIP_CLOSEST_HIT_SHADER,0xff,0,0,1,shadowRay,shadow);
+            }
+            if (!shadow.hit)
+                direct += value*PathVolumePhase(dot(incoming,L),volumeG)
+                    *PathVolumeShadow(P,L,distance)/float(neeSamples);
+        }
+    } else {
+        for (uint id = 0u; id < directionalLightCount; ++id) {
+            PathDirectionalLight light = lights[id];
+            float3 L = normalize(light.direction);
+            float3 T,B; PathBasis(L,T,B);
+            for (uint sample = 0u; sample < neeSamples; ++sample) {
+                uint dimension = HashPCG((768u+id*64u+sample*2u+bounce*128u)^HashPCG(sampleIndex));
+                float2 u = PathSample(dimension);
+                float radius = sqrt(u.x)*tan(light.angularRadius);
+                float phi = 2.0*PI*u.y;
+                float3 direction = normalize(L+radius*(cos(phi)*T+sin(phi)*B));
+                RayDesc shadowRay;
+                shadowRay.Origin = P; shadowRay.Direction = direction;
+                shadowRay.TMin = .001; shadowRay.TMax = 1e7;
+                ShadowPayload shadow; shadow.hit = false;
+                if (hasGeometry != 0u) {
+                    shadow.hit = true;
+                    TraceRay(tScene,RAY_FLAG_FORCE_OPAQUE|RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH
+                        |RAY_FLAG_SKIP_CLOSEST_HIT_SHADER,0xff,0,0,1,shadowRay,shadow);
+                }
+                if (!shadow.hit)
+                    direct += light.radiance*PathVolumePhase(dot(incoming,direction),volumeG)
+                        *PathVolumeShadow(P,direction,1e7)/float(neeSamples);
+            }
+        }
+    }
+    return direct;
+}
 
 [shader("raygeneration")]
 void main() {
@@ -34,11 +121,61 @@ void main() {
     payload.previousPosition = 0.0;
     payload.previousNormal = 0.0;
     payload.previousBsdfPdf = 0.0;
-    if (hasGeometry != 0u) {
+    if (hasGeometry != 0u || PathVolumeActive()) {
         // Iteration keeps the DXR stack at primary + nested shadow regardless of N.
         // @ref Kajiya 1986 "The Rendering Equation"
         // @constants maxBounces is the configured number of surface vertices.
         for (uint bounce = 0u; bounce < maxBounces; ++bounce) {
+            if (PathVolumeActive() && restirMode == 0u) {
+                float surfaceDistance = ray.TMax;
+                if (hasGeometry != 0u) {
+                    RayQuery<RAY_FLAG_FORCE_OPAQUE> query;
+                    query.TraceRayInline(tScene,RAY_FLAG_NONE,0xff,ray);
+                    while (query.Proceed()) {}
+                    if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT)
+                        surfaceDistance = query.CommittedRayT();
+                }
+                float2 interval = PathVolumeInterval(ray.Origin,ray.Direction,surfaceDistance);
+                float lengthInMedium = interval.y-interval.x;
+                float sigmaT = volumeSigmaA+volumeSigmaS;
+                if (volumeSigmaS == 0.0) {
+                    // Rao-Blackwellized absorption-only case, no RNG needed.
+                    payload.throughput *= PathVolumeTransmittance(sigmaT,lengthInMedium);
+                } else if (lengthInMedium > 0.0) {
+                    uint dimension = HashPCG((1024u+bounce*128u)^HashPCG(sampleIndex));
+                    float distance = PathVolumeDistance(sigmaT,PathSample(dimension).x);
+                    if (distance < lengthInMedium) {
+                        float3 P = ray.Origin+ray.Direction*(interval.x+distance);
+                        // Tr*sigmaS / (sigmaT*Tr) = scattering albedo.
+                        // Surface survival similarly has weight Tr/Tr = 1.
+                        payload.throughput *= volumeSigmaS/sigmaT;
+                        payload.radiance += payload.throughput*PathVolumeDirect(P,ray.Direction,bounce);
+                        payload.bounceCount++;
+                        if (!PathCanContinue(payload.bounceCount,maxBounces)) break;
+                        float2 phaseU = PathSample(dimension+1u);
+                        float cosine = clamp(PathVolumePhaseCosine(phaseU.x,volumeG),-1.0,1.0);
+                        float sine = sqrt(max(0.0,1.0-cosine*cosine));
+                        float phi = 2.0*PI*phaseU.y;
+                        float3 T,B; PathBasis(ray.Direction,T,B);
+                        float3 direction = normalize(cosine*ray.Direction+sine*(cos(phi)*T+sin(phi)*B));
+                        payload.previousPosition = P;
+                        payload.previousNormal = 0.0;
+                        payload.previousBsdfPdf = PathVolumePhase(cosine,volumeG);
+                        ray.Origin = P; ray.Direction = direction; ray.TMin = .001;
+                        if (rrEnabled != 0u && payload.bounceCount >= rrMinBounce) {
+                            float survival = PathSurvivalProbability(max(payload.throughput.x,
+                                max(payload.throughput.y,payload.throughput.z)));
+                            if (PathSample(dimension+2u).x >= survival) break;
+                            payload.throughput /= survival;
+                        }
+                        continue;
+                    }
+                }
+            }
+            if (hasGeometry == 0u) {
+                payload.radiance += payload.throughput*PathEnvironment(ray.Direction);
+                break;
+            }
             TraceRay(tScene, RAY_FLAG_FORCE_OPAQUE, 0xff, 0, 0, 0, ray, payload);
             if (restirMode != 0u) return;
             if (payload.terminated) break;

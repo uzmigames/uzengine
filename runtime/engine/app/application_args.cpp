@@ -148,6 +148,8 @@ void Application::ParseArgs(int argc, char* argv[]) {
         } else if (std::strcmp(argv[i], "--path-trace") == 0) {
             m_cvarOverrides.emplace_back("r.RayTracing", 1.0f);
             m_cvarOverrides.emplace_back("r.PathTracer.Pipeline", 1.0f);
+        } else if (std::strcmp(argv[i], "--volume") == 0) {
+            m_cvarOverrides.emplace_back("r.PathTracer.Volume", 1.0f);
         } else if (std::strcmp(argv[i], "--restir-di") == 0) {
             m_cvarOverrides.emplace_back("r.ReSTIR.DI", 1.0f);
         } else if (std::strcmp(argv[i], "--light-bvh") == 0) {

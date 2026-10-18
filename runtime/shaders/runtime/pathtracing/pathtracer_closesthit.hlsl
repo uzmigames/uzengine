@@ -204,6 +204,7 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
                 TraceRay(tScene,RAY_FLAG_FORCE_OPAQUE|RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH
                     |RAY_FLAG_SKIP_CLOSEST_HIT_SHADER,0xff,0,0,1,ray,shadow);
                 if (!shadow.hit) {
+                    value *= PathVolumeShadow(P,L,distance);
                     direct += brdf*value/float(neeSamples);
                     if (nrdEnabled != 0u)
                         diffuseDirect += NrdDiffuseBRDF(N,V,L,albedo,metallic)*value/float(neeSamples);
@@ -235,7 +236,7 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
                      | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER, 0xff, 0, 0, 1, ray, shadow);
             if (!shadow.hit) {
                 direct += EvaluatePBR(N, V, shadowDirection, albedo, roughness, metallic)
-                        * light.radiance / float(neeSamples);
+                        * light.radiance * PathVolumeShadow(P,shadowDirection,1e7) / float(neeSamples);
                 if (nrdEnabled != 0u)
                     diffuseDirect += NrdDiffuseBRDF(N,V,shadowDirection,albedo,metallic)
                                    * light.radiance / float(neeSamples);

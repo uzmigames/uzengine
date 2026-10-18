@@ -332,6 +332,8 @@ TIER_B = [
     # sample count and bounce/RR controls. Shared graphics and PerFrameCB do not grow.
     layout_entry('pathtracing/pathtracer_shared.hlsli', 'PathTracerRoot',
                  PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'PipelinePathRoot'),
+    layout_entry('pathtracing/pathtracer_volume.hlsli', 'PathVolumeRoot',
+                 PASSES + 'pathtracing/pipeline_path_tracer_pass.h'),
     *[layout_entry(shader, 'VFXBillboardConstants', PASSES + 'vfx/particle_render_pass.h',
                    'ParticleBillboardIndices')
       for shader in ('vfx/particle_billboard_vs.hlsl', 'vfx/particle_billboard_ps.hlsl')],

@@ -38,6 +38,22 @@ static auto* cv_NeeSamples = UZ_CVAR_INT("r.PathTracer.NEESamples", 4,
     "Directional visibility samples per vertex (1 for equal-ray ReSTIR comparison)", 1, 32);
 static auto* cv_Nrd = UZ_CVAR_BOOL("r.NRD", false,
     "Opt-in stage-1 diffuse temporal/a-trous denoiser for the DXR path tracer");
+static auto* cv_Volume = UZ_CVAR_BOOL("r.PathTracer.Volume", false,
+    "Opt-in homogeneous spherical participating medium in DXR transport");
+static auto* cv_VolumeA = UZ_CVAR_FLOAT("r.PathTracer.Volume.SigmaA", 0.001f,
+    "Homogeneous absorption per centimeter", 0.f, 10.f);
+static auto* cv_VolumeS = UZ_CVAR_FLOAT("r.PathTracer.Volume.SigmaS", 0.003f,
+    "Homogeneous scattering per centimeter", 0.f, 10.f);
+static auto* cv_VolumeG = UZ_CVAR_FLOAT("r.PathTracer.Volume.G", 0.f,
+    "Henyey-Greenstein anisotropy", -0.99f, 0.99f);
+static auto* cv_VolumeRadius = UZ_CVAR_FLOAT("r.PathTracer.Volume.Radius", 500.f,
+    "Homogeneous sphere radius in centimeters", 0.f, 1e6f);
+static auto* cv_VolumeX = UZ_CVAR_FLOAT("r.PathTracer.Volume.CenterX", 0.f,
+    "Medium sphere center X", -1e6f, 1e6f);
+static auto* cv_VolumeY = UZ_CVAR_FLOAT("r.PathTracer.Volume.CenterY", 0.f,
+    "Medium sphere center Y", -1e6f, 1e6f);
+static auto* cv_VolumeZ = UZ_CVAR_FLOAT("r.PathTracer.Volume.CenterZ", 150.f,
+    "Medium sphere center Z", -1e6f, 1e6f);
 
 namespace uz {
 struct PipelinePathTracerPass::Impl {
@@ -114,7 +130,7 @@ bool PipelinePathTracerPass::Init(IRHIDevice* device) {
     ranges[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
     ranges[1].NumDescriptors = 1;
     ranges[1].BaseShaderRegister = 0;
-    D3D12_ROOT_PARAMETER params[5]{};
+    D3D12_ROOT_PARAMETER params[6]{};
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
     params[0].Constants = {0, 0, kRootDwords};
     params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
@@ -126,6 +142,9 @@ bool PipelinePathTracerPass::Init(IRHIDevice* device) {
     }
     params[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
     params[4].Constants = {2, 0, sizeof(NrdSignalRoot) / sizeof(uint32_t)};
+    params[5].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    params[5].Constants = {3, 0, sizeof(PathVolumeRoot) / sizeof(uint32_t)};
+    static_assert(kRootDwords + 2 + 2 + sizeof(NrdSignalRoot)/4 + sizeof(PathVolumeRoot)/4 <= 64);
     D3D12_STATIC_SAMPLER_DESC sampler{};
     sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
     sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
@@ -133,7 +152,7 @@ bool PipelinePathTracerPass::Init(IRHIDevice* device) {
     sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
     sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     D3D12_ROOT_SIGNATURE_DESC rootDesc{};
-    rootDesc.NumParameters = 5;
+    rootDesc.NumParameters = 6;
     rootDesc.pParameters = params;
     rootDesc.NumStaticSamplers = 1;
     rootDesc.pStaticSamplers = &sampler;
@@ -468,7 +487,19 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
     const uint32_t maxBounces = std::clamp(cv.GetInt("r.PathTracer.MaxBounces", 4), 1, 16);
     const uint32_t rrEnabled = cv.GetBool("r.PathTracer.RussianRoulette", true);
     const uint32_t rrMinBounce = std::clamp(cv.GetInt("r.PathTracer.RussianRouletteMinBounce", 2), 0, 16);
-    const uint32_t restirEnabled = cv_RestirDI->value >= 0.5f;
+    PathVolumeRoot volume{};
+    volume.volumeSigmaA = cv_VolumeA->value;
+    volume.volumeSigmaS = cv_VolumeS->value;
+    volume.volumeG = cv_VolumeG->value;
+    volume.volumeRadius = cv_VolumeRadius->value;
+    volume.volumeCenterX = cv_VolumeX->value;
+    volume.volumeCenterY = cv_VolumeY->value;
+    volume.volumeCenterZ = cv_VolumeZ->value;
+    volume.volumeEnabled = cv_Volume->value >= 0.5f
+        && volume.volumeRadius > 0.f && volume.volumeSigmaA + volume.volumeSigmaS > 0.f;
+    // Surface-only reservoir validation and diffuse denoiser guides do not
+    // describe stochastic medium vertices. Use ordinary unbiased NEE here.
+    const uint32_t restirEnabled = cv_RestirDI->value >= 0.5f && !volume.volumeEnabled;
     const uint32_t restirTemporal = cv_RestirTemporal->value >= 0.5f;
     const uint32_t neeSamples = std::clamp(cv.GetInt("r.PathTracer.NEESamples", 4), 1, 32);
     hash(&maxBounces, sizeof(maxBounces));
@@ -477,6 +508,7 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
     hash(&restirEnabled, sizeof(restirEnabled));
     hash(&restirTemporal, sizeof(restirTemporal));
     hash(&neeSamples, sizeof(neeSamples));
+    hash(&volume, sizeof(volume));
     const auto* pf = static_cast<const PerFrameCB*>(perFrame.cpuPtr);
     hash(&pf->skyLightIntensity, sizeof(float) * 4);
     if (p.width != width || p.height != height) {
@@ -540,7 +572,7 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
     radianceDesc.format = RHIFormat::RGBA16Float;
     radianceDesc.usage = RHITextureUsage::ShaderResource | RHITextureUsage::UnorderedAccess;
     const auto radiance = builder.CreateTexture("PipelinePathTracer_Radiance", radianceDesc);
-    const bool denoise = cv_Nrd->value >= 0.5f;
+    const bool denoise = cv_Nrd->value >= 0.5f && !volume.volumeEnabled;
     rg::RgResourceId diffuse, fraction, signalAlbedo;
     if (denoise) {
         if (!p.denoiser) {
@@ -597,6 +629,7 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
                 native->SetComputeRoot32BitConstants(0, kRootDwords, &constants, 0);
                 const NrdSignalRoot signal{};
                 native->SetComputeRoot32BitConstants(4, sizeof(signal) / 4, &signal, 0);
+                native->SetComputeRoot32BitConstants(5, sizeof(volume) / 4, &volume, 0);
                 native->SetComputeRootConstantBufferView(1, m_impl->device->GetBufferGPUAddress(perFrame.bufferHandle) + perFrame.offsetBytes);
                 auto& heap = dx->GetDescriptorAllocator(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
                 native->SetComputeRootDescriptorTable(2, heap.GpuHandle(tlasSrv));
@@ -674,6 +707,10 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
                 signal.albedoUav = state.device->GetTextureUAVIndex(res.GetTexture(signalAlbedo));
             }
             native->SetComputeRoot32BitConstants(4, sizeof(signal) / 4, &signal, 0);
+            native->SetComputeRoot32BitConstants(5, sizeof(volume) / 4, &volume, 0);
+            if (accumulatedFrames == 0 && volume.volumeEnabled)
+                UZ_LOG(Renderer, Info, "PathVolume: homogeneous sphere sigmaA={} sigmaS={} g={} radius={}; exponential free flight, HG + NEE; surface ReSTIR/NRD bypassed",
+                    volume.volumeSigmaA,volume.volumeSigmaS,volume.volumeG,volume.volumeRadius);
             native->SetComputeRootConstantBufferView(1,
                 state.device->GetBufferGPUAddress(perFrame.bufferHandle) + perFrame.offsetBytes);
             native->SetComputeRootDescriptorTable(2, heap.GpuHandle(tlasSrv));

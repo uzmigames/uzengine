@@ -4,6 +4,7 @@
 #include "../material/brdf.hlsli"
 #include "../common/sampling.hlsli"
 #include "pathtracer_math.hlsli"
+#include "pathtracer_volume.hlsli"
 #include "nrd_signal.hlsli"
 
 #ifndef RESTIR_COMPUTE
