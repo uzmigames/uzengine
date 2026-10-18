@@ -32,6 +32,8 @@ static auto* cv_RestirDI = UZ_CVAR_BOOL("r.ReSTIR.DI", false,
     "Opt-in primary-hit ReSTIR DI in the DXR path tracer");
 static auto* cv_RestirTemporal = UZ_CVAR_BOOL("r.ReSTIR.Temporal", true,
     "Reuse validated previous-frame direct-light reservoirs");
+static auto* cv_RestirSpatial = UZ_CVAR_BOOL("r.ReSTIR.Spatial", true,
+    "Reuse four spatial neighbors with source-target MIS correction");
 static auto* cv_RestirReadback = UZ_CVAR_BOOL("r.ReSTIR.Readback", false,
     "Diagnostic reservoir GPU readback (synchronizes the GPU)");
 static auto* cv_NeeSamples = UZ_CVAR_INT("r.PathTracer.NEESamples", 4,
@@ -79,7 +81,7 @@ struct PipelinePathTracerPass::Impl {
 #ifdef _WIN32
     ComPtr<ID3D12RootSignature> root;
     ComPtr<ID3D12StateObject> pipeline;
-    ComPtr<ID3D12PipelineState> restirInitialPSO, restirTemporalPSO;
+    ComPtr<ID3D12PipelineState> restirInitialPSO, restirTemporalPSO, restirSpatialPSO;
 #endif
     bool ready = false;
     bool logged = false;
@@ -178,8 +180,9 @@ bool PipelinePathTracerPass::Init(IRHIDevice* device) {
 
     ShaderCompiler compiler;
     if (!compiler.Init()) return false;
-    const EngineShader restirShaders[] = {EngineShader::RestirInitialCS, EngineShader::RestirTemporalCS};
-    for (uint32_t i = 0; i < 2; ++i) {
+    const EngineShader restirShaders[] = {
+        EngineShader::RestirInitialCS, EngineShader::RestirTemporalCS, EngineShader::RestirSpatialCS};
+    for (uint32_t i = 0; i < 3; ++i) {
         ShaderCompileDesc desc{};
         desc.source = EngineShaders::GetSource(restirShaders[i]);
         desc.sourceName = EngineShaders::GetName(restirShaders[i]);
@@ -193,8 +196,9 @@ bool PipelinePathTracerPass::Init(IRHIDevice* device) {
         D3D12_COMPUTE_PIPELINE_STATE_DESC pd{};
         pd.pRootSignature = p.root.Get();
         pd.CS = {result.bytecode.data(), result.bytecode.size()};
-        hr = dx->GetDevice()->CreateComputePipelineState(&pd,
-            IID_PPV_ARGS(i == 0 ? &p.restirInitialPSO : &p.restirTemporalPSO));
+        auto** destination = i == 0 ? p.restirInitialPSO.GetAddressOf()
+            : i == 1 ? p.restirTemporalPSO.GetAddressOf() : p.restirSpatialPSO.GetAddressOf();
+        hr = dx->GetDevice()->CreateComputePipelineState(&pd, IID_PPV_ARGS(destination));
         if (FAILED(hr)) return false;
         UZ_LOG(Renderer, Info, "ReSTIR DI: '{}' compiled cs_6_6; PSO ready", desc.sourceName);
     }
@@ -439,7 +443,7 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
                         sizeof(config),"LightBVH_Config")) return false;
             bvhConfigSrv = p.device->GetBufferSRVIndex(p.bvhConfigs[slot])+1u;
             if (!p.bvhLogged) {
-                UZ_LOG(Renderer, Info, "LightBVH: GPU hierarchy uploaded; {} traversal in path-tracer NEE; ReSTIR-conditioned RIS deferred",
+                UZ_LOG(Renderer, Info, "LightBVH: GPU hierarchy uploaded; {} traversal in path-tracer NEE and opt-in ReSTIR RIS",
                     bvhUniform ? "uniform reference" : "stochastic");
                 p.bvhLogged = true;
             }
@@ -515,12 +519,14 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
     const bool layered = cv_Layered->value >= 0.5f && cv_CoatWeight->value > 0.f;
     const uint32_t restirEnabled = cv_RestirDI->value >= 0.5f && !volume.volumeEnabled && !layered;
     const uint32_t restirTemporal = cv_RestirTemporal->value >= 0.5f;
+    const uint32_t restirSpatial = cv_RestirSpatial->value >= 0.5f;
     const uint32_t neeSamples = std::clamp(cv.GetInt("r.PathTracer.NEESamples", 4), 1, 32);
     hash(&maxBounces, sizeof(maxBounces));
     hash(&rrEnabled, sizeof(rrEnabled));
     hash(&rrMinBounce, sizeof(rrMinBounce));
     hash(&restirEnabled, sizeof(restirEnabled));
     hash(&restirTemporal, sizeof(restirTemporal));
+    hash(&restirSpatial, sizeof(restirSpatial));
     hash(&neeSamples, sizeof(neeSamples));
     hash(&volume, sizeof(volume));
     const auto* pf = static_cast<const PerFrameCB*>(perFrame.cpuPtr);
@@ -620,7 +626,7 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
     restirConstants.restirHistory = accumulatedFrames > 0 ? 1u : 0u;
     restirConstants.neeSamples = neeSamples;
     restirConstants.restirTemporal = restirTemporal;
-    restirConstants.restirLightCount = lightCount;
+    restirConstants.restirLightCount = bvhConfigSrv != 0u ? uint32_t(p.lightBVH.lights.size()) : lightCount;
     if (restirEnabled) {
         surface = builder.ImportTrackedBuffer("ReSTIR_Surface", p.restirSurface);
         initial = builder.ImportTrackedBuffer("ReSTIR_Initial", p.restirInitial);
@@ -661,10 +667,14 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
 #endif
             });
         });
-        for (uint32_t temporal = 0; temporal < 2; ++temporal) {
-            builder.AddPass(temporal ? "ReSTIR_Temporal" : "ReSTIR_Initial", [=, this](rg::RgPassBuilder& pb) {
+        for (uint32_t stage = 0; stage < (restirSpatial ? 3u : 2u); ++stage) {
+            builder.AddPass(stage == 2 ? "ReSTIR_Spatial" : stage == 1 ? "ReSTIR_Temporal" : "ReSTIR_Initial",
+                [=, this](rg::RgPassBuilder& pb) {
                 pb.Read(surface, RHIResourceState::UnorderedAccess);
-                if (temporal) {
+                if (stage == 2) {
+                    pb.Read(current, RHIResourceState::UnorderedAccess);
+                    pb.Write(initial, RHIResourceState::UnorderedAccess);
+                } else if (stage == 1) {
                     pb.Read(initial, RHIResourceState::UnorderedAccess);
                     pb.Read(previous, RHIResourceState::UnorderedAccess);
                     pb.Write(current, RHIResourceState::UnorderedAccess);
@@ -675,19 +685,21 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
                     native->SetComputeRootSignature(m_impl->root.Get());
                     native->SetComputeRoot32BitConstants(0, kRootDwords, &restirConstants, 0);
                     native->SetComputeRootConstantBufferView(1, m_impl->device->GetBufferGPUAddress(perFrame.bufferHandle) + perFrame.offsetBytes);
-                    native->SetPipelineState(temporal ? m_impl->restirTemporalPSO.Get() : m_impl->restirInitialPSO.Get());
+                    native->SetPipelineState(stage == 2 ? m_impl->restirSpatialPSO.Get()
+                        : stage == 1 ? m_impl->restirTemporalPSO.Get() : m_impl->restirInitialPSO.Get());
                     native->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
                     native->SetComputeRootSignature(static_cast<DX12Device*>(m_impl->device)->GetRootSignature());
                     if (accumulatedFrames == 0 || accumulatedFrames == 15)
                         UZ_LOG(Renderer, Info, "ReSTIR DI: {} dispatched {}x{}, history={}, 32 candidates, 20-frame M cap",
-                            temporal ? "temporal" : "initial", (width + 7) / 8, (height + 7) / 8, restirConstants.restirHistory);
+                            stage == 2 ? "spatial (4 neighbors, source-target MIS)" : stage == 1 ? "temporal" : "initial",
+                            (width + 7) / 8, (height + 7) / 8, restirConstants.restirHistory);
 #endif
                 });
             });
         }
     }
     builder.AddPass("PipelinePathTracer", [=, this](rg::RgPassBuilder& pb) {
-        if (restirEnabled) pb.Read(current, RHIResourceState::UnorderedAccess);
+        if (restirEnabled) pb.Read(restirSpatial ? initial : current, RHIResourceState::UnorderedAccess);
         pb.Write(radiance, RHIResourceState::UnorderedAccess);
         pb.Write(accumulation, RHIResourceState::UnorderedAccess);
         pb.Write(compensation, RHIResourceState::UnorderedAccess);
@@ -709,6 +721,9 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
             auto& heap = dx->GetDescriptorAllocator(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
             native->SetComputeRootSignature(state.root.Get());
             auto constants = restirConstants;
+            // Spatial output reuses the initial buffer, never the temporal history.
+            if (restirEnabled && restirSpatial)
+                constants.restirCurrentUav = constants.restirInitialUav;
             constants.accumulationUav = state.device->GetTextureUAVIndex(res.GetTexture(accumulation));
             constants.compensationUav = state.device->GetTextureUAVIndex(res.GetTexture(compensation));
             constants.accumulatedFrames = accumulatedFrames;

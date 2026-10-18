@@ -119,7 +119,7 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
         payload.terminated = true;
         return;
     }
-    if (restirEnabled != 0u && payload.bounceCount == 0u && bvhConfigIndex == 0u && !hair) {
+    if (restirEnabled != 0u && payload.bounceCount == 0u && !hair) {
         RWStructuredBuffer<Reservoir> reservoirs = ResourceDescriptorHeap[restirCurrentUav];
         uint2 pixel = DispatchRaysIndex().xy;
         Reservoir r = reservoirs[pixel.y * restirWidth + pixel.x];
@@ -131,6 +131,12 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
             float distance;
             ray.Direction = RestirDirection(P, r.sample, distance);
             ray.TMin = 0.01; ray.TMax = max(distance - 0.05, 0.01);
+            if (any(r.sample.normal != 0.0)) {
+                float3 delta = r.sample.position - ray.Origin;
+                distance = length(delta);
+                ray.Direction = delta / distance;
+                ray.TMax = max(distance - 0.01, 0.01);
+            }
             TraceRay(tScene, RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH
                      | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER, 0xff, 0, 0, 1, ray, shadow);
             if (!shadow.hit) {

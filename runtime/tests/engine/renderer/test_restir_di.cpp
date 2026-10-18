@@ -5,7 +5,7 @@
 
 TEST(RestirDIStage1, StructuredBufferLayouts) {
     EXPECT_EQ(sizeof(uz::RestirLightSample), 44u);
-    EXPECT_EQ(sizeof(uz::RestirReservoir), 80u);
+    EXPECT_EQ(sizeof(uz::RestirReservoir), 112u);
     EXPECT_EQ(offsetof(uz::RestirReservoir, weightSum), 44u);
     EXPECT_EQ(offsetof(uz::RestirReservoir, M), 48u);
     EXPECT_EQ(offsetof(uz::RestirReservoir, W), 52u);

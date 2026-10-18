@@ -93,6 +93,136 @@ contains the fresh PNGs, manifests, and render logs.
 are in `E:/UzmiEngine/`. The capture and PNG-analysis scripts are in
 `E:/UzmiEngine/restir-stage1-evidence/`.
 
+## Stage 2: Opt-in DXR spatial reuse (2026-10-18)
+
+This extends the stage-1 DXR path, not the separate deferred-lighting roadmap.
+The reservoir now records its source position, normal, view direction, albedo,
+roughness, and metallic value (112-byte stride). Four disk-sampled neighbors
+within 30 pixels are combined with the canonical temporal reservoir. Geometry
+gates select domains, never samples or weights. Spatial output reuses the
+initial buffer; only final shading reads it, so it cannot feed temporal history.
+The pass-private root remains 96 bytes / 24 DWORDs.
+
+The contribution invariant is `E[W_i g(Y_i)] = integral_{S_i} g(y) dy`, where
+`S_i = {y : p_i(y) > 0}` and `p_i` is the unshadowed source target. For every
+sample, evaluate all contributing domains and use
+`m_i(y) = M_i p_i(y) / sum_j M_j p_j(y)`. These weights vanish outside `S_i`
+and sum to one on the receiving support because the canonical domain is
+always included. Stream `w_i = p_here(Y_i) W_i m_i(Y_i)`, select with
+probability `w_i / sum_j w_j`, and finalize `W = sum_j w_j / p_here(Y)`.
+Conditional expectation over that last selection is
+`sum_i W_i m_i(Y_i) g_here(Y_i)`; taking expectation gives
+`integral g_here(y) sum_i m_i(y) dy = integral g_here(y) dy`.
+No second division by total M is permitted. Null reservoirs remain contributing
+domains. Temporal reuse uses the same correction; capping M changes only the
+MIS preference, not W. Correlation between source samples does not change the
+linearity argument for fixed domains.
+
+Emitter positions are stored in a common area measure, so the identity shift
+has Jacobian 1; cosine/distance-squared belongs in the receiving contribution,
+not a second Jacobian. The existing NEE/BSDF balance partition is evaluated at
+each receiving surface, preserving the complementary emitter-hit contribution.
+Visibility is evaluated once, after spatial selection, in final DXR shading.
+The base BRDF is unchanged.
+
+- [x] Build and shader dispatch: `cd runtime && zig build
+  -Doptimize=ReleaseFast` exited 0; 152 embedded shaders verified.
+  Both fresh spatial `run.log` files report `restir_spatial_cs.hlsl` compiled
+  `cs_6_6`, PSO ready, and `spatial (4 neighbors, source-target MIS) dispatched`.
+  Neither spatial log contains `compile failed` or device-removal markers.
+- [x] Directional and 108-emissive-light 200-sample means match plain NEE
+  within 0.5% in both RGB-code and inverse-sRGB display-linear measurements.
+  PNGs were decoded and visually inspected. On 2,954 directional interior
+  pixels, NEE/spatial RGB-code means are 63.365832 / 63.415933:
+  **+0.050102 codes, +0.07907%**; display-linear means are
+  0.065501660 / 0.065589760: **+0.13450%**.
+  On 33,757 emissive interior pixels, NEE/spatial RGB-code means are
+  39.821726 / 39.707468: **-0.114258 codes, -0.28692%**;
+  display-linear means are 0.030004265 / 0.030102934: **+0.32885%**.
+  The emissive log confirms 108 lights / 215 BVH nodes. These finite PNG
+  measurements corroborate the invariant above, not an assertion of exact
+  finite-sample equality or a general moving-camera proof.
+- [x] Equal-low-spp spatial error variance is below temporal-only. With
+  1 NEE shadow sample per primary hit, TAA off, identical cameras, 1 bounce
+  for directional and 2 for emissive, RGB-code error variance against each
+  scene's 200-sample NEE reference is:
+
+  | Scene | Samples | Temporal-only | Spatial | Reduction |
+  | --- | ---: | ---: | ---: | ---: |
+  | Directional | 5 | 24.281800 | 10.611854 | 56.2971% |
+  | Directional | 10 | 13.996161 | 6.349300 | 54.6354% |
+  | Directional | 20 | 7.428180 | 3.247283 | 56.2843% |
+  | 108 emissive lights | 5 | 1108.582738 | 467.697679 | 57.8112% |
+  | 108 emissive lights | 10 | 1010.621970 | 278.513533 | 72.4414% |
+  | 108 emissive lights | 20 | 959.672761 | 177.158966 | 81.5396% |
+
+  Temporal-only is the same new binary with `r.ReSTIR.Spatial=0`, including
+  source-support correction in temporal reuse. Spatial also beats the
+  previously recorded stage-1 directional 5-sample variance, 23.238415.
+  Masks use only the NEE reference (mean code 15..180, eroded at +/-4 pixels,
+  excluding a 5-pixel image border), not estimator differences. This is
+  spatial error variance, the same metric used for stage 1, not repeated-seed
+  ensemble variance.
+- [x] All five `RestirDIStage2` gtests pass:
+  `ProvenanceLayoutPreservesRootBudget`,
+  `MISPartitionsUnityAcrossDifferentSupports`,
+  `ExactEnumerationRemovesBiasedCombineDrift`,
+  `RecursiveTemporalReuseRetainsContributionInvariant`, and
+  `CorrelatedSpatialInputsRemainUnbiased`.
+  Exact enumeration gives integral **7** with correction and **6** without it
+  (-14.2857% negative-control support-loss drift). Every supported basis
+  function integrates to 1; five-domain MIS weights sum to 1. No random
+  trials, sleeps, or convergence-dependent assertions are used.
+- [x] Default safety: neither `--restir-di` nor `--path-trace` was supplied.
+  Reflection-reference frame 95 is PNG-byte-identical to
+  `E:/UzmiEngine/f005-after/frames/f_95.png`; **max_code_delta = 0**.
+  `PipelinePathRoot` is still **24 DWORDs**. `pathtracer_shared.hlsli`,
+  including the base BRDF, has no diff.
+- [x] Layout gate: `npm run test:layouts` exited **0**; Tier A **88/88**,
+  Tier B **32/32**, Tier C **12/12**, including the spatial root and
+  112-byte reservoir provenance contract.
+- [x] Regression gate: `GTEST_FILTER='-RuntimeViewportTest.*' zig build test
+  -Doptimize=ReleaseFast` ran **7,882 tests**, **7,862 passed**, 17 skipped,
+  and the same three existing `VfxEditorSlate` failures
+  (`WorkbenchHasTwoColumns`, `TitleBarReflectsEmitterName`,
+  `StatusBarBindingsReflectTelemetry`). Command exit **1** is solely those
+  failures. Delta versus 7,857 passing baseline: **+5 passes, zero new
+  failures**. Test execution took 40.341 seconds. No TDR/device-removal
+  markers occurred, so no retry was needed.
+
+**Stage 2 is complete within the opt-in static-camera DXR/base-material
+boundary above.** The deferred-lighting, moving-camera, and other expanded
+roadmap items remain separate. Builds/tests were bounded at 175 seconds,
+captures at 170 seconds. All engine/test/Zig processes were stopped; no commit
+or archive was made.
+
+Evidence outside the repository:
+`E:/UzmiEngine/restir-stage2-{directional,emissive}-{nee,temporal,spatial}-verify/`
+and `restir-stage2-default-nee-verify/` contain PNGs, manifests, and logs.
+`restir-stage2-build-finish.log`, `restir-stage2-layouts-finish2.log`,
+`restir-stage2-gtests-verify.log`, and `restir-stage2-metrics-verify.json`
+are in `E:/UzmiEngine/`. The bounded runner and PNG analysis scripts are in
+`E:/UzmiEngine/restir-stage2-evidence/`. The inherited capture helper's invalid
+comma-separated screenshot list was corrected to the supported `5-200` range;
+the initial failed invocation produced no evidence used above.
+
+Complete stage-2 changed-file list (including the inherited, finished WIP):
+
+- `.rulebook/tasks/phase1_falcor-restir-di/tasks.md`
+- `runtime/engine/renderer/passes/pathtracing/pipeline_path_tracer_pass.cpp`
+- `runtime/engine/renderer/passes/pathtracing/pipeline_path_tracer_pass.h`
+- `runtime/shaders/runtime/include/restir_di.hlsli`
+- `runtime/shaders/runtime/include/restir_math.hlsli`
+- `runtime/shaders/runtime/pathtracing/pathtracer_closesthit.hlsl`
+- `runtime/shaders/runtime/pathtracing/restir_initial_cs.hlsl`
+- `runtime/shaders/runtime/pathtracing/restir_temporal_cs.hlsl`
+- `runtime/shaders/runtime/pathtracing/restir_spatial_cs.hlsl` (new)
+- `runtime/tests/engine/renderer/test_restir_di.cpp`
+- `runtime/tests/engine/renderer/test_restir_di_spatial.cpp` (new)
+- `scripts/rendering/test_cbuffer_layouts.py`
+
+Unrelated VFX-editor and other shared-worktree changes were not touched.
+
 ## Expanded roadmap: Reservoir Data Structure + Initial Sampling
 
 - [ ] 1.1 Create `include/restir_di.hlsli` — `struct LightSample { uint lightIndex; float3 position; float3 normal; float3 emission; float pdf; }`. `struct Reservoir { LightSample sample; float weightSum; uint M; float W; }`. `void UpdateReservoir(inout Reservoir r, LightSample s, float weight, float u)` — streaming RIS update (Talbot et al. 2005 Eq. 3). @ref Bitterli et al. 2020

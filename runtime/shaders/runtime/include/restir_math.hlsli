@@ -24,6 +24,18 @@ inline float RestirCappedSum(float sum, uint M, uint cap) {
 inline float RestirCombineWeight(float targetHere, float W, uint M) {
     return targetHere * W * float(M);
 }
+/// @ref Lin et al. 2022 "Generalized Resampled Importance Sampling", Eqs. 4, 7, 22.
+// Source targets need not be the (intractable) reservoir PDFs. These weights
+// must partition unity, and vanish outside each source's support.
+inline float RestirMIS(float sourceTarget, uint M, float targetSum) {
+    return targetSum > 0.0f ? float(M) * sourceTarget / targetSum : 0.0f;
+}
+inline float RestirReuseWeight(float targetHere, float W, float mis) {
+    return targetHere * W * mis;
+}
+inline float RestirReuseFinalize(float sum, float target) {
+    return target > 0.0f ? sum / target : 0.0f;
+}
 #undef RIS_INOUT
 #ifdef __cplusplus
 }
