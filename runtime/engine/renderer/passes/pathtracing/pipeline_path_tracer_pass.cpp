@@ -13,6 +13,7 @@
 #include "color_utils.h"
 #include "cvar.h"
 #include "path_tracer_pass.h"
+#include "light_bvh.h"
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -44,6 +45,10 @@ struct PipelinePathTracerPass::Impl {
     std::array<uint32_t, 3> capacity{};
     std::array<RHIBufferHandle, 3> lights{};
     std::array<uint32_t, 3> lightCapacity{};
+    LightBVH lightBVH;
+    std::array<RHIBufferHandle, 3> bvhNodes{}, bvhLights{}, bvhConfigs{};
+    std::array<uint32_t, 3> bvhNodeCapacity{}, bvhLightCapacity{}, bvhConfigCapacity{};
+    bool bvhLogged = false;
 #ifdef _WIN32
     ComPtr<ID3D12RootSignature> root;
     ComPtr<ID3D12StateObject> pipeline;
@@ -68,6 +73,9 @@ struct PipelinePathTracerPass::Impl {
             if (buffer.IsValid()) device->DestroyBuffer(buffer);
         for (auto buffer : lights)
             if (buffer.IsValid()) device->DestroyBuffer(buffer);
+        for (auto buffers : {bvhNodes, bvhLights, bvhConfigs})
+            for (auto buffer : buffers)
+                if (buffer.IsValid()) device->DestroyBuffer(buffer);
         if (sbt.IsValid()) device->DestroyBuffer(sbt);
         if (accumulation.IsValid()) device->DestroyTexture(accumulation);
         if (compensation.IsValid()) device->DestroyTexture(compensation);
@@ -236,7 +244,7 @@ bool PipelinePathTracerPass::Init(IRHIDevice* device) {
     p.ready = true;
     UZ_LOG(Renderer, Info,
            "PipelinePathTracer: RT-PSO CreateStateObject succeeded; 3 lib_6_6 libraries, "
-           "56-byte PathPayload, 4-byte ShadowPayload, depth=2 (iterative+shadow), SBT ready");
+           "84-byte PathPayload, 4-byte ShadowPayload, depth=2 (iterative+shadow), SBT ready");
     return true;
 #else
     return false;
@@ -294,6 +302,7 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
         mat.roughnessSrv = srv(draw.roughnessSrvIndex);
         mat.metallicSrv = srv(draw.metallicSrvIndex);
         mat.materialFlags = draw.materialFlags;
+        mat.lightSourceIndex = uint32_t(&draw - draws.data());
         mat.roughnessMultiplier = draw.roughnessMultiplier;
         mat.metallicMultiplier = draw.metallicMultiplier;
         mat.uvScale[0] = draw.uvScaleX; mat.uvScale[1] = draw.uvScaleY;
@@ -351,6 +360,58 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
         }
     }
     const uint32_t lightCount = static_cast<uint32_t>(directionalLights.size());
+    uint32_t bvhConfigSrv = 0;
+    const bool lightBVHEnabled = CVarRegistry::Get().GetBool("r.LightBVH", false);
+    const uint32_t bvhUniform = CVarRegistry::Get().GetBool("r.LightBVH.Uniform", false);
+    if (lightBVHEnabled) {
+        if (p.lightBVH.Gather(draws, meshes, world)) {
+            UZ_LOG(Renderer, Info, "LightBVH: Morton build {} lights, {} nodes, root power={}",
+                p.lightBVH.lights.size(), p.lightBVH.nodes.size(),
+                p.lightBVH.nodes.empty() ? 0.f : p.lightBVH.nodes[0].totalEmissionPower);
+        }
+        if (!p.lightBVH.lights.empty()) {
+            auto upload = [&](RHIBufferHandle& buffer, uint32_t& capacity, const void* data,
+                              uint32_t count, uint32_t stride, const char* name) {
+                if (capacity < count) {
+                    if (buffer.IsValid()) {
+                        p.device->WaitIdle();
+                        p.device->DestroyBuffer(buffer);
+                    }
+                    RHIBufferDesc desc{};
+                    desc.sizeBytes = uint64_t(count)*stride; desc.stride = stride;
+                    desc.memory = RHIMemoryType::Upload;
+                    desc.usage = RHIBufferUsage::StructuredBuffer; desc.debugName = name;
+                    buffer = p.device->CreateBuffer(desc);
+                    capacity = buffer.IsValid() ? count : 0;
+                }
+                if (!buffer.IsValid()) return false;
+                void* destination = p.device->MapBuffer(buffer);
+                if (!destination) return false;
+                std::memcpy(destination,data,size_t(count)*stride);
+                p.device->UnmapBuffer(buffer);
+                return true;
+            };
+            if (!upload(p.bvhNodes[slot],p.bvhNodeCapacity[slot],p.lightBVH.nodes.data(),
+                        uint32_t(p.lightBVH.nodes.size()),sizeof(LightBVHNode),"LightBVH_Nodes")
+                || !upload(p.bvhLights[slot],p.bvhLightCapacity[slot],p.lightBVH.lights.data(),
+                        uint32_t(p.lightBVH.lights.size()),sizeof(LightBVHLight),"LightBVH_Lights"))
+                return false;
+            LightBVHConfig config{p.device->GetBufferSRVIndex(p.bvhNodes[slot]),
+                p.device->GetBufferSRVIndex(p.bvhLights[slot]),
+                uint32_t(p.lightBVH.lights.size()), bvhUniform};
+            if (!upload(p.bvhConfigs[slot],p.bvhConfigCapacity[slot],&config,1,
+                        sizeof(config),"LightBVH_Config")) return false;
+            bvhConfigSrv = p.device->GetBufferSRVIndex(p.bvhConfigs[slot])+1u;
+            if (!p.bvhLogged) {
+                UZ_LOG(Renderer, Info, "LightBVH: GPU hierarchy uploaded; {} traversal in path-tracer NEE; ReSTIR-conditioned RIS deferred",
+                    bvhUniform ? "uniform reference" : "stochastic");
+                p.bvhLogged = true;
+            }
+        }
+    }
+    // The existing 32-byte light record has an unused DWORD. Point it at a
+    // pass-private structured config instead of growing the 24-DWORD root.
+    if (!directionalLights.empty()) directionalLights[0].padding = bvhConfigSrv;
     const uint32_t lightNeeded = std::max(lightCount, 1u);
     if (p.lightCapacity[slot] < lightNeeded) {
         if (p.lights[slot].IsValid()) {
@@ -371,6 +432,11 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
     if (!mapped) return false;
     if (lightCount)
         std::memcpy(mapped, directionalLights.data(), lightCount * sizeof(PipelinePathDirectionalLight));
+    else {
+        PipelinePathDirectionalLight dummy{};
+        dummy.padding = bvhConfigSrv;
+        std::memcpy(mapped,&dummy,sizeof(dummy));
+    }
     p.device->UnmapBuffer(p.lights[slot]);
     const uint32_t lightSrv = p.device->GetBufferSRVIndex(p.lights[slot]);
 
@@ -387,7 +453,11 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
         hash(&draw.meshId, sizeof(draw.meshId));
     }
     hash(entries.data(), entries.size() * sizeof(PipelinePathMaterial));
-    hash(directionalLights.data(), directionalLights.size() * sizeof(PipelinePathDirectionalLight));
+    // Descriptor indices rotate across frame slots and are not transport inputs.
+    for (const auto& light : directionalLights)
+        hash(&light, offsetof(PipelinePathDirectionalLight,padding));
+    hash(&lightBVHEnabled,sizeof(lightBVHEnabled));
+    hash(&bvhUniform,sizeof(bvhUniform));
     const auto& cv = CVarRegistry::Get();
     const uint32_t maxBounces = std::clamp(cv.GetInt("r.PathTracer.MaxBounces", 4), 1, 16);
     const uint32_t rrEnabled = cv.GetBool("r.PathTracer.RussianRoulette", true);

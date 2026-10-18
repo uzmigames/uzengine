@@ -7,7 +7,7 @@
 
 TEST(PipelinePathTracerStage1, MaterialStructuredBufferLayout) {
     using M = uz::PipelinePathMaterial;
-    EXPECT_EQ(sizeof(M), 96u);
+    EXPECT_EQ(sizeof(M), 100u);
     EXPECT_EQ(offsetof(M, albedoSrv), 12u);
     EXPECT_EQ(offsetof(M, vbSrv), 16u);
     EXPECT_EQ(offsetof(M, normalOffset), 32u);
@@ -34,7 +34,7 @@ TEST(PipelinePathTracerStage1, PipelineBudgetIncludesNestedShadowRay) {
     using P = uz::PipelinePathTracerPass;
     EXPECT_LE(P::kRootDwords, 24u);
     EXPECT_EQ(P::kRootDwords * sizeof(uint32_t), sizeof(uz::PipelinePathRoot));
-    EXPECT_EQ(P::kPayloadBytes, 3u * sizeof(float) * 4u + 2u * sizeof(uint32_t));
+    EXPECT_EQ(P::kPayloadBytes, 3u * sizeof(float) * 6u + sizeof(float) + 2u * sizeof(uint32_t));
     EXPECT_EQ(P::kRecursionDepth, 2u);
 }
 

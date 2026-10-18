@@ -1,5 +1,6 @@
 #include "pathtracer_shared.hlsli"
 #include "../include/restir_di.hlsli"
+#include "../include/light_bvh.hlsli"
 
 [shader("closesthit")]
 void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr) {
@@ -70,6 +71,8 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
         emission *= tex.SampleLevel(linearWrap, uv, 0).rgb;
     }
     float3 direct = 0.0;
+    StructuredBuffer<PathDirectionalLight> sceneLights = ResourceDescriptorHeap[directionalLightsSrv];
+    uint bvhConfigIndex = sceneLights[0].padding;
     if (restirMode != 0u) {
         RestirSurface surface;
         surface.position = P; surface.valid = 1u;
@@ -82,7 +85,7 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
         payload.terminated = true;
         return;
     }
-    if (restirEnabled != 0u && payload.bounceCount == 0u) {
+    if (restirEnabled != 0u && payload.bounceCount == 0u && bvhConfigIndex == 0u) {
         RWStructuredBuffer<Reservoir> reservoirs = ResourceDescriptorHeap[restirCurrentUav];
         uint2 pixel = DispatchRaysIndex().xy;
         Reservoir r = reservoirs[pixel.y * restirWidth + pixel.x];
@@ -103,6 +106,94 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
                 surface.view = V; surface.metallic = metallic;
                 surface.albedo = albedo; surface.padding = 0.0;
                 direct = RestirContribution(surface, r.sample) * r.W;
+            }
+        }
+    } else {
+    if (bvhConfigIndex != 0u) {
+        StructuredBuffer<LightBVHConfig> configurations = ResourceDescriptorHeap[bvhConfigIndex-1u];
+        LightBVHConfig config = configurations[0];
+        StructuredBuffer<LightBVHNode> nodes = ResourceDescriptorHeap[config.nodesSrv];
+        StructuredBuffer<LightBVHLight> emitters = ResourceDescriptorHeap[config.lightsSrv];
+        if (payload.bounceCount > 0u && any(emission > 0.0)) {
+            for (uint id = 0u; id < config.lightCount; ++id) {
+                LightBVHLight light = emitters[id];
+                if (light.type != 0u || light.sourceIndex != mat.lightSourceIndex
+                    || light.padding != PrimitiveIndex()) continue;
+                float3 delta = P-payload.previousPosition;
+                float d2 = dot(delta,delta);
+                float cosine = abs(dot(light.normal,-normalize(delta)));
+                if (cosine > 0.0) {
+                    float selectPdf = EvaluateLightBVHPDF(payload.previousPosition,
+                        payload.previousNormal,id,config,nodes,emitters);
+                    float lightPdf = LightBVHSolidAnglePDF(selectPdf,light.area,d2,cosine);
+                    emission *= LightBVHBalanceWeight(payload.previousBsdfPdf,
+                        float(neeSamples)*lightPdf);
+                }
+                break;
+            }
+        }
+        for (uint sample = 0u; sample < neeSamples; ++sample) {
+            uint dimension = HashPCG((128u + sample*2u + payload.bounceCount*64u)
+                ^ HashPCG(sampleIndex));
+            float2 u = PathSample(dimension);
+            // @ref Halton 1960 "On the efficiency of certain quasi-random sequences of points"
+            // @constants 2,3,5 = distinct prime bases for selection and triangle coordinates.
+            // PathSample(dimension+1).x reuses base 2: only its pixel rotation
+            // may be reused, not its sample-index sequence.
+            float triangleV = frac(Halton(sampleIndex+1u,5u)
+                + PathSample(dimension+1u).x - Halton(sampleIndex+1u,2u));
+            LightBVHSample chosen = SampleLightBVH(P,N,
+                float3(u,triangleV),config,nodes,emitters);
+            LightBVHLight light = emitters[chosen.lightId];
+            // @ref Pharr et al. 2023 "Physically Based Rendering", section 13.4
+            // Area NEE replaces a BSDF ray to an emitter, so it must obey
+            // that ray's depth limit. Analytic NEE has no additional surface.
+            if (light.type == 0u && !PathCanContinue(payload.bounceCount+1u,maxBounces)) continue;
+            float3 L;
+            float distance = 1e7;
+            float3 value = light.emission / chosen.selectionPdf;
+            if (light.type == 1u) {
+                L = normalize(light.v0);
+                float3 T,B; PathBasis(L,T,B);
+                float2 disk = PathSample(dimension+1u);
+                float radius = sqrt(disk.x)*tan(light.angularRadius);
+                float phi = 2.0*PI*disk.y;
+                L = normalize(L+radius*(cos(phi)*T+sin(phi)*B));
+            } else {
+                float3 delta = chosen.samplePos-P;
+                float d2 = dot(delta,delta);
+                distance = sqrt(d2);
+                L = delta/max(distance,1e-10);
+                value = light.emission * abs(dot(light.normal,-L))
+                      / max(d2*chosen.pdf,1e-20);
+                if (light.emissiveSrv != 0xffffffffu) {
+                    Texture2D<float4> tex = ResourceDescriptorHeap[NonUniformResourceIndex(light.emissiveSrv)];
+                    value *= tex.SampleLevel(linearWrap,chosen.uv,0).rgb;
+                }
+                float cosine = abs(dot(light.normal,-L));
+                if (cosine <= 0.0) continue;
+                float lightPdf = LightBVHSolidAnglePDF(chosen.selectionPdf,light.area,d2,cosine);
+                value *= LightBVHBalanceWeight(float(neeSamples)*lightPdf,
+                    PathBRDFPDF(N,V,L,roughness,metallic));
+            }
+            float3 brdf = EvaluatePBR(N,V,L,albedo,roughness,metallic);
+            if (any(brdf > 0.0) && distance > .1) {
+                ShadowPayload shadow; shadow.hit = true;
+                RayDesc ray;
+                ray.Origin = P+N*.05; ray.Direction = L;
+                ray.TMin = .01; ray.TMax = max(distance-.1,.01);
+                if (light.type == 0u) {
+                    // The endpoint must be measured from the offset origin.
+                    // Reusing L from P hits the emitter before TMax at grazing
+                    // angles, falsely treating the sampled light as a blocker.
+                    float3 shadowDelta = chosen.samplePos-ray.Origin;
+                    float shadowDistance = length(shadowDelta);
+                    ray.Direction = shadowDelta/shadowDistance;
+                    ray.TMax = max(shadowDistance-.01,.01);
+                }
+                TraceRay(tScene,RAY_FLAG_FORCE_OPAQUE|RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH
+                    |RAY_FLAG_SKIP_CLOSEST_HIT_SHADER,0xff,0,0,1,ray,shadow);
+                if (!shadow.hit) direct += brdf*value/float(neeSamples);
             }
         }
     } else {
@@ -134,13 +225,21 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
         }
     }
     }
+    }
     payload.radiance += payload.throughput * (emission + direct);
     payload.bounceCount++;
     payload.terminated = true;
     if (!PathCanContinue(payload.bounceCount, maxBounces)) return;
     float3 weight;
-    uint dimension = 32u + payload.bounceCount * 64u;
+    // @ref O'Neill 2014 "PCG: A Family of Simple Fast Space-Efficient Statistically Good Algorithms for Random Number Generation"
+    // Per-sample dimension scrambling makes the BSDF lobe choice independent
+    // of its angular variates. Fixed rotations of the same Halton base leave
+    // a persistent (non-converging) correlation even with BVH disabled.
+    uint dimension = HashPCG((32u + payload.bounceCount * 64u) ^ HashPCG(sampleIndex));
     float3 nextDirection = SamplePathBRDF(N, V, albedo, roughness, metallic, dimension, weight);
+    payload.previousPosition = P;
+    payload.previousNormal = N;
+    payload.previousBsdfPdf = PathBRDFPDF(N,V,nextDirection,roughness,metallic);
     payload.throughput *= weight;
     if (!all(isfinite(payload.throughput)) || max(payload.throughput.x,
         max(payload.throughput.y, payload.throughput.z)) <= 0.0) return;

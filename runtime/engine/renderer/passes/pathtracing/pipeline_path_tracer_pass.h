@@ -25,8 +25,9 @@ struct PipelinePathMaterial {
     float roughnessMultiplier = 1, metallicMultiplier = 1;
     float uvScale[2] = {1, 1}, uvOffsetValue[2] = {};
     float emission[3] = {}; uint32_t emissiveSrv = UINT32_MAX;
+    uint32_t lightSourceIndex = UINT32_MAX;
 };
-static_assert(sizeof(PipelinePathMaterial) == 96);
+static_assert(sizeof(PipelinePathMaterial) == 100);
 static_assert(offsetof(PipelinePathMaterial, metallicSrv) == 48);
 static_assert(offsetof(PipelinePathMaterial, emission) == 80);
 
@@ -81,7 +82,7 @@ static_assert(sizeof(PipelinePathDirectionalLight) == 32);
 class PipelinePathTracerPass {
 public:
     static constexpr uint32_t kRootDwords = sizeof(PipelinePathRoot) / sizeof(uint32_t);
-    static constexpr uint32_t kPayloadBytes = 56;
+    static constexpr uint32_t kPayloadBytes = 84;
     static constexpr uint32_t kRecursionDepth = 2; // iterative surface loop + nested shadow
     PipelinePathTracerPass();
     ~PipelinePathTracerPass();

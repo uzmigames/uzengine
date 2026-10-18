@@ -369,6 +369,12 @@ TIER_B = [
 ]
 
 TIER_C = [
+    layout_entry('include/light_bvh.hlsli', 'LightBVHNode',
+                 PASSES + 'pathtracing/light_bvh.h', 'LightBVHNode'),
+    layout_entry('include/light_bvh.hlsli', 'LightBVHLight',
+                 PASSES + 'pathtracing/light_bvh.h', 'LightBVHLight'),
+    layout_entry('include/light_bvh.hlsli', 'LightBVHConfig',
+                 PASSES + 'pathtracing/light_bvh.h', 'LightBVHConfig'),
     layout_entry('include/restir_di.hlsli', 'LightSample',
                  PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'RestirLightSample'),
     {**layout_entry('include/restir_di.hlsli', 'Reservoir',

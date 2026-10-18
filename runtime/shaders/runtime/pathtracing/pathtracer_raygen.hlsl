@@ -23,6 +23,9 @@ void main() {
     payload.throughput = 1.0;
     payload.bounceCount = 0u;
     payload.terminated = false;
+    payload.previousPosition = 0.0;
+    payload.previousNormal = 0.0;
+    payload.previousBsdfPdf = 0.0;
     if (hasGeometry != 0u) {
         // Iteration keeps the DXR stack at primary + nested shadow regardless of N.
         // @ref Kajiya 1986 "The Rendering Equation"

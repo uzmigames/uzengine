@@ -13,6 +13,9 @@ struct [raypayload] PathPayload {
     bool terminated : read(caller) : write(caller, closesthit, miss);
     float3 nextOrigin : read(caller) : write(closesthit);
     float3 nextDirection : read(caller) : write(closesthit);
+    float3 previousPosition : read(caller, closesthit) : write(caller, closesthit);
+    float3 previousNormal : read(caller, closesthit) : write(caller, closesthit);
+    float previousBsdfPdf : read(caller, closesthit) : write(caller, closesthit);
 };
 
 struct [raypayload] ShadowPayload {
@@ -82,6 +85,7 @@ struct MaterialData {
     uint metallicSrv; uint materialFlags; float roughnessMultiplier; float metallicMultiplier;
     float2 uvScale; float2 uvOffsetValue;
     float3 emission; uint emissiveSrv;
+    uint lightSourceIndex;
 };
 
 struct PathDirectionalLight {
@@ -152,6 +156,18 @@ float3 SampleGGX(float3 N, float3 V, float roughness, float metallic,
 // @constants 0.5 = equal diffuse/specular mixture for dielectrics, 1 for metals.
 // Evaluate BOTH densities at the sampled direction, not only the selected lobe.
 #ifndef RESTIR_COMPUTE
+float PathBRDFPDF(float3 N, float3 V, float3 L, float roughness, float metallic) {
+    float NoL = saturate(dot(N,L));
+    if (NoL <= 0.0) return 0.0;
+    float3 H = normalize(V+L);
+    float alpha = RoughnessToAlpha(roughness);
+    float NoV = max(dot(N,V),1e-6);
+    float specularPdf = D_GGX(alpha,saturate(dot(N,H)))
+                      * G1_SmithGGX(alpha*alpha,NoV)/(4.0*NoV);
+    float specularProbability = lerp(0.5,1.0,metallic);
+    return specularProbability*specularPdf+(1.0-specularProbability)*NoL/PI;
+}
+
 float3 SamplePathBRDF(float3 N, float3 V, float3 albedo, float roughness,
                       float metallic, uint dimension, out float3 weight) {
     float specularProbability = lerp(0.5, 1.0, metallic);
