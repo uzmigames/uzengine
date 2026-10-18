@@ -1,5 +1,6 @@
 #include "pathtracer_shared.hlsli"
 #include "layered_bsdf.hlsli"
+#include "hair_bcsdf.hlsli"
 #include "../include/restir_di.hlsli"
 #include "../include/light_bvh.hlsli"
 
@@ -10,11 +11,14 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
     StructuredBuffer<MaterialData> materials = ResourceDescriptorHeap[materialTableSrv];
     uint materialId = InstanceIndex();
     MaterialData mat = materials[materialId];
+    bool hair = PathIsHair(mat);
     ByteAddressBuffer vertices = ResourceDescriptorHeap[NonUniformResourceIndex(mat.vbSrv)];
     float3 weights = float3(1.0 - attr.barycentrics.x - attr.barycentrics.y, attr.barycentrics);
     float3 position = 0.0;
     float3 normal = 0.0;
     float2 uv = 0.0;
+    float3 strandPositions[3];
+    float2 strandUVs[3];
     [unroll]
     for (uint corner = 0u; corner < 3u; ++corner) {
         uint index = PrimitiveIndex() * 3u + corner;
@@ -25,6 +29,10 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
             if (mat.indexFormat == 2u) index = (index >> ((address & 2u) * 8u)) & 65535u;
         }
         uint vertex = index * mat.vertexStride;
+        if (hair) {
+            strandPositions[corner] = asfloat(vertices.Load3(vertex));
+            strandUVs[corner] = asfloat(vertices.Load2(vertex + mat.uvOffset));
+        }
         position += weights[corner] * asfloat(vertices.Load3(vertex));
         uv += weights[corner] * asfloat(vertices.Load2(vertex + mat.uvOffset));
         float3 n;
@@ -41,6 +49,26 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
     float3 N = normalize(mul(normal, (float3x3)WorldToObject3x4()));
     float3 V = -WorldRayDirection();
     if (dot(N, V) < 0.0) N = -N;
+    float3 strandTangent = 0.0;
+    float fiberOffset = 0.0;
+    if (hair) {
+        // Hair-tagged triangle ribbons use U across the fiber and V root-to-tip.
+        // Recover dP/dV from geometry instead of assuming a world-space axis.
+        float2 duv1 = strandUVs[1]-strandUVs[0];
+        float2 duv2 = strandUVs[2]-strandUVs[0];
+        float determinant = duv1.x*duv2.y-duv1.y*duv2.x;
+        float3 dPdv = ((strandPositions[2]-strandPositions[0])*duv1.x
+                    -(strandPositions[1]-strandPositions[0])*duv2.x)/determinant;
+        strandTangent = normalize(mul((float3x3)ObjectToWorld3x4(),dPdv));
+        N = normalize(N-dot(N,strandTangent)*strandTangent);
+        float3 dPdu = ((strandPositions[1]-strandPositions[0])*duv2.y
+                    -(strandPositions[2]-strandPositions[0])*duv1.y)/determinant;
+        float3 across = mul((float3x3)ObjectToWorld3x4(),dPdu);
+        // Signed near-field offset follows the outgoing tangent frame, including
+        // a view from the back of a two-sided ribbon.
+        fiberOffset = (2.0*uv.x-1.0)
+                    * (dot(across,cross(strandTangent,N)) < 0.0 ? -1.0 : 1.0);
+    }
     uv = uv * mat.uvScale + mat.uvOffsetValue;
     float3 albedo = mat.tint;
     if (mat.albedoSrv != 0xffffffffu) {
@@ -81,7 +109,7 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
     uint bvhConfigIndex = sceneLights[0].padding;
     if (restirMode != 0u) {
         RestirSurface surface;
-        surface.position = P; surface.valid = 1u;
+        surface.position = P; surface.valid = hair ? 0u : 1u;
         surface.normal = N; surface.roughness = roughness;
         surface.view = V; surface.metallic = metallic;
         surface.albedo = albedo; surface.padding = 0.0;
@@ -91,7 +119,7 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
         payload.terminated = true;
         return;
     }
-    if (restirEnabled != 0u && payload.bounceCount == 0u && bvhConfigIndex == 0u) {
+    if (restirEnabled != 0u && payload.bounceCount == 0u && bvhConfigIndex == 0u && !hair) {
         RWStructuredBuffer<Reservoir> reservoirs = ResourceDescriptorHeap[restirCurrentUav];
         uint2 pixel = DispatchRaysIndex().xy;
         Reservoir r = reservoirs[pixel.y * restirWidth + pixel.x];
@@ -185,13 +213,13 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
                 if (cosine <= 0.0) continue;
                 float lightPdf = LightBVHSolidAnglePDF(chosen.selectionPdf,light.area,d2,cosine);
                 value *= LightBVHBalanceWeight(float(neeSamples)*lightPdf,
-                    PathLayeredPDF(N,V,L,roughness,metallic,mat));
+                    PathSurfacePDF(N,V,L,roughness,metallic,mat,albedo,strandTangent,fiberOffset));
             }
-            float3 brdf = EvaluatePathLayered(N,V,L,albedo,roughness,metallic,mat);
+            float3 brdf = EvaluatePathSurface(N,V,L,albedo,roughness,metallic,mat,strandTangent,fiberOffset);
             if (any(brdf > 0.0) && distance > .1) {
                 ShadowPayload shadow; shadow.hit = true;
                 RayDesc ray;
-                ray.Origin = P+N*.05; ray.Direction = L;
+                ray.Origin = P+N*(hair && dot(N,L) < 0.0 ? -.05 : .05); ray.Direction = L;
                 ray.TMin = .01; ray.TMax = max(distance-.1,.01);
                 if (light.type == 0u) {
                     // The endpoint must be measured from the offset origin.
@@ -207,7 +235,7 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
                 if (!shadow.hit) {
                     value *= PathVolumeShadow(P,L,distance);
                     direct += brdf*value/float(neeSamples);
-                    if (nrdEnabled != 0u)
+                    if (nrdEnabled != 0u && !hair)
                         diffuseDirect += NrdDiffuseBRDF(N,V,L,albedo,metallic)
                             * PathLayerTransmission(mat,N,V,L)*value/float(neeSamples);
                 }
@@ -230,16 +258,17 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
             ShadowPayload shadow;
             shadow.hit = true;
             RayDesc ray;
-            ray.Origin = P + N * 0.05;
+            ray.Origin = P + N * (hair && dot(N,shadowDirection) < 0.0 ? -0.05 : 0.05);
             ray.Direction = shadowDirection;
             ray.TMin = 0.01;
             ray.TMax = 1e7;
             TraceRay(tScene, RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH
                      | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER, 0xff, 0, 0, 1, ray, shadow);
             if (!shadow.hit) {
-                direct += EvaluatePathLayered(N, V, shadowDirection, albedo, roughness, metallic, mat)
+                direct += EvaluatePathSurface(N, V, shadowDirection, albedo, roughness, metallic, mat,
+                                              strandTangent, fiberOffset)
                         * light.radiance * PathVolumeShadow(P,shadowDirection,1e7) / float(neeSamples);
-                if (nrdEnabled != 0u)
+                if (nrdEnabled != 0u && !hair)
                     diffuseDirect += NrdDiffuseBRDF(N,V,shadowDirection,albedo,metallic)
                                    * PathLayerTransmission(mat,N,V,shadowDirection)
                                    * light.radiance / float(neeSamples);
@@ -261,17 +290,20 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
     // of its angular variates. Fixed rotations of the same Halton base leave
     // a persistent (non-converging) correlation even with BVH disabled.
     uint dimension = HashPCG((32u + payload.bounceCount * 64u) ^ HashPCG(sampleIndex));
-    float3 nextDirection = SamplePathLayered(N, V, albedo, roughness, metallic, dimension, mat, weight);
+    float3 nextDirection = SamplePathSurface(N, V, albedo, roughness, metallic, dimension, mat,
+                                            strandTangent, fiberOffset, weight);
     if (nrdEnabled != 0u && payload.bounceCount == 1u) {
         RWTexture2D<float4> fraction = ResourceDescriptorHeap[nrdFractionUav];
-        float3 full = EvaluatePathLayered(N,V,nextDirection,albedo,roughness,metallic,mat);
+        float3 full = EvaluatePathSurface(N,V,nextDirection,albedo,roughness,metallic,mat,
+                                         strandTangent,fiberOffset);
         fraction[DispatchRaysIndex().xy] = float4(
-            NrdDiffuseBRDF(N,V,nextDirection,albedo,metallic)
+            (hair ? float3(0,0,0) : NrdDiffuseBRDF(N,V,nextDirection,albedo,metallic))
                 * PathLayerTransmission(mat,N,V,nextDirection) / max(full,1e-20), 1.0);
     }
     payload.previousPosition = P;
     payload.previousNormal = N;
-    payload.previousBsdfPdf = PathLayeredPDF(N,V,nextDirection,roughness,metallic,mat);
+    payload.previousBsdfPdf = PathSurfacePDF(N,V,nextDirection,roughness,metallic,mat,
+                                           albedo,strandTangent,fiberOffset);
     payload.throughput *= weight;
     if (!all(isfinite(payload.throughput)) || max(payload.throughput.x,
         max(payload.throughput.y, payload.throughput.z)) <= 0.0) return;
@@ -283,7 +315,7 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
         if (PathSample(dimension + 2u).x >= survival) return;
         payload.throughput /= survival;
     }
-    payload.nextOrigin = P + N * 0.05;
+    payload.nextOrigin = P + N * (hair && dot(N,nextDirection) < 0.0 ? -0.05 : 0.05);
     payload.nextDirection = nextDirection;
     payload.terminated = false;
 }
