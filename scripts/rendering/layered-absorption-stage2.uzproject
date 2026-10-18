@@ -1,0 +1,19 @@
+{
+  "name": "DXR clearcoat absorption stage 2",
+  "version": "1.0",
+  "content_root": "../..",
+  "default_scene": "scripts/rendering/layered-absorption-stage2.uzscene",
+  "window": {"width": 640, "height": 360},
+  "cvars": {
+    "r.AutoExposure": 0, "r.Exposure": 1, "r.Bloom": 0,
+    "r.TonemapOperator": 0, "r.TAA": 0, "r.Fog": 0, "r.VolumetricFog": 0,
+    "r.TechPanel.Show": 0, "r.Toolbar.Show": 0,
+    "r.GTAO": 0, "r.SSGI": 0, "r.RadianceCache": 0,
+    "r.GI.FinalGather": 0, "r.GI.Reflections": 0,
+    "r.PathTracer.MaxBounces": 1, "r.PathTracer.NEESamples": 1,
+    "r.PathTracer.Coat.Weight": 1, "r.PathTracer.Coat.Roughness": 0.12,
+    "r.PathTracer.Coat.IOR": 1.5, "r.PathTracer.Coat.Thickness": 1,
+    "r.PathTracer.Coat.SigmaAR": 0, "r.PathTracer.Coat.SigmaAG": 0,
+    "r.PathTracer.Coat.SigmaAB": 0
+  }
+}

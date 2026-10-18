@@ -48,6 +48,14 @@ static auto* cv_CoatRoughness = UZ_CVAR_FLOAT("r.PathTracer.Coat.Roughness", 0.1
     "Global coat perceptual GGX roughness (engine alpha floor applies)", 0.f, 1.f);
 static auto* cv_CoatIOR = UZ_CVAR_FLOAT("r.PathTracer.Coat.IOR", 1.5f,
     "Global coat index of refraction", 1.f, 3.f);
+static auto* cv_CoatThickness = UZ_CVAR_FLOAT("r.PathTracer.Coat.Thickness", 1.f,
+    "Normal-incidence round-trip coat optical distance in cm (Snell approximation)", 0.f, 1e6f);
+static auto* cv_CoatSigmaAR = UZ_CVAR_FLOAT("r.PathTracer.Coat.SigmaAR", 0.f,
+    "Coat red absorption coefficient per cm; zero preserves stage 1", 0.f, 1e6f);
+static auto* cv_CoatSigmaAG = UZ_CVAR_FLOAT("r.PathTracer.Coat.SigmaAG", 0.f,
+    "Coat green absorption coefficient per cm", 0.f, 1e6f);
+static auto* cv_CoatSigmaAB = UZ_CVAR_FLOAT("r.PathTracer.Coat.SigmaAB", 0.f,
+    "Coat blue absorption coefficient per cm", 0.f, 1e6f);
 static auto* cv_Volume = UZ_CVAR_BOOL("r.PathTracer.Volume", false,
     "Opt-in spherical participating medium in DXR transport");
 static auto* cv_VolumeVariation = UZ_CVAR_FLOAT("r.PathTracer.Volume.Variation", 0.f,
@@ -346,6 +354,10 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
         mat.coatWeight = cv_Layered->value >= 0.5f ? cv_CoatWeight->value : 0.f;
         mat.coatRoughness = cv_CoatRoughness->value;
         mat.coatIOR = cv_CoatIOR->value;
+        mat.coatThickness = cv_CoatThickness->value;
+        mat.coatSigmaA[0] = cv_CoatSigmaAR->value;
+        mat.coatSigmaA[1] = cv_CoatSigmaAG->value;
+        mat.coatSigmaA[2] = cv_CoatSigmaAB->value;
         mat.roughnessMultiplier = draw.roughnessMultiplier;
         mat.metallicMultiplier = draw.metallicMultiplier;
         mat.uvScale[0] = draw.uvScaleX; mat.uvScale[1] = draw.uvScaleY;
@@ -765,8 +777,9 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
                 UZ_LOG(Renderer, Info, "PathVolume: sphere sigmaA={} sigmaS={} g={} radius={} variation={}; delta free flight + ratio shadow tracking (exact homogeneous limit), HG + NEE; surface ReSTIR/NRD bypassed",
                     volume.volumeSigmaA,volume.volumeSigmaS,volume.volumeG,volume.volumeRadius,volume.volumeVariation);
             if (accumulatedFrames == 0 && layered)
-                UZ_LOG(Renderer, Info, "PathLayered: coat weight={} roughness={} IOR={}; two interface transmissions; base-only ReSTIR bypassed",
-                    cv_CoatWeight->value,cv_CoatRoughness->value,cv_CoatIOR->value);
+                UZ_LOG(Renderer, Info, "PathLayered: coat weight={} roughness={} IOR={} thickness={} sigmaA=({},{},{}); Snell optical-distance approximation; base-only ReSTIR bypassed",
+                    cv_CoatWeight->value,cv_CoatRoughness->value,cv_CoatIOR->value,
+                    cv_CoatThickness->value,cv_CoatSigmaAR->value,cv_CoatSigmaAG->value,cv_CoatSigmaAB->value);
             native->SetComputeRootConstantBufferView(1,
                 state.device->GetBufferGPUAddress(perFrame.bufferHandle) + perFrame.offsetBytes);
             native->SetComputeRootDescriptorTable(2, heap.GpuHandle(tlasSrv));

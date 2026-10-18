@@ -28,9 +28,13 @@ struct PipelinePathMaterial {
     float emission[3] = {}; uint32_t emissiveSrv = UINT32_MAX;
     uint32_t lightSourceIndex = UINT32_MAX;
     float coatWeight = 0, coatRoughness = 0.1f, coatIOR = 1.5f;
+    float coatThickness = 1;
+    float coatSigmaA[3] = {};
 };
-static_assert(sizeof(PipelinePathMaterial) == 112);
+static_assert(sizeof(PipelinePathMaterial) == 128);
 static_assert(offsetof(PipelinePathMaterial, coatWeight) == 100);
+static_assert(offsetof(PipelinePathMaterial, coatThickness) == 112);
+static_assert(offsetof(PipelinePathMaterial, coatSigmaA) == 116);
 static_assert(offsetof(PipelinePathMaterial, metallicSrv) == 48);
 static_assert(offsetof(PipelinePathMaterial, emission) == 80);
 
