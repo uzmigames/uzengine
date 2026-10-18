@@ -94,3 +94,80 @@ SAH, and isolated traversal-timing work is not included in this completion.
 - Deferred: SAH construction/optimization, tighter normal cones,
   ReSTIR-BVH candidate generation/integration, GPU selection-histogram
   readback, and isolated traversal timing. No commit or archive was made.
+
+## Stage-2 verification, 2026-10-18: COMPLETE
+
+- [x] S2.1 Replace balanced Morton median splits with importance SAOH splits:
+  exact prefix/suffix sweeps of centroid and normal axes minimize
+  `power * AABB surface area * orientation cost` (Conty Estevez & Kulla 2018,
+  Eq. 1; Falcor `LightBVHBuilder::evalSAOH`). Child capacity constrains depth
+  to the existing 32-level GPU traversal budget. `r.LightBVH.Morton=1` retains
+  the exact stage-1 build/full-sphere estimate as a diagnostic reference.
+- [x] S2.2 Compute enclosing spherical normal cones by cap union, including
+  containment and antipodal axes. The existing axis/cosine fields encode
+  theta_o; theta_e is fixed at pi/2 for diffuse triangles, as in Falcor.
+  Traversal subtracts cone spread and AABB subtended angle from the normal
+  angle. The transport contract is two-sided, so it bounds both +/- normal
+  cones using absolute dot; it must not cull the emitting back side.
+  Positive support floors and unchanged branch-product PDFs preserve MIS.
+  Directional/mixed nodes retain the conservative power-only sentinel.
+  Node/light/config strides remain 64/112/16 bytes; no CB/layout changes.
+- [x] S2.3 Still-unbiased rendered-mean gate on the 108-triangle scene:
+  `E:/UzmiEngine/lightbvh-stage2-proof/{sah,morton,off}/` holds final PNGs,
+  manifests, and `run.log`; all three captures exit 0 with identical
+  2060-frame budgets, two bounces, four NEE samples, and roulette off.
+  At frame 210 (about 200 accumulated samples), whole-image RGB PNG means
+  are SAOH `0.041575486791938995` vs plain `0.04140063316993464`,
+  delta `+0.4223452846%`. At frame 2050, means are
+  `0.04158352056100218` vs `0.041588660811546836`,
+  delta `-0.0123597405%`. Both methods' frame-210 and frame-2050 PNGs
+  were read: illumination is restored across the floor/back wall, without
+  systematic darkening. The larger plain-sampling noise converges away.
+- [x] S2.4 Lower rendered variance than stage 1 at equal low sample count:
+  frame-10 residual variance against each method's own frame-2050 image is
+  SAOH `0.0001622469389302276` vs Morton `0.00017806692923728998`,
+  delta `-8.8842944475%`. The Morton diagnostic reproduces the committed
+  stage-1 mean and variance exactly. Both low-sample PNGs were read.
+  `E:/UzmiEngine/lightbvh-stage2-proof/prove.py analyze` reproduces metrics.
+  No additional GPU scene was needed. The pure CPU directional-cluster
+  test additionally measures variance `0.014058907816` vs
+  `0.0312519755837`, delta `-55.014339%`, with normalized PDFs and exact
+  inverse-probability expectation.
+- [x] S2.5 Build and shader engagement: `cd runtime &&
+  zig build -Doptimize=ReleaseFast` exits 0, 152 shader integrity checks.
+  `sah/run.log:518` records
+  `LightBVH: SAOH/cone build 108 lights, 215 nodes, root power=663552`;
+  line 520 records the uploaded stochastic GPU hierarchy, followed by
+  `DispatchRays 640x360`, 11 TLAS instances. No stage-2 capture log contains
+  `compile failed` or device-removal diagnostics. The unchanged pass logger
+  also emits its old "Morton build" label; the new builder log identifies
+  the actual selected algorithm.
+- [x] S2.6 Opt-in/default safety: flag-free reflection-reference frame 95 is
+  byte-identical to `E:/UzmiEngine/f005-after/frames/f_95.png`,
+  `max_code_delta=0`, engine exit 0. Evidence:
+  `E:/UzmiEngine/lightbvh-stage2-proof/default/`.
+  The base BRDF (D7) and VFX editor WIP are untouched.
+- [x] S2.7 Tests: `npm run test:layouts` exits 0. All 14 LightBVH tests
+  pass (nine existing plus five stage-2 tests):
+  `SAOHCostIsMonotoneInPowerAreaAndSpread`,
+  `ConeUnionBoundsBothChildrenIncludingAntipodesAndContainment`,
+  `SAOHSeparatesKnownSpatialClusters`,
+  `TwoSidedConeDownweightsEdgeOnNotBackFacingAndKeepsSupport`, and
+  `DirectionalClusterEstimatorIsUnbiasedAndBeatsMortonVariance`.
+  The existing independent PDF oracle now includes the new orientation
+  estimate; its normalization, histogram, MIS, and estimator checks pass.
+  `GTEST_FILTER='-RuntimeViewportTest.*' zig build test -Doptimize=ReleaseFast`
+  runs 7887 tests: 7867 pass (+5 versus supplied 7862 baseline), 17 skip,
+  and the same three pre-existing failures:
+  `VfxEditorSlate.WorkbenchHasTwoColumns`,
+  `VfxEditorSlate.TitleBarReflectsEmitterName`,
+  `VfxEditorSlate.StatusBarBindingsReflectTelemetry`.
+  Exit 1 solely for those failures; test execution 40.563 seconds.
+  No TDR retry was needed. clangd is unavailable; the actual build and
+  runtime shader compiler supply compiler validation.
+- [x] S2.8 Engine/build/test commands are bounded to 180 seconds; final
+  process enumeration finds no engine/test/zig processes. No commit or
+  archive was made.
+
+Deferred after stage 2: ReSTIR-BVH candidate generation/integration,
+GPU selection-histogram readback, and isolated traversal timing.

@@ -32,7 +32,15 @@ double NodeImportance(const uz::LightBVHNode& node, Vec3 position, Vec3 normal) 
     const Vec3 delta = (node.aabbMin + node.aabbMax) * .5f - position;
     const double distanceSquared = std::max(double(delta.LengthSq()), 1.0);
     const double cosine = std::max(double(normal.Dot(delta)) / std::sqrt(distanceSquared), .01);
-    return node.totalEmissionPower * cosine / distanceSquared;
+    double orientation=1;
+    if (node.coneCosHalfAngle > 0) {
+        double distance=std::sqrt(std::max(double(delta.LengthSq()),1e-20));
+        double radius=.5*(node.aabbMax-node.aabbMin).Length();
+        double theta=std::acos(std::clamp(std::abs(double(node.coneAxis.Dot(delta)))/distance,0.0,1.0));
+        double subtended=std::asin(std::min(radius/distance,1.0));
+        orientation=std::max(std::cos(std::max(0.0,theta-std::acos(double(node.coneCosHalfAngle))-subtended)),.01);
+    }
+    return node.totalEmissionPower * cosine * orientation / distanceSquared;
 }
 
 double PathPDF(const LightBVH& bvh, uint32_t light, Vec3 position, Vec3 normal) {

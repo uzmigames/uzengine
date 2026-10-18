@@ -25,6 +25,8 @@ std::shared_ptr<const LightBVHGeometry> CaptureLightBVHGeometry(const Mesh& mesh
 struct LightBVHNode {
     Vec3 aabbMin; float totalEmissionPower = 0;
     Vec3 aabbMax; uint32_t leftChild = 0;
+    // Normal cone theta_o; diffuse emission theta_e is fixed at pi/2.
+    // Triangle transport is two-sided: traversal bounds both +/- coneAxis.
     Vec3 coneAxis; float coneCosHalfAngle = -1;
     uint32_t rightChild = 0, lightOffset = 0, lightCount = 0, parent = UINT32_MAX;
 };
@@ -48,7 +50,9 @@ class LightBVH {
 public:
     std::vector<LightBVHNode> nodes;
     std::vector<LightBVHLight> lights;
-    void Build(std::vector<LightBVHLight> input);
+    void Build(std::vector<LightBVHLight> input, bool mortonReference = false);
+    static LightBVHNode Union(const LightBVHNode& a, const LightBVHNode& b);
+    static float SplitCost(const LightBVHNode& node);
     bool Gather(std::span<const DrawCommand> draws, std::span<const GPUMesh> meshes,
                 World* world);
     float Importance(uint32_t node, const Vec3& position, const Vec3& normal) const;

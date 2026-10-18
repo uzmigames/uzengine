@@ -33,8 +33,19 @@ float LightBVHImportance(LightBVHNode node, float3 P, float3 N) {
     if (node.coneCosHalfAngle == -2.0) return node.totalEmissionPower;
     float3 delta = .5 * (node.aabbMin + node.aabbMax) - P;
     float d2 = max(dot(delta,delta), 1.0);
+    /// @ref Conty Estevez & Kulla 2018 "Importance Sampling of Many Lights with Adaptive Tree Splitting"
+    // @constants theta_e=pi/2 (diffuse); .01 support floor; 1e-20 distance guard.
+    // Two-sided triangles need the union of the +/- normal cones (abs dot).
+    float orientation = 1.0;
+    if (node.coneCosHalfAngle > 0.0) {
+        float distance = sqrt(max(dot(delta,delta),1e-20));
+        float radius = .5*length(node.aabbMax-node.aabbMin);
+        float subtended = asin(min(radius/distance,1.0));
+        float theta = acos(saturate(abs(dot(node.coneAxis,delta))/distance));
+        orientation = max(cos(max(0.0,theta-acos(node.coneCosHalfAngle)-subtended)),.01);
+    }
     // Keep support when a triangle spans the receiver's hemisphere boundary.
-    return node.totalEmissionPower * max(dot(N,delta) * rsqrt(d2), .01) / d2;
+    return node.totalEmissionPower * max(dot(N,delta) * rsqrt(d2), .01) * orientation / d2;
 }
 float LightBVHLeftProbability(LightBVHNode node, float3 P, float3 N,
                               StructuredBuffer<LightBVHNode> bvh) {
@@ -43,7 +54,7 @@ float LightBVHLeftProbability(LightBVHNode node, float3 P, float3 N,
     return clamp(a/(a+b), 1e-6, 1.0-1e-6);
 }
 // Stack-free single-path descent: rescale the variate after every branch.
-// Balanced Morton construction bounds depth by 32 for uint32 light counts.
+// SAOH splits constrain child capacity to the remaining 32-level budget.
 LightBVHSample SampleLightBVH(float3 P, float3 N, float3 u,
     LightBVHConfig config, StructuredBuffer<LightBVHNode> bvh,
     StructuredBuffer<LightBVHLight> lights) {
