@@ -12,6 +12,7 @@ namespace rg { class RgBuilder; }
 // extraction consumes b2; the denoiser has its own compute root signature.
 struct NrdSignalRoot {
     uint32_t enabled, diffuseUav, fractionUav, albedoUav;
+    uint32_t specularUav, modulationUav, virtualPositionUav, guideUav;
 };
 
 struct NrdRoot {
@@ -21,17 +22,25 @@ struct NrdRoot {
     uint32_t historyValid, inputSrv, stepWidth, remodulate;
 };
 static_assert(sizeof(NrdRoot) == 64);
-static_assert(sizeof(NrdSignalRoot) == 16);
+static_assert(sizeof(NrdSignalRoot) == 32);
+
+struct NrdStage2Root {
+    uint32_t specularSrv, modulationSrv, virtualPositionSrv, channel;
+    uint32_t filteredDiffuseSrv, flags, pathGuideSrv, debugSignal;
+    Mat4 previousViewProj;
+};
+static_assert(sizeof(NrdStage2Root) == 96);
 
 struct NrdInputs {
     rg::RgResourceId raw, diffuse, albedo, depth, normal, velocity;
+    rg::RgResourceId specular, modulation, virtualPosition, pathGuide;
     CBAllocation perFrame;
     uint32_t width, height, frameIndex;
     bool reset;
 };
 
-// Stage 1: diffuse demodulation, validated temporal reuse, and edge-aware
-// a-trous reconstruction. Specular/emission remain the unmodified residual.
+// Separate diffuse/specular temporal and edge-aware a-trous reconstruction.
+// Primary emission and background remain the unmodified residual.
 // This is the native NRD-style baseline, not the NVIDIA SDK dispatch adapter.
 class NrdDenoiser {
 public:

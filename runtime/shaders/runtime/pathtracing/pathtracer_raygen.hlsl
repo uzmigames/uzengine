@@ -98,6 +98,14 @@ void main() {
         diffuse[pixel] = 0.0;
         fraction[pixel] = 0.0;
         albedo[pixel] = 1.0;
+        RWTexture2D<float4> specular = ResourceDescriptorHeap[nrdSpecularUav];
+        RWTexture2D<float4> modulation = ResourceDescriptorHeap[nrdModulationUav];
+        RWTexture2D<float4> virtualPosition = ResourceDescriptorHeap[nrdVirtualPositionUav];
+        specular[pixel] = 0.0;
+        modulation[pixel] = float4(1, 1, 1, 1);
+        virtualPosition[pixel] = 0.0;
+        RWTexture2D<float4> guide = ResourceDescriptorHeap[nrdGuideUav];
+        guide[pixel] = 0.0;
     }
     if (restirMode != 0u) {
         RWStructuredBuffer<RestirSurface> surfaces = ResourceDescriptorHeap[restirSurfaceUav];

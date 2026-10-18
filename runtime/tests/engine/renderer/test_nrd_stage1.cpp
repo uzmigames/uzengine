@@ -39,5 +39,5 @@ TEST(NrdStage1, AtrousNormalWeightStopsOrthogonalAndOppositeSurfaces) {
 
 TEST(NrdStage1, PrivateRootsDoNotGrowSharedGraphicsConstants) {
     EXPECT_EQ(sizeof(uz::NrdRoot), 16u * sizeof(uint32_t));
-    EXPECT_EQ(sizeof(uz::NrdSignalRoot), 4u * sizeof(uint32_t));
+    EXPECT_EQ(sizeof(uz::NrdSignalRoot), 8u * sizeof(uint32_t));
 }

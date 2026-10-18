@@ -237,6 +237,11 @@ for shader in ('gbuffer/gbuffer_ps.hlsl', 'gbuffer/mesh_vs.hlsl', 'gbuffer/mesh_
     TIER_A.append(layout_entry(shader, 'PerObjectCB', PARAMS + 'constant_buffers.h',
                                before='gbuffer_ps.perobject.before.hlsl' if shader == 'gbuffer/gbuffer_ps.hlsl' else None))
 TIER_A += [
+    layout_entry('pathtracing/nrd_common.hlsli', 'NrdCamera', PARAMS + 'constant_buffers.h',
+                 'PerFrameCB', {'currentViewProj': 'viewProj', 'cameraPosition': 'cameraPos',
+                  'cameraTime': 'timeParams', 'cameraLightDir': 'lightDir',
+                  'cameraLightColor': 'lightColor', 'cameraAmbient': 'ambientColor',
+                  'inverseViewProj': 'invViewProj'}),
     layout_entry('vfx/particle_spawn_cs.hlsl', 'VFXSpawnConstants', PASSES + 'vfx/particle_simulation_pass.h',
                  'ParticleSpawnConstants', {'_pad3': '_padUser'}),
     layout_entry('vfx/particle_update_cs.hlsl', 'VFXUpdateConstants', PASSES + 'vfx/particle_simulation_pass.h',
@@ -324,10 +329,14 @@ TIER_A += [
 TIER_B = [
     layout_entry('pathtracing/nrd_common.hlsli', 'NrdRoot',
                  PASSES + 'pathtracing/nrd_denoiser.h'),
+    layout_entry('pathtracing/nrd_common.hlsli', 'NrdStage2Root',
+                 PASSES + 'pathtracing/nrd_denoiser.h'),
     layout_entry('pathtracing/nrd_signal.hlsli', 'NrdSignalRoot',
                  PASSES + 'pathtracing/nrd_denoiser.h', aliases={
                      'nrdEnabled': 'enabled', 'nrdDiffuseUav': 'diffuseUav',
-                     'nrdFractionUav': 'fractionUav', 'nrdAlbedoUav': 'albedoUav'}),
+                     'nrdFractionUav': 'fractionUav', 'nrdAlbedoUav': 'albedoUav',
+                     'nrdSpecularUav': 'specularUav', 'nrdModulationUav': 'modulationUav',
+                     'nrdVirtualPositionUav': 'virtualPositionUav', 'nrdGuideUav': 'guideUav'}),
     # Private DXR/ReSTIR root: 96 bytes / 24 DWORDs, including history UAVs,
     # sample count and bounce/RR controls. Shared graphics and PerFrameCB do not grow.
     layout_entry('pathtracing/pathtracer_shared.hlsli', 'PathTracerRoot',

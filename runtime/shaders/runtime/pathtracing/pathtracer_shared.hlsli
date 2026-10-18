@@ -11,12 +11,12 @@
 struct [raypayload] PathPayload {
     float3 radiance : read(caller, closesthit, miss) : write(caller, closesthit, miss);
     float3 throughput : read(caller, closesthit, miss) : write(caller, closesthit);
-    uint bounceCount : read(caller, closesthit) : write(caller, closesthit);
+    uint bounceCount : read(caller, closesthit, miss) : write(caller, closesthit);
     bool terminated : read(caller) : write(caller, closesthit, miss);
     float3 nextOrigin : read(caller) : write(closesthit);
     float3 nextDirection : read(caller) : write(closesthit);
-    float3 previousPosition : read(caller, closesthit) : write(caller, closesthit);
-    float3 previousNormal : read(caller, closesthit) : write(caller, closesthit);
+    float3 previousPosition : read(caller, closesthit, miss) : write(caller, closesthit);
+    float3 previousNormal : read(caller, closesthit, miss) : write(caller, closesthit);
     float previousBsdfPdf : read(caller, closesthit) : write(caller, closesthit);
 };
 

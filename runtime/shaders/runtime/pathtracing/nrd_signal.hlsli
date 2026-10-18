@@ -1,7 +1,10 @@
 #ifndef UZ_NRD_SIGNAL
 #define UZ_NRD_SIGNAL
+#include "nrd_math.hlsli"
+#include "../common/encoding.hlsli"
 cbuffer NrdSignalRoot : register(b2) {
     uint nrdEnabled, nrdDiffuseUav, nrdFractionUav, nrdAlbedoUav;
+    uint nrdSpecularUav, nrdModulationUav, nrdVirtualPositionUav, nrdGuideUav;
 };
 #ifndef RESTIR_COMPUTE
 // Primary diffuse attribution uses f_diffuse/f_total at the SAME sampled
@@ -22,6 +25,17 @@ void NrdAddDiffuse(float3 contribution) {
 float3 NrdFraction() {
     RWTexture2D<float4> fraction = ResourceDescriptorHeap[nrdFractionUav];
     return fraction[DispatchRaysIndex().xy].rgb;
+}
+void NrdAddSpecular(float3 contribution) {
+    RWTexture2D<float4> specular = ResourceDescriptorHeap[nrdSpecularUav];
+    uint2 pixel = DispatchRaysIndex().xy;
+    specular[pixel] = float4(specular[pixel].rgb + contribution, 1.0);
+}
+float3 NrdVirtualPosition(float3 position, float3 direction, float3 normal, float distance) {
+    float d = dot(direction, normal);
+    return float3(NrdVirtualComponent(position.x, direction.x, normal.x, d, distance),
+        NrdVirtualComponent(position.y, direction.y, normal.y, d, distance),
+        NrdVirtualComponent(position.z, direction.z, normal.z, d, distance));
 }
 #endif
 #endif

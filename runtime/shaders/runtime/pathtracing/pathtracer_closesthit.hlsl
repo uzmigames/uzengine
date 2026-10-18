@@ -104,6 +104,20 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
     if (nrdEnabled != 0u && payload.bounceCount == 0u && restirMode == 0u) {
         RWTexture2D<float4> outputAlbedo = ResourceDescriptorHeap[nrdAlbedoUav];
         outputAlbedo[DispatchRaysIndex().xy] = float4(albedo, 1.0);
+        RWTexture2D<float4> modulation = ResourceDescriptorHeap[nrdModulationUav];
+        RWTexture2D<float4> virtualPosition = ResourceDescriptorHeap[nrdVirtualPositionUav];
+        modulation[DispatchRaysIndex().xy] = float4(ComputeF0(albedo, metallic), roughness);
+        virtualPosition[DispatchRaysIndex().xy] = float4(P, 1.0);
+        RWTexture2D<float4> guide = ResourceDescriptorHeap[nrdGuideUav];
+        float4 clip = mul(float4(P, 1), viewProj);
+        guide[DispatchRaysIndex().xy] = float4(OctEncode(N), clip.z / clip.w, roughness);
+    }
+    if (nrdEnabled != 0u && payload.bounceCount == 1u) {
+        // Unfold the reflected segment through the primary tangent plane.
+        // This virtual point follows reflection parallax, not surface motion.
+        RWTexture2D<float4> virtualPosition = ResourceDescriptorHeap[nrdVirtualPositionUav];
+        virtualPosition[DispatchRaysIndex().xy] = float4(NrdVirtualPosition(payload.previousPosition,
+            WorldRayDirection(), payload.previousNormal, RayTCurrent()), 1.0);
     }
     StructuredBuffer<PathDirectionalLight> sceneLights = ResourceDescriptorHeap[directionalLightsSrv];
     uint bvhConfigIndex = sceneLights[0].padding;
@@ -284,9 +298,12 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
     }
     }
     payload.radiance += payload.throughput * (emission + direct);
-    if (nrdEnabled != 0u)
+    if (nrdEnabled != 0u) {
         NrdAddDiffuse(payload.bounceCount == 0u ? diffuseDirect
             : NrdFraction() * payload.throughput * (emission + direct));
+        NrdAddSpecular(payload.bounceCount == 0u ? direct - diffuseDirect
+            : (1.0 - NrdFraction()) * payload.throughput * (emission + direct));
+    }
     payload.bounceCount++;
     payload.terminated = true;
     if (!PathCanContinue(payload.bounceCount, maxBounces)) return;

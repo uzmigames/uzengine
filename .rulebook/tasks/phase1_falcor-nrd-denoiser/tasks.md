@@ -71,6 +71,89 @@ the unfiltered specular residual can still produce isolated bright outliers
 The two original SDK sessions below are not marked complete by this native
 baseline. No setup script was run, commit created, or task archived.
 
+## Stage 2: Separate Specular and Temporal Stability (2026-10-18)
+
+- [x] S2.1 Extract primary-specular radiance independently of diffuse and primary
+  emission, using the same sampled-direction attribution as stage 1. Demodulate
+  by primary F0 and remodulate after filtering. Keep primary emission/background
+  in the untouched residual. No base-BRDF or ray-payload size change.
+- [x] S2.2 Use roughness-dependent spatial radius (1 to 4) and temporal history
+  (2 to 32). Unfold the reflected segment through the primary tangent plane and
+  reproject its virtual point using previous/current camera projections; blend
+  toward surface motion with roughness squared. Static virtual points produce
+  zero camera-motion displacement, including stochastic glossy ray directions.
+- [x] S2.3 Clamp accepted diffuse/specular history to the current edge-aware
+  5x5 mean +/- 3 sigma box; above one pixel of motion, use +/- 0.5 sigma and
+  shorten history to 2 diffuse / 2..4 specular samples. Rejected history uses only the current frame and a
+  dense, guide-weighted spatial reconstruction before the a-trous passes.
+  Stage-2 guides come from the actual DXR primary hit, including opaque
+  backfaces that raster guides do not describe.
+- [x] S2.4 Prove specular error reduction without large bias, post-motion clamp
+  improvement, and reduced error on genuinely newly uncovered pixels with
+  `python scripts/rendering/test_nrd_stage2.py --out E:/UzmiEngine/nrd-stage2`.
+  RTX 5080 evidence lives in that output directory; all image assertions exit 0.
+  Metrics are RGB PNG display-code metrics, not linear-HDR MSE:
+  - Metallic=1, roughness=0.45 floor ROI `(160,250,320,75)`, frame 32 against
+    the converged 1024-frame capture `reference/frames/f_1023.png`:
+    raw 1-spp MSE 100.5043333 / MAE 6.5380833;
+    diffuse-only stage 1 MSE 104.2655833 / MAE 6.5939167;
+    stage 2 MSE 0.4682917 / MAE 0.4359583. MSE falls 99.5341% against raw and
+    99.5509% against stage 1. Mean 4.49525 versus converged 4.636875 is -3.05432%;
+    specular peak 14 and p99 13 both exactly match converged 14 / 13.
+    `raw/`, `stage1/`, `stage2/` retain their frame-4/frame-32 PNGs; `stage2/`
+    also retains frames 8, 12, 16, 20, 24, 28.
+  - Scripted 100-unit camera translation at frame 24, trailing-boundary ROI
+    `(400,80,40,80)` against `motion-reference/frames/f_1023.png`:
+    no-clamp MSE 239.784375; clamp/anti-lag MSE 10.2340625 (95.7320% lower);
+    stage 1 MSE 14.9496875. Files are `motion-no-clamp/frames/f_24.png`,
+    `motion-stage2/frames/f_24.png`, `motion-stage1/frames/f_24.png`.
+  - Newly revealed strip left of the moved occluder `(300,160,20,30)`:
+    stage 1 MSE 16.0233333; stage 2 MSE 0.9216667 (94.2480% lower).
+    Disabling the dense disocclusion fix gives MSE 0.9433333; the fix itself
+    improves this by 2.2968%. This very dark strip has reference mean 0.93
+    and stage-2 mean 0.53833: fresh-frame low-signal bias is not hidden.
+  - `default/frames/f_95.png` versus `E:/UzmiEngine/f005-after/frames/f_95.png`:
+    max code delta 0. `metrics.json` retains every ROI, error, mean and peak.
+  - `stage2/run.log` records both `cs_6_6` PSOs and diffuse/specular
+    reprojection plus three a-trous dispatches, with valid temporal history.
+    All capture logs pass the no-`compile failed` gate. Every engine run has
+    a 180-second bound. Signal diagnostics also verified emission/background
+    remain in the unfiltered residual.
+- [x] S2.5 Verify ReleaseFast build, shader dispatch/compilation, unchanged
+  default frame 95, layouts and full regression suite. New pure tests:
+  `NrdStage2.RoughnessWidensSpecularRadiusMonotonically`,
+  `NrdStage2.RoughnessSlowsTemporalAccumulationMonotonically`,
+  `NrdStage2.HistoryClampUsesMeanPlusMinusKSigma`,
+  `NrdStage2.FullyRoughNormalGateIsFiniteAtOrthogonalEdges`,
+  `NrdStage2.VirtualRayUnfoldsReflectedHitThroughTangentPlane`,
+  `NrdStage2.PrivateComputeRootFitsD3D12Budget`.
+  All six pass. `cd runtime && zig build -Doptimize=ReleaseFast` exits 0.
+  `npm run test:layouts` exits 0, including the 96-byte `NrdStage2Root`,
+  32-byte `NrdSignalRoot`, and seven offsets in the read-only `NrdCamera`
+  prefix. `GTEST_FILTER='-RuntimeViewportTest.*' zig build test
+  -Doptimize=ReleaseFast` runs 7893 tests: 7873 pass (+6 versus the 7867
+  baseline), 17 skip, and only the same three pre-existing VfxEditorSlate
+  failures named in stage 1 (exit 1; no new regression).
+  `E:/UzmiEngine/nrd-stage2/gtests.xml` retains the final result.
+  No TDR occurred. clangd is not installed, so LSP diagnostics were unavailable;
+  C++ compilation, DXC/layout reflection, real GPU captures and gtests ran.
+
+Stage 2 remains opt-in through `r.NRD`. `r.NRD.Specular=0` reproduces the
+diffuse-only reconstruction; `r.NRD.HistoryClamp=0` and
+`r.NRD.DisocclusionFix=0` are diagnostic controls. Camera motion is validated
+per pixel; transport/settings changes, explicit reset, frame gaps, resize and
+disabled accumulation still invalidate history. The private `NrdSignalRoot`
+is 32 bytes/8 DWORDs; the compute roots are 16 + 24 DWORDs plus a read-only
+CBV for the existing camera-buffer prefix. `PipelinePathRoot`, shared graphics
+roots and `PerFrameCB` do not grow.
+`r.NRD.DebugSignal` optionally displays raw radiance (1), the unfiltered
+emission/background residual (2), raw specular (3) or raw diffuse (4);
+the default 0 displays the recombined result.
+
+Deferred after native stage 2: full NVIDIA SDK provisioning, resource translation
+and SDK dispatch integration, plus firefly-specific processing. The SDK sessions
+below are not completed by the native implementation. No commit or archive.
+
 ## Session 1: NRD SDK Integration + NrdDenoiser Class (deferred)
 
 - [ ] 1.1 Add NRD SDK to `scripts/setup.ps1` — `Clone-Repo` or `Download-Header` for NRD headers (`NRD.h`, `NRDDescs.h`, `NRDSettings.h`), static library, and HLSL include files. Store under `runtime/thirdparty/nrd/`. Do NOT run the script — user runs manually.
