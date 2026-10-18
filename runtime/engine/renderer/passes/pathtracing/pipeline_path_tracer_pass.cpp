@@ -49,7 +49,9 @@ static auto* cv_CoatRoughness = UZ_CVAR_FLOAT("r.PathTracer.Coat.Roughness", 0.1
 static auto* cv_CoatIOR = UZ_CVAR_FLOAT("r.PathTracer.Coat.IOR", 1.5f,
     "Global coat index of refraction", 1.f, 3.f);
 static auto* cv_Volume = UZ_CVAR_BOOL("r.PathTracer.Volume", false,
-    "Opt-in homogeneous spherical participating medium in DXR transport");
+    "Opt-in spherical participating medium in DXR transport");
+static auto* cv_VolumeVariation = UZ_CVAR_FLOAT("r.PathTracer.Volume.Variation", 0.f,
+    "Linear density variation along normalized (X+Y); zero is exactly homogeneous", 0.f, 1.f);
 static auto* cv_VolumeA = UZ_CVAR_FLOAT("r.PathTracer.Volume.SigmaA", 0.001f,
     "Homogeneous absorption per centimeter", 0.f, 10.f);
 static auto* cv_VolumeS = UZ_CVAR_FLOAT("r.PathTracer.Volume.SigmaS", 0.003f,
@@ -510,6 +512,7 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
     volume.volumeCenterX = cv_VolumeX->value;
     volume.volumeCenterY = cv_VolumeY->value;
     volume.volumeCenterZ = cv_VolumeZ->value;
+    volume.volumeVariation = cv_VolumeVariation->value;
     volume.volumeEnabled = cv_Volume->value >= 0.5f
         && volume.volumeRadius > 0.f && volume.volumeSigmaA + volume.volumeSigmaS > 0.f;
     // Surface-only reservoir validation and diffuse denoiser guides do not
@@ -759,8 +762,8 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
             native->SetComputeRoot32BitConstants(4, sizeof(signal) / 4, &signal, 0);
             native->SetComputeRoot32BitConstants(5, sizeof(volume) / 4, &volume, 0);
             if (accumulatedFrames == 0 && volume.volumeEnabled)
-                UZ_LOG(Renderer, Info, "PathVolume: homogeneous sphere sigmaA={} sigmaS={} g={} radius={}; exponential free flight, HG + NEE; surface ReSTIR/NRD bypassed",
-                    volume.volumeSigmaA,volume.volumeSigmaS,volume.volumeG,volume.volumeRadius);
+                UZ_LOG(Renderer, Info, "PathVolume: sphere sigmaA={} sigmaS={} g={} radius={} variation={}; delta free flight + ratio shadow tracking (exact homogeneous limit), HG + NEE; surface ReSTIR/NRD bypassed",
+                    volume.volumeSigmaA,volume.volumeSigmaS,volume.volumeG,volume.volumeRadius,volume.volumeVariation);
             if (accumulatedFrames == 0 && layered)
                 UZ_LOG(Renderer, Info, "PathLayered: coat weight={} roughness={} IOR={}; two interface transmissions; base-only ReSTIR bypassed",
                     cv_CoatWeight->value,cv_CoatRoughness->value,cv_CoatIOR->value);

@@ -57,8 +57,9 @@ struct PathVolumeRoot {
     float volumeSigmaA = 0, volumeSigmaS = 0, volumeG = 0, volumeRadius = 0;
     float volumeCenterX = 0, volumeCenterY = 0, volumeCenterZ = 0;
     uint32_t volumeEnabled = 0;
+    float volumeVariation = 0, volumePadding0 = 0, volumePadding1 = 0, volumePadding2 = 0;
 };
-static_assert(sizeof(PathVolumeRoot) == 32);
+static_assert(sizeof(PathVolumeRoot) == 48);
 
 struct RestirLightSample {
     uint32_t lightIndex;

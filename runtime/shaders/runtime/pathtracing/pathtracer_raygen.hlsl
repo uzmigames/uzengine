@@ -57,7 +57,8 @@ float3 PathVolumeDirect(float3 P, float3 incoming, uint bounce) {
             }
             if (!shadow.hit)
                 direct += value*PathVolumePhase(dot(incoming,L),volumeG)
-                    *PathVolumeShadow(P,L,distance)/float(neeSamples);
+                    *PathVolumeShadow(P,L,distance,PathVolumeSeed(sampleIndex,DispatchRaysIndex().xy,
+                        4096u+sample+bounce*128u))/float(neeSamples);
         }
     } else {
         for (uint id = 0u; id < directionalLightCount; ++id) {
@@ -81,7 +82,8 @@ float3 PathVolumeDirect(float3 P, float3 incoming, uint bounce) {
                 }
                 if (!shadow.hit)
                     direct += light.radiance*PathVolumePhase(dot(incoming,direction),volumeG)
-                        *PathVolumeShadow(P,direction,1e7)/float(neeSamples);
+                        *PathVolumeShadow(P,direction,1e7,PathVolumeSeed(sampleIndex,DispatchRaysIndex().xy,
+                            8192u+sample+id*32u+bounce*1024u))/float(neeSamples);
             }
         }
     }
@@ -147,11 +149,16 @@ void main() {
                 float lengthInMedium = interval.y-interval.x;
                 float sigmaT = volumeSigmaA+volumeSigmaS;
                 if (volumeSigmaS == 0.0) {
-                    // Rao-Blackwellized absorption-only case, no RNG needed.
-                    payload.throughput *= PathVolumeTransmittance(sigmaT,lengthInMedium);
+                    // Absorption-only: ratio tracking, or exact Beer-Lambert
+                    // without RNG in the constant-density limit.
+                    payload.throughput *= PathVolumeShadow(ray.Origin,ray.Direction,surfaceDistance,
+                        PathVolumeSeed(sampleIndex,pixel,12288u+bounce));
                 } else if (lengthInMedium > 0.0) {
                     uint dimension = HashPCG((1024u+bounce*128u)^HashPCG(sampleIndex));
-                    float distance = PathVolumeDistance(sigmaT,PathSample(dimension).x);
+                    float distance = PathVolumeDelta(sigmaT,volumeVariation,
+                        PathVolumeCoordinate(ray.Origin+ray.Direction*interval.x),
+                        PathVolumeSlope(ray.Direction),lengthInMedium,PathSample(dimension).x,
+                        PathVolumeSeed(sampleIndex,pixel,16384u+bounce));
                     if (distance < lengthInMedium) {
                         float3 P = ray.Origin+ray.Direction*(interval.x+distance);
                         // Tr*sigmaS / (sigmaT*Tr) = scattering albedo.
