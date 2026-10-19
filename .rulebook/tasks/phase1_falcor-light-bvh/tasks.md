@@ -177,7 +177,9 @@ GPU selection-histogram readback, and isolated traversal timing.
 - [ ] DXR ReSTIR-BVH acceptance. The joint-source-PDF, converged-mean,
   BVH-off stage-2 equivalence, default safety, and regression gates pass.
   What remains is the required lower variance than **BVH-only** at equal
-  low sample count. A win against uniform ReSTIR alone is insufficient.
+  low sample count, including on the new occlusion scene: +4.91421% /
+  +30.52693% / +76.91175% at 5 / 10 / 20 samples. A win against uniform
+  ReSTIR alone is insufficient.
   The expanded shader-define/histogram and demo items above are not claimed
   complete.
 
@@ -224,3 +226,53 @@ evidence are in the stage-3 section of
   Final exact-name process enumeration found no `uzengine.exe`,
   `test_runtime.exe`, or `zig.exe` processes. No commit or archive was made;
   unrelated WIP and scratch files are untouched.
+
+### Occlusion follow-up, 2026-10-19: gate honestly remains open
+
+`scripts/rendering/restir-occlusion.uzproject` / `.uzscene` places the 108
+emissive triangles above four opaque overhead cell dividers, with the camera
+below them. Exact segment/AABB intersection blocks **3,008 / 3,969 (75.78735%)**
+emitter-center rays from a 441-point floor grid. This is a geometric diagnostic,
+not a GPU visibility histogram.
+
+All five serialized captures in `E:/UzmiEngine/restir-occlusion-proof-v2/`
+exit **0**, without `compile failed` or device-removal markers.
+`measure_restir_occlusion.py analyze OUTPUT` reproduces `metrics.json`.
+Detailed capture commands, methodology, complete five-file change list,
+and caveats are in the matching occlusion subsection of
+`../phase1_falcor-restir-di/tasks.md`.
+
+- Frame-2050 combined/plain-NEE interior RGB-code means:
+  **71.513817 / 71.575993**, **-0.08687%**; inverse-sRGB display-linear:
+  **0.086325471 / 0.086513478**, **-0.21732%**. Whole-image display-linear:
+  **0.001195433 / 0.001194264**, **+0.09781%**. Linear checks pass the
+  existing 0.5% mean tolerance; whole-image RGB-code delta **+0.65915%**
+  does not. PNGs were decoded and visually read; no exact finite-sample
+  or raw-HDR equality is asserted.
+- Equal-low-sample spatial RGB-code error variance on 2,316 reference-only
+  interior pixels (one NEE shadow sample/frame, same two-bounce camera):
+
+  | Samples | ReSTIR x BVH | BVH only | Uniform ReSTIR | vs BVH | vs ReSTIR |
+  | --- | ---: | ---: | ---: | ---: | ---: |
+  | 5 | 1878.585387 | 1790.591979 | 4220.197851 | +4.91421% | -55.48585% |
+  | 10 | 1144.353998 | 876.718699 | 5042.886549 | +30.52693% | -77.30756% |
+  | 20 | 788.021408 | 445.431933 | 3396.884011 | +76.91175% | -76.80164% |
+
+  Whole-image variance also loses to BVH-only. Uniform ReSTIR retains emitter
+  enumeration with `r.LightBVH.Uniform=1`, without importance traversal;
+  plain-NEE reference disables ReSTIR and uses 32 uniform NEE samples/frame.
+- Cause: all reservoir targets and reuse are **unshadowed**; final DXR
+  visibility happens only after selection and is not fed back into history.
+  This implementation cannot reuse known-visible samples. Static coherence
+  does not repair that; camera/object motion invalidates history. No M/radius
+  tuning, new visibility mechanism, or moving-camera claim was added.
+  **Stage-3 remains [ ]**, not closed by the uniform-ReSTIR improvement.
+- Build **exit 0**, 152 shaders; layouts **exit 0**, 89/89 + 33/33 + 12/12.
+  Non-viewport gtests: **7,890 pass**, 17 skip, only the three pre-existing
+  `VfxEditorSlate` failures, **exit 1**; 43.817 seconds, no TDR retry needed.
+  Logs: `E:/UzmiEngine/restir-occlusion-{build,layouts,gtests}.log`.
+- Flag-free default frame 95 is PNG-byte-identical to
+  `E:/UzmiEngine/f005-after/frames/f_95.png`, **max_code_delta 0**.
+  Captures bounded to 170 seconds, build/tests to 175 seconds. Final cleanup
+  verifies no engine/test/zig processes. The base BRDF, integration files,
+  unrelated WIP and scratch files are untouched. No commit or archive.

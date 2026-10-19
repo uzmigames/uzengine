@@ -227,8 +227,9 @@ Unrelated VFX-editor and other shared-worktree changes were not touched.
 
 - [ ] DXR ReSTIR-BVH acceptance: source-PDF correctness, opt-out equivalence,
   and the converged-mean gate pass, but the required variance win over
-  **both** constituent methods does not. What remains is reducing the combined
-  estimator's equal-low-sample variance below BVH-only on the 108-light scene.
+  **both** constituent methods does not. The occlusion follow-up below also
+  fails the BVH-only comparison: +4.91421% / +30.52693% / +76.91175% error
+  variance at 5 / 10 / 20 samples despite 75.79% geometric occlusion.
   Do not mark this integration complete from the uniform-ReSTIR win alone.
 
 The committed shader already called `SampleLightBVH`, stored its joint area
@@ -314,6 +315,108 @@ Scoped changed files:
 The BRDF, GI/multi-bounce ReSTIR roadmap, unrelated WIP, and scratch files
 are untouched. Final exact-name process enumeration found no `uzengine.exe`,
 `test_runtime.exe`, or `zig.exe` processes. No commit or archive was made.
+
+### Occlusion follow-up, 2026-10-19: gate honestly remains open
+
+New scene: `scripts/rendering/restir-occlusion.uzproject` / `.uzscene`.
+It retains nine emissive cubes (108 triangles / 215 BVH nodes), a floor and
+back wall, and adds four opaque, dark cell dividers: x = +/-75 and
+y = +/-75, extending from z = 150 to 320. The fixed camera is below them.
+Exact segment/AABB intersection from 441 floor-grid points to the nine
+emitter centers finds 3,008 / 3,969 segments blocked (**75.78735%**).
+This diagnostic measures emitter-center geometry, not a GPU shadow-ray histogram.
+
+Reproduce with `python scripts/rendering/measure_restir_occlusion.py capture
+OUTPUT MODE`, where MODE is `combined`, `bvh`, `uniform`, `reference`, or
+`default`; use a new OUTPUT directory and run serially. Then run
+`python scripts/rendering/measure_restir_occlusion.py analyze OUTPUT`.
+Evidence: `E:/UzmiEngine/restir-occlusion-proof-v2/`, including `metrics.json`,
+all five manifests, `run.log` files, and PNGs. Each capture exited **0** and
+was bounded to 170 seconds. No capture log contains `compile failed` or
+device-removal markers. The initial attempt in `restir-occlusion-proof/`
+exited 1 before rendering because the CLI does not accept comma-separated
+screenshot frames; the retained script uses the supported range syntax.
+
+The three strategies have identical 640x360 cameras, two bounces, roulette
+and TAA off, and one NEE shadow sample per primary hit per frame.
+`uniform` means plain ReSTIR with `r.LightBVH.Uniform=1`: emitter enumeration
+is retained, but there is no hierarchy importance traversal. Literal
+`r.LightBVH=0` removes emissive candidate enumeration and is not an equivalent
+emissive-ReSTIR comparator. The ordinary plain-NEE reference disables ReSTIR,
+uses uniform emitter selection without importance traversal, and averages
+32 NEE samples per frame through frame 2050. It is not the BVH-only reference.
+
+PNG reference, combined high-sample, and both low-sample comparison images
+were decoded and visually read. The reference-only interior mask is the
+previous study's mean-code 15..180 mask, eroded at +/-4 pixels with a
+five-pixel border excluded; it contains **2,316** pixels. At frame 2050:
+
+- Combined/reference interior RGB-code means: **71.513817 / 71.575993**,
+  delta **-0.08687%**; inverse-sRGB display-linear means:
+  **0.086325471 / 0.086513478**, delta **-0.21732%**.
+- Whole-image display-linear means: **0.001195433 / 0.001194264**,
+  delta **+0.09781%**. Both linear checks meet the existing 0.5% tolerance
+  and support the unbiased estimator contract; finite PNGs are not a proof
+  of exact equality or raw-HDR energy equality.
+- Whole-image RGB-code means: **1.403168 / 1.393980**, delta **+0.65915%**.
+  This code-space check does not meet 0.5%; it is reported rather than hidden.
+  The almost-black background makes code-space quantization/noise significant.
+
+Equal-low-sample spatial RGB-code error variance against the same ordinary
+NEE reference (not repeated-seed ensemble variance):
+
+| Samples | ReSTIR x BVH | BVH only | Uniform ReSTIR | Combined vs BVH | Combined vs ReSTIR |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 5 | 1878.585387 | 1790.591979 | 4220.197851 | +4.91421% | -55.48585% |
+| 10 | 1144.353998 | 876.718699 | 5042.886549 | +30.52693% | -77.30756% |
+| 20 | 788.021408 | 445.431933 | 3396.884011 | +76.91175% | -76.80164% |
+
+Whole-image error variance also loses to BVH-only: combined/BVH/uniform at
+5 samples is **26.640894 / 24.229555 / 67.659046**; at 10 samples,
+**16.238490 / 12.073689 / 68.719992**; at 20 samples,
+**11.015423 / 6.095419 / 44.155189**.
+
+Why occlusion does not close this gate: `RestirContribution` is unshadowed.
+Neither initial, temporal, nor spatial selection evaluates visibility, and
+the reservoir does not store the outcome of the final shadow ray.
+`pathtracer_closesthit.hlsl` traces that ray only after reservoir selection.
+Consequently reuse cannot favor samples discovered to be visible; it keeps
+reusing high unshadowed-contribution samples even behind these dividers.
+Temporal correlation can persist while ordinary BVH NEE draws fresh samples.
+The static camera already provides temporal coherence; moving the camera or
+objects would reset this implementation's history via the transport signature,
+not demonstrate reprojection. Changing candidate count/radius cannot add the
+missing visibility feedback. No integration tuning or moving-scene claim was
+made, and **the Stage-3 gate remains [ ]**.
+
+Verification on the RTX 5080:
+
+- `cd runtime && zig build -Doptimize=ReleaseFast`: **exit 0**, 152 shader
+  integrity checks; log `E:/UzmiEngine/restir-occlusion-build.log`.
+- Default `reflection-reference`, no `--path-trace`, frame 95:
+  PNG bytes identical to `E:/UzmiEngine/f005-after/frames/f_95.png`,
+  **max_code_delta = 0**; `default/` capture exited 0.
+- `npm run test:layouts`: **exit 0**, A 89/89, B 33/33, C 12/12;
+  `E:/UzmiEngine/restir-occlusion-layouts.log`.
+- `GTEST_FILTER='-RuntimeViewportTest.*' zig build test -Doptimize=ReleaseFast`:
+  **7,910 tests, 7,890 passed, 17 skipped**, matching the supplied pass
+  baseline. Exit **1** solely for the three existing VFX failures:
+  `VfxEditorSlate.WorkbenchHasTwoColumns`,
+  `VfxEditorSlate.TitleBarReflectsEmitterName`,
+  `VfxEditorSlate.StatusBarBindingsReflectTelemetry`. Test execution
+  **43.817 seconds**; no TDR and no retry needed.
+  Log: `E:/UzmiEngine/restir-occlusion-gtests.log`.
+- Build/tests bounded to 175 seconds. Final process cleanup verifies no
+  `uzengine`, `test_runtime`, or `zig` processes. Python LSP diagnostics are
+  clean. No engine/shader/base-BRDF changes, no commit, and no archive.
+
+Complete changed-file list for this follow-up (earlier Stage-3 list is historical):
+
+- `.rulebook/tasks/phase1_falcor-restir-di/tasks.md`
+- `.rulebook/tasks/phase1_falcor-light-bvh/tasks.md`
+- `scripts/rendering/restir-occlusion.uzproject` (new)
+- `scripts/rendering/restir-occlusion.uzscene` (new)
+- `scripts/rendering/measure_restir_occlusion.py` (new)
 
 ## Expanded roadmap: Reservoir Data Structure + Initial Sampling
 

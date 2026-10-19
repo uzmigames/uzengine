@@ -1,0 +1,14 @@
+{
+  "name": "ReSTIR occluded many-light reference",
+  "version": "1.0",
+  "content_root": "../..",
+  "default_scene": "scripts/rendering/restir-occlusion.uzscene",
+  "window": {"width": 640, "height": 360},
+  "cvars": {
+    "r.AutoExposure": 0, "r.Exposure": 1, "r.TonemapOperator": 0,
+    "r.GTAO": 0, "r.RadianceCache": 0, "r.GI.FinalGather": 0,
+    "r.GI.Reflections": 0, "r.SSGI": 0, "r.TAA": 0, "r.Fog": 0,
+    "r.TechPanel.Show": 0, "r.Bloom": 0,
+    "r.PathTracer.MaxBounces": 2, "r.PathTracer.NEESamples": 1
+  }
+}
