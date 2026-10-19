@@ -1,26 +1,226 @@
 ## Session 1: Emissive Triangle Extraction + BVH Construction
 
-- [ ] 1.1 Add emissive triangle extraction to `scene_gather.cpp`: iterate all `MeshComponent` + `MaterialComponent` pairs; if `material.emissiveColor` luminance > 0, add all triangles to `EmissiveTriangleList { position[3], normal, emissiveColor, area }`. Cache by scene change flag.
-- [ ] 1.2 Implement LBVH construction in `light_bvh.cpp`: compute 30-bit Morton code for each triangle centroid (normalize centroids to [0,1]³ AABB, interleave xyz bits). Sort triangles by Morton code (radix sort or `std::sort` for CPU build).
-- [ ] 1.3 Build binary BVH bottom-up from sorted triangles: `LightBVHNode { float3 aabbMin, aabbMax; float3 coneAxis; float coneCosHalfAngle; float totalEmissionPower; uint leftChild, rightChild; uint triangleOffset, triangleCount; }`. Internal nodes aggregate children's AABBs, cones (from Beckmann 1990), and emission power sums.
-- [ ] 1.4 Upload `StructuredBuffer<LightBVHNode>` and `StructuredBuffer<EmissiveTriangle>` to GPU via upload heap. `LightBVH::Rebuild()` called when emissive triangle list changes.
-- [ ] 1.5 Build + verify: BVH builds for a scene with 100 emissive triangles. Root node's `totalEmissionPower` matches sum of all triangle powers (CPU unit test).
+- [x] 1.1 Extract emissive triangles from the gathered draw list in `LightBVH::Gather()` (`light_bvh.cpp`), retaining uploaded LOD0 positions/UVs only when enabled before mesh upload. Cache using a hash of transforms, geometry identities, emission, UVs, textures, and directional lights.
+- [x] 1.2 Build 30-bit centroid Morton codes and stable-sort emitters in `light_bvh.cpp`.
+- [x] 1.3 Build a balanced binary hierarchy from Morton order, aggregating AABBs and emission power. Stage 1 uses conservative full-sphere cones; tighter cones and SAH are deferred.
+- [x] 1.4 Upload pass-private structured buffers for nodes, emitters, and configuration through triple-buffered upload allocations in `pipeline_path_tracer_pass.cpp`.
+- [x] 1.5 Verify 100-triangle root power and parent bounds/power in CPU tests; GPU reference scene engages 108 triangles and 215 nodes. See the stage-1 evidence below.
 
 ## Session 2: GPU Traversal HLSL + Integration
 
-- [ ] 2.1 Create `include/light_bvh.hlsli` — `SampleLightBVH(float3 shadingPos, float3 shadingNormal, float2 u, StructuredBuffer<LightBVHNode> bvh, StructuredBuffer<EmissiveTriangle> triangles) → LightBVHSample { uint triangleId; float3 samplePos; float3 sampleNormal; float3 emission; float pdf; }`. Iterative (non-recursive) stack-based top-down traversal with 32-depth stack.
-- [ ] 2.2 Node importance estimation during traversal: `NodeImportance(node, shadingPos, shadingNormal) = node.totalEmissionPower * ApproximateSolidAngle(node.aabbMin, node.aabbMax, shadingPos) * max(0, dot(shadingNormal, normalize(nodeCentroid - shadingPos)))`. Split `u.x` proportionally between children importance values.
-- [ ] 2.3 Leaf sampling: at leaf node, uniformly sample one triangle by area. Sample random point on triangle: `p = (1-√u1)*v0 + √u1*(1-u2)*v1 + √u1*u2*v2`. Compute PDF as `1/(triangleArea * leafSamplingProbability)`.
-- [ ] 2.4 `EvaluateLightBVHPDF(float3 shadingPos, float3 shadingNormal, uint triangleId, ...) → float` — trace selection probability from root to the specific triangle node.
+- [x] 2.1 Implement `include/light_bvh.hlsli` with stack-free, single-path traversal bounded to 32 levels and three independent selection/triangle variates.
+- [x] 2.2 Split the selection variate by child power, inverse squared distance, and clamped receiver cosine; preserve nonzero support and handle directional/mixed nodes conservatively.
+- [x] 2.3 Sample triangle area uniformly using square-root barycentrics. The joint area PDF is `P(select triangle) / triangleArea`, not the reciprocal of that probability.
+- [x] 2.4 Evaluate the same selection PDF by parent traversal. NEE and BSDF emitter hits use matching area-to-solid-angle conversion and complementary balance MIS weights, including the NEE sample count. Exact draw/primitive identities survive Morton sorting.
 - [ ] 2.5 Wire into `restir_initial_cs.hlsl` as the candidate generator when `HAS_LIGHT_BVH=1` define is set. Build + verify: scene with 100 emissive cubes — sampling probability distribution concentrates correctly in front-facing emitters (validate via readback histogram of selected triangle IDs).
 
 ## Session 3: Validation + Demo
 
-- [ ] 3.1 `LightBVH::Rebuild()` triggered on emissive mesh change: hook into scene dirty tracking system, call rebuild when any emissive material parameter changes
+- [x] 3.1 Rebuild from `LightBVH::Gather()` when its transport-input hash changes; unchanged gathered data avoids rescanning triangles.
 - [ ] 3.2 Demo: place 100 emissive cubes in a grid at varying intensities. Render with `--restir-di` + light BVH. Verify: brighter cubes receive proportionally more samples (histogram check). Compare convergence rate vs uniform sampling via 100-sample screenshot comparison.
 - [ ] 3.3 Build + verify: `--screenshot-stdout` after 64 samples shows correct multi-emitter lighting. No visible sampling bias (no dark patches near bright emitters). GPU timestamp (`--gpu-profile`) confirms traversal cost is sub-millisecond for 100 emitters.
+- [x] 3.4 Stage-1 path-traced emissive demo: equal-budget BVH on/off captures pass the mean gate at frames 210 and 2050 while retaining the low-sample variance improvement. ReSTIR demo/readback and isolated traversal timing in 3.2/3.3 remain deferred.
 
 ## 1. Tail (mandatory — enforced by rulebook v5.3.0)
-- [ ] 1.1 Update or create documentation covering the implementation
-- [ ] 1.2 Write tests covering the new behavior
-- [ ] 1.3 Run tests and confirm they pass
+- [x] 1.1 Document the implementation, corrected visibility/MIS contracts, and measured evidence below.
+- [x] 1.2 Add nine LightBVH tests, including shared CPU/HLSL PDF conversion and complementary MIS energy conservation.
+- [x] 1.3 Run build, layouts, render gates, and the full non-viewport gtests; all LightBVH tests pass with no new suite failures (the three existing VFX failures remain).
+
+## Stage-1 verification, 2026-10-18: COMPLETE
+
+Stage 1 is the opt-in Morton light hierarchy integrated into path-tracer NEE.
+Its equal-sample rendered-mean gate now passes. The original ReSTIR, tighter-cone,
+SAH, and isolated traversal-timing work is not included in this completion.
+
+- Root cause: `pathtracer_closesthit.hlsl` offset the shadow origin to
+  `P + 0.05*N` but retained direction and endpoint distance measured from `P`.
+  For parallel receiver/emitter planes, the sampled emitter is intersected at
+  `d - 0.05/Lz`, before the old `TMax = d - 0.1` whenever `Lz < 0.5`.
+  The sampled light falsely occluded itself, removing grazing illumination.
+  Visibility direction and distance now come from the actual offset origin
+  to `chosen.samplePos`; the BRDF and Jacobian retain the shading vertex.
+- MIS: secondary emission is no longer blanket-zeroed. Both techniques use
+  `p_light = P(select triangle) * distanceSquared / (area * abs(cosEmitter))`
+  at the previous shading vertex and complementary balance weights with
+  `neeSamples * p_light`. The private payload carries the previous vertex,
+  normal, and BSDF density; material/emitter records identify the exact draw
+  and primitive. Shared CPU/HLSL math has a conservation regression test.
+  MIS alone left a -16.4673% mean discrepancy; fixing visibility eliminated it.
+- Scene: `scripts/rendering/light-bvh-emissive.uzproject` and `.uzscene`;
+  nine emissive mesh panels, 108 triangles, `r.TonemapOperator=0`, bloom off.
+  Final captures use `--path-trace`, `r.LightBVH=1` versus `0`,
+  `r.PathTracer.MaxBounces=2`, four NEE samples, roulette off, and identical
+  2060-frame budgets with screenshots at both frame 210 and frame 2050.
+- GPU engagement: `E:/UzmiEngine/lightbvh-mis-proof/visible-on/run.log:514`
+  records `LightBVH: Morton build 108 lights, 215 nodes, root power=663552`;
+  line 518 records `DispatchRays 640x360`, 11 TLAS instances and shadow rays;
+  line 559 reaches 200 accumulated samples. Neither final capture log contains
+  `compile failed`; both engine runs exit 0.
+- Unbiased-mean gate (whole-image RGB PNG means in linear passthrough display):
+  frame 210 on/off = `0.04158375885076253 / 0.04140063316993464`,
+  delta `+0.4423257975%`; frame 2050 =
+  `0.04158531340777052 / 0.041588660811546836`,
+  delta `-0.0080488376%`. Before the fix, the corresponding deltas were
+  `-16.201% / -16.575%`. Both final frame-2050 PNGs were read: BVH-on is
+  smoother, with restored peripheral/foreground illumination rather than
+  systematic darkening.
+- Retained noise win: frame-10 residual variance against each method's own
+  frame-2050 image is `0.00017806692923729` on versus
+  `0.020336453840647712` off, a `99.1243953807%` reduction.
+- Render evidence: `E:/UzmiEngine/lightbvh-mis-proof/visible-{on,off}/`
+  contains logs, manifests, and PNGs; `metrics-final.json` records means and
+  variance. `prove.py` reproduces captures, metrics, and the default gate.
+- Default safety on the final binary: flag-free `reflection-reference`
+  frame 95 is byte-identical to `E:/UzmiEngine/f005-after/frames/f_95.png`;
+  `max_code_delta=0`, engine exit 0. Evidence:
+  `E:/UzmiEngine/lightbvh-mis-proof/final-default/`.
+- `cd runtime && zig build -Doptimize=ReleaseFast`: exit 0, 149 shader
+  integrity checks. `npm run test:layouts`: exit 0, including the 100-byte
+  private material stride and light-BVH structured buffers.
+- Final `GTEST_FILTER='-RuntimeViewportTest.*' zig build test -Doptimize=ReleaseFast`:
+  7853 tests, 7833 passed, 17 skipped, the same three pre-existing failures,
+  exit 1. This adds one passing MIS regression to the supplied 7832-pass
+  light-BVH WIP baseline (+9 versus the original 7824 baseline).
+  All nine LightBVH tests pass. Two-light chi-square `0.000008333`,
+  hierarchical chi-square `0.000186499`, estimator mean `5.519579143`
+  versus target `5.519578771`, variance `0.008685727` versus uniform
+  `27.023226314`. Evidence: `E:/UzmiEngine/lightbvh-mis-proof/gtests-final.log`.
+  Unchanged failures: `VfxEditorSlate.WorkbenchHasTwoColumns`,
+  `VfxEditorSlate.TitleBarReflectsEmitterName`,
+  `VfxEditorSlate.StatusBarBindingsReflectTelemetry`. No TDR retry was needed.
+- Build/capture/test invocations were bounded to 180 seconds. C++ LSP
+  diagnostics were unavailable because clangd is not installed; build and
+  runtime shader compilation supplied the compiler verification.
+- Deferred: SAH construction/optimization, tighter normal cones,
+  ReSTIR-BVH candidate generation/integration, GPU selection-histogram
+  readback, and isolated traversal timing. No commit or archive was made.
+
+## Stage-2 verification, 2026-10-18: COMPLETE
+
+- [x] S2.1 Replace balanced Morton median splits with importance SAOH splits:
+  exact prefix/suffix sweeps of centroid and normal axes minimize
+  `power * AABB surface area * orientation cost` (Conty Estevez & Kulla 2018,
+  Eq. 1; Falcor `LightBVHBuilder::evalSAOH`). Child capacity constrains depth
+  to the existing 32-level GPU traversal budget. `r.LightBVH.Morton=1` retains
+  the exact stage-1 build/full-sphere estimate as a diagnostic reference.
+- [x] S2.2 Compute enclosing spherical normal cones by cap union, including
+  containment and antipodal axes. The existing axis/cosine fields encode
+  theta_o; theta_e is fixed at pi/2 for diffuse triangles, as in Falcor.
+  Traversal subtracts cone spread and AABB subtended angle from the normal
+  angle. The transport contract is two-sided, so it bounds both +/- normal
+  cones using absolute dot; it must not cull the emitting back side.
+  Positive support floors and unchanged branch-product PDFs preserve MIS.
+  Directional/mixed nodes retain the conservative power-only sentinel.
+  Node/light/config strides remain 64/112/16 bytes; no CB/layout changes.
+- [x] S2.3 Still-unbiased rendered-mean gate on the 108-triangle scene:
+  `E:/UzmiEngine/lightbvh-stage2-proof/{sah,morton,off}/` holds final PNGs,
+  manifests, and `run.log`; all three captures exit 0 with identical
+  2060-frame budgets, two bounces, four NEE samples, and roulette off.
+  At frame 210 (about 200 accumulated samples), whole-image RGB PNG means
+  are SAOH `0.041575486791938995` vs plain `0.04140063316993464`,
+  delta `+0.4223452846%`. At frame 2050, means are
+  `0.04158352056100218` vs `0.041588660811546836`,
+  delta `-0.0123597405%`. Both methods' frame-210 and frame-2050 PNGs
+  were read: illumination is restored across the floor/back wall, without
+  systematic darkening. The larger plain-sampling noise converges away.
+- [x] S2.4 Lower rendered variance than stage 1 at equal low sample count:
+  frame-10 residual variance against each method's own frame-2050 image is
+  SAOH `0.0001622469389302276` vs Morton `0.00017806692923728998`,
+  delta `-8.8842944475%`. The Morton diagnostic reproduces the committed
+  stage-1 mean and variance exactly. Both low-sample PNGs were read.
+  `E:/UzmiEngine/lightbvh-stage2-proof/prove.py analyze` reproduces metrics.
+  No additional GPU scene was needed. The pure CPU directional-cluster
+  test additionally measures variance `0.014058907816` vs
+  `0.0312519755837`, delta `-55.014339%`, with normalized PDFs and exact
+  inverse-probability expectation.
+- [x] S2.5 Build and shader engagement: `cd runtime &&
+  zig build -Doptimize=ReleaseFast` exits 0, 152 shader integrity checks.
+  `sah/run.log:518` records
+  `LightBVH: SAOH/cone build 108 lights, 215 nodes, root power=663552`;
+  line 520 records the uploaded stochastic GPU hierarchy, followed by
+  `DispatchRays 640x360`, 11 TLAS instances. No stage-2 capture log contains
+  `compile failed` or device-removal diagnostics. The unchanged pass logger
+  also emits its old "Morton build" label; the new builder log identifies
+  the actual selected algorithm.
+- [x] S2.6 Opt-in/default safety: flag-free reflection-reference frame 95 is
+  byte-identical to `E:/UzmiEngine/f005-after/frames/f_95.png`,
+  `max_code_delta=0`, engine exit 0. Evidence:
+  `E:/UzmiEngine/lightbvh-stage2-proof/default/`.
+  The base BRDF (D7) and VFX editor WIP are untouched.
+- [x] S2.7 Tests: `npm run test:layouts` exits 0. All 14 LightBVH tests
+  pass (nine existing plus five stage-2 tests):
+  `SAOHCostIsMonotoneInPowerAreaAndSpread`,
+  `ConeUnionBoundsBothChildrenIncludingAntipodesAndContainment`,
+  `SAOHSeparatesKnownSpatialClusters`,
+  `TwoSidedConeDownweightsEdgeOnNotBackFacingAndKeepsSupport`, and
+  `DirectionalClusterEstimatorIsUnbiasedAndBeatsMortonVariance`.
+  The existing independent PDF oracle now includes the new orientation
+  estimate; its normalization, histogram, MIS, and estimator checks pass.
+  `GTEST_FILTER='-RuntimeViewportTest.*' zig build test -Doptimize=ReleaseFast`
+  runs 7887 tests: 7867 pass (+5 versus supplied 7862 baseline), 17 skip,
+  and the same three pre-existing failures:
+  `VfxEditorSlate.WorkbenchHasTwoColumns`,
+  `VfxEditorSlate.TitleBarReflectsEmitterName`,
+  `VfxEditorSlate.StatusBarBindingsReflectTelemetry`.
+  Exit 1 solely for those failures; test execution 40.563 seconds.
+  No TDR retry was needed. clangd is unavailable; the actual build and
+  runtime shader compiler supply compiler validation.
+- [x] S2.8 Engine/build/test commands are bounded to 180 seconds; final
+  process enumeration finds no engine/test/zig processes. No commit or
+  archive was made.
+
+Deferred after stage 2: ReSTIR-BVH candidate generation/integration,
+GPU selection-histogram readback, and isolated traversal timing.
+
+## Stage 3: DXR ReSTIR / light-BVH integration (2026-10-19): INCOMPLETE
+
+- [ ] DXR ReSTIR-BVH acceptance. The joint-source-PDF, converged-mean,
+  BVH-off stage-2 equivalence, default safety, and regression gates pass.
+  What remains is the required lower variance than **BVH-only** at equal
+  low sample count. A win against uniform ReSTIR alone is insufficient.
+  The expanded shader-define/histogram and demo items above are not claimed
+  complete.
+
+The committed initial shader already traversed `SampleLightBVH` and used
+`target / (selectionPdf / triangleArea)`. This increment shares that exact
+weight with a pure gtest, documents its area measure, identifies the combined
+dispatch, and stratifies the 32 selection variates only for BVH importance
+traversal. The equally weighted stratum mixture has the original BVH density.
+The existing descriptor gate enables this only with both ReSTIR and
+`r.LightBVH`; BVH-off keeps the committed stage-2 generator. Reservoir/root/
+material contracts and the base BRDF are unchanged.
+
+Detailed methodology, the complete seven-file change list, and acceptance
+evidence are in the stage-3 section of
+`../phase1_falcor-restir-di/tasks.md`. Evidence root:
+`E:/UzmiEngine/restir-bvh-proof/`; replay metrics with
+`prove.py analyze restored nee-uniform restored`.
+
+- 108 lights / 215 nodes, two bounces, one NEE shadow sample/frame,
+  TAA/roulette off. The ordinary NEE reference uses uniform emitter
+  selection without importance traversal, ReSTIR off, 32 NEE samples/frame,
+  frame 2050. Combined/reference whole-image RGB-code mean delta:
+  **+0.02555%**. Reference-only interior RGB-code/display-linear mean deltas:
+  **+0.07340% / +0.41005%**, within the stage-2 0.5% tolerance.
+- At 5 samples, combined/uniform-ReSTIR/BVH-only error variance is
+  **421.160413 / 1697.648757 / 420.023284**: **-75.19155%** versus
+  uniform ReSTIR but **+0.27073%** versus BVH-only. At 10/20 samples,
+  versus uniform ReSTIR is **-83.99920% / -83.53551%**, while versus
+  BVH-only is **+13.26194% / +41.03204%**. Whole-image and
+  own-converged-reference measurements also fail the BVH-only gate.
+  Independent, selection-stratified, and additionally area-stratified
+  candidates were measured; the best selection-stratified version is retained.
+- BVH-off versus the pre-edit committed build: mean/max code delta **0**,
+  PNG-byte-identical at frames **5, 10, 20, 200**. Flag-free default frame 95:
+  PNG-byte-identical to `E:/UzmiEngine/f005-after/frames/f_95.png`, max **0**.
+- Integrated `run.log` identifies BVH-sourced RIS plus temporal/spatial
+  dispatch; no proof log has `compile failed` or device-removal markers.
+- Pure source-density gtest: exact integral **41**, biased missing-PDF
+  control **5.3**, exact stratified-mixture integral **41**. It passes.
+  Build exit **0** (152 shaders); layouts exit **0** (89/89, 33/33, 12/12).
+  Non-viewport gtests: **7,889 pass (+1)**, 17 skip, only the same three
+  pre-existing `VfxEditorSlate` failures, exit **1**. No TDR retry.
+  Builds/tests are bounded to 175 seconds and captures to 170 seconds.
+  Final exact-name process enumeration found no `uzengine.exe`,
+  `test_runtime.exe`, or `zig.exe` processes. No commit or archive was made;
+  unrelated WIP and scratch files are untouched.

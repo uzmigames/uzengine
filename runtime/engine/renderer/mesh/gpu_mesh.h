@@ -23,6 +23,7 @@
 #include "vector3.h"
 
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 namespace uz {
@@ -30,6 +31,7 @@ namespace uz {
 class IRHIDevice;
 class IRHICommandList;
 struct Mesh;
+struct LightBVHGeometry;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GPUMesh — Handles and metadata for a mesh uploaded to the GPU
@@ -41,6 +43,7 @@ struct Mesh;
 /// Created by `UploadMesh()`, destroyed by `DestroyGPUMesh()`. All buffer
 /// handles are owned by the caller and must be explicitly destroyed.
 struct GPUMesh {
+    std::shared_ptr<const LightBVHGeometry> lightBVHGeometry;
     RHIBufferHandle vertexBuffer;                       ///< GPU vertex buffer handle.
     RHIBufferHandle prevVertexBuffer;                   ///< Previous GPU-skinned pose, owned with this mesh.
     uint32_t        prevVbSrvIndex = 0;

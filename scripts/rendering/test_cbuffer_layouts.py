@@ -226,6 +226,7 @@ for shader in (
     'postprocess/ssr_temporal_cs.hlsl', 'postprocess/ssr_trace_cs.hlsl',
     'postprocess/svgf_atrous_cs.hlsl', 'postprocess/svgf_filter_moments_cs.hlsl',
     'postprocess/velocity_object_vs.hlsl', 'pathtracing/path_tracer_ps.hlsl',
+    'pathtracing/pathtracer_shared.hlsli',
     'lighting/cluster_assign_cs.hlsl', 'lighting/env_mis_temporal_cs.hlsl',
     'debug/debug_view_ps.hlsl', 'atmosphere/height_fog_ps.hlsl',
     'atmosphere/skybox_cubemap_ps.hlsl', 'atmosphere/sky_atmosphere_ps.hlsl',
@@ -236,6 +237,11 @@ for shader in ('gbuffer/gbuffer_ps.hlsl', 'gbuffer/mesh_vs.hlsl', 'gbuffer/mesh_
     TIER_A.append(layout_entry(shader, 'PerObjectCB', PARAMS + 'constant_buffers.h',
                                before='gbuffer_ps.perobject.before.hlsl' if shader == 'gbuffer/gbuffer_ps.hlsl' else None))
 TIER_A += [
+    layout_entry('pathtracing/nrd_common.hlsli', 'NrdCamera', PARAMS + 'constant_buffers.h',
+                 'PerFrameCB', {'currentViewProj': 'viewProj', 'cameraPosition': 'cameraPos',
+                  'cameraTime': 'timeParams', 'cameraLightDir': 'lightDir',
+                  'cameraLightColor': 'lightColor', 'cameraAmbient': 'ambientColor',
+                  'inverseViewProj': 'invViewProj'}),
     layout_entry('vfx/particle_spawn_cs.hlsl', 'VFXSpawnConstants', PASSES + 'vfx/particle_simulation_pass.h',
                  'ParticleSpawnConstants', {'_pad3': '_padUser'}),
     layout_entry('vfx/particle_update_cs.hlsl', 'VFXUpdateConstants', PASSES + 'vfx/particle_simulation_pass.h',
@@ -321,6 +327,24 @@ TIER_A += [
 ]
 
 TIER_B = [
+    layout_entry('pathtracing/nrd_common.hlsli', 'NrdRoot',
+                 PASSES + 'pathtracing/nrd_denoiser.h'),
+    layout_entry('pathtracing/nrd_common.hlsli', 'NrdStage2Root',
+                 PASSES + 'pathtracing/nrd_denoiser.h'),
+    layout_entry('pathtracing/nrd_signal.hlsli', 'NrdSignalRoot',
+                 PASSES + 'pathtracing/nrd_denoiser.h', aliases={
+                     'nrdEnabled': 'enabled', 'nrdDiffuseUav': 'diffuseUav',
+                     'nrdFractionUav': 'fractionUav', 'nrdAlbedoUav': 'albedoUav',
+                     'nrdSpecularUav': 'specularUav', 'nrdModulationUav': 'modulationUav',
+                     'nrdVirtualPositionUav': 'virtualPositionUav', 'nrdGuideUav': 'guideUav'}),
+    # Private DXR/ReSTIR root: 96 bytes / 24 DWORDs, including history UAVs,
+    # sample count and bounce/RR controls. Shared graphics and PerFrameCB do not grow.
+    layout_entry('pathtracing/pathtracer_shared.hlsli', 'PathTracerRoot',
+                 PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'PipelinePathRoot'),
+    layout_entry('pathtracing/restir_spatial_cs.hlsl', 'PathTracerRoot',
+                 PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'PipelinePathRoot'),
+    layout_entry('pathtracing/pathtracer_volume.hlsli', 'PathVolumeRoot',
+                 PASSES + 'pathtracing/pipeline_path_tracer_pass.h'),
     *[layout_entry(shader, 'VFXBillboardConstants', PASSES + 'vfx/particle_render_pass.h',
                    'ParticleBillboardIndices')
       for shader in ('vfx/particle_billboard_vs.hlsl', 'vfx/particle_billboard_ps.hlsl')],
@@ -364,6 +388,25 @@ TIER_B = [
 ]
 
 TIER_C = [
+    layout_entry('include/light_bvh.hlsli', 'LightBVHNode',
+                 PASSES + 'pathtracing/light_bvh.h', 'LightBVHNode'),
+    layout_entry('include/light_bvh.hlsli', 'LightBVHLight',
+                 PASSES + 'pathtracing/light_bvh.h', 'LightBVHLight'),
+    layout_entry('include/light_bvh.hlsli', 'LightBVHConfig',
+                 PASSES + 'pathtracing/light_bvh.h', 'LightBVHConfig'),
+    layout_entry('include/restir_di.hlsli', 'LightSample',
+                 PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'RestirLightSample'),
+    {**layout_entry('include/restir_di.hlsli', 'Reservoir',
+                   PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'RestirReservoir'),
+     'hlsl_structs': ('LightSample',), 'extra_structs': ('RestirLightSample',)},
+    layout_entry('include/restir_di.hlsli', 'RestirSurface',
+                 PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'RestirSurface'),
+    layout_entry('pathtracing/pathtracer_shared.hlsli', 'PathDirectionalLight',
+                 PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'PipelinePathDirectionalLight'),
+    # 128-byte pass-private DXR material: thickness at 112, RGB sigmaA at 116.
+    # Every declared field and the structured stride are reflected below.
+    layout_entry('pathtracing/pathtracer_shared.hlsli', 'MaterialData',
+                 PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'PipelinePathMaterial'),
     layout_entry('gbuffer/mesh_vs.hlsl', 'Vertex', 'runtime/engine/renderer/mesh/vertex.h'),
     layout_entry('gbuffer/mesh_vs.hlsl', 'VertexPacked', 'runtime/engine/renderer/mesh/vertex.h'),
     layout_entry('gi/global_sdf_composite_cs.hlsl', 'MeshSdf',
@@ -579,7 +622,7 @@ def members(text):
     return result
 
 
-def reflect_declaration(shader_path, name, workdir, kind='cbuffer'):
+def reflect_declaration(shader_path, name, workdir, kind='cbuffer', extra_structs=()):
     source_text = Path(shader_path).read_text(encoding='utf-8')
     try:
         text = declaration(source_text, kind, name)
@@ -605,6 +648,15 @@ def reflect_declaration(shader_path, name, workdir, kind='cbuffer'):
             raise ValueError(f'{shader_path}: DXC preprocessing failed:\n{out.stderr}')
         text = re.sub(r'^\s*#.*$', '', Path(preprocessed).read_text(encoding='utf-8'), flags=re.M)
     field_names = members(text)
+    dependencies = []
+    for dependency in extra_structs:
+        definition = declaration(source_text, 'struct', dependency)
+        first_member = members(definition)[0][1]
+        nested = re.findall(r'\b' + re.escape(dependency) + r'\s+(\w+)\s*;', text)
+        field_names = [(field, expr + '.' + first_member if field in nested else expr)
+                       for field, expr in field_names]
+        dependencies.append(definition)
+    text = '\n'.join(dependencies) + '\n' + text
     if kind == 'struct':
         text += f'\nStructuredBuffer<{name}> elements : register(t0);\n'
         expression = ' + '.join('float(elements[id].' + expr + ')' for _, expr in field_names)
@@ -645,8 +697,10 @@ def compare_isolated(entry, shader_path, workdir):
 
 
 def compare_size(entry, workdir, kind='cbuffer'):
-    _, _, reflected = reflect_declaration(os.path.join(SHADERS, entry['shader']), entry['name'], workdir, kind)
-    cpp = cpp_offsets(os.path.join(REPO, entry['header']), entry['struct'], ['__size'], workdir)
+    _, _, reflected = reflect_declaration(os.path.join(SHADERS, entry['shader']), entry['name'], workdir, kind,
+                                         entry.get('hlsl_structs', ()))
+    cpp = cpp_offsets(os.path.join(REPO, entry['header']), entry['struct'], ['__size'], workdir,
+                      entry.get('extra_structs', ()))
     return reflected, cpp['__size']
 
 

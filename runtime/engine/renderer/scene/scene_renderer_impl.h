@@ -193,6 +193,7 @@
     // ── Ray Tracing (DXR) ────────────────────────────────────────────────
     std::unique_ptr<RTManager> m_rtManager;          ///< BLAS/TLAS/SBT lifecycle, gated by r.RayTracing CVar.
     std::unique_ptr<RTUVTestPass> m_rtUVTestPass;    ///< RT UV gradient test pass (r.RayTracing.TestPass).
+    std::unique_ptr<PipelinePathTracerPass> m_pipelinePathTracer; ///< Lazy, --path-trace only.
 
     // ── Auto-Exposure ──────────────────────────────────────────────────────
     std::unique_ptr<AutoExposure> m_autoExposure;   ///< GPU histogram-based eye adaptation.

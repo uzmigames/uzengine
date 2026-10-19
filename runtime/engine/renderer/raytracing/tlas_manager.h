@@ -17,6 +17,7 @@
 
 #include "rhi_types.h"
 #include "blas_manager.h"
+#include "math/mat4.h"
 
 #include <cstdint>
 #include <vector>
@@ -48,6 +49,14 @@ class TLASManager {
 public:
     TLASManager() = default;
     ~TLASManager() = default;
+
+    /// Convert the engine's row-vector affine matrix to DXR's row-major 3x4.
+    static void WriteInstanceTransform(float* t, const Mat4& world) {
+        const auto& xm = world.m;
+        t[0] = xm._11; t[1] = xm._21; t[2] = xm._31; t[3] = xm._41;
+        t[4] = xm._12; t[5] = xm._22; t[6] = xm._32; t[7] = xm._42;
+        t[8] = xm._13; t[9] = xm._23; t[10] = xm._33; t[11] = xm._43;
+    }
 
     /// Initializes the TLAS and instance buffer for a maximum instance count.
     ///
