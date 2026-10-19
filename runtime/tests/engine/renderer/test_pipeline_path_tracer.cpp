@@ -41,7 +41,7 @@ TEST(PipelinePathTracerStage1, PipelineBudgetIncludesNestedShadowRay) {
     using P = uz::PipelinePathTracerPass;
     EXPECT_LE(P::kRootDwords, 24u);
     EXPECT_EQ(P::kRootDwords * sizeof(uint32_t), sizeof(uz::PipelinePathRoot));
-    EXPECT_EQ(P::kPayloadBytes, 3u * sizeof(float) * 6u + sizeof(float) + 2u * sizeof(uint32_t));
+    EXPECT_EQ(P::kPayloadBytes, 3u * sizeof(float) * 6u + sizeof(float) + 3u * sizeof(uint32_t));
     EXPECT_EQ(P::kRecursionDepth, 2u);
 }
 

@@ -1,6 +1,7 @@
 #include "pathtracer_shared.hlsli"
 #include "layered_bsdf.hlsli"
 #include "hair_bcsdf.hlsli"
+#include "hair_dual_scatter.hlsli"
 #include "../include/restir_di.hlsli"
 #include "../include/light_bvh.hlsli"
 
@@ -133,6 +134,23 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
         payload.terminated = true;
         return;
     }
+    if (!hair) payload.hairBounces = 0u;
+    // Partition BEFORE this vertex's NEE and continuation, not after adding
+    // either. Unsupported near-field lighting/volumes retain explicit transport.
+    if (HairDualReplace(hair,mat.coatWeight>0.0,int(payload.hairBounces),int(mat.coatRoughness))
+        && bvhConfigIndex == 0u && !PathVolumeActive()) {
+        uint dimension = HashPCG((4096u+payload.bounceCount*64u)^HashPCG(sampleIndex));
+        float3 tail = HairDualTail(P,N,V,strandTangent,
+            PathHairMaterial(albedo,roughness,metallic,fiberOffset),mat.coatIOR,dimension);
+        payload.radiance += payload.throughput*(emission+tail);
+        if (nrdEnabled != 0u) {
+            NrdAddDiffuse(NrdFraction()*payload.throughput*(emission+tail));
+            NrdAddSpecular((1.0-NrdFraction())*payload.throughput*(emission+tail));
+        }
+        payload.terminated = true;
+        return;
+    }
+    if (hair) payload.hairBounces++;
     if (restirEnabled != 0u && payload.bounceCount == 0u && !hair) {
         RWStructuredBuffer<Reservoir> reservoirs = ResourceDescriptorHeap[restirCurrentUav];
         uint2 pixel = DispatchRaysIndex().xy;

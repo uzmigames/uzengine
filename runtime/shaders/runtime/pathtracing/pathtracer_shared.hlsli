@@ -12,6 +12,7 @@ struct [raypayload] PathPayload {
     float3 radiance : read(caller, closesthit, miss) : write(caller, closesthit, miss);
     float3 throughput : read(caller, closesthit, miss) : write(caller, closesthit);
     uint bounceCount : read(caller, closesthit, miss) : write(caller, closesthit);
+    uint hairBounces : read(caller, closesthit) : write(caller, closesthit);
     bool terminated : read(caller) : write(caller, closesthit, miss);
     float3 nextOrigin : read(caller) : write(closesthit);
     float3 nextDirection : read(caller) : write(closesthit);

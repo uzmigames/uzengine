@@ -40,6 +40,14 @@ static auto* cv_NeeSamples = UZ_CVAR_INT("r.PathTracer.NEESamples", 4,
     "Directional visibility samples per vertex (1 for equal-ray ReSTIR comparison)", 1, 32);
 static auto* cv_Nrd = UZ_CVAR_BOOL("r.NRD", false,
     "Opt-in diffuse/specular temporal/a-trous denoiser for the DXR path tracer");
+static auto* cv_HairMultiScatter = UZ_CVAR_BOOL("r.Hair.MultiScatter", false,
+    "Opt-in biased dual-scattering tail replacement for aligned hair under distant illumination");
+static auto* cv_HairExplicitBounces = UZ_CVAR_INT("r.Hair.ExplicitBounces", 20,
+    "Consecutive hair vertices traced before replacing the tail (larger reduces closure bias)", 1, 127);
+static auto* cv_HairMaxBounces = UZ_CVAR_INT("r.Hair.MaxBounces", 0,
+    "Opt-in hair scene depth including the explicit reference (0 uses ordinary depth, at least K+1 when dual is on)", 0, 128);
+static auto* cv_HairDensity = UZ_CVAR_FLOAT("r.Hair.Density", 0.7f,
+    "Dual-scattering local backscatter density (Zinke 2008)", 0.f, 1.f);
 static auto* cv_Layered = UZ_CVAR_BOOL("r.PathTracer.LayeredMaterial", false,
     "Opt-in DXR dielectric coat over the unchanged base BRDF");
 static auto* cv_CoatWeight = UZ_CVAR_FLOAT("r.PathTracer.Coat.Weight", 1.f,
@@ -291,7 +299,8 @@ bool PipelinePathTracerPass::Init(IRHIDevice* device) {
     p.ready = true;
     UZ_LOG(Renderer, Info,
            "PipelinePathTracer: RT-PSO CreateStateObject succeeded; 3 lib_6_6 libraries, "
-           "84-byte PathPayload, 4-byte ShadowPayload, depth=2 (iterative+shadow), SBT ready");
+           "{}-byte PathPayload, 4-byte ShadowPayload, depth=2 (iterative+shadow), SBT ready",
+           kPayloadBytes);
     return true;
 #else
     return false;
@@ -358,6 +367,13 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
         mat.coatSigmaA[0] = cv_CoatSigmaAR->value;
         mat.coatSigmaA[1] = cv_CoatSigmaAG->value;
         mat.coatSigmaA[2] = cv_CoatSigmaAB->value;
+        // Hair has no dielectric coat. Reuse its dormant material slots instead
+        // of growing the 128-byte table or the 24-DWORD PathTracerRoot.
+        if (((draw.materialFlags >> 24u) & 15u) == 6u) {
+            mat.coatWeight = cv_HairMultiScatter->value >= 0.5f ? 1.f : 0.f;
+            mat.coatRoughness = cv_HairExplicitBounces->value;
+            mat.coatIOR = cv_HairDensity->value;
+        }
         mat.roughnessMultiplier = draw.roughnessMultiplier;
         mat.metallicMultiplier = draw.metallicMultiplier;
         mat.uvScale[0] = draw.uvScaleX; mat.uvScale[1] = draw.uvScaleY;
@@ -513,7 +529,17 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
     hash(&lightBVHEnabled,sizeof(lightBVHEnabled));
     hash(&bvhUniform,sizeof(bvhUniform));
     const auto& cv = CVarRegistry::Get();
-    const uint32_t maxBounces = std::clamp(cv.GetInt("r.PathTracer.MaxBounces", 4), 1, 16);
+    uint32_t maxBounces = std::clamp(cv.GetInt("r.PathTracer.MaxBounces", 4), 1, 16);
+    const bool hairScene = std::any_of(entries.begin(), entries.end(), [](const PipelinePathMaterial& mat) {
+        return ((mat.materialFlags >> 24u) & 15u) == 6u;
+    });
+    if (cv_HairMaxBounces->value > 0.f && hairScene) {
+        maxBounces = std::clamp(int(cv_HairMaxBounces->value), 1, 128);
+    } else if (hairScene && cv_HairMultiScatter->value >= 0.5f) {
+        // K explicit vertices need one more intersection for the replacement.
+        // Otherwise enabling the closure at K >= the ordinary depth is a no-op.
+        maxBounces = std::max(maxBounces, uint32_t(cv_HairExplicitBounces->value) + 1u);
+    }
     const uint32_t rrEnabled = cv.GetBool("r.PathTracer.RussianRoulette", true);
     const uint32_t rrMinBounce = std::clamp(cv.GetInt("r.PathTracer.RussianRouletteMinBounce", 2), 0, 16);
     PathVolumeRoot volume{};
@@ -780,6 +806,9 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
                 UZ_LOG(Renderer, Info, "PathLayered: coat weight={} roughness={} IOR={} thickness={} sigmaA=({},{},{}); Snell optical-distance approximation; base-only ReSTIR bypassed",
                     cv_CoatWeight->value,cv_CoatRoughness->value,cv_CoatIOR->value,
                     cv_CoatThickness->value,cv_CoatSigmaAR->value,cv_CoatSigmaAG->value,cv_CoatSigmaAB->value);
+            if (accumulatedFrames == 0 && hairScene)
+                UZ_LOG(Renderer, Info, "HairDual: enabled={} K={} density={} maxBounces={}; biased passive tail replacement, distant lighting only",
+                    cv_HairMultiScatter->value,cv_HairExplicitBounces->value,cv_HairDensity->value,maxBounces);
             native->SetComputeRootConstantBufferView(1,
                 state.device->GetBufferGPUAddress(perFrame.bufferHandle) + perFrame.offsetBytes);
             native->SetComputeRootDescriptorTable(2, heap.GpuHandle(tlasSrv));

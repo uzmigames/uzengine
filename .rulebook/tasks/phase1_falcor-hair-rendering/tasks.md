@@ -26,6 +26,27 @@ authoring (including variable IOR/tilt), DOM shadows, GBuffer hair integration,
 hair LOD, root-to-tip gradients, and OIT. Sessions 1-4 below and their global
 tail are not claimed complete by the DXR stage.
 
+## DXR Stage 2: Dual-scattering multiple scattering as a tail replacement (2026-10-18)
+
+In the multi-bounce DXR path tracer, inter-fiber multiple scattering is already
+captured by explicit fiber-to-fiber bounces, and the stage-1 BCSDF is already
+energy-conserving (furnace 0.998). Classic additive dual-scattering would
+double-count transport and break energy conservation here. This stage instead
+uses dual-scattering as a VARIANCE/COST reduction: trace the first K explicit
+inter-fiber bounces, then REPLACE the remaining deep multiple-scattering tail
+with the analytic Zinke dual-scattering estimate (no double-count, energy-bounded).
+Opt-in behind `r.Hair.MultiScatter`.
+
+- [x] S2.1 Implement the tail-replacement dual-scattering estimate in `runtime/shaders/runtime/pathtracing/hair_dual_scatter.hlsli` (average forward attenuation a_f + spread, average backward attenuation a_b + back-scatter density/spread, from the stage-1 BCSDF lobe integrals), wired into `pathtracer_closesthit.hlsl` after K explicit inter-fiber bounces; gated by `r.Hair.MultiScatter`. `PipelinePathMaterial` (128 bytes) + `PathTracerRoot` (24 DWORDs) unchanged.
+- [x] S2.2 Consistent-mean proof (the tail replacement converges to the explicit fully-traced reference): on a blonde swatch the dual-ON mean relative bias vs the explicit reference shrinks with K: K1 -26.8%, K4 -15.5%, K8 -6.7%, K12 -1.95%, K16 -0.60%, K20 -0.18%, K24 -0.053%, K32 -0.0041%. Dark hair off==stage1 (K16 rgb_relative_bias [0,0,0]). Evidence: `E:/UzmiEngine/hair-stage2-proof/metrics.json`.
+- [x] S2.3 Variance/cost win: at equal GPU cost the dual-ON estimator variance is 0.705x the explicit path tracer (29.5% lower), the win for light hair that otherwise needs many bounces (`equal_gpu_cost_variance_ratio` in metrics.json).
+- [x] S2.4 Off-limit + energy: `r.Hair.MultiScatter` OFF (and non-hair) reproduces the stage-1 explicit transport exactly (test `OffAndNonHairNeverReplaceStageOneTransport`); the tail replacement never exceeds single-fiber energy (test `ReplacementFurnaceNeverSpendsMoreThanSingleFiber`).
+- [x] S2.5 Safety + tests: default (no `--path-trace`) reflection-reference frame-95 PNG byte-identical to `E:/UzmiEngine/f005-after/frames/f_95.png` (max_code_delta 0). `cd runtime && zig build -Doptimize=ReleaseFast` exit 0 (152 shaders); `npm run test:layouts` exit 0 (89/89 Tier A, all agree); `GTEST_FILTER='-RuntimeViewportTest.*' zig build test -Doptimize=ReleaseFast` -> 7,888 passed, 17 skipped, only the 3 pre-existing VfxEditorSlate failures (exit 1 for those; a first run hit a transient DX12DeviceTest TDR, clean on re-run). 6 new `HairDualScatterStage2` tests pass (ForwardLobeMassMatchesIndependentQuadrature, AverageForwardBackwardSumToBCSDFLobeIntegrals, BackscatterSeriesAndSpreadUseSamePathWeights, ReplacementFurnaceNeverSpendsMoreThanSingleFiber, OffAndNonHairNeverReplaceStageOneTransport, +1).
+
+Deferred (unchanged from stage 1): far-field scattering, higher-order explicit
+lobes, full parameter authoring, and the raster Sessions 1-4 below (dedicated
+strand assets, raster VS/PS, DOM shadows, GBuffer hair, LOD, root-to-tip, OIT).
+
 ## Session 1: Hair Strand Geometry
 
 - [ ] 1.1 Create `hair_strand_asset.h/.cpp` — `HairStrandAsset` class: `Load(path)` reads `.hair` binary format (header: strandCount, pointsPerStrand; data: float3 positions, float widths, float2 UVs). `GetVertexBuffer() → RhiBufferHandle`. `GetStrandCount() → uint`. `GetLODLevel(float distanceCm) → uint` (returns target strand count fraction: 1.0 at <500cm, 0.5 at 1000cm, 0.25 at 2000cm).

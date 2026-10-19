@@ -127,6 +127,7 @@ void main() {
     payload.radiance = 0.0;
     payload.throughput = 1.0;
     payload.bounceCount = 0u;
+    payload.hairBounces = 0u;
     payload.terminated = false;
     payload.previousPosition = 0.0;
     payload.previousNormal = 0.0;
@@ -166,6 +167,7 @@ void main() {
                         payload.throughput *= volumeSigmaS/sigmaT;
                         payload.radiance += payload.throughput*PathVolumeDirect(P,ray.Direction,bounce);
                         payload.bounceCount++;
+                        payload.hairBounces = 0u;
                         if (!PathCanContinue(payload.bounceCount,maxBounces)) break;
                         float2 phaseU = PathSample(dimension+1u);
                         float cosine = clamp(PathVolumePhaseCosine(phaseU.x,volumeG),-1.0,1.0);

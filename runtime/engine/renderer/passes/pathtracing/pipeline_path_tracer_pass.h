@@ -99,7 +99,7 @@ static_assert(sizeof(PipelinePathDirectionalLight) == 32);
 class PipelinePathTracerPass {
 public:
     static constexpr uint32_t kRootDwords = sizeof(PipelinePathRoot) / sizeof(uint32_t);
-    static constexpr uint32_t kPayloadBytes = 84;
+    static constexpr uint32_t kPayloadBytes = 88;
     static constexpr uint32_t kRecursionDepth = 2; // iterative surface loop + nested shadow
     PipelinePathTracerPass();
     ~PipelinePathTracerPass();
