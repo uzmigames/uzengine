@@ -137,11 +137,23 @@ float3 EvaluatePBR(float3 N, float3 V, float3 L, float3 albedo,
     float NoV = saturate(dot(N, V));
     if (NoL <= 0.0 || NoV <= 0.0) return 0.0;
     float3 H = normalize(V + L);
-    float3 F = F_Schlick(ComputeF0(albedo, metallic), saturate(dot(V, H)));
+    float3 f0 = ComputeF0(albedo, metallic);
+    float3 F = F_Schlick(f0, saturate(dot(V, H)));
     float alpha = RoughnessToAlpha(roughness);
     float3 specular = D_GGX(alpha, saturate(dot(N, H)))
                     * V_SmithGGXCorrelated(alpha, NoV, NoL) * F;
-    return ((1.0 - F) * (1.0 - metallic) * albedo / PI + specular) * NoL;
+    // Reuse the IBL LUT: its F0*A+B integrates this same correlated GGX lobe.
+    // Clamp to texel centers because the existing material sampler wraps.
+    Texture2D<float2> brdfLut = ResourceDescriptorHeap[brdfLutSrvIndex];
+    uint lutWidth, lutHeight;
+    brdfLut.GetDimensions(lutWidth, lutHeight);
+    float2 halfTexel = 0.5 / float2(lutWidth, lutHeight);
+    float2 ab = brdfLut.SampleLevel(linearWrap,
+        clamp(float2(NoV, roughness), halfTexel, 1.0 - halfTexel), 0);
+    float3 specularAlbedo = f0 * ab.x + ab.y;
+    float3 diffuseEnergy = float3(PathDiffuseEnergy(specularAlbedo.r, NoV),
+        PathDiffuseEnergy(specularAlbedo.g, NoV), PathDiffuseEnergy(specularAlbedo.b, NoV));
+    return (diffuseEnergy * (1.0 - metallic) * albedo / PI + specular) * NoL;
 }
 
 // Adapter to the engine's SampleGGX_VNDF (common/sampling.hlsli); the PDF

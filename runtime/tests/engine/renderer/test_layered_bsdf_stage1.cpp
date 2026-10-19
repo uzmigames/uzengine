@@ -3,6 +3,39 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include "pathtracer_furnace_test.h"
+
+TEST(PathTracerEnergy, WhiteFurnaceConservesTotalDirectionalAlbedo) {
+    double maxAlbedo = 0, maxDielectric = 0;
+    int cases = 0;
+    for (int step = 1; step <= 9; ++step)
+        for (double nv : {.0001,.0005,.0009,.001,.01,.025,.05,.1,.2,.3,.5,.7,.9,1.0})
+            for (double metallic : {0.0,.5,1.0}) {
+                const double roughness = step/10.0;
+                const double f0 = .04*(1-metallic)+metallic;
+                const double diffuse = (1-metallic)
+                    * path_furnace::DiffuseEnergy(nv,roughness,f0);
+                const double specular = path_furnace::SpecularIntegral(nv,roughness,f0);
+                const double total = diffuse+specular;
+                EXPECT_LE(total,1.0) << "roughness=" << roughness << " NoV=" << nv
+                    << " metallic=" << metallic;
+                maxAlbedo = std::max(maxAlbedo,total);
+                if (metallic == 0) {
+                    maxDielectric = std::max(maxDielectric,total);
+                    if (nv == 1) {
+                        EXPECT_GT(total,.99) << "roughness=" << roughness;
+                        std::printf("BASE_FURNACE normal roughness=%.1f total=%.9f\n",
+                            roughness,total);
+                    }
+                    if (step == 3 && nv == .1)
+                        std::printf("BASE_FURNACE D7 total=%.9f diffuse=%.9f specular=%.9f\n",
+                            total,diffuse,specular);
+                }
+                ++cases;
+            }
+    std::printf("BASE_FURNACE cases=%d max_total=%.9f max_dielectric=%.9f\n",
+        cases,maxAlbedo,maxDielectric);
+}
 
 TEST(LayeredBSDFStage1, CoatFresnelNormalGrazingAndMatchedIOR) {
     EXPECT_NEAR(uz::PathCoatFresnel(1.f,1.5f),.04f,1e-7f);
@@ -72,7 +105,7 @@ TEST(LayeredBSDFStage1, GGXCoatMatchesEngineNormalIncidence) {
 
 TEST(LayeredBSDFStage1, WhiteFurnaceRelativeEnergyBound) {
     // Deterministic cosine-hemisphere quadrature: no RNG or timing dependence.
-    // The base below is the unchanged EvaluatePBR, not a corrected substitute.
+    // Same directional-energy coupling as EvaluatePBR, including its baked LUT.
     constexpr double pi = 3.141592653589793;
     constexpr int radial = 256, angular = 512;
     double maxDelta = -1e9, maxExcess = -1e9, maxAlbedo = 0;
@@ -86,6 +119,8 @@ TEST(LayeredBSDFStage1, WhiteFurnaceRelativeEnergyBound) {
                         const double vx = std::sqrt(1-double(nv)*nv);
                         const double alpha = std::max(double(baseRoughness)*baseRoughness,.0064);
                         const double a2 = alpha*alpha;
+                        const double diffuseEnergy = path_furnace::DiffuseEnergy(
+                            nv,baseRoughness,.04*(1-metallic)+metallic);
                         for (int i = 0; i < radial; ++i) {
                             const double nl = std::sqrt((i+.5)/radial);
                             const double tangent = std::sqrt(1-nl*nl);
@@ -102,7 +137,7 @@ TEST(LayeredBSDFStage1, WhiteFurnaceRelativeEnergyBound) {
                                 const double visibility = .5/std::max(
                                     nl*std::sqrt(nv*nv*(1-a2)+a2)
                                   + nv*std::sqrt(nl*nl*(1-a2)+a2),1e-7);
-                                const float base = float(((1-f)*(1-metallic)/pi
+                                const float base = float((diffuseEnergy*(1-metallic)/pi
                                     + a2/(pi*d*d)*visibility*f)*nl);
                                 const float coat = uz::PathCoatReflection(weight,coatRoughness,1.5f,
                                     nv,float(nl),float(nh),float(vh));

@@ -4,6 +4,7 @@
 #include <bit>
 #include <cmath>
 #include <cstdio>
+#include "pathtracer_furnace_test.h"
 
 TEST(LayeredBSDFStage2, BeerLambertCoatPathViaSnell) {
     for (float ior : {1.f,1.33f,1.5f,3.f})
@@ -60,7 +61,7 @@ TEST(LayeredBSDFStage2, AbsorptionOnlyRemovesTransmittedEnergy) {
             }
 }
 
-TEST(LayeredBSDFStage2, AbsorbingWhiteFurnaceRelativeToUnchangedBase) {
+TEST(LayeredBSDFStage2, AbsorbingWhiteFurnaceRelativeToEnergyCorrectBase) {
     constexpr double pi = 3.141592653589793;
     constexpr int radial = 256, angular = 512;
     double maxDelta = -1e9, maxExcess = -1e9, maxAbsorbedMinusClear = -1e9;
@@ -73,6 +74,8 @@ TEST(LayeredBSDFStage2, AbsorbingWhiteFurnaceRelativeToUnchangedBase) {
                     const double vx = std::sqrt(1-double(nv)*nv);
                     const double alpha = std::max(double(baseR)*baseR,.0064);
                     const double a2 = alpha*alpha;
+                    const double diffuseEnergy = path_furnace::DiffuseEnergy(
+                        nv,baseR,.04*(1-metal)+metal);
                     for (int i = 0; i < radial; ++i) {
                         const double nl = std::sqrt((i+.5)/radial);
                         const double tangent = std::sqrt(1-nl*nl);
@@ -91,8 +94,8 @@ TEST(LayeredBSDFStage2, AbsorbingWhiteFurnaceRelativeToUnchangedBase) {
                             const double visibility = .5/std::max(
                                 nl*std::sqrt(nv*nv*(1-a2)+a2)
                                 + nv*std::sqrt(nl*nl*(1-a2)+a2),1e-7);
-                            // Same unchanged base equations as stage 1, including D7 gain.
-                            const float base = float(((1-f)*(1-metal)/pi
+                            // Same energy-correct base equations as stage 1.
+                            const float base = float((diffuseEnergy*(1-metal)/pi
                                 + a2/(pi*d*d)*visibility*f)*nl);
                             const float coat = uz::PathCoatReflection(1.f,coatR,1.5f,
                                 nv,float(nl),float(nh),float(vh));

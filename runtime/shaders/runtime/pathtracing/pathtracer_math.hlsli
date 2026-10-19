@@ -37,6 +37,18 @@ inline bool PathCanContinue(uint completedBounces, uint maxBounces) {
     return completedBounces < maxBounces;
 }
 
+/// @ref Karis 2013 "Real Shading in Unreal Engine 4" - integrated environment BRDF.
+/// @constants 0.005 = conservative absolute albedo reserve for the existing
+/// 1024-sample RG16F LUT and bilinear filtering; checked by the furnace sweep.
+/// 0.001 = minimum NoV in brdf_lut_cs.hlsl. Below the baked domain, extend
+/// the specular budget toward its conservative upper bound 1 at the horizon.
+/// The Lambert lobe integrates to this remaining directional energy budget.
+inline float PathDiffuseEnergy(float specularAlbedo, float NoV) {
+    float remaining = 1.0f - specularAlbedo - 0.005f;
+    float grazing = NoV < 0.001f ? NoV / 0.001f : 1.0f;
+    return remaining < 0.0f ? 0.0f : remaining * grazing;
+}
+
 // @ref Schlick 1994 "An Inexpensive BRDF Model for Physically-Based Rendering"
 // Air-to-coat interface; the CVar boundary restricts IOR to [1,3].
 inline float PathCoatFresnel(float cosine, float ior) {
