@@ -223,14 +223,16 @@ Complete stage-2 changed-file list (including the inherited, finished WIP):
 
 Unrelated VFX-editor and other shared-worktree changes were not touched.
 
-## Stage 3: DXR ReSTIR / light-BVH integration (2026-10-19): INCOMPLETE
+## Stage 3: DXR ReSTIR / light-BVH integration (2026-10-19): OCCLUSION GATE CLOSED
 
-- [ ] DXR ReSTIR-BVH acceptance: source-PDF correctness, opt-out equivalence,
-  and the converged-mean gate pass, but the required variance win over
-  **both** constituent methods does not. The occlusion follow-up below also
-  fails the BVH-only comparison: +4.91421% / +30.52693% / +76.91175% error
-  variance at 5 / 10 / 20 samples despite 75.79% geometric occlusion.
-  Do not mark this integration complete from the uniform-ReSTIR win alone.
+- [x] DXR ReSTIR-BVH occlusion acceptance: visibility-aware reuse preserves
+  the estimator invariant and passes the 0.5% converged-mean tolerance on
+  both scenes. Occlusion error variance is **46.37721% / 43.02730% /
+  37.69728% lower than BVH-only** at 5 / 10 / 20 frames, and lower than
+  uniform ReSTIR. See the visibility-aware follow-up below. The earlier
+  unshadowed measurements remain historical evidence, not the current gate.
+  This closes the requested static-camera occlusion gate, not the expanded
+  deferred-lighting/moving-camera roadmap or an equal-GPU-cost claim.
 
 The committed shader already called `SampleLightBVH`, stored its joint area
 PDF, and streamed `target / sourcePdf`; its stage-2 emissive captures enabled
@@ -417,6 +419,140 @@ Complete changed-file list for this follow-up (earlier Stage-3 list is historica
 - `scripts/rendering/restir-occlusion.uzproject` (new)
 - `scripts/rendering/restir-occlusion.uzscene` (new)
 - `scripts/rendering/measure_restir_occlusion.py` (new)
+
+### Visibility-aware follow-up, 2026-10-19: occlusion gate closed
+
+The inherited uncommitted implementation was inspected and retained, rather
+than restarted. It was already wired end to end; this follow-up supplies the
+missing GPU, layout, and regression proof. Initial RIS still samples 32
+unshadowed candidates with the existing joint source PDF and stratification.
+One inline shadow query rejects its selected sample by multiplying `W` and
+`weightSum` by visibility, without renormalizing or dropping its domain/M.
+Temporal and spatial reuse use visible targets in **every** source/receiving
+evaluation and GRIS denominator. Only own-source visibility is cached;
+cross-domain visibility is traced at the corresponding surface. The ray
+origin, opaque flags, mask, and emitter endpoint match final DXR shading.
+Spatial output remains separate from temporal history.
+
+Unbiasedness: unshadowed initial RIS has `E[W g(Y)] = integral g`.
+Selected-sample rejection therefore gives
+`E[V W g(Y)] = integral_visible g`. Write `t_i = V_i * p_hat_i` and
+`m_i(y) = M_i t_i(y) / sum_j M_j t_j(y)`. Streaming
+`w_i = t_here(Y_i) W_i m_i(Y_i)` and finalizing
+`W = sum_i w_i / t_here(Y)` cancels the receiving target in conditional
+selection expectation. Source expectations then sum to
+`integral_visible g * sum_i m_i = integral_visible g`: the canonical source
+covers the receiving support, the MIS weights partition unity there, and a
+source weight vanishes outside its visible support. Null sources retain M
+and their domains in the denominator. The history cap changes only the MIS
+preference. Correlated spatial inputs do not require independence for this
+sum of expectations. The complementary existing BSDF/emitter MIS term is
+unchanged; no base-BRDF modification was made.
+
+The visibility float grows the structured reservoir from 112 to **116 bytes**
+at offset **112**. CPU/HLSL declarations, allocation/readback strides,
+layout entry, and consumers agree. **PipelinePathRoot stays 96 bytes /
+24 DWORDs**. The compute dispatch now binds the existing TLAS root table.
+The mechanism remains behind opt-in ReSTIR plus the light-BVH descriptor;
+BVH-off retains the stage-2 generator and visibility factor 1.
+
+Evidence: `E:/UzmiEngine/restir-visible-proof/`. All seven serialized captures
+exit **0**; no `run.log` contains `compile failed` or device-removal markers.
+PNGs were decoded and visually read. Replay the occlusion study with the
+committed `measure_restir_occlusion.py`; the external `verify.py` captures
+the emissive reference/combined pair and `verify.py analyze` reproduces
+`metrics.json`. Both scenes use 640x360, two bounces, TAA/roulette off,
+one NEE sample/frame for tested methods, and ordinary uniform-emitter NEE
+with ReSTIR off and 32 NEE samples/frame for the frame-2050 reference.
+
+Converged frame-2050 combined / plain-NEE means:
+
+| Scene | Interior pixels | RGB-code means | Code delta | Inverse-sRGB display-linear means | Linear delta |
+| --- | ---: | --- | ---: | --- | ---: |
+| Occlusion | 2,316 | 71.696891 / 71.575993 | +0.16891% | 0.086832760 / 0.086513478 | **+0.36905%** |
+| 108-light emissive | 37,618 | 38.165931 / 38.150637 | +0.04009% | 0.028176307 / 0.028157012 | **+0.06853%** |
+
+Whole-image linear means are respectively **0.001197903 / 0.001194264**
+(**+0.30470%**) and **0.006995627 / 0.006993278** (**+0.03359%**).
+Whole-image RGB-code deltas are **+0.21857% / +0.00106%**. All combined
+mean checks satisfy the existing 0.5% tolerance. These finite 8-bit PNG
+measurements corroborate the analytic invariant; they do not assert exact
+finite-sample equality or raw-HDR equality. The reference-only mask remains
+mean code 15..180, eroded at +/-4 pixels with a five-pixel border excluded.
+
+On the 75.78735%-occluded scene, equal-low-frame spatial RGB-code error
+variance against the same plain-NEE reference is:
+
+| Frames | ReSTIR x BVH | BVH only | Uniform ReSTIR | vs BVH | vs ReSTIR |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 5 | 960.165335 | 1790.591979 | 4066.222807 | **-46.37721%** | **-76.38680%** |
+| 10 | 499.490358 | 876.718699 | 4927.537876 | **-43.02730%** | **-89.86329%** |
+| 20 | 277.516212 | 445.431933 | 3294.179770 | **-37.69728%** | **-91.57556%** |
+| 50 | 133.829715 | 192.882209 | 1665.658494 | -30.61583% | -91.96536% |
+| 200 | 43.774719 | 49.457106 | 436.285368 | -11.48953% | -89.96649% |
+
+This reverses the prior **+4.91421% / +30.52693% / +76.91175%** losses
+against BVH-only at 5 / 10 / 20 frames. Whole-image variances also win:
+combined/BVH/uniform are **13.386430 / 24.229555 / 64.468249**,
+**7.073240 / 12.073689 / 66.661658**, and
+**3.884402 / 6.095419 / 42.393022** at those frame counts.
+Uniform ReSTIR retains emitter enumeration with `r.LightBVH.Uniform=1`,
+without hierarchy importance traversal, and receives the same visibility
+correction in this comparison. Its frame-2050 interior linear mean delta
+is still **+1.33599%**, so no converged-mean pass is claimed for that noisy
+comparator. The combined estimator also beats the historical pre-fix plain
+ReSTIR variances (4220.197851 / 5042.886549 / 3396.884011).
+This is spatial error variance, not repeated-seed ensemble variance.
+Equal frame count is **not equal GPU cost**: visibility queries add work;
+the accepted gate is the explicitly permitted equal-low-sample comparison.
+
+Verification:
+
+- Build `cd runtime && zig build -Doptimize=ReleaseFast`: **exit 0**,
+  152 shader integrity checks (`E:/UzmiEngine/restir-visible-build.log`).
+- `npm run test:layouts`: **exit 0**, Tier A **89/89**, B **33/33**,
+  C **12/12**, including DXC reflection of the 116-byte reservoir and
+  24-DWORD root (`E:/UzmiEngine/restir-visible-layouts.log`).
+- Flag-free `reflection-reference` frame 95 is **PNG-byte-identical** to
+  `E:/UzmiEngine/f005-after/frames/f_95.png`, **max_code_delta = 0**.
+- `VisibilityReusePreservesSupportAndRejectsOccludedHistory` passes exact
+  enumeration of differing visible supports: basis expectations **1, 0, 1**.
+  The inconsistent unshadowed-denominator control yields **1/172** instead
+  of 1 for the first visible basis. `VisibilityReuseReducesVarianceAgainstUnshadowedControl`
+  preserves mean **1** in both modes and reduces exact variance to **2**
+  from **greater than 6** for the pre-fix final-shadow-only control.
+- `GTEST_FILTER='-RuntimeViewportTest.*' zig build test -Doptimize=ReleaseFast`:
+  **7,912 tests, 7,892 passed (+2 versus 7,890), 17 skipped**, and only
+  the three pre-existing `VfxEditorSlate` failures:
+  `WorkbenchHasTwoColumns`, `TitleBarReflectsEmitterName`,
+  `StatusBarBindingsReflectTelemetry`. **Exit 1** is solely those failures;
+  test execution **43.755 seconds**. No TDR/device-removal markers occurred,
+  so no retry was needed (`E:/UzmiEngine/restir-visible-gtests.log`).
+- Python layout diagnostics are clean. clangd is unavailable; the real
+  engine build, runtime DXC, and gtests supply compiler validation.
+- Captures are bounded to 170 seconds, build/test commands to 175 seconds.
+  Final exact-name enumeration found **no `uzengine`, `test_runtime`, or
+  `zig` processes**. No commit or archive was made.
+
+Complete scoped changed-file list, including the inherited WIP:
+
+- `.rulebook/tasks/phase1_falcor-restir-di/tasks.md`
+- `.rulebook/tasks/phase1_falcor-light-bvh/tasks.md`
+- `runtime/engine/renderer/passes/pathtracing/pipeline_path_tracer_pass.cpp`
+- `runtime/engine/renderer/passes/pathtracing/pipeline_path_tracer_pass.h`
+- `runtime/shaders/runtime/include/restir_di.hlsli`
+- `runtime/shaders/runtime/include/restir_math.hlsli`
+- `runtime/shaders/runtime/pathtracing/restir_initial_cs.hlsl`
+- `runtime/shaders/runtime/pathtracing/restir_temporal_cs.hlsl`
+- `runtime/shaders/runtime/pathtracing/restir_spatial_cs.hlsl`
+- `runtime/tests/engine/renderer/test_restir_di.cpp`
+- `runtime/tests/engine/renderer/test_restir_di_bvh.cpp`
+- `runtime/tests/engine/renderer/test_restir_di_spatial.cpp`
+- `scripts/rendering/test_cbuffer_layouts.py`
+
+The base BRDF, unrelated VFX-editor work, and ignored scratch files were
+not touched. The evidence helper and generated captures/logs are outside
+the repository.
 
 ## Expanded roadmap: Reservoir Data Structure + Initial Sampling
 

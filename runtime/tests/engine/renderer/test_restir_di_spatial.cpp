@@ -62,7 +62,8 @@ double Integral(const Distribution& distribution, const Target& integrand) {
 } // namespace
 
 TEST(RestirDIStage2, ProvenanceLayoutPreservesRootBudget) {
-    EXPECT_EQ(sizeof(uz::RestirReservoir), 112u);
+    EXPECT_EQ(sizeof(uz::RestirReservoir), 116u);
+    EXPECT_EQ(offsetof(uz::RestirReservoir, visibility), 112u);
     EXPECT_EQ(offsetof(uz::RestirReservoir, surfaceView), 80u);
     EXPECT_EQ(offsetof(uz::RestirReservoir, surfaceRoughness), 92u);
     EXPECT_EQ(offsetof(uz::RestirReservoir, surfaceAlbedo), 96u);

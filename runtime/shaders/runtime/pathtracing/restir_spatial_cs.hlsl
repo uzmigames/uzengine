@@ -9,6 +9,8 @@
 // Stream w_i = target_here(Y_i) W_i m_i(Y_i), finalize W = sum(w)/target_here(Y).
 // The canonical pixel covers the output support. Gates depend only on geometry,
 // never W or the selected sample. Correlated/null inputs retain the invariant.
+// Targets include exact visibility at EVERY domain; cached visibility applies
+// only to a sample's own source. Cross-domain tests cannot reuse that bit.
 [numthreads(8,8,1)]
 void main(uint3 id : SV_DispatchThreadID) {
     if (id.x >= restirWidth || id.y >= restirHeight) return;
@@ -35,22 +37,33 @@ void main(uint3 id : SV_DispatchThreadID) {
     Reservoir result = candidates[0];
     result.weightSum = 0.0;
     result.M = 0u;
+    float selectedTarget = 0.0;
     for (uint i = 0u; i < count; ++i) {
         float targetSum = 0.0;
         float sourceTarget = 0.0;
+        float here = 0.0, visibilityHere = 0.0;
         for (uint j = 0u; j < count; ++j) {
-            float target = RestirTarget(RestirContribution(RestirSource(candidates[j]), candidates[i].sample));
+            float visibility = candidates[i].visibility;
+            RestirSurface source = RestirSource(candidates[j]);
+            float target;
+            if (j == i)
+                target = RestirVisibilityTarget(RestirTarget(RestirContribution(source, candidates[i].sample)), visibility);
+            else
+                target = RestirVisibleTarget(source, candidates[i].sample, visibility);
             targetSum += float(candidates[j].M) * target;
             if (j == i) sourceTarget = target;
+            if (j == 0u) { here = target; visibilityHere = visibility; }
         }
-        float here = RestirTarget(RestirContribution(surface, candidates[i].sample));
         float weight = RestirReuseWeight(here, candidates[i].W,
             RestirMIS(sourceTarget, candidates[i].M, targetSum));
-        if (RestirStream(result.weightSum, weight, RestirRandom(index, sampleIndex, 271u + i)))
+        if (RestirStream(result.weightSum, weight, RestirRandom(index, sampleIndex, 271u + i))) {
             result.sample = candidates[i].sample;
+            result.visibility = visibilityHere;
+            selectedTarget = here;
+        }
         result.M += candidates[i].M;
     }
-    result.W = RestirReuseFinalize(result.weightSum, RestirTarget(RestirContribution(surface, result.sample)));
+    result.W = RestirReuseFinalize(result.weightSum, selectedTarget);
     // Spatial output never becomes temporal history.
     output[index] = result;
 }

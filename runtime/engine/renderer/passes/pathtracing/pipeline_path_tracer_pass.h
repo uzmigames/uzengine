@@ -77,6 +77,7 @@ struct RestirReservoir {
     float surfacePosition[3], surfaceNormal[3];
     float surfaceView[3], surfaceRoughness;
     float surfaceAlbedo[3], surfaceMetallic;
+    float visibility;
 };
 struct RestirSurface {
     float position[3]; uint32_t valid;
@@ -85,7 +86,8 @@ struct RestirSurface {
     float albedo[3], padding;
 };
 static_assert(sizeof(RestirLightSample) == 44);
-static_assert(sizeof(RestirReservoir) == 112);
+static_assert(sizeof(RestirReservoir) == 116);
+static_assert(offsetof(RestirReservoir, visibility) == 112);
 static_assert(sizeof(RestirSurface) == 64);
 
 struct PipelinePathDirectionalLight {

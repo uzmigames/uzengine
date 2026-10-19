@@ -19,6 +19,7 @@ struct Reservoir {
     float3 surfaceNormal;
     float3 surfaceView; float surfaceRoughness;
     float3 surfaceAlbedo; float surfaceMetallic;
+    float visibility; // Selected sample at THIS source surface, never a neighbor's visibility.
 };
 struct RestirSurface {
     float3 position; uint valid;
@@ -92,6 +93,35 @@ float3 RestirContribution(RestirSurface s, LightSample light) {
     }
     return EvaluatePBR(s.normal, s.view, L, s.albedo, s.roughness, s.metallic) * value;
 }
+#ifdef RESTIR_COMPUTE
+RaytracingAccelerationStructure tRestirScene : register(t0);
+float RestirVisibility(RestirSurface surface, LightSample sample) {
+    StructuredBuffer<PathDirectionalLight> lights = ResourceDescriptorHeap[directionalLightsSrv];
+    // Preserve the BVH-off stage-2 estimator and its exact random sequence.
+    if (lights[0].padding == 0u) return 1.0;
+    RayDesc ray;
+    ray.Origin = surface.position + surface.normal * 0.05;
+    float distance;
+    ray.Direction = RestirDirection(surface.position, sample, distance);
+    ray.TMin = 0.01; ray.TMax = max(distance - 0.05, 0.01);
+    if (any(sample.normal != 0.0)) {
+        float3 delta = sample.position - ray.Origin;
+        distance = length(delta);
+        ray.Direction = delta / distance;
+        ray.TMax = max(distance - 0.01, 0.01);
+    }
+    // Match final DXR shading, including the offset-origin emitter endpoint.
+    RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> query;
+    query.TraceRayInline(tRestirScene, RAY_FLAG_NONE, 0xff, ray);
+    while (query.Proceed()) {}
+    return query.CommittedStatus() == COMMITTED_NOTHING ? 1.0 : 0.0;
+}
+float RestirVisibleTarget(RestirSurface surface, LightSample sample, out float visibility) {
+    float target = RestirTarget(RestirContribution(surface, sample));
+    visibility = target > 0.0 ? RestirVisibility(surface, sample) : 0.0;
+    return RestirVisibilityTarget(target, visibility);
+}
+#endif
 // Independent dimensions/frame hashes avoid reusing correlated Halton rotations
 // when a reservoir survives many frames.
 float RestirRandom(uint pixel, uint frame, uint dimension) {

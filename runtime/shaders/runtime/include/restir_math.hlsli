@@ -15,6 +15,11 @@ using uint = uint32_t;
 inline float RestirCandidateWeight(float target, float sourcePdf) {
     return target / sourcePdf;
 }
+// Visibility restricts the contribution invariant to the visible support.
+// Apply it to every source/receiving target, including the MIS denominator.
+inline float RestirVisibilityTarget(float target, float visibility) {
+    return target * visibility;
+}
 inline bool RestirStream(RIS_INOUT sum, float weight, float u) {
     sum += weight;
     return weight > 0.0f && u * sum < weight;

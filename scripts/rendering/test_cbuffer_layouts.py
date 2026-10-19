@@ -396,6 +396,7 @@ TIER_C = [
                  PASSES + 'pathtracing/light_bvh.h', 'LightBVHConfig'),
     layout_entry('include/restir_di.hlsli', 'LightSample',
                  PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'RestirLightSample'),
+    # 116-byte reservoir: source visibility at 112; the private root stays 24 DWORDs.
     {**layout_entry('include/restir_di.hlsli', 'Reservoir',
                    PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'RestirReservoir'),
      'hlsl_structs': ('LightSample',), 'extra_structs': ('RestirLightSample',)},

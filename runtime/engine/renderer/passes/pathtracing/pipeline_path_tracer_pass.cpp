@@ -740,6 +740,9 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
                     native->SetComputeRootSignature(m_impl->root.Get());
                     native->SetComputeRoot32BitConstants(0, kRootDwords, &restirConstants, 0);
                     native->SetComputeRootConstantBufferView(1, m_impl->device->GetBufferGPUAddress(perFrame.bufferHandle) + perFrame.offsetBytes);
+                    auto* dx = static_cast<DX12Device*>(m_impl->device);
+                    auto& heap = dx->GetDescriptorAllocator(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+                    native->SetComputeRootDescriptorTable(2, heap.GpuHandle(tlasSrv));
                     native->SetPipelineState(stage == 2 ? m_impl->restirSpatialPSO.Get()
                         : stage == 1 ? m_impl->restirTemporalPSO.Get() : m_impl->restirInitialPSO.Get());
                     native->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
@@ -747,7 +750,7 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
                     if (accumulatedFrames == 0 || accumulatedFrames == 15)
                         UZ_LOG(Renderer, Info, "ReSTIR DI: {} dispatched {}x{}, history={}, 32 candidates, 20-frame M cap",
                             stage == 2 ? "spatial (4 neighbors, source-target MIS)" : stage == 1 ? "temporal"
-                                : restirBVH ? "initial BVH-sourced RIS (joint source PDF)" : "initial",
+                                : restirBVH ? "initial BVH-sourced RIS (joint source PDF, visibility-aware reuse)" : "initial",
                             (width + 7) / 8, (height + 7) / 8, restirConstants.restirHistory);
 #endif
                 });

@@ -72,6 +72,12 @@ void main(uint3 id : SV_DispatchThreadID) {
                             RestirRandom(index, sampleIndex, d + 6u));
         }
         r.W = RestirWeight(r.weightSum, r.M, RestirTarget(RestirContribution(surface, r.sample)));
+        // Test only the selected RIS sample. E[V W g(Y)] = integral_visible g:
+        // keep the visible weight unchanged, zero an occluded weight, retain M.
+        // Null outcomes still represent their domain during subsequent MIS.
+        r.visibility = r.W > 0.0 ? RestirVisibility(surface, r.sample) : 0.0;
+        r.W *= r.visibility;
+        r.weightSum *= r.visibility;
     }
     output[index] = r;
 }
