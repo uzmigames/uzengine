@@ -8,7 +8,7 @@ struct LightSample {
     float3 position; // Direction for an infinitely distant directional source.
     float3 normal;
     float3 emission;
-    float pdf; // Discrete light-selection density; source disk is normalized.
+    float pdf; // Source joint area density, or discrete normalized-disk density.
 };
 struct Reservoir {
     LightSample sample;

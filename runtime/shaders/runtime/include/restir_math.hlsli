@@ -10,6 +10,11 @@ using uint = uint32_t;
 #endif
 
 // Streaming RIS, including zero-weight candidates in M (Talbot et al. 2005).
+// The source density is joint area density for mesh emitters, or discrete
+// selection probability for the normalized directional source disk.
+inline float RestirCandidateWeight(float target, float sourcePdf) {
+    return target / sourcePdf;
+}
 inline bool RestirStream(RIS_INOUT sum, float weight, float u) {
     sum += weight;
     return weight > 0.0f && u * sum < weight;

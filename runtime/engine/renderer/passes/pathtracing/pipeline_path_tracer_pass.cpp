@@ -681,6 +681,7 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
     restirConstants.neeSamples = neeSamples;
     restirConstants.restirTemporal = restirTemporal;
     restirConstants.restirLightCount = bvhConfigSrv != 0u ? uint32_t(p.lightBVH.lights.size()) : lightCount;
+    const bool restirBVH = restirEnabled && bvhConfigSrv != 0u;
     if (restirEnabled) {
         surface = builder.ImportTrackedBuffer("ReSTIR_Surface", p.restirSurface);
         initial = builder.ImportTrackedBuffer("ReSTIR_Initial", p.restirInitial);
@@ -745,7 +746,8 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
                     native->SetComputeRootSignature(static_cast<DX12Device*>(m_impl->device)->GetRootSignature());
                     if (accumulatedFrames == 0 || accumulatedFrames == 15)
                         UZ_LOG(Renderer, Info, "ReSTIR DI: {} dispatched {}x{}, history={}, 32 candidates, 20-frame M cap",
-                            stage == 2 ? "spatial (4 neighbors, source-target MIS)" : stage == 1 ? "temporal" : "initial",
+                            stage == 2 ? "spatial (4 neighbors, source-target MIS)" : stage == 1 ? "temporal"
+                                : restirBVH ? "initial BVH-sourced RIS (joint source PDF)" : "initial",
                             (width + 7) / 8, (height + 7) / 8, restirConstants.restirHistory);
 #endif
                 });

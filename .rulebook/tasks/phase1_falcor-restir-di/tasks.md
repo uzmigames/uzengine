@@ -223,6 +223,98 @@ Complete stage-2 changed-file list (including the inherited, finished WIP):
 
 Unrelated VFX-editor and other shared-worktree changes were not touched.
 
+## Stage 3: DXR ReSTIR / light-BVH integration (2026-10-19): INCOMPLETE
+
+- [ ] DXR ReSTIR-BVH acceptance: source-PDF correctness, opt-out equivalence,
+  and the converged-mean gate pass, but the required variance win over
+  **both** constituent methods does not. What remains is reducing the combined
+  estimator's equal-low-sample variance below BVH-only on the 108-light scene.
+  Do not mark this integration complete from the uniform-ReSTIR win alone.
+
+The committed shader already called `SampleLightBVH`, stored its joint area
+PDF, and streamed `target / sourcePdf`; its stage-2 emissive captures enabled
+the BVH. This increment makes that contract shared/testable with
+`RestirCandidateWeight`, corrects the PDF field documentation, and identifies
+the combined dispatch in `run.log`. Candidate selection is stratified across
+32 BVH-CDF intervals only for importance traversal. Their equally weighted
+mixture is the original BVH density, so the pooled RIS weight still divides
+by `selectionPdf / triangleArea`, not by an extra stratum factor. Directional
+sources retain their discrete selection PDF. The target, temporal/spatial
+correction, 112-byte reservoir, material contracts, and 24-DWORD root are
+unchanged. BVH-off retains exactly the committed stage-2 generator.
+
+Evidence is outside the repository in `E:/UzmiEngine/restir-bvh-proof/`.
+`prove.py analyze restored nee-uniform restored` reproduces the final metrics
+in `metrics-final.json`. Captures use `light-bvh-emissive`, 108 lights /
+215 nodes, 640x360, two bounces, roulette/TAA off, and one NEE shadow sample
+per frame for all low-sample comparisons. `uniform/` is ReSTIR with uniform
+emitter selection (`r.LightBVH.Uniform=1`), without hierarchy traversal;
+literal `r.LightBVH=0` is tested separately because it also removes emissive
+candidate enumeration in the committed engine. `bvh/` disables ReSTIR.
+`nee-uniform/` is the converged ordinary uniform-emitter NEE reference:
+ReSTIR off, no importance traversal, 32 NEE samples/frame, frame 2050.
+
+- Converged PNG means: combined/reference whole-image RGB code means
+  **10.608559 / 10.605849**, delta **+0.02555%**. On 36,621 reference-only
+  interior pixels, RGB-code means are **38.208214 / 38.180188**
+  (**+0.07340%**); inverse-sRGB display-linear means are
+  **0.028306252 / 0.028190655** (**+0.41005%**). Both interior mean deltas
+  are within the stage-2 0.5% tolerance. PNGs were decoded and visually read;
+  these finite measurements corroborate the estimator invariant, not exact
+  finite-sample equality.
+- Equal-low-sample RGB-code error variance against that reference:
+
+  | Samples | Combined | Uniform ReSTIR | BVH only | vs uniform ReSTIR | vs BVH only |
+  | --- | ---: | ---: | ---: | ---: | ---: |
+  | 5 | 421.160413 | 1697.648757 | 420.023284 | -75.19155% | **+0.27073%** |
+  | 10 | 242.721635 | 1516.934011 | 214.301138 | -83.99920% | **+13.26194%** |
+  | 20 | 154.781422 | 940.092518 | 109.749122 | -83.53551% | **+41.03204%** |
+
+  The reference-only mask is mean code 15..180, eroded at +/-4 pixels,
+  excluding a five-pixel border. This is spatial error variance, not an
+  ensemble variance claim. Whole-image and own-converged-reference metrics
+  also fail the BVH-only comparison. Three strategies were measured:
+  independent candidates (`combined/`), selection-stratified (`stratified/`,
+  retained and recaptured as `restored/`), and selection plus independently
+  shifted triangle-area stratification (`joint/`). None beat BVH-only.
+- `baseline-off/` was captured from a clean build of the committed source
+  before edits. `off-restored/` has mean delta **0**, max code delta **0**,
+  and identical PNG bytes at frames **5, 10, 20, 200**. Flag-free
+  `default-restored/frames/f_95.png` is byte-identical to
+  `E:/UzmiEngine/f005-after/frames/f_95.png`, max code delta **0**.
+- Integrated logs identify `initial BVH-sourced RIS (joint source PDF)`,
+  temporal and spatial dispatch. No proof capture contains `compile failed`
+  or device-removal markers. Engine captures exit 0.
+- `RestirDIStage3.BVHSourceDensityPreservesUnbiasedRISWeight` passes.
+  Exact enumeration gives area integral **41**, versus **5.3** for the
+  negative control omitting the source PDF. Exact stratum/CDF intersections
+  also give **41**, proving the mixture-density normalization.
+- Build exits **0**, 152 shader integrity checks. `npm run test:layouts`
+  exits **0**: Tier A **89/89**, B **33/33**, C **12/12**.
+  `GTEST_FILTER='-RuntimeViewportTest.*' zig build test -Doptimize=ReleaseFast`
+  runs **7,909** tests: **7,889 pass** (**+1** versus 7,888), 17 skip,
+  and only the three pre-existing `VfxEditorSlate` failures:
+  `WorkbenchHasTwoColumns`, `TitleBarReflectsEmitterName`,
+  `StatusBarBindingsReflectTelemetry`. Exit **1** is solely those failures;
+  final test execution **37.069 seconds**. No TDR retry was needed.
+  Logs: `E:/UzmiEngine/restir-bvh-{build-final,layouts,gtests-final}.log`.
+  clangd is unavailable; the actual build and runtime DXC provide compiler
+  validation. Each build/test is bounded to 175 seconds, each capture to 170.
+
+Scoped changed files:
+
+- `.rulebook/tasks/phase1_falcor-restir-di/tasks.md`
+- `.rulebook/tasks/phase1_falcor-light-bvh/tasks.md`
+- `runtime/engine/renderer/passes/pathtracing/pipeline_path_tracer_pass.cpp`
+- `runtime/shaders/runtime/include/restir_di.hlsli`
+- `runtime/shaders/runtime/include/restir_math.hlsli`
+- `runtime/shaders/runtime/pathtracing/restir_initial_cs.hlsl`
+- `runtime/tests/engine/renderer/test_restir_di_bvh.cpp` (new)
+
+The BRDF, GI/multi-bounce ReSTIR roadmap, unrelated WIP, and scratch files
+are untouched. Final exact-name process enumeration found no `uzengine.exe`,
+`test_runtime.exe`, or `zig.exe` processes. No commit or archive was made.
+
 ## Expanded roadmap: Reservoir Data Structure + Initial Sampling
 
 - [ ] 1.1 Create `include/restir_di.hlsli` — `struct LightSample { uint lightIndex; float3 position; float3 normal; float3 emission; float pdf; }`. `struct Reservoir { LightSample sample; float weightSum; uint M; float W; }`. `void UpdateReservoir(inout Reservoir r, LightSample s, float weight, float u)` — streaming RIS update (Talbot et al. 2005 Eq. 3). @ref Bitterli et al. 2020

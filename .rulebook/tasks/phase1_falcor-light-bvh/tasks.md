@@ -171,3 +171,56 @@ SAH, and isolated traversal-timing work is not included in this completion.
 
 Deferred after stage 2: ReSTIR-BVH candidate generation/integration,
 GPU selection-histogram readback, and isolated traversal timing.
+
+## Stage 3: DXR ReSTIR / light-BVH integration (2026-10-19): INCOMPLETE
+
+- [ ] DXR ReSTIR-BVH acceptance. The joint-source-PDF, converged-mean,
+  BVH-off stage-2 equivalence, default safety, and regression gates pass.
+  What remains is the required lower variance than **BVH-only** at equal
+  low sample count. A win against uniform ReSTIR alone is insufficient.
+  The expanded shader-define/histogram and demo items above are not claimed
+  complete.
+
+The committed initial shader already traversed `SampleLightBVH` and used
+`target / (selectionPdf / triangleArea)`. This increment shares that exact
+weight with a pure gtest, documents its area measure, identifies the combined
+dispatch, and stratifies the 32 selection variates only for BVH importance
+traversal. The equally weighted stratum mixture has the original BVH density.
+The existing descriptor gate enables this only with both ReSTIR and
+`r.LightBVH`; BVH-off keeps the committed stage-2 generator. Reservoir/root/
+material contracts and the base BRDF are unchanged.
+
+Detailed methodology, the complete seven-file change list, and acceptance
+evidence are in the stage-3 section of
+`../phase1_falcor-restir-di/tasks.md`. Evidence root:
+`E:/UzmiEngine/restir-bvh-proof/`; replay metrics with
+`prove.py analyze restored nee-uniform restored`.
+
+- 108 lights / 215 nodes, two bounces, one NEE shadow sample/frame,
+  TAA/roulette off. The ordinary NEE reference uses uniform emitter
+  selection without importance traversal, ReSTIR off, 32 NEE samples/frame,
+  frame 2050. Combined/reference whole-image RGB-code mean delta:
+  **+0.02555%**. Reference-only interior RGB-code/display-linear mean deltas:
+  **+0.07340% / +0.41005%**, within the stage-2 0.5% tolerance.
+- At 5 samples, combined/uniform-ReSTIR/BVH-only error variance is
+  **421.160413 / 1697.648757 / 420.023284**: **-75.19155%** versus
+  uniform ReSTIR but **+0.27073%** versus BVH-only. At 10/20 samples,
+  versus uniform ReSTIR is **-83.99920% / -83.53551%**, while versus
+  BVH-only is **+13.26194% / +41.03204%**. Whole-image and
+  own-converged-reference measurements also fail the BVH-only gate.
+  Independent, selection-stratified, and additionally area-stratified
+  candidates were measured; the best selection-stratified version is retained.
+- BVH-off versus the pre-edit committed build: mean/max code delta **0**,
+  PNG-byte-identical at frames **5, 10, 20, 200**. Flag-free default frame 95:
+  PNG-byte-identical to `E:/UzmiEngine/f005-after/frames/f_95.png`, max **0**.
+- Integrated `run.log` identifies BVH-sourced RIS plus temporal/spatial
+  dispatch; no proof log has `compile failed` or device-removal markers.
+- Pure source-density gtest: exact integral **41**, biased missing-PDF
+  control **5.3**, exact stratified-mixture integral **41**. It passes.
+  Build exit **0** (152 shaders); layouts exit **0** (89/89, 33/33, 12/12).
+  Non-viewport gtests: **7,889 pass (+1)**, 17 skip, only the same three
+  pre-existing `VfxEditorSlate` failures, exit **1**. No TDR retry.
+  Builds/tests are bounded to 175 seconds and captures to 170 seconds.
+  Final exact-name process enumeration found no `uzengine.exe`,
+  `test_runtime.exe`, or `zig.exe` processes. No commit or archive was made;
+  unrelated WIP and scratch files are untouched.

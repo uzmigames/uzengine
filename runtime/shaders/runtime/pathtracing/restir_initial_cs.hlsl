@@ -13,17 +13,25 @@ void main(uint3 id : SV_DispatchThreadID) {
     Reservoir r = (Reservoir)0;
     RestirSetSurface(r, surface);
     if (surface.valid != 0u && restirLightCount > 0u) {
+        // This pass is dispatched only with ReSTIR enabled. The descriptor is
+        // present only with r.LightBVH enabled; zero retains stage-2 sampling.
+        uint configIndex = lights[0].padding;
         for (uint i = 0u; i < 32u; ++i) {
             uint d = i * 7u;
             LightSample s = (LightSample)0;
-            uint configIndex = lights[0].padding;
             if (configIndex != 0u) {
                 StructuredBuffer<LightBVHConfig> configurations = ResourceDescriptorHeap[configIndex - 1u];
                 LightBVHConfig config = configurations[0];
                 StructuredBuffer<LightBVHNode> nodes = ResourceDescriptorHeap[config.nodesSrv];
                 StructuredBuffer<LightBVHLight> emitters = ResourceDescriptorHeap[config.lightsSrv];
+                // Stratify the hierarchy's selection variate across the whole
+                // candidate set. The equally weighted mixture of all 32
+                // strata has exactly the BVH source density used below.
+                float selectionU = RestirRandom(index, sampleIndex, d);
+                if (config.uniformSampling == 0u)
+                    selectionU = (float(i) + selectionU) / 32.0;
                 LightBVHSample chosen = SampleLightBVH(surface.position, surface.normal,
-                    float3(RestirRandom(index, sampleIndex, d),
+                    float3(selectionU,
                            RestirRandom(index, sampleIndex, d + 1u),
                            RestirRandom(index, sampleIndex, d + 2u)), config, nodes, emitters);
                 LightBVHLight light = emitters[chosen.lightId];
@@ -32,7 +40,7 @@ void main(uint3 id : SV_DispatchThreadID) {
                 if (light.type == 0u) {
                     // Fixed emitter-area coordinates: identity shift, Jacobian 1.
                     s.position = chosen.samplePos; s.normal = chosen.sampleNormal;
-                    s.pdf = chosen.pdf;
+                    s.pdf = chosen.pdf; // BVH selection probability / emitter area.
                     if (light.emissiveSrv != 0xffffffffu) {
                         Texture2D<float4> tex = ResourceDescriptorHeap[NonUniformResourceIndex(light.emissiveSrv)];
                         s.emission *= tex.SampleLevel(linearWrap, chosen.uv, 0).rgb;
@@ -58,7 +66,10 @@ void main(uint3 id : SV_DispatchThreadID) {
             s.position = normalize(L + radius * (cos(phi) * T + sin(phi) * B));
             }
             float target = RestirTarget(RestirContribution(surface, s));
-            UpdateReservoir(r, s, target / s.pdf, RestirRandom(index, sampleIndex, d + 6u));
+            // p_hat remains in the common emitter-area measure, not divided
+            // by the proposal. Divide exactly once here; reuse retains W.
+            UpdateReservoir(r, s, RestirCandidateWeight(target, s.pdf),
+                            RestirRandom(index, sampleIndex, d + 6u));
         }
         r.W = RestirWeight(r.weightSum, r.M, RestirTarget(RestirContribution(surface, r.sample)));
     }
