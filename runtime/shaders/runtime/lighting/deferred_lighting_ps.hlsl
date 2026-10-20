@@ -602,7 +602,12 @@ LightingOutput main(FSInput input) {
     // self-shadowed regardless of CSM result, so skip the expensive PCF/PCSS
     // filtering entirely. Saves 16-tap PCF work on every back-facing fragment
     // in enclosed interiors. @ref UE5 ShadowProjectionPixelShader — N·L cull.
-    float  shadow = (sunNoL > 0.0) ? CascadeShadow(worldPos, viewDepth, N, sunNoL) : 0.0;
+    // r.Shadows.SoftPCSS (ShadowDataCB.softPCSS, uniform): PCSS variable penumbra, or the fixed-radius
+    // PCF it replaced. The pixel position seeds the soft kernel's spatially stable rotation.
+    float  shadow = (sunNoL > 0.0)
+        ? ((softPCSS != 0u) ? CascadeShadowSoft(worldPos, viewDepth, N, sunNoL, float2(px))
+                            : CascadeShadow(worldPos, viewDepth, N, sunNoL))
+        : 0.0;
 #if defined(UZ_BINDLESS) && defined(UZ_CLOUD_GROUND_SHADOWS)
     if (gBufIndices.cloudShadowCascadeCount != 0 && gBufIndices.cloudShadowBufferSrv != 0xFFFFFFFF)
         shadow *= SampleCloudShadow(worldPos * 0.00001f, sunL,

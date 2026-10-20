@@ -1,0 +1,220 @@
+{
+  "name": "PCSS soft shadow reference (24 m wall, 4 m pillar, 30 degree sun)",
+  "version": "1.0",
+  "cvars": {
+    "r.AutoExposure": 0,
+    "r.Exposure": 1,
+    "r.GTAO": 0,
+    "r.SSGI": 0,
+    "r.RadianceCache": 0,
+    "r.GI.FinalGather": 0,
+    "r.GI.Reflections": 0
+  },
+  "entities": [
+    {
+      "name": "Sun",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            -30.0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "light": {
+          "type": "directional",
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 5,
+          "cast_shadows": true,
+          "atmosphere_sun_light": true,
+          "light_source_angle": 0.5357
+        }
+      }
+    },
+    {
+      "name": "Camera",
+      "components": {
+        "transform": {
+          "position": [
+            -2000.0,
+            -4500.0,
+            2500.0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "camera": {
+          "fov": 60,
+          "near": 5,
+          "far": 20000,
+          "active": true,
+          "look_at": [
+            -2000.0,
+            0.0,
+            0.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "Sky",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        },
+        "sky_atmosphere": {
+          "sun_illuminance": [
+            5,
+            5,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "SkyLight",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        },
+        "sky_light": {
+          "intensity": 0.5,
+          "light_color": [
+            1,
+            1,
+            1
+          ],
+          "indirect_lighting_intensity": 1,
+          "min_occlusion": 0.0,
+          "lower_hemisphere_is_black": true
+        }
+      }
+    },
+    {
+      "name": "Ground",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/reference/pcss_ground.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0.55,
+          "baseColorG": 0.55,
+          "baseColorB": 0.55,
+          "roughnessMultiplier": 1.0,
+          "metallicMultiplier": 0.0
+        }
+      }
+    },
+    {
+      "name": "Wall",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/reference/pcss_wall.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0.75,
+          "baseColorG": 0.6,
+          "baseColorB": 0.45,
+          "roughnessMultiplier": 1.0,
+          "metallicMultiplier": 0.0
+        }
+      }
+    },
+    {
+      "name": "Pillar",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/reference/pcss_pillar.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0.45,
+          "baseColorG": 0.55,
+          "baseColorB": 0.75,
+          "roughnessMultiplier": 1.0,
+          "metallicMultiplier": 0.0
+        }
+      }
+    }
+  ]
+}

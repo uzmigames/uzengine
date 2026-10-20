@@ -369,6 +369,7 @@ void ComputeCascades(
         outCascades[cascade].splitFar           = extendedFar;
         outCascades[cascade].splitFarFadeStart  = splitFar; // original, un-extended
         outCascades[cascade].texelSize          = worldUnitsPerTexel;
+        outCascades[cascade].depthRange         = depthRange;
         outCascades[cascade].computedDepthBias  = cascadeDepthBias;
         outCascades[cascade].computedNormalBias = finalNormalBias;
         outCascades[cascade].center             = center;
@@ -482,6 +483,7 @@ void ComputeCascades(
             outCascades[outIdx].splitFar           = fExtendedFar;
             outCascades[outIdx].splitFarFadeStart  = fSplitFar;
             outCascades[outIdx].texelSize          = worldUnitsPerTexel;
+            outCascades[outIdx].depthRange         = depthRange;
             outCascades[outIdx].computedDepthBias  = cascadeDepthBias;
             outCascades[outIdx].computedNormalBias = finalNormalBias;
             outCascades[outIdx].center             = center;

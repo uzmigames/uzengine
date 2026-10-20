@@ -128,6 +128,9 @@ ENTRIES = [
         'header': 'runtime/engine/renderer/core/params/constant_buffers.h', 'struct': 'ShadowDataCB',
         'map': {'cascadeViewProj': 'cascadeViewProj', 'shadowAtlasIndex': 'shadowAtlasIndex', 'cascadeCount': 'cascadeCount',
                 'localShadowAtlasIndex': 'localShadowAtlasIndex', 'localShadowCount': 'localShadowCount',
+                'localShadowNormalOffset': 'localShadowNormalOffset', 'softPCSS': 'softPCSS',
+                'pcssMinPenumbraTexels': 'pcssMinPenumbraTexels', 'pcssMaxPenumbraTexels': 'pcssMaxPenumbraTexels',
+                'cascadePcssDepthToTexelsPacked': 'cascadePcssDepthToTexels',
                 'localShadowRaw': 'localShadows'},
         # The struct text alone does not compile: the nested struct and the array bound come from the same header.
         'extra_structs': ['LocalLightShadowData'], 'extra_constants': ['kMaxLocalLightShadows'],

@@ -1113,6 +1113,11 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
         ctx.totalCascadeCount             = 0;
         ctx.shadowFrame.totalCascadeCount = 0;
     }
+    // r.Shadows.SoftPCSS (registered in shadow_renderer.cpp) is re-read every frame so a runtime
+    // toggle applies at once: the CSM block above is reused while camera, lights and transforms
+    // hold still, and SetupShadowFrame only runs on a dirty frame.
+    reinterpret_cast<ShadowDataCB*>(ctx.shadowAlloc.cpuPtr)->softPCSS =
+        CVarRegistry::Get().GetBool("r.Shadows.SoftPCSS", true) ? 1u : 0u;
 
     // ── Build ShadowDataParams for binder path ──────────────────────────
     // Copy the 768-byte scalar section from the CB allocation, then attach

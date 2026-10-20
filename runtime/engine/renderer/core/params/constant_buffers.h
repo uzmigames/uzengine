@@ -654,7 +654,11 @@ struct ShadowDataCB {
     uint32_t localShadowAtlasIndex = UINT32_MAX; ///< SRV heap index for local light shadow atlas. UINT32_MAX = none.
     uint32_t localShadowCount = 0;  ///< Number of active local light shadows (0 to kMaxLocalShadowTiles).
     float    localShadowNormalOffset = 0.005f; ///< r.Shadow.Local.NormalOffset (block A.1).
-    float    _pad2[15] = {};        ///< Pad CSM section to 768 bytes.
+    uint32_t softPCSS = 0;          ///< r.Shadows.SoftPCSS: 1 = variable-penumbra PCSS on the CSM, 0 = fixed PCF.
+    float    pcssMinPenumbraTexels = 0.5f;  ///< r.Shadow.PCSSMinPenumbra — PCSS kernel radius floor (texels).
+    float    pcssMaxPenumbraTexels = 16.0f; ///< r.Shadow.PCSSMaxPenumbra — PCSS kernel radius cap (texels).
+    float    cascadePcssDepthToTexels[8] = {}; ///< Per-cascade penumbra texels per unit depth gap (shadow_pcss.h).
+    float    _pad2[4] = {};         ///< Pad CSM section to 768 bytes.
 
     // ── Local Light Shadow Data (appended after CSM section) ──────────────
     // Up to 16 local light shadows. Each entry stores the light-space viewProj

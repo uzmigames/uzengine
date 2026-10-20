@@ -7,6 +7,7 @@
 
 #include "camera.h"
 #include "shadow_pass.h"
+#include "shadow_pcss.h"
 #include "log.h"
 #include "cvar.h"
 
@@ -22,6 +23,12 @@ static auto* cv_LocalShadowTileSize  = UZ_CVAR_INT("r.Shadow.LocalTileSize", 102
 static auto* cv_PCSSSearchSamples    = UZ_CVAR_INT("r.Shadow.PCSS.SearchSamples", 16, "PCSS blocker search sample count", 8, 32);
 static auto* cv_PCSSFilterSamples    = UZ_CVAR_INT("r.Shadow.PCSS.Samples", 32, "PCSS PCF filter sample count", 16, 64);
 static auto* cv_PCSSMaxSharpness     = UZ_CVAR_FLOAT("r.Shadow.PCSS.MaxSharpness", 4.0f, "PCSS post-PCF sharpening limit", 1.f, 8.f);
+// Soft sun shadows (PCSS stage 1, directional CSM). The OFF path is the fixed 16-tap Poisson PCF of
+// SampleShadowCascade, untouched; ON swaps in SampleShadowCascadeSoft (blocker search, penumbra from
+// the receiver/blocker depth gap, PCF with that radius). The kernel clamps are the existing
+// r.Shadow.PCSSMinPenumbra / r.Shadow.PCSSMaxPenumbra (texels, frame_constants.cpp).
+static auto* cv_SoftPCSS             = UZ_CVAR_BOOL("r.Shadows.SoftPCSS", true, "Directional (CSM) soft shadows: 1 = PCSS variable penumbra (default), 0 = the fixed-radius PCF");
+static auto* cv_SoftPCSSLightSize    = UZ_CVAR_FLOAT("r.Shadows.SoftPCSS.LightSize", 1.0f, "PCSS penumbra scale on the directional light's angular diameter (1 = the light's own lightSourceAngle, 0.5357 deg for the sun)", 0.f, 32.f);
 
 namespace uz {
 
@@ -143,6 +150,20 @@ ShadowFrameData SetupShadowFrame(
     //   Convert from texels to tile UV space [0,1].
     //   Default: r.Shadow.MaxSoftKernelSize = 40 (ShadowRendering.cpp:188-192).
     shadowData.maxSoftKernelSize = cfg.maxSoftKernelSize / static_cast<float>(shadowResolution);
+
+    // ── Soft shadows: PCSS stage 1 on the directional CSM (r.Shadows.SoftPCSS) ─────────────
+    // The shader multiplies the receiver/blocker depth gap by this per-cascade constant to get the
+    // penumbra radius in texels; shadow_pcss.h derives the orthographic form of Fernando's estimate.
+    // Cached with the rest of the CSM block while the shadows are not dirty; the on/off flag is
+    // re-read every frame in frame_constants.cpp so a runtime toggle applies at once.
+    shadowData.softPCSS              = cv_SoftPCSS->value >= 0.5f ? 1u : 0u;  // CVarRegistry::GetBool rule
+    shadowData.pcssMinPenumbraTexels = CVarRegistry::Get().GetFloat("r.Shadow.PCSSMinPenumbra", 0.5f);
+    shadowData.pcssMaxPenumbraTexels = CVarRegistry::Get().GetFloat("r.Shadow.PCSSMaxPenumbra", 16.0f);
+    for (uint32_t i = 0; i < totalCascades; ++i) {
+        shadowData.cascadePcssDepthToTexels[i] = PcssDepthToPenumbraTexels(
+            tanHalfAngle, cv_SoftPCSSLightSize->value,
+            result.cascades[i].depthRange, result.cascades[i].texelSize);
+    }
 
     // Atlas grid layout — needed by the shader to compute cascade UV offsets
     shadowData.atlasColumns = GetAtlasColumns(totalCascades);
