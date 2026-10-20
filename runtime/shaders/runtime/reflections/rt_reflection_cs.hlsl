@@ -37,6 +37,14 @@
 ///    ray t is written to the SSR hit-distance texture for the SSR temporal pass's virtual-hit
 ///    reprojection; on that route the pass runs between SSR_Resolve and SSR_Temporal.
 ///
+/// Stage 3 (`kReflectionFlagNoScreenTrace`): no screen trace this frame — SSR off (`r.SSR` 0), or
+/// its trace pass skipped (`r.SSR.Trace` 0). The screen confidence is zero everywhere, so every
+/// eligible texel is traced, and the pass owns the whole reflection buffer (and, on the denoise
+/// route, the hit-distance texture): a texel it does not trace is written as "no reflection" (zero
+/// weight, the lighting keeps its prefiltered probe / sky) instead of being left to a resolve that
+/// did not run. The lighting reads the buffer through the same `PerFrameCB::ssrSrvIndex`, so with
+/// SSR off the ladder is ray -> probe / sky. With the flag clear nothing here changes.
+///
 /// Bindings: root constants at b0 (`uz::RTReflectionRootConstants`, 16 DWORDs), PerFrameCB at b1,
 /// the shared trace constants at b2 (`uz::RadianceCacheTraceConstants`, rows 1-11 as the DDGI
 /// writer and the path tracer bind them; rows 1-2 carry the probe grid + frame index here).
@@ -61,7 +69,7 @@
 cbuffer RTReflectionRootCB : register(b0) {
     uint  depthSrvIdx;         // 0  GBuffer depth (reversed-Z device depth)
     uint  normalSrvIdx;        // 1  GBuffer normal: rg = octahedral normal, b = metallic, a = roughness
-    uint  ssrTraceSrvIdx;      // 2  This frame's SSR trace output: a = screen confidence
+    uint  ssrTraceSrvIdx;      // 2  This frame's SSR trace output: a = screen confidence (unread, sentinel, with kReflectionFlagNoScreenTrace)
     uint  outputUavIdx;        // 3  SSR resolved buffer: rgb = reflected radiance, a = blend weight
     uint  tlasSrvIdx;          // 4  Scene TLAS
     uint  outputWidth;         // 5
@@ -164,6 +172,17 @@ void WriteHitDistance(uint2 pixel, float t) {
     hitDistance[pixel] = t;
 }
 
+// Stage 3: with no screen trace this frame the pass owns the whole buffer, so a texel it does not
+// trace is written as "no reflection" (zero weight: the lighting keeps its prefiltered probe / sky)
+// and its hit distance as "no hit", instead of being left to a screen trace that did not run. With
+// the screen trace on (flag clear) the texel keeps the resolve's value, as in stages 1 and 2.
+void WriteNoReflection(uint2 pixel) {
+    if (!ReflectionOwnsOutput(flags)) return;
+    RWTexture2D<float4> output = ResourceDescriptorHeap[outputUavIdx];
+    output[pixel] = float4(0.0, 0.0, 0.0, 0.0);
+    WriteHitDistance(pixel, 0.0);
+}
+
 [numthreads(8, 8, 1)]
 void main(uint3 DTid : SV_DispatchThreadID)
 {
@@ -171,15 +190,23 @@ void main(uint3 DTid : SV_DispatchThreadID)
 
     Texture2D<float>  depthTex    = ResourceDescriptorHeap[depthSrvIdx];
     Texture2D<float4> normalTex   = ResourceDescriptorHeap[normalSrvIdx];
-    Texture2D<float4> screenTrace = ResourceDescriptorHeap[ssrTraceSrvIdx];
 
     const float  deviceZ          = depthTex.Load(int3(DTid.xy, 0)).r;
     const float4 normalData       = normalTex.Load(int3(DTid.xy, 0));
     const float  roughness        = normalData.a;
     // The current screen trace, not the temporally accumulated history: a reflection whose source
-    // left the screen must hand over to the ray, not linger (contract comment).
-    const float  screenConfidence = screenTrace.Load(int3(DTid.xy, 0)).a;
-    if (!ReflectionNeedsRT(deviceZ, roughness, maxRoughness, screenConfidence)) return;
+    // left the screen must hand over to the ray, not linger (contract comment). Stage 3: with no
+    // screen trace this frame the confidence is zero everywhere (every eligible texel is traced)
+    // and the trace texture is not read.
+    float screenConfidence = 0.0;
+    if (!ReflectionOwnsOutput(flags)) {
+        Texture2D<float4> screenTrace = ResourceDescriptorHeap[ssrTraceSrvIdx];
+        screenConfidence = screenTrace.Load(int3(DTid.xy, 0)).a;
+    }
+    if (!ReflectionNeedsRT(deviceZ, roughness, maxRoughness, screenConfidence)) {
+        WriteNoReflection(DTid.xy);
+        return;
+    }
 
     // ── The ray from the visible surface: the mirror vector, or a glossy lobe sample ───────
     const float2 uv       = (float2(DTid.xy) + 0.5) / float2(outputWidth, outputHeight);
@@ -205,7 +232,10 @@ void main(uint3 DTid : SV_DispatchThreadID)
     }
     // A shading normal facing away from the camera reflects the ray into the surface; skip it
     // (the lighting keeps its probe) rather than trace from inside the geometry.
-    if (dot(R, N) <= 0.0) return;
+    if (dot(R, N) <= 0.0) {
+        WriteNoReflection(DTid.xy);
+        return;
+    }
 
     RaytracingAccelerationStructure tlas = ResourceDescriptorHeap[tlasSrvIdx];
 
@@ -264,7 +294,10 @@ void main(uint3 DTid : SV_DispatchThreadID)
         albedo          = GITrace_HitAlbedo(meshId, hitP, materialTableSrv);
     }
     // A hit without attributes is left to the lighting's prefiltered probe.
-    if (!ReflectionHitUsable(true, surfaceDistance, dot(hitN, hitN))) return;
+    if (!ReflectionHitUsable(true, surfaceDistance, dot(hitN, hitN))) {
+        WriteNoReflection(DTid.xy);
+        return;
+    }
 
     // ── Direct sun with a shadow ray (the DDGI writer's / path tracer's NEE) ─────────────
     const float3 L   = normalize(float3(lightDirX, lightDirY, lightDirZ));

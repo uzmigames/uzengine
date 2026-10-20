@@ -10,7 +10,9 @@
 /// The pass itself is `SceneRenderer::RegisterRTReflectionPass` (frame/frame_gi_passes.cpp),
 /// registered after the SSR passes (or between SSR_Resolve and SSR_Temporal on the denoise route)
 /// and gated on `r.RayTracing.Reflections` (default off): with the gate off nothing here is bound,
-/// compiled or dispatched.
+/// compiled or dispatched. Stage 3: with SSR off (`r.SSR` 0) the pass runs on its own
+/// (`SceneRenderer::RTReflectionsStandalone`), owning the reflection buffer the lighting reads
+/// (`kRTReflectionFlagNoScreenTrace`), the SSR denoiser chained behind it on the denoise route.
 ///
 /// @ref docs/specs/rendering/rt-reflections.md — design (root budget <= 20 DWORDs, hit attributes)
 
@@ -27,7 +29,7 @@ namespace uz {
 struct RTReflectionRootConstants {
     uint32_t depthSrvIdx        = UINT32_MAX;  ///< [0]  GBuffer depth SRV.
     uint32_t normalSrvIdx       = UINT32_MAX;  ///< [1]  GBuffer normal SRV (rg oct normal, b metallic, a roughness).
-    uint32_t ssrTraceSrvIdx     = UINT32_MAX;  ///< [2]  This frame's SSR trace output (a = screen confidence).
+    uint32_t ssrTraceSrvIdx     = UINT32_MAX;  ///< [2]  This frame's SSR trace output (a = screen confidence); sentinel = unread (kRTReflectionFlagNoScreenTrace).
     uint32_t outputUavIdx       = UINT32_MAX;  ///< [3]  SSR resolved buffer UAV (the texture the lighting blends).
     uint32_t tlasSrvIdx         = UINT32_MAX;  ///< [4]  Scene TLAS SRV.
     uint32_t outputWidth        = 0;           ///< [5]
@@ -40,7 +42,7 @@ struct RTReflectionRootConstants {
     uint32_t skyCubemapSrv      = UINT32_MAX;  ///< [12] Sky cubemap for escaping rays (sentinel = flat skylight).
     uint32_t probeShSrv         = UINT32_MAX;  ///< [13] Radiance-cache probe SH buffer (sentinel = no indirect term).
     uint32_t hitDistUavIdx      = UINT32_MAX;  ///< [14] SSR hit-distance UAV (written on the denoise route).
-    uint32_t flags              = 0;           ///< [15] rtreflection::kReflectionFlag* bits (glossy, indirect, hit distance).
+    uint32_t flags              = 0;           ///< [15] rtreflection::kReflectionFlag* bits (glossy, indirect, hit distance, no screen trace).
 };
 
 /// `RTReflectionRootConstants::flags` bits — the shader contract's `rtreflection::kReflectionFlag*`
@@ -49,6 +51,9 @@ enum : uint32_t {
     kRTReflectionFlagGlossy      = 1u,   ///< r.RayTracing.Reflections.Glossy: GGX-VNDF sampled ray.
     kRTReflectionFlagIndirect    = 2u,   ///< r.RayTracing.Reflections.Indirect: probe SH at the hit.
     kRTReflectionFlagHitDistance = 4u,   ///< r.RayTracing.Reflections.Denoise: write the ray t for SSR_Temporal.
+    /// Stage 3: no screen trace this frame (SSR off, or r.SSR.Trace 0) — every eligible texel is
+    /// traced and the pass writes every texel of the buffer (zero weight where it does not trace).
+    kRTReflectionFlagNoScreenTrace = 8u,
 };
 
 /// The ray-traced roughness cutoff: `r.RayTracing.Reflections.MaxRoughness` when set, else the

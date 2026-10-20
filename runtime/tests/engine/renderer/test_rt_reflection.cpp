@@ -361,3 +361,51 @@ TEST(RTReflectionStage2, ProbeGridAndFrameIndexFillTheSharedRows) {
     EXPECT_FLOAT_EQ(tc.lightColorR, 1.0f);       // and so are the sun rows
     EXPECT_FLOAT_EQ(tc.groundAlbedo, 0.18f);
 }
+
+// ── Stage 3: the pass without the screen trace (SSR off) ─────────────────────────────────────
+
+// The CPU mirror and the contract agree on the stage 3 flag, which overlaps no stage 2 bit and
+// rides in the existing `flags` DWORD (no new root constant); a default root block is still the
+// stage 1/2 pass (flag clear, the screen trace read), so the SSR-on route is untouched, and the
+// trace SRV's sentinel is the "unread" value the standalone route binds.
+TEST(RTReflectionStage3, NoScreenTraceFlagMatchesTheContractAndOverlapsNoOtherBit) {
+    EXPECT_EQ(kRTReflectionFlagNoScreenTrace, kReflectionFlagNoScreenTrace);
+    EXPECT_EQ(kReflectionFlagNoScreenTrace
+                  & (kReflectionFlagGlossy | kReflectionFlagIndirect | kReflectionFlagHitDistance), 0u);
+    EXPECT_FALSE(ReflectionOwnsOutput(0u));
+    EXPECT_FALSE(ReflectionOwnsOutput(kReflectionFlagGlossy | kReflectionFlagIndirect | kReflectionFlagHitDistance));
+    EXPECT_TRUE(ReflectionOwnsOutput(kReflectionFlagNoScreenTrace));
+    EXPECT_TRUE(ReflectionOwnsOutput(kReflectionFlagNoScreenTrace | kReflectionFlagGlossy | kReflectionFlagHitDistance));
+    // The stage 2 opt-ins are unaffected by the stage 3 bit.
+    EXPECT_TRUE(ReflectionUsesGlossyLobe(kReflectionFlagNoScreenTrace | kReflectionFlagGlossy, 0.5f));
+    EXPECT_FALSE(ReflectionUsesGlossyLobe(kReflectionFlagNoScreenTrace, 0.5f));
+
+    const RTReflectionRootConstants rc{};
+    EXPECT_FALSE(ReflectionOwnsOutput(rc.flags));
+    EXPECT_EQ(rc.ssrTraceSrvIdx, UINT32_MAX);
+    EXPECT_EQ(sizeof(RTReflectionRootConstants), 64u);
+    EXPECT_EQ(kRTReflectionRootDwords, 16u);
+    EXPECT_LE(kRTReflectionRootDwords, 20u);
+}
+
+// With no screen trace the confidence the shader feeds ReflectionNeedsRT is zero everywhere, so
+// the ray selection reduces to the eligibility test: every eligible texel is traced and no
+// ineligible one (the sky, a surface rougher than the cutoff) — the "no SSR = always need the
+// ray" rule of the fallback ladder with its screen layer removed.
+TEST(RTReflectionStage3, ZeroScreenConfidenceTracesExactlyTheEligibleTexels) {
+    const float maxRoughness = 0.35f;
+    const float depths[]      = {0.0f, 0.00005f, 0.0001f, 0.001f, 0.5f, 1.0f};
+    const float roughnesses[] = {0.0f, 0.02f, kReflectionMirrorRoughness, 0.35f, 0.36f, 0.9f};
+    int traced = 0;
+    for (const float z : depths) {
+        for (const float r : roughnesses) {
+            EXPECT_EQ(ReflectionNeedsRT(z, r, maxRoughness, 0.0f), ReflectionEligible(z, r, maxRoughness))
+                << "deviceZ " << z << " roughness " << r;
+            traced += ReflectionNeedsRT(z, r, maxRoughness, 0.0f) ? 1 : 0;
+        }
+    }
+    EXPECT_EQ(traced, 3 * 4);   // three depths above the sky threshold x four roughnesses within the cutoff
+    // The same texel with a confident screen hit stays with the screen trace (stages 1 and 2).
+    EXPECT_FALSE(ReflectionNeedsRT(0.5f, 0.02f, maxRoughness, 1.0f));
+    EXPECT_TRUE(ReflectionNeedsRT(0.5f, 0.02f, maxRoughness, 0.0f));
+}

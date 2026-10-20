@@ -977,13 +977,28 @@
     /// Registers Screen-Space Reflections passes (trace + resolve + temporal).
     void RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
 
+    /// Registers the SSR temporal accumulation + spatial bilateral denoise over the resolved
+    /// buffer: the tail of RegisterSSRPasses, and (stage 3) the denoiser of the ray-traced
+    /// reflections when they run without the screen trace.
+    void RegisterSSRDenoisePasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
+
     /// Registers the hardware ray-traced reflection pass (`r.RayTracing.Reflections`, default
     /// off): fills the texels of the resolved SSR buffer whose screen trace found no confident hit
     /// with a ray against the TLAS (stage 1: mirror; stage 2 opt-ins: GGX-VNDF glossy ray, probe SH
     /// indirect at the hit, SSR denoise). Called twice per frame — from RegisterSSRPasses after
     /// SSR_Resolve (`beforeDenoise` true) and from RegisterLightingPasses after the SSR chain — and
     /// registers on the call `r.RayTracing.Reflections.Denoise` selects. Not registered when off.
+    /// Stage 3: with SSR off the pass registers from the RegisterLightingPasses call on its own,
+    /// owning the resolved buffer (see RTReflectionsStandalone).
     void RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameContext& ctx, bool beforeDenoise = false);
+
+    /// Stage 3 of the ray-traced reflections: true when they run without the screen trace — SSR
+    /// switched off (`r.SSR` 0, or ShowFlag::SSR) with `r.RayTracing.Reflections` on and a built,
+    /// non-empty TLAS — so the pass owns the resolved SSR buffer and the lighting reads it
+    /// (PerFrameCB::ssrSrvIndex, published by PopulatePerFrameConstants under this same test).
+    /// SSR on but not yet running (its first frame) is not standalone: the pass waits for the
+    /// chain as before, so an SSR run is unchanged. Member state only, so both call sites agree.
+    [[nodiscard]] bool RTReflectionsStandalone() const;
 
     /// Registers the deferred lighting pass (or debug view / GBuffer debug).
     void RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, FrameContext& ctx);

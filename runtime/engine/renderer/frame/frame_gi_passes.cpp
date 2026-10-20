@@ -688,6 +688,15 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
     // accumulated and filtered with the screen-trace texels. Registered only when that route is on.
     RegisterRTReflectionPass(rgBuilder, ctx, /*beforeDenoise=*/true);
 
+    RegisterSSRDenoisePasses(rgBuilder, ctx);
+}
+
+// ── SSR temporal accumulation + spatial bilateral denoise ──────────────────────────────────
+// The tail of the SSR chain over the resolved buffer (temporal -> history, spatial -> resolved),
+// and (stage 3) the denoiser of the ray-traced reflections when the screen trace is off: the ray
+// pass writes the resolved buffer and the hit distance, and these two passes run over them.
+
+void SceneRenderer::RegisterSSRDenoisePasses(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
     // SSR Temporal accumulation — virtual hit reprojection + YCoCg variance clip.
     // @ref AMD FidelityFX SSSR — temporal pass uses hit distance for virtual reprojection.
     {
@@ -834,7 +843,20 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
 // SSR (on screen) -> ray (off screen) -> the lighting's prefiltered probe / sky (texel untouched
 // on a miss or a hit the field does not cover). Stage 1 = mirror / low roughness only (the
 // r.SSR.MaxRoughness cutoff); glossy GGX-VNDF rays, the radiance-cache indirect term at the hit
-// and a denoiser are stage 2. @ref docs/specs/rendering/rt-reflections.md
+// and a denoiser are stage 2; stage 3 runs the pass with SSR off (RTReflectionsStandalone: the
+// pass owns the resolved buffer, every eligible texel traced). @ref docs/specs/rendering/rt-reflections.md
+
+bool SceneRenderer::RTReflectionsStandalone() const {
+    // SSR switched off (`r.SSR` 0, or the show flag) — not SSR warming up: on an SSR run the ray
+    // pass waits for the chain (its first frame has no previous colour) as in stages 1 and 2, so
+    // SSR-on frames are unchanged. The resolved buffer is created with the other SSR resources
+    // whether or not SSR is on, and is the texture PerFrameCB::ssrSrvIndex publishes.
+    const bool ssrOff = !m_ssrEnabled || !m_showFlags.Get(ShowFlag::SSR);
+    return ssrOff && m_rtManager && m_rtManager->IsReflectionsEnabled() && m_rtManager->IsReady()
+        && m_rtManager->GetTLASInstanceCount() > 0u
+        && m_ssrResolvedOutput.IsValid() && m_ssrResolvedOutputSrv != UINT32_MAX
+        && m_ssrResolvedOutputUav != UINT32_MAX;
+}
 
 void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameContext& ctx, bool beforeDenoise) {
     // Opt-in (`r.RayTracing.Reflections`, default off) on top of the `r.RayTracing` master
@@ -849,16 +871,24 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
     // The render graph chains every access to a resource in registration order (depth is read by
     // every SSR pass), so the registration point is the execution point.
     const bool denoise = cv_RTReflectionsDenoise->value;
-    if (denoise != beforeDenoise) return;
-    // The same gate as RegisterSSRPasses: the pass fills the holes of this frame's screen trace
-    // in the resolved buffer the lighting reads this frame (PerFrameCB::ssrSrvIndex).
-    if (!m_showFlags.Get(ShowFlag::SSR) || !ctx.ssrActive || !m_ssrHasPrevColor) return;
+    // With the SSR chain (RegisterSSRPasses' gate) the pass fills the holes of this frame's screen
+    // trace in the resolved buffer the lighting reads this frame (PerFrameCB::ssrSrvIndex). Stage 3:
+    // with SSR off the pass runs on its own from the RegisterLightingPasses call, owning that
+    // buffer (the lighting reads it under the same RTReflectionsStandalone test), the SSR denoiser
+    // chained behind it on the denoise route. SSR on but not yet running (its first frame, no
+    // previous colour) registers nothing, as before.
+    const bool ssrChain   = m_showFlags.Get(ShowFlag::SSR) && ctx.ssrActive && m_ssrHasPrevColor;
+    const bool standalone = !ssrChain && RTReflectionsStandalone();
+    if (ssrChain ? (denoise != beforeDenoise) : (!standalone || beforeDenoise)) return;
+    // No screen trace this frame — SSR off, or its trace pass skipped (r.SSR.Trace 0): every
+    // eligible texel is traced and the pass writes every texel (kRTReflectionFlagNoScreenTrace).
+    const bool ownsOutput = standalone || cv_SSRTrace->value < 0.5f;
     // Hit attributes: the per-mesh geometry + material table by TLAS InstanceID the path tracer
     // shades its bounce vertices with (refreshed here, as the path tracer does, only while the
     // pass is on), the global distance field for meshes without an entry.
     const uint32_t materialTableSrv = UpdateGIMaterialTable(ctx);
 
-    rgBuilder.AddPass("RT_Reflections", [&, materialTableSrv](rg::RgPassBuilder& pb) {
+    rgBuilder.AddPass("RT_Reflections", [&, materialTableSrv, ownsOutput](rg::RgPassBuilder& pb) {
         // The GBuffer reads order this pass after the GBuffer and, in registration order, after
         // SSR_SpatialDenoise (the last writer of the resolved buffer) and before the lighting.
         // The TLAS (built in RTManager::BeginFrame, before the graph executes) and the SSR
@@ -868,7 +898,7 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
         pb.Read(ctx.normalRes, RHIResourceState::ShaderResource);
         pb.Read(ctx.velocityRes, RHIResourceState::ShaderResource);
 
-        pb.SetExecutionCallback([this, &ctx, materialTableSrv](IRHICommandList* cmd, const rg::RgPassResources&) {
+        pb.SetExecutionCallback([this, &ctx, materialTableSrv, ownsOutput](IRHICommandList* cmd, const rg::RgPassResources&) {
             UZ_PROFILE_SCOPE("RTReflections::Trace");
 
             auto rtReflectionPSO = ctx.pipelines->GetRtReflection();
@@ -895,7 +925,9 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
 
             const bool denoiseRoute = cv_RTReflectionsDenoise->value;
             {
-                m_rgStates->Transition(cmd, m_ssrTraceOutput, RHIResourceState::ShaderResource);
+                // The screen trace is read only with the chain (unread, sentinel index, when the
+                // pass owns the buffer).
+                if (!ownsOutput) m_rgStates->Transition(cmd, m_ssrTraceOutput, RHIResourceState::ShaderResource);
                 m_rgStates->Transition(cmd, m_ssrResolvedOutput, RHIResourceState::UnorderedAccess);
                 // The hit distance feeds the temporal pass's virtual-hit reprojection on the
                 // denoise route; the trace pass left it in ShaderResource.
@@ -913,7 +945,7 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
             RTReflectionRootConstants rc{};
             rc.depthSrvIdx        = m_gbuffer.depthSRV;
             rc.normalSrvIdx       = m_gbuffer.normalSRV;
-            rc.ssrTraceSrvIdx     = m_ssrTraceOutputSrv;
+            rc.ssrTraceSrvIdx     = ownsOutput ? UINT32_MAX : m_ssrTraceOutputSrv;
             rc.outputUavIdx       = m_ssrResolvedOutputUav;
             rc.tlasSrvIdx         = m_rtManager->GetTLASSRVIndex();
             rc.outputWidth        = m_renderWidth;
@@ -931,7 +963,8 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
             rc.hitDistUavIdx      = denoiseRoute ? m_ssrHitDistanceUav : UINT32_MAX;
             rc.flags              = (cv_RTReflectionsGlossy->value ? kRTReflectionFlagGlossy : 0u)
                                   | (indirect ? kRTReflectionFlagIndirect : 0u)
-                                  | (denoiseRoute ? kRTReflectionFlagHitDistance : 0u);
+                                  | (denoiseRoute ? kRTReflectionFlagHitDistance : 0u)
+                                  | (ownsOutput ? kRTReflectionFlagNoScreenTrace : 0u);
 
             cmd->SetRootConstants(kSlotRootConstants, reinterpret_cast<const uint32_t*>(&rc),
                                   kRTReflectionRootDwords);
@@ -952,6 +985,11 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
             }
         });
     });
+
+    // Stage 3 denoise route without the SSR chain: the temporal accumulation + spatial denoise over
+    // the ray texels (and their hit distances) the pass just wrote, then the lighting reads the
+    // denoised buffer.
+    if (standalone && denoise) RegisterSSRDenoisePasses(rgBuilder, ctx);
 }
 
 // ── SSGI Previous Frame Color Copy ─────────────────────────────────────────

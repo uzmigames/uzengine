@@ -250,7 +250,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
     RegisterSSGIPasses(rgBuilder, ctx);
     RegisterBrixelizerGIPasses(rgBuilder, ctx);
     RegisterSSRPasses(rgBuilder, ctx);
-    RegisterRTReflectionPass(rgBuilder, ctx);   // opt-in HWRT fill of the SSR holes (r.RayTracing.Reflections)
+    RegisterRTReflectionPass(rgBuilder, ctx);   // opt-in HWRT fill of the SSR holes, or the reflections on their own with SSR off (r.RayTracing.Reflections)
     
     // ── Env MIS temporal accumulation (render graph compute pass) ───────
     if (ctx.perFrame.sdfReflectionsEnabled == 0 && m_envMisEnabled
@@ -541,8 +541,13 @@ void SceneRenderer::RegisterPassInspectorTargets(FrameContext& ctx) {
     if (ctx.ssrActive) {
         m_passInspector.RegisterTarget("ssr.trace", m_ssrTraceOutput, m_ssrTraceOutputSrv,
                                         VisDisplayMode::Color, rw, rh);
+    }
+    // The resolved buffer: the SSR chain's output, or (stage 3, SSR off) the ray-traced reflections'.
+    if (ctx.ssrActive || RTReflectionsStandalone()) {
         m_passInspector.RegisterTarget("ssr.resolve", m_ssrResolvedOutput, m_ssrResolvedOutputSrv,
                                         VisDisplayMode::Color, rw, rh);
+    }
+    if (ctx.ssrActive) {
         // Register the temporal history write target (the one lighting reads from).
         // After the temporal pass flips the index, the *previous* write idx is
         // what was written this frame. At this point m_ssrHistoryIndex has been

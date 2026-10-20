@@ -1,5 +1,6 @@
 // Shared CPU/shader contract of the hardware ray-traced reflection pass: the stage 1 mirror ray and
-// fallback mask, and the stage 2 glossy lobe, probe weighting and hit radiance. Scalar math only, so
+// fallback mask, the stage 2 glossy lobe, probe weighting and hit radiance, and the stage 3
+// no-screen-trace mode (the pass owns the reflection buffer). Scalar math only, so
 // the gtests (tests/engine/renderer/test_rt_reflection.cpp) evaluate the same expressions the shader
 // runs.
 #ifndef UZ_RT_REFLECTION_CONTRACT
@@ -30,6 +31,8 @@ static const float kReflectionSurfaceBias = 2.0f;
 static const uint kReflectionFlagGlossy      = 1u;   // r.RayTracing.Reflections.Glossy
 static const uint kReflectionFlagIndirect    = 2u;   // r.RayTracing.Reflections.Indirect
 static const uint kReflectionFlagHitDistance = 4u;   // r.RayTracing.Reflections.Denoise: write the ray t
+// Stage 3: no screen trace this frame (SSR off, or r.SSR.Trace 0) — the pass owns the buffer.
+static const uint kReflectionFlagNoScreenTrace = 8u;
 
 // Below this roughness the lobe is a mirror: the screen trace's MIRROR_THRESHOLD
 // (ssr_trace_cs.hlsl) and the cutoff below which the SSR spatial denoise passes texels through.
@@ -115,6 +118,19 @@ float ReflectionProbeFacingWeight(float3 normal, float3 toProbe) {
 // A hit in the sun's shadow is lit by the probe term alone.
 float3 ReflectionHitRadiance(float3 albedo, float3 sunRadiance, float3 probeIrradianceOverPi) {
     return albedo * (sunRadiance / kReflectionPi) + albedo * probeIrradianceOverPi;
+}
+
+// ─── Stage 3 ──────────────────────────────────────────────────────────────────────────────────
+
+// With no screen trace this frame the pass is the only writer of the reflection buffer the
+// lighting blends, so it writes every texel: the ray's radiance where it traces, zero weight where
+// it does not (an ineligible surface, a ray into the surface, a hit without attributes — the
+// lighting keeps its prefiltered probe / sky there), and the screen confidence that hands a texel
+// to the ray is zero everywhere, so every eligible texel is traced:
+// ReflectionNeedsRT(z, r, max, 0) == ReflectionEligible(z, r, max). With the flag clear the pass is
+// the stage 1/2 pass: it reads the screen trace and fills only its holes.
+bool ReflectionOwnsOutput(uint flags) {
+    return (flags & kReflectionFlagNoScreenTrace) != 0u;
 }
 
 #ifdef __cplusplus
