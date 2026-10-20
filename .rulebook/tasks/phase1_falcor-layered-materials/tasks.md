@@ -215,3 +215,154 @@ Stage-2 changed files (all paths relative to the repository; no commit made):
 - `scripts/rendering/layered-absorption-stage2.uzscene`
 - `scripts/rendering/test_cbuffer_layouts.py`
 - `scripts/rendering/test_layered_bsdf_stage2.py`
+
+## DXR Stage 3: Opt-in Adjacent-IOR Refracted Stack (2026-10-20)
+
+The transport is a position-free, plane-parallel stack over the unchanged D7
+base. It is a local BSDF: film thickness controls Beer-Lambert optical distance,
+not lateral displacement of a texture lookup or geometric parallax. Each
+boundary samples visible GGX facets using that interface's roughness, evaluates
+exact dielectric Fresnel between the two adjacent media, and chooses reflection
+with probability F or Snell transmission with probability 1-F. TIR has F=1.
+All internal reflection orders are included with 0.75-survival roulette after
+eight events; there is no fixed scattering-order truncation.
+
+For a fixed facet, the angular Jacobian is
+`dOmegaT/dOmegaI = (etaI/etaT)^2 * cosI/cosT`. The rough-facet PDF uses
+`dOmegaH/dOmegaT = etaT^2 * abs(LoH)/(etaI*VoH + etaT*LoH)^2`.
+With separable Smith visibility, the importance weight is `G1(L)` for
+reflection and `G1(L)*(etaI/etaT)^2` for radiance transmission. On every
+completed external reflection path the eta-squared factors telescope to one;
+G1 and absorption are at most one. A passive base therefore stays passive,
+including after TIR, and roulette preserves the expectation. Dielectric
+boundaries satisfy eta-scaled reciprocity; the base retains D7's existing
+directional diffuse/specular coupling, rather than claiming a new reciprocal
+base model.
+
+The marginal outgoing-direction PDF of the random walk is not available in
+closed form. Continuation carries the exact path-space importance weight;
+analytic-light NEE uses a last-exit estimator. Area emitters and environment
+are continuation-only, with no fabricated marginal PDF or double-counted MIS.
+Active stacks bypass the existing base-only ReSTIR target and NRD split.
+
+Opt-in controls are `--path-trace --layered` plus `r.PathTracer.Stack.Depth`
+2..4. Depth defaults to 0. Depth 0/1 explicitly dispatches to the unchanged
+stage-1/2 coat, even with absorption: this is a compatibility model selection,
+not a claim that external-direction stage 1 is the physical one-layer limit.
+The first interface uses `r.PathTracer.Coat.*`; additional interfaces use
+`r.PathTracer.Stack.Layer2/3/4.{IOR,Roughness,Thickness,SigmaAR,SigmaAG,SigmaAB}`.
+An additional medium with the same IOR is a delta identity, regardless of its
+roughness, so depth 2 with Layer2.IOR equal to Coat.IOR is the physical
+one-boundary comparison. Hair never selects this stack.
+
+The pass-private material StructuredBuffer grows from 128 to 204 bytes:
+stackDepth 128, stackRoughness 132, stackIOR 144, stackThickness 156,
+stackSigmaAR 168, stackSigmaAG 180, stackSigmaAB 192. Its upload, stride, copy,
+and accumulation hash all use sizeof(PipelinePathMaterial). PipelinePathRoot
+stays 96 bytes / 24 DWORDs.
+
+- [x] DXR.S3.1 Refracted transport and furnace/Jacobian/reciprocity proof.
+  Seven LayeredBSDFStage3 tests pass, including fixed-facet etendue and reverse
+  Jacobians, finite-difference rough-refraction Jacobians, eta-scaled boundary
+  reciprocity, depth-one dispatch, and TIR. The 27-case fixed-seed path-space
+  furnace integrates 131072 walks/case, depth {2,3,4}, NoV {.05,.5,1},
+  roughness {.15,.5,1}, and adjacent IORs {1,1.5,1.1,1.8,1.33}.
+  With the known passive Lambert base albedo .8 and zero absorption:
+  maximum stack albedo 0.848171193; maximum stack-minus-base 0.048171193;
+  maximum stack-minus-base-minus-interface-reflections -0.106304269.
+  8172296 TIR events occur. Every completed unrouletted external path is
+  bounded by 1, or .8 if it visits the base; this tests the telescoping eta
+  factors directly. A separate 512x512 deterministic solid-angle quadrature
+  of both boundary hemispheres gives maximum invariant-radiance energy
+  0.969396740 (12 cases); the unit-white-base stack sweep gives maximum
+  0.682476384 (9 cases, 131072 walks/case, 2707458 TIR events).
+  These are numerical transport measurements, not tone-mapped PNG energy.
+  The independent unchanged D7 base furnace passes all 378 cases:
+  maximum total 0.999999932, maximum dielectric 0.995392333.
+  Evidence: `E:/UzmiEngine/layered-stage3-gtests.log` and
+  `E:/UzmiEngine/layered-stage3/gtests.xml`.
+- [x] DXR.S3.2 Depth-one compatibility, rough-refraction/TIR, and convergence.
+  All final PNGs below were opened and inspected on the RTX 5080.
+  `layered-stage3/{depth0,depth1}/frames/f_255.png` is byte-identical:
+  maximum and mean RGB code delta 0. Both use zero absorption and the
+  committed coat scene. Against the archived stage-1 and stage-2 coat PNGs,
+  depth1 differs by maximum 2 / mean absolute 0.002102141 codes; those older
+  artifacts are NOT claimed byte-identical. The fresh compatibility pair
+  selects the unchanged committed stage-1/2 equations with identical output.
+  `layered-stage3/{legacy,one,two,sharp}/frames/f_2047.png` uses the new
+  separated-sphere scene. `legacy` is depth 1; `one` is depth 2 with a matched
+  second IOR of 1.5; `two` is 1 -> 1.5 -> 1.1. Physical thickness is 2 cm per
+  film (Thickness=4 round-trip cm); both rough interfaces have roughness .45.
+  The rough refracted stack broadens/softens the red-base highlight, while
+  `sharp` (both roughnesses .12) has a concentrated highlight and higher Monte
+  Carlo variance. Adding the second real boundary brightens the white
+  interface component and grazing band: two-minus-one foreground mean
+  +3.679854107 codes, MAE 3.863337729; five-pixel silhouette-band mean
+  +5.349370300, maximum +47 (3679 pixels). This is consistent with increased
+  internal reflection/TIR, independently exercised by the CPU event counts;
+  a PNG by itself cannot separate Fresnel reflection from TIR.
+  The final `two` capture contains 28040 foreground pixels with mean RGB code
+  15.777948169 and remains non-black. Against its 2048-frame reference,
+  32/128/512/1024-frame foreground RMSE falls
+  11.765782695 / 5.942879755 / 2.792475539 / 1.615243306 codes;
+  MAE falls 4.359296243 / 2.408404660 / 1.168009986 / 0.680955777.
+  This supports convergence; unbiasedness follows from the PDF/weight and
+  last-exit/roulette derivation, not from a finite convergence plot alone.
+  `four-tint/frames/f_2047.png` also renders all four interfaces, with layer-3
+  sigmaA=(.1,.4,.8)/cm: the blue base darkens while white interface reflection
+  remains visible. No layer is silently omitted.
+- [x] DXR.S3.3 Default reference, D7 protection, build, layouts, and full suite.
+  Release build exits 0 (152 shaders); layouts exit 0 (A 89/89, B 33/33,
+  C 12/12; material 204 bytes, root 96 bytes). D7 EvaluatePBR's 1,313 bytes
+  match HEAD. The only pathtracer_shared.hlsli diff hunk is
+  `@@ -94,6 +94,13 @@ struct MaterialData`, adding the seven stack fields.
+  Everything after MaterialData is also unchanged. EvaluatePBR SHA-256:
+  `27460d3b7e0a350702ba0ad23739c62bbd959548df52d6fac77ab70654510b88`.
+  `layered-stage3/default/frames/f_95.png` versus
+  `E:/UzmiEngine/f005-after/frames/f_95.png` has maximum and mean code delta 0
+  without --path-trace or --layered.
+  Full `GTEST_FILTER='-RuntimeViewportTest.*' zig build test
+  -Doptimize=ReleaseFast`: 7919 tests, 7899 passed (+7 vs 7892), 17 skipped,
+  only the three existing VfxEditorSlate failures (WorkbenchHasTwoColumns,
+  TitleBarReflectsEmitterName, StatusBarBindingsReflectTelemetry).
+  Exit 1 is solely those known failures; test execution took 40.065 seconds.
+  No TDR occurred and no TDR rerun was required. LSP diagnostics were
+  unavailable because clangd is absent; C++ and DXC compilation succeeded.
+  The plain `--path-trace` entry point also renders the red/blue coat scene
+  correctly without --layered: `layered-stage3/base/frames/f_255.png` was
+  inspected and is non-black with plausible material highlights.
+  All nine final captures exit 0 and their full run.log files contain
+  no `compile failed`, DEVICE_REMOVED, or 0x887A0005. Each engine run has a
+  170-second runner deadline inside a 180-second monitor. Build/layout/test
+  monitors are also bounded to 180 seconds. An initial comma-list screenshot
+  argument was rejected before rendering; the successful convergence capture
+  uses the supported `31-2047:32` range.
+  Final process inspection reports NO_ENGINE_TEST_ZIG_PROCESSES.
+  No commit, archive, D7 base edit, or unrelated WIP edit was made.
+
+Reproduce the transport captures with
+`scripts/rendering/layered-stack-stage3.uzproject`, `--path-trace --layered`,
+`--frames 2048`, and `--screenshot-frames 31-2047:32` (supply --screenshot).
+The project records the `two` configuration. Override Stack.Depth=1 for legacy,
+Stack.Layer2.IOR=1.5 for one, or both interface Roughness CVars=.12 for sharp.
+Use `flicker.runner.run_capture(..., timeout=170)` to enforce the same deadline.
+Build/layout evidence is `E:/UzmiEngine/layered-stage3-{build,layouts}.log`.
+
+Stage-3 changed files (including every material-buffer consumer touched):
+- `runtime/engine/renderer/passes/pathtracing/pipeline_path_tracer_pass.cpp`
+- `runtime/engine/renderer/passes/pathtracing/pipeline_path_tracer_pass.h`
+- `runtime/shaders/runtime/pathtracing/layered_bsdf.hlsli`
+- `runtime/shaders/runtime/pathtracing/layered_stack.hlsli`
+- `runtime/shaders/runtime/pathtracing/pathtracer_closesthit.hlsl`
+- `runtime/shaders/runtime/pathtracing/pathtracer_shared.hlsli`
+- `runtime/tests/engine/renderer/test_layered_bsdf_stage3.cpp`
+- `runtime/tests/engine/renderer/test_pipeline_path_tracer.cpp`
+- `runtime/tests/engine/renderer/test_restir_di.cpp`
+- `scripts/rendering/test_cbuffer_layouts.py`
+- `scripts/rendering/layered-stack-stage3.uzproject`
+- `scripts/rendering/layered-stack-stage3.uzscene`
+- `.rulebook/tasks/phase1_falcor-layered-materials/tasks.md`
+
+Still deferred: thin-film interference, anisotropic coats, full spectral
+transport, spatially displaced film transport, per-material stack authoring,
+layered ReSTIR/NRD targets, and the original deferred-renderer sessions.

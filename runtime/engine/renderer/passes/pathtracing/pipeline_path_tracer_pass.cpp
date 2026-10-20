@@ -64,6 +64,32 @@ static auto* cv_CoatSigmaAG = UZ_CVAR_FLOAT("r.PathTracer.Coat.SigmaAG", 0.f,
     "Coat green absorption coefficient per cm", 0.f, 1e6f);
 static auto* cv_CoatSigmaAB = UZ_CVAR_FLOAT("r.PathTracer.Coat.SigmaAB", 0.f,
     "Coat blue absorption coefficient per cm", 0.f, 1e6f);
+static auto* cv_StackDepth = UZ_CVAR_INT("r.PathTracer.Stack.Depth", 0,
+    "Opt-in refracted stack: 0/1 preserves legacy coat, 2..4 adjacent dielectric interfaces", 0, 4);
+static uz::CVar* cv_StackRoughness[] = {
+    UZ_CVAR_FLOAT("r.PathTracer.Stack.Layer2.Roughness", .2f, "Second interface GGX roughness", 0.f, 1.f),
+    UZ_CVAR_FLOAT("r.PathTracer.Stack.Layer3.Roughness", .3f, "Third interface GGX roughness", 0.f, 1.f),
+    UZ_CVAR_FLOAT("r.PathTracer.Stack.Layer4.Roughness", .4f, "Fourth interface GGX roughness", 0.f, 1.f)};
+static uz::CVar* cv_StackIOR[] = {
+    UZ_CVAR_FLOAT("r.PathTracer.Stack.Layer2.IOR", 1.33f, "Second medium IOR (not air-relative F0)", 1.f, 3.f),
+    UZ_CVAR_FLOAT("r.PathTracer.Stack.Layer3.IOR", 1.5f, "Third medium IOR", 1.f, 3.f),
+    UZ_CVAR_FLOAT("r.PathTracer.Stack.Layer4.IOR", 1.33f, "Fourth medium IOR", 1.f, 3.f)};
+static uz::CVar* cv_StackThickness[] = {
+    UZ_CVAR_FLOAT("r.PathTracer.Stack.Layer2.Thickness", 1.f, "Second film round-trip normal distance in cm", 0.f, 1e6f),
+    UZ_CVAR_FLOAT("r.PathTracer.Stack.Layer3.Thickness", 1.f, "Third film round-trip normal distance in cm", 0.f, 1e6f),
+    UZ_CVAR_FLOAT("r.PathTracer.Stack.Layer4.Thickness", 1.f, "Fourth film round-trip normal distance in cm", 0.f, 1e6f)};
+static uz::CVar* cv_StackSigmaAR[] = {
+    UZ_CVAR_FLOAT("r.PathTracer.Stack.Layer2.SigmaAR", 0.f, "Second film red absorption per cm", 0.f, 1e6f),
+    UZ_CVAR_FLOAT("r.PathTracer.Stack.Layer3.SigmaAR", 0.f, "Third film red absorption per cm", 0.f, 1e6f),
+    UZ_CVAR_FLOAT("r.PathTracer.Stack.Layer4.SigmaAR", 0.f, "Fourth film red absorption per cm", 0.f, 1e6f)};
+static uz::CVar* cv_StackSigmaAG[] = {
+    UZ_CVAR_FLOAT("r.PathTracer.Stack.Layer2.SigmaAG", 0.f, "Second film green absorption per cm", 0.f, 1e6f),
+    UZ_CVAR_FLOAT("r.PathTracer.Stack.Layer3.SigmaAG", 0.f, "Third film green absorption per cm", 0.f, 1e6f),
+    UZ_CVAR_FLOAT("r.PathTracer.Stack.Layer4.SigmaAG", 0.f, "Fourth film green absorption per cm", 0.f, 1e6f)};
+static uz::CVar* cv_StackSigmaAB[] = {
+    UZ_CVAR_FLOAT("r.PathTracer.Stack.Layer2.SigmaAB", 0.f, "Second film blue absorption per cm", 0.f, 1e6f),
+    UZ_CVAR_FLOAT("r.PathTracer.Stack.Layer3.SigmaAB", 0.f, "Third film blue absorption per cm", 0.f, 1e6f),
+    UZ_CVAR_FLOAT("r.PathTracer.Stack.Layer4.SigmaAB", 0.f, "Fourth film blue absorption per cm", 0.f, 1e6f)};
 static auto* cv_Volume = UZ_CVAR_BOOL("r.PathTracer.Volume", false,
     "Opt-in spherical participating medium in DXR transport");
 static auto* cv_VolumeVariation = UZ_CVAR_FLOAT("r.PathTracer.Volume.Variation", 0.f,
@@ -367,12 +393,22 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
         mat.coatSigmaA[0] = cv_CoatSigmaAR->value;
         mat.coatSigmaA[1] = cv_CoatSigmaAG->value;
         mat.coatSigmaA[2] = cv_CoatSigmaAB->value;
+        mat.stackDepth = cv_Layered->value >= 0.5f ? uint32_t(cv_StackDepth->value) : 0u;
+        for (int layer = 0; layer < 3; ++layer) {
+            mat.stackRoughness[layer] = cv_StackRoughness[layer]->value;
+            mat.stackIOR[layer] = cv_StackIOR[layer]->value;
+            mat.stackThickness[layer] = cv_StackThickness[layer]->value;
+            mat.stackSigmaAR[layer] = cv_StackSigmaAR[layer]->value;
+            mat.stackSigmaAG[layer] = cv_StackSigmaAG[layer]->value;
+            mat.stackSigmaAB[layer] = cv_StackSigmaAB[layer]->value;
+        }
         // Hair has no dielectric coat. Reuse its dormant material slots instead
-        // of growing the 128-byte table or the 24-DWORD PathTracerRoot.
+        // of adding hair fields or growing the 24-DWORD PathTracerRoot.
         if (((draw.materialFlags >> 24u) & 15u) == 6u) {
             mat.coatWeight = cv_HairMultiScatter->value >= 0.5f ? 1.f : 0.f;
             mat.coatRoughness = cv_HairExplicitBounces->value;
             mat.coatIOR = cv_HairDensity->value;
+            mat.stackDepth = 0u;
         }
         mat.roughnessMultiplier = draw.roughnessMultiplier;
         mat.metallicMultiplier = draw.metallicMultiplier;
@@ -639,7 +675,8 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
     radianceDesc.format = RHIFormat::RGBA16Float;
     radianceDesc.usage = RHITextureUsage::ShaderResource | RHITextureUsage::UnorderedAccess;
     const auto radiance = builder.CreateTexture("PipelinePathTracer_Radiance", radianceDesc);
-    const bool denoise = cv_Nrd->value >= 0.5f && !volume.volumeEnabled;
+    const bool denoise = cv_Nrd->value >= 0.5f && !volume.volumeEnabled
+        && !(layered && cv_StackDepth->value >= 2.f);
     rg::RgResourceId diffuse, fraction, signalAlbedo, specular, modulation, virtualPosition, pathGuide;
     if (denoise) {
         if (!p.denoiser) {
@@ -807,10 +844,13 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
             if (accumulatedFrames == 0 && volume.volumeEnabled)
                 UZ_LOG(Renderer, Info, "PathVolume: sphere sigmaA={} sigmaS={} g={} radius={} variation={}; delta free flight + ratio shadow tracking (exact homogeneous limit), HG + NEE; surface ReSTIR/NRD bypassed",
                     volume.volumeSigmaA,volume.volumeSigmaS,volume.volumeG,volume.volumeRadius,volume.volumeVariation);
-            if (accumulatedFrames == 0 && layered)
+            if (accumulatedFrames == 0 && layered && cv_StackDepth->value < 2.f)
                 UZ_LOG(Renderer, Info, "PathLayered: coat weight={} roughness={} IOR={} thickness={} sigmaA=({},{},{}); Snell optical-distance approximation; base-only ReSTIR bypassed",
                     cv_CoatWeight->value,cv_CoatRoughness->value,cv_CoatIOR->value,
                     cv_CoatThickness->value,cv_CoatSigmaAR->value,cv_CoatSigmaAG->value,cv_CoatSigmaAB->value);
+            if (accumulatedFrames == 0 && layered && cv_StackDepth->value >= 2.f)
+                UZ_LOG(Renderer, Info, "PathStack: depth={}; adjacent-IOR GGX random walk, exact Fresnel/TIR, radiance and PDF Jacobians, unbiased internal roulette; last-exit analytic NEE, continuation-only area/environment; NRD bypassed",
+                    cv_StackDepth->value);
             if (accumulatedFrames == 0 && hairScene)
                 UZ_LOG(Renderer, Info, "HairDual: enabled={} K={} density={} maxBounces={}; biased passive tail replacement, distant lighting only",
                     cv_HairMultiScatter->value,cv_HairExplicitBounces->value,cv_HairDensity->value,maxBounces);

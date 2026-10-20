@@ -191,7 +191,7 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
         LightBVHConfig config = configurations[0];
         StructuredBuffer<LightBVHNode> nodes = ResourceDescriptorHeap[config.nodesSrv];
         StructuredBuffer<LightBVHLight> emitters = ResourceDescriptorHeap[config.lightsSrv];
-        if (payload.bounceCount > 0u && any(emission > 0.0)) {
+        if (payload.bounceCount > 0u && payload.previousBsdfPdf >= 0.0 && any(emission > 0.0)) {
             for (uint id = 0u; id < config.lightCount; ++id) {
                 LightBVHLight light = emitters[id];
                 if (light.type != 0u || light.sourceIndex != mat.lightSourceIndex
@@ -222,6 +222,10 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
             LightBVHSample chosen = SampleLightBVH(P,N,
                 float3(u,triangleV),config,nodes,emitters);
             LightBVHLight light = emitters[chosen.lightId];
+            // Stack sampling has a path-space density, not a marginal BSDF PDF.
+            // Area lights use continuation only; analytic lights retain the
+            // unbiased last-exit estimator in EvaluatePathStack.
+            if (PathHasStack(mat) && light.type == 0u) continue;
             // @ref Pharr et al. 2023 "Physically Based Rendering", section 13.4
             // Area NEE replaces a BSDF ray to an emitter, so it must obey
             // that ray's depth limit. Analytic NEE has no additional surface.

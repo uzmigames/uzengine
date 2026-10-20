@@ -7,7 +7,7 @@
 
 TEST(PipelinePathTracerStage1, MaterialStructuredBufferLayout) {
     using M = uz::PipelinePathMaterial;
-    EXPECT_EQ(sizeof(M), 128u);
+    EXPECT_EQ(sizeof(M), 204u);
     EXPECT_EQ(offsetof(M, albedoSrv), 12u);
     EXPECT_EQ(offsetof(M, vbSrv), 16u);
     EXPECT_EQ(offsetof(M, normalOffset), 32u);
@@ -20,6 +20,13 @@ TEST(PipelinePathTracerStage1, MaterialStructuredBufferLayout) {
     EXPECT_EQ(offsetof(M, coatIOR), 108u);
     EXPECT_EQ(offsetof(M, coatThickness), 112u);
     EXPECT_EQ(offsetof(M, coatSigmaA), 116u);
+    EXPECT_EQ(offsetof(M, stackDepth), 128u);
+    EXPECT_EQ(offsetof(M, stackRoughness), 132u);
+    EXPECT_EQ(offsetof(M, stackIOR), 144u);
+    EXPECT_EQ(offsetof(M, stackThickness), 156u);
+    EXPECT_EQ(offsetof(M, stackSigmaAR), 168u);
+    EXPECT_EQ(offsetof(M, stackSigmaAG), 180u);
+    EXPECT_EQ(offsetof(M, stackSigmaAB), 192u);
 }
 
 TEST(PipelinePathTracerStage1, MaterialDefaultsDoNotSampleMissingDescriptors) {
@@ -35,6 +42,7 @@ TEST(PipelinePathTracerStage1, MaterialDefaultsDoNotSampleMissingDescriptors) {
     EXPECT_FLOAT_EQ(material.emission[0], 0.f);
     EXPECT_FLOAT_EQ(material.coatThickness, 1.f);
     for (float sigmaA : material.coatSigmaA) EXPECT_FLOAT_EQ(sigmaA, 0.f);
+    EXPECT_EQ(material.stackDepth, 0u);
 }
 
 TEST(PipelinePathTracerStage1, PipelineBudgetIncludesNestedShadowRay) {

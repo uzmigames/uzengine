@@ -13,7 +13,7 @@ TEST(RestirDIStage1, StructuredBufferLayouts) {
     EXPECT_EQ(offsetof(uz::RestirReservoir, surfacePosition), 56u);
     EXPECT_EQ(sizeof(uz::RestirSurface), 64u);
     EXPECT_EQ(sizeof(uz::PipelinePathRoot), 96u);
-    EXPECT_EQ(sizeof(uz::PipelinePathMaterial), 128u);
+    EXPECT_EQ(sizeof(uz::PipelinePathMaterial), 204u);
     EXPECT_EQ(offsetof(uz::PipelinePathMaterial, emission), 80u);
     EXPECT_EQ(offsetof(uz::PipelinePathMaterial, emissiveSrv), 92u);
     EXPECT_EQ(sizeof(uz::PipelinePathDirectionalLight), 32u);

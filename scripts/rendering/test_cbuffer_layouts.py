@@ -404,7 +404,8 @@ TIER_C = [
                  PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'RestirSurface'),
     layout_entry('pathtracing/pathtracer_shared.hlsli', 'PathDirectionalLight',
                  PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'PipelinePathDirectionalLight'),
-    # 128-byte pass-private DXR material: thickness at 112, RGB sigmaA at 116.
+    # 204-byte pass-private DXR material: legacy coat at 100..127,
+    # stack depth at 128 and three additional six-float films at 132..203.
     # Every declared field and the structured stride are reflected below.
     layout_entry('pathtracing/pathtracer_shared.hlsli', 'MaterialData',
                  PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'PipelinePathMaterial'),

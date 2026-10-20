@@ -1,0 +1,43 @@
+{
+  "name": "Refracted rough lacquer and adjacent low-IOR film",
+  "version": "1.0",
+  "entities": [
+    {
+      "name": "Camera",
+      "components": {
+        "transform": {"position": [0, -450, 120]},
+        "camera": {"fov": 42, "near": 1, "far": 5000, "active": true, "look_at": [0, 0, 90]}
+      }
+    },
+    {
+      "name": "Soft sun",
+      "components": {
+        "transform": {"rotation": [-35, 0, -65]},
+        "light": {"type": "directional", "color": [1, 1, 1], "intensity": 2,
+                  "cast_shadows": true, "light_source_angle": 3}
+      }
+    },
+    {
+      "name": "White environment",
+      "components": {"sky_light": {"intensity": 0.15, "light_color": [1, 1, 1]}}
+    },
+    {
+      "name": "Red metallic base",
+      "components": {
+        "transform": {"position": [-140, 0, 95], "scale": [120, 120, 120]},
+        "mesh": {"asset": "sample/content/meshes/sphere.uzmesh"},
+        "material": {"baseColorR": 0.55, "baseColorG": 0.025, "baseColorB": 0.012,
+                     "metallicMultiplier": 1, "roughnessMultiplier": 0.3}
+      }
+    },
+    {
+      "name": "Blue rough diffuse base",
+      "components": {
+        "transform": {"position": [140, 0, 95], "scale": [120, 120, 120]},
+        "mesh": {"asset": "sample/content/meshes/sphere.uzmesh"},
+        "material": {"baseColorR": 0.015, "baseColorG": 0.09, "baseColorB": 0.35,
+                     "metallicMultiplier": 0, "roughnessMultiplier": 0.85}
+      }
+    }
+  ]
+}

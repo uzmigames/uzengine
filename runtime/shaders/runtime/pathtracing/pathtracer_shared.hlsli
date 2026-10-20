@@ -94,6 +94,13 @@ struct MaterialData {
     float coatIOR;
     float coatThickness;
     float3 coatSigmaA;
+    uint stackDepth;
+    float3 stackRoughness;
+    float3 stackIOR;
+    float3 stackThickness;
+    float3 stackSigmaAR;
+    float3 stackSigmaAG;
+    float3 stackSigmaAB;
 };
 
 struct PathDirectionalLight {

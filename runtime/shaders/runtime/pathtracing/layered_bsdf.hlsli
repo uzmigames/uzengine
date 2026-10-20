@@ -27,6 +27,7 @@ inline float PathCoatAbsorption(float sigmaA, float pathLength) {
 #ifdef __cplusplus
 } // namespace uz
 #else
+#include "layered_stack.hlsli"
 // Included after pathtracer_shared: extend, never replace, its base BRDF.
 float3 PathLayerTransmission(MaterialData mat, float3 N, float3 V, float3 L) {
     float transmission = PathCoatTransmission(mat.coatWeight,saturate(dot(N,V)),
@@ -42,6 +43,7 @@ float3 PathLayerTransmission(MaterialData mat, float3 N, float3 V, float3 L) {
 
 float3 EvaluatePathLayered(float3 N, float3 V, float3 L, float3 albedo,
                            float roughness, float metallic, MaterialData mat) {
+    if (PathHasStack(mat)) return EvaluatePathStack(N,V,L,albedo,roughness,metallic,mat);
     float3 base = EvaluatePBR(N,V,L,albedo,roughness,metallic);
     if (mat.coatWeight == 0.0) return base;
     float3 H = normalize(V+L);
@@ -55,6 +57,8 @@ float3 EvaluatePathLayered(float3 N, float3 V, float3 L, float3 albedo,
 
 float PathLayeredPDF(float3 N, float3 V, float3 L, float roughness,
                      float metallic, MaterialData mat) {
+    // Negative sentinel means continuation-only area lighting, NOT a density.
+    if (PathHasStack(mat)) return -1.0;
     float basePDF = PathBRDFPDF(N,V,L,roughness,metallic);
     if (mat.coatWeight == 0.0) return basePDF;
     if (dot(N,L) <= 0.0) return 0.0;
@@ -70,6 +74,8 @@ float PathLayeredPDF(float3 N, float3 V, float3 L, float roughness,
 float3 SamplePathLayered(float3 N, float3 V, float3 albedo, float roughness,
                          float metallic, uint dimension, MaterialData mat,
                          out float3 weight) {
+    if (PathHasStack(mat))
+        return SamplePathStack(N,V,albedo,roughness,metallic,dimension,mat,weight);
     // Do not consume a random dimension or recompute a weight at zero coat.
     if (mat.coatWeight == 0.0)
         return SamplePathBRDF(N,V,albedo,roughness,metallic,dimension,weight);
