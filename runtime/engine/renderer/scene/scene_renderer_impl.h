@@ -977,10 +977,13 @@
     /// Registers Screen-Space Reflections passes (trace + resolve + temporal).
     void RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
 
-    /// Registers the hardware ray-traced reflection pass (stage 1, `r.RayTracing.Reflections`,
-    /// default off): after the SSR passes, fills the texels of the resolved SSR buffer whose screen
-    /// trace found no confident hit with a mirror ray against the TLAS. Not registered when off.
-    void RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameContext& ctx);
+    /// Registers the hardware ray-traced reflection pass (`r.RayTracing.Reflections`, default
+    /// off): fills the texels of the resolved SSR buffer whose screen trace found no confident hit
+    /// with a ray against the TLAS (stage 1: mirror; stage 2 opt-ins: GGX-VNDF glossy ray, probe SH
+    /// indirect at the hit, SSR denoise). Called twice per frame — from RegisterSSRPasses after
+    /// SSR_Resolve (`beforeDenoise` true) and from RegisterLightingPasses after the SSR chain — and
+    /// registers on the call `r.RayTracing.Reflections.Denoise` selects. Not registered when off.
+    void RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameContext& ctx, bool beforeDenoise = false);
 
     /// Registers the deferred lighting pass (or debug view / GBuffer debug).
     void RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, FrameContext& ctx);

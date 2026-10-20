@@ -52,6 +52,20 @@ static auto* cv_SSRSlopeTolerance  = UZ_CVAR_FLOAT("r.SSR.SlopeToleranceScale", 
 // reach is the pass's only parameter of its own.
 static auto* cv_RTReflectionsMaxDistance = UZ_CVAR_FLOAT("r.RayTracing.Reflections.MaxDistance", 100000.0f,
     "Hardware ray-traced reflections (stage 1): mirror-ray TMax in cm", 100.0f, 1000000.0f);
+// Stage 2, each opt-in; at the defaults the pass is the stage 1 pass (mirror rays, sun + sky at the
+// hit, raw output after the SSR denoise).
+static auto* cv_RTReflectionsMaxRoughness = UZ_CVAR_FLOAT("r.RayTracing.Reflections.MaxRoughness", 0.0f,
+    "Hardware ray-traced reflections (stage 2): roughness cutoff of the ray-traced reflection and its "
+    "blend-weight fade; 0 = the screen trace's r.SSR.MaxRoughness (the stage 1 range)", 0.0f, 1.0f);
+static auto* cv_RTReflectionsGlossy = UZ_CVAR_BOOL("r.RayTracing.Reflections.Glossy", false,
+    "Hardware ray-traced reflections (stage 2): GGX-VNDF sampled glossy ray for roughness above the "
+    "mirror threshold (0.04) instead of the mirror vector");
+static auto* cv_RTReflectionsIndirect = UZ_CVAR_BOOL("r.RayTracing.Reflections.Indirect", false,
+    "Hardware ray-traced reflections (stage 2): add the radiance-cache probe irradiance at the hit "
+    "(the diffuse bounce the reflected surface receives)");
+static auto* cv_RTReflectionsDenoise = UZ_CVAR_BOOL("r.RayTracing.Reflections.Denoise", false,
+    "Hardware ray-traced reflections (stage 2): run the pass between SSR_Resolve and SSR_Temporal so "
+    "the ray texels go through the SSR temporal accumulation + spatial denoise (0 = after them, raw)");
 
 /// Selects DXR ray-traced probe update over the SDF sphere-trace path.
 /// Requires DXR 1.1 (`RayQuery<>`) and a built TLAS. When the device does not
@@ -669,6 +683,11 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
         });
     });
 
+    // Stage 2 denoise route (`r.RayTracing.Reflections.Denoise`): the ray texels are written into the
+    // resolved buffer here, before the temporal pass reads it as this frame's input, so they are
+    // accumulated and filtered with the screen-trace texels. Registered only when that route is on.
+    RegisterRTReflectionPass(rgBuilder, ctx, /*beforeDenoise=*/true);
+
     // SSR Temporal accumulation — virtual hit reprojection + YCoCg variance clip.
     // @ref AMD FidelityFX SSSR — temporal pass uses hit distance for virtual reprojection.
     {
@@ -817,7 +836,7 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
 // r.SSR.MaxRoughness cutoff); glossy GGX-VNDF rays, the radiance-cache indirect term at the hit
 // and a denoiser are stage 2. @ref docs/specs/rendering/rt-reflections.md
 
-void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
+void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameContext& ctx, bool beforeDenoise) {
     // Opt-in (`r.RayTracing.Reflections`, default off) on top of the `r.RayTracing` master
     // switch, with a built, non-empty TLAS: with the master switch off RTManager::BeginFrame never
     // rebuilds it and every ray would miss (the DDGI writer's lesson, followup-08). Off = the pass
@@ -825,6 +844,12 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
     // frame without it.
     if (!m_rtManager || !m_rtManager->IsReflectionsEnabled() || !m_rtManager->IsReady()
         || m_rtManager->GetTLASInstanceCount() == 0u) return;
+    // Placement (stage 2): called once from RegisterSSRPasses after SSR_Resolve and once from
+    // RegisterLightingPasses after the SSR chain; the denoise CVar selects which call registers.
+    // The render graph chains every access to a resource in registration order (depth is read by
+    // every SSR pass), so the registration point is the execution point.
+    const bool denoise = cv_RTReflectionsDenoise->value;
+    if (denoise != beforeDenoise) return;
     // The same gate as RegisterSSRPasses: the pass fills the holes of this frame's screen trace
     // in the resolved buffer the lighting reads this frame (PerFrameCB::ssrSrvIndex).
     if (!m_showFlags.Get(ShowFlag::SSR) || !ctx.ssrActive || !m_ssrHasPrevColor) return;
@@ -854,19 +879,36 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
             const auto* perFrame = static_cast<const PerFrameCB*>(ctx.perFrameAlloc.cpuPtr);
             if (perFrame == nullptr) return;
             RadianceCacheTraceConstants traceConstants{};
-            FillRTReflectionTraceConstants(traceConstants, m_globalDistanceField, *perFrame);
+            FillRTReflectionTraceConstants(traceConstants, m_globalDistanceField, *perFrame, ctx.frameIndex);
+            // Stage 2 indirect term: the radiance cache's published SH buffer and the grid it was
+            // traced with, under the gate the deferred lighting consumes it (frame_constants.cpp):
+            // an allocated but never-written buffer is not irradiance.
+            const bool indirect = cv_RTReflectionsIndirect->value && m_sdfGiEnabled
+                               && m_radianceCache.HasProducedResult();
+            if (indirect) {
+                SetRTReflectionProbeGrid(traceConstants, m_radianceCache.GetCompletedGridOrigin(),
+                                         m_radianceCache.GetProbeSpacing(), RadianceCache::kProbesPerAxis);
+            }
             auto traceAlloc = m_cbRing->Allocate(sizeof(traceConstants));
             if (!traceAlloc.cpuPtr) return;
             std::memcpy(traceAlloc.cpuPtr, &traceConstants, sizeof(traceConstants));
 
+            const bool denoiseRoute = cv_RTReflectionsDenoise->value;
             {
                 m_rgStates->Transition(cmd, m_ssrTraceOutput, RHIResourceState::ShaderResource);
                 m_rgStates->Transition(cmd, m_ssrResolvedOutput, RHIResourceState::UnorderedAccess);
+                // The hit distance feeds the temporal pass's virtual-hit reprojection on the
+                // denoise route; the trace pass left it in ShaderResource.
+                if (denoiseRoute) m_rgStates->Transition(cmd, m_ssrHitDistance, RHIResourceState::UnorderedAccess);
             }
 
             cmd->SetPipeline(rtReflectionPSO);
 
             const float ssrMaxRoughness = std::max(0.05f, cv_SSRMaxRoughness->value);
+            // Stage 2: the ray-traced cutoff may exceed the screen trace's; unset = the SSR cutoff,
+            // which keeps the stage 1 range and blend weights.
+            const float rtMaxRoughness  = RTReflectionMaxRoughness(cv_RTReflectionsMaxRoughness->value,
+                                                                   ssrMaxRoughness);
 
             RTReflectionRootConstants rc{};
             rc.depthSrvIdx        = m_gbuffer.depthSRV;
@@ -876,15 +918,20 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
             rc.tlasSrvIdx         = m_rtManager->GetTLASSRVIndex();
             rc.outputWidth        = m_renderWidth;
             rc.outputHeight       = m_renderHeight;
-            rc.maxRoughness       = ssrMaxRoughness;
+            rc.maxRoughness       = rtMaxRoughness;
             rc.rayMaxDistance     = cv_RTReflectionsMaxDistance->value;
             rc.intensity          = cv_SSRIntensity->value;
-            rc.roughnessMaskScale = -2.0f / ssrMaxRoughness;
+            rc.roughnessMaskScale = -2.0f / rtMaxRoughness;
             rc.materialTableSrv   = materialTableSrv;
             // The sky an escaping ray returns: the same SRV every path-tracer sky read uses (HDRI
             // when active, else the atmosphere capture once filled, else the flat skylight).
             rc.skyCubemapSrv      = m_hdriActive ? m_hdriCubemapSrv
                                   : (m_skyCubemapFilled ? m_skyCubemapSrv : UINT32_MAX);
+            rc.probeShSrv         = indirect ? m_radianceCache.GetProbeSHBufferSrv() : UINT32_MAX;
+            rc.hitDistUavIdx      = denoiseRoute ? m_ssrHitDistanceUav : UINT32_MAX;
+            rc.flags              = (cv_RTReflectionsGlossy->value ? kRTReflectionFlagGlossy : 0u)
+                                  | (indirect ? kRTReflectionFlagIndirect : 0u)
+                                  | (denoiseRoute ? kRTReflectionFlagHitDistance : 0u);
 
             cmd->SetRootConstants(kSlotRootConstants, reinterpret_cast<const uint32_t*>(&rc),
                                   kRTReflectionRootDwords);
@@ -898,9 +945,10 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
             const uint32_t groupsY = (m_renderHeight + 7) / 8;
             cmd->Dispatch(groupsX, groupsY, 1);
 
-            // Back to SRV for the lighting to read
+            // Back to SRV for the lighting (or, on the denoise route, the temporal pass) to read
             {
                 m_rgStates->Transition(cmd, m_ssrResolvedOutput, RHIResourceState::ShaderResource);
+                if (denoiseRoute) m_rgStates->Transition(cmd, m_ssrHitDistance, RHIResourceState::ShaderResource);
             }
         });
     });

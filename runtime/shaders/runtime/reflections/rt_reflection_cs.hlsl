@@ -1,38 +1,60 @@
-/// UzEngine Hardware Ray-Traced Reflections — stage 1: mirror rays that fill the off-screen holes
-/// of the screen-space trace (opt-in: `r.RayTracing.Reflections`, default off).
+/// UzEngine Hardware Ray-Traced Reflections — rays that fill the off-screen holes of the screen-space
+/// trace (opt-in: `r.RayTracing.Reflections`, default off). Stage 1: mirror rays, sun + sky at the
+/// hit. Stage 2 (each opt-in, default = the stage 1 behaviour): a GGX-VNDF sampled glossy ray, the
+/// radiance-cache probe irradiance at the hit, and the SSR temporal + spatial denoise over the output.
 ///
 /// One thread per pixel. Where this frame's screen trace found no confident hit
-/// (`ReflectionNeedsRT`: eligible surface, SSR confidence <= 0.001) a single mirror ray is traced
-/// against the scene TLAS with an inline `RayQuery` (DXR 1.1) and the hit is shaded exactly as the
-/// reference path tracer shades a bounce vertex (`gi_trace_common.hlsli`, the substrate the DDGI
-/// probe writer shares): the interpolated vertex normal and the material albedo from the per-mesh
-/// table indexed by TLAS InstanceID, the global distance field's gradient and reflectance where a
-/// mesh has no table entry — an inline RayQuery reports the hit distance but no attributes — then
-/// the sun with a shadow ray. A ray that escapes the scene returns the sky the path tracer and the
-/// probe writers see. The result replaces that texel of the SSR resolved buffer, which the deferred
-/// lighting already blends before the BRDF (`radiance = lerp(radiance, ssr.rgb, ssr.a)`), so no
-/// composite wiring changes.
+/// (`ReflectionNeedsRT`: eligible surface, SSR confidence <= 0.001) a single ray is traced against
+/// the scene TLAS with an inline `RayQuery` (DXR 1.1) and the hit is shaded exactly as the reference
+/// path tracer shades a bounce vertex (`gi_trace_common.hlsli`, the substrate the DDGI probe writer
+/// shares): the interpolated vertex normal and the material albedo from the per-mesh table indexed
+/// by TLAS InstanceID, the global distance field's gradient and reflectance where a mesh has no
+/// table entry — an inline RayQuery reports the hit distance but no attributes — then the sun with
+/// a shadow ray. A ray that escapes the scene returns the sky the path tracer and the probe writers
+/// see. The result replaces that texel of the SSR resolved buffer, which the deferred lighting
+/// already blends before the BRDF (`radiance = lerp(radiance, ssr.rgb, ssr.a)`), so no composite
+/// wiring changes.
 ///
 /// Fallback ladder (Lumen's screen -> hardware trace -> probe): SSR where it hit on screen; this
 /// pass where it did not (a hit with attributes, or the sky); otherwise the texel is left untouched
 /// and the lighting keeps its prefiltered probe (`ReflectionHitUsable` false: a hit outside every
 /// GDF cascade with no table geometry, or a hit without a usable normal).
 ///
-/// Stage 1 is mirror / low roughness only (the `r.SSR.MaxRoughness` cutoff shared with SSR).
-/// Deferred to stage 2: GGX-VNDF glossy rays, the radiance-cache SH indirect term at the hit,
-/// denoise / temporal accumulation.
+/// Stage 2 extensions (flags in the root constants):
+///  - Glossy (`kReflectionFlagGlossy`): for roughness above the mirror threshold the ray is drawn
+///    from the GGX distribution of visible normals — the path tracer's sampler (`SampleGGX_VNDF`)
+///    on the deferred BRDF's alpha — so the texel is one sample of the lobe the lighting's
+///    split-sum integrates. The ratio estimator at one sample per pixel is the hit radiance
+///    itself (the BRDF x cos / pdf weight cancels in the normalisation), so the texel stays
+///    "radiance before the BRDF" as the screen trace writes it. A sample below the horizon is
+///    redrawn (up to 4 attempts), then the mirror direction (the lobe's mode) stands in, so the
+///    texel always carries a valid sample for the temporal accumulation.
+///  - Indirect (`kReflectionFlagIndirect`): the radiance cache's probe SH (E / pi) evaluated at the
+///    hit with the lighting's trilinear, facing-weighted, guard-checked read (the grid rows of the
+///    shared b2 constants) adds the diffuse bounce the reflected surface receives, so a reflected
+///    surface in the sun's shadow is lit as the path tracer's multi-bounce lights it.
+///  - Hit distance (`kReflectionFlagHitDistance`, with `r.RayTracing.Reflections.Denoise`): the
+///    ray t is written to the SSR hit-distance texture for the SSR temporal pass's virtual-hit
+///    reprojection; on that route the pass runs between SSR_Resolve and SSR_Temporal.
 ///
-/// Bindings: root constants at b0 (`uz::RTReflectionRootConstants`, 13 DWORDs), PerFrameCB at b1,
+/// Bindings: root constants at b0 (`uz::RTReflectionRootConstants`, 16 DWORDs), PerFrameCB at b1,
 /// the shared trace constants at b2 (`uz::RadianceCacheTraceConstants`, rows 1-11 as the DDGI
-/// writer and the path tracer bind them). Dispatch ceil(w/8) x ceil(h/8).
+/// writer and the path tracer bind them; rows 1-2 carry the probe grid + frame index here).
+/// Dispatch ceil(w/8) x ceil(h/8).
 ///
 /// @ref Wright et al. 2022 "Lumen: Real-time Global Illumination in Unreal Engine 5" — trace ladder
 /// @ref Majercik 2019 "Dynamic Diffuse Global Illumination with Ray-Traced Irradiance Probes"
+/// @ref Heitz 2018 "Sampling the GGX Distribution of Visible Normals"
+/// @ref Dupuy & Benyoub 2023 "Sampling Visible GGX Normals with Spherical Caps"
+/// @ref Stachowiak 2015 "Stochastic Screen-Space Reflections" — ratio estimator, IGN seeds
 /// @ref Microsoft DirectX-Specs "Inline Raytracing (DXR 1.1)" — RayQuery<>
 
-#include "../common/constants.hlsli"     // kSentinelSrvIndex, PI
+#include "../common/constants.hlsli"     // kSentinelSrvIndex, PI, kMinGGXAlpha
 #include "../common/encoding.hlsli"      // OctDecode
-#include "rt_reflection_contract.hlsli"  // ReflectionDirection / ReflectionEligible / ReflectionNeedsRT / ReflectionHitUsable
+#include "../common/sampling.hlsli"      // SampleGGX_VNDF (+ math.hlsli: BuildOrthonormalBasis)
+#include "../lighting/ibl.hlsli"         // EvalSH_L2 (the lighting's packed-SH evaluation)
+#include "../gi/rc_probe_guard.hlsli"    // ProbeGuardIndex / ProbeEffectivePosition / ProbeGuardRejects
+#include "rt_reflection_contract.hlsli"  // ReflectionDirection / ReflectionNeedsRT / glossy lobe / hit radiance
 
 // ─── Root constants at b0 (mirrors `uz::RTReflectionRootConstants`) ────────────────────────
 
@@ -44,12 +66,15 @@ cbuffer RTReflectionRootCB : register(b0) {
     uint  tlasSrvIdx;          // 4  Scene TLAS
     uint  outputWidth;         // 5
     uint  outputHeight;        // 6
-    float maxRoughness;        // 7  r.SSR.MaxRoughness — the `ReflectionEligible` cutoff
+    float maxRoughness;        // 7  The `ReflectionEligible` cutoff (r.RayTracing.Reflections.MaxRoughness, else r.SSR.MaxRoughness)
     float rayMaxDistance;      // 8  cm — r.RayTracing.Reflections.MaxDistance (ray TMax)
     float intensity;           // 9  r.SSR.Intensity — the weight scale the screen trace uses
-    float roughnessMaskScale;  // 10 -2 / MaxRoughness — the screen trace's roughness fade
+    float roughnessMaskScale;  // 10 -2 / maxRoughness — the screen trace's roughness fade
     uint  materialTableSrv;    // 11 GIMeshMaterial table by TLAS InstanceID (sentinel = GDF attributes only)
     uint  skyCubemapSrv;       // 12 Sky cubemap for escaping rays (sentinel = flat skylight colour)
+    uint  probeShSrv;          // 13 Radiance-cache probe SH buffer (sentinel = no indirect term)
+    uint  hitDistUavIdx;       // 14 SSR hit-distance texture (written with kReflectionFlagHitDistance)
+    uint  flags;               // 15 kReflectionFlag* bits
 };
 
 // ─── PerFrameCB at b1 (the prefix the SSR passes declare; invViewProj + cameraPos are read) ──
@@ -65,16 +90,78 @@ cbuffer PerFrameCB : register(b1) {
     float  nearPlane, farPlane;
 };
 
-// ─── Trace constants at b2 + hit helpers (declares linearClamp s2, includes gdf_surface.hlsli) ──
-
-#include "../gi/gi_trace_common.hlsli"
-
 float3 ReconstructWorldPos(float2 uv, float deviceZ) {
     float2 ndc = uv * 2.0 - 1.0;
     ndc.y = -ndc.y;
     float4 clipPos  = float4(ndc, deviceZ, 1.0);
     float4 worldPos = mul(clipPos, invViewProj);
     return worldPos.xyz / worldPos.w;
+}
+
+// ─── Trace constants at b2 + hit helpers (declares linearClamp s2, includes gdf_surface.hlsli).
+// The helpers below read its grid rows (gridOrigin*, probeSpacing, probesPerAxis, frameIndex). ──
+
+#include "../gi/gi_trace_common.hlsli"
+
+// ─── Glossy sample seeds: the screen trace's interleaved gradient noise with its temporal
+// rotation (ssr_trace_cs.hlsl), so the ray texels carry the noise pattern the SSR temporal and
+// spatial passes were built for. `attempt` offsets the pattern for a redraw.
+// @ref Jimenez 2014 "Next Generation Post Processing in Call of Duty"
+static const uint kReflectionGlossyAttempts = 4u;
+
+float ReflectionIGN(float2 p, uint frame) {
+    p += float(frame % 64u) * float2(47.0, 17.0) * 0.695;
+    return frac(52.9829189 * frac(p.x * 0.06711056 + p.y * 0.00583715));
+}
+
+float2 ReflectionSample2D(uint2 pixel, uint frame, uint attempt) {
+    const float2 p = float2(pixel) + float(attempt) * float2(23.0, 41.0);
+    return float2(ReflectionIGN(p, frame), ReflectionIGN(p + float2(37.0, 59.0), frame));
+}
+
+// ─── Radiance-cache probe irradiance (E / pi) at a world point: the SDF reflections' read
+// (sdf_reflections.hlsli SdfReflectionIrradiance) on the grid rows of the b2 constants —
+// trilinear over the eight surrounding probes, each weighted by its facing, skipped when invalid
+// (record 6.w) or guarded behind a face; zero outside the grid.
+float3 ReflectionProbeIrradianceOverPi(float3 position, float3 normal) {
+    if (probeShSrv == kGITraceSentinelSrv || probesPerAxis < 2u || probeSpacing <= 0.0) return 0.0;
+    const float3 origin = float3(gridOriginX, gridOriginY, gridOriginZ);
+    const float3 cell = (position - origin) / probeSpacing;
+    if (any(cell < 0.0) || any(cell > float(probesPerAxis - 1u))) return 0.0;
+    const uint3  lower    = uint3(floor(cell));
+    const uint3  upper    = min(lower + 1u, probesPerAxis - 1u);
+    const float3 fraction = frac(cell);
+    StructuredBuffer<float4> probes = ResourceDescriptorHeap[probeShSrv];
+    float3 irradiance = 0.0;
+    float  totalWeight = 0.0;
+    [unroll]
+    for (uint corner = 0; corner < 8; ++corner) {
+        const uint3 index = uint3((corner & 1) ? upper.x : lower.x,
+                                  (corner & 2) ? upper.y : lower.y,
+                                  (corner & 4) ? upper.z : lower.z);
+        float weight = ((corner & 1) ? fraction.x : 1.0 - fraction.x)
+                     * ((corner & 2) ? fraction.y : 1.0 - fraction.y)
+                     * ((corner & 4) ? fraction.z : 1.0 - fraction.z);
+        const uint   probeLinear  = index.x + index.y * probesPerAxis + index.z * probesPerAxis * probesPerAxis;
+        const float3 gridPosition = origin + float3(index) * probeSpacing;
+        const float4 guard        = probes[ProbeGuardIndex(probesPerAxis, probeLinear)];
+        weight *= ReflectionProbeFacingWeight(normal, ProbeEffectivePosition(guard, gridPosition) - position);
+        const uint base = probeLinear * 7u;
+        if (probes[base + 6].w <= 0.0) continue;
+        if (ProbeGuardRejects(guard, gridPosition, position)) continue;
+        float4 sh[7];
+        [unroll]
+        for (uint k = 0; k < 7; ++k) sh[k] = probes[base + k];
+        irradiance  += weight * EvalSH_L2(normal, sh);
+        totalWeight += weight;
+    }
+    return totalWeight > 0.0 ? irradiance / totalWeight : 0.0;
+}
+
+void WriteHitDistance(uint2 pixel, float t) {
+    if ((flags & kReflectionFlagHitDistance) == 0u) return;
+    RWTexture2D<float> hitDistance = ResourceDescriptorHeap[hitDistUavIdx];
+    hitDistance[pixel] = t;
 }
 
 [numthreads(8, 8, 1)]
@@ -94,12 +181,28 @@ void main(uint3 DTid : SV_DispatchThreadID)
     const float  screenConfidence = screenTrace.Load(int3(DTid.xy, 0)).a;
     if (!ReflectionNeedsRT(deviceZ, roughness, maxRoughness, screenConfidence)) return;
 
-    // ── Mirror ray from the visible surface ──────────────────────────────────────────────
+    // ── The ray from the visible surface: the mirror vector, or a glossy lobe sample ───────
     const float2 uv       = (float2(DTid.xy) + 0.5) / float2(outputWidth, outputHeight);
     const float3 worldPos = ReconstructWorldPos(uv, deviceZ);
     const float3 N        = OctDecode(normalData.rg);
     const float3 incident = normalize(worldPos - cameraPos.xyz);
-    const float3 R        = ReflectionDirection(incident, N);
+    float3 R = ReflectionDirection(incident, N);
+    if (ReflectionUsesGlossyLobe(flags, roughness)) {
+        // A visible microfacet normal from the view direction (tangent space, Z along N), the ray
+        // reflected about it — path_tracer_ps.hlsl's specular lobe on the same sampler and alpha.
+        const float  alpha = ReflectionGlossyAlpha(roughness);
+        const float3 V     = -incident;
+        float3 T, B;
+        BuildOrthonormalBasis(N, T, B);
+        const float3 Vt = float3(dot(V, T), dot(V, B), dot(V, N));
+        [loop]
+        for (uint attempt = 0u; attempt < kReflectionGlossyAttempts; ++attempt) {
+            const float3 Ht = SampleGGX_VNDF(alpha, Vt, ReflectionSample2D(DTid.xy, frameIndex, attempt));
+            const float3 H  = normalize(T * Ht.x + B * Ht.y + N * Ht.z);
+            const float3 L  = ReflectionDirection(incident, H);
+            if (dot(L, N) > 0.0) { R = L; break; }
+        }
+    }
     // A shading normal facing away from the camera reflects the ray into the surface; skip it
     // (the lighting keeps its probe) rather than trace from inside the geometry.
     if (dot(R, N) <= 0.0) return;
@@ -125,6 +228,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
         // Escaped the scene: the sky the reference path tracer and the probe writers return for
         // a miss (the atmosphere capture / HDRI scaled by the skylight colour x intensity).
         output[DTid.xy] = float4(GITrace_SkyRadiance(R, skyCubemapSrv), weight);
+        WriteHitDistance(DTid.xy, 0.0);   // the SSR convention: 0 = no hit, surface reprojection
         return;
     }
 
@@ -178,8 +282,16 @@ void main(uint3 DTid : SV_DispatchThreadID)
         sq.Proceed();
         visibility = (sq.CommittedStatus() == COMMITTED_TRIANGLE_HIT) ? 0.0 : 1.0;
     }
-    const float3 sunRad   = float3(lightColorR, lightColorG, lightColorB) * lightIntensity * NdL * visibility;
-    const float3 radiance = albedo * (sunRad / PI);          // Lambert: the radiance the mirror sees
+    const float3 sunRad = float3(lightColorR, lightColorG, lightColorB) * lightIntensity * NdL * visibility;
+    float3 radiance = albedo * (sunRad / PI);          // Lambert: the radiance the mirror sees
+    if ((flags & kReflectionFlagIndirect) != 0u) {
+        // The diffuse bounce the reflected surface receives (the radiance cache's E / pi at the
+        // hit, read from the biased hit point as the SDF reflections do): the term the path
+        // tracer's multi-bounce carries and stage 1 left out.
+        radiance = ReflectionHitRadiance(albedo, sunRad,
+            ReflectionProbeIrradianceOverPi(hitP + hitN * kReflectionSurfaceBias, hitN));
+    }
 
     output[DTid.xy] = float4(radiance, weight);
+    WriteHitDistance(DTid.xy, q.CommittedRayT());
 }

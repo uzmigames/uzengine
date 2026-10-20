@@ -1,13 +1,16 @@
 #pragma once
 
-/// Hardware ray-traced reflections, stage 1 — the CPU side of the `rt_reflection_cs.hlsl`
-/// binding contract: the root constants at b0, and the fill of the shared b2 trace constants
+/// Hardware ray-traced reflections — the CPU side of the `rt_reflection_cs.hlsl` binding
+/// contract: the root constants at b0, and the fill of the shared b2 trace constants
 /// (`RadianceCacheTraceConstants`, the rows `gi_trace_common.hlsli` declares for the path tracer
-/// and the DDGI writer) from the global distance field and the frame's sun and skylight.
+/// and the DDGI writer) from the global distance field, the frame's sun and skylight, and (stage 2)
+/// the radiance-cache probe grid the indirect term reads and the frame index the glossy sample
+/// sequence rotates with.
 ///
 /// The pass itself is `SceneRenderer::RegisterRTReflectionPass` (frame/frame_gi_passes.cpp),
-/// registered after the SSR passes and gated on `r.RayTracing.Reflections` (default off): with the
-/// gate off nothing here is bound, compiled or dispatched.
+/// registered after the SSR passes (or between SSR_Resolve and SSR_Temporal on the denoise route)
+/// and gated on `r.RayTracing.Reflections` (default off): with the gate off nothing here is bound,
+/// compiled or dispatched.
 ///
 /// @ref docs/specs/rendering/rt-reflections.md — design (root budget <= 20 DWORDs, hit attributes)
 
@@ -29,17 +32,35 @@ struct RTReflectionRootConstants {
     uint32_t tlasSrvIdx         = UINT32_MAX;  ///< [4]  Scene TLAS SRV.
     uint32_t outputWidth        = 0;           ///< [5]
     uint32_t outputHeight       = 0;           ///< [6]
-    float    maxRoughness       = 0.35f;       ///< [7]  r.SSR.MaxRoughness — ReflectionEligible cutoff.
+    float    maxRoughness       = 0.35f;       ///< [7]  ReflectionEligible cutoff (r.RayTracing.Reflections.MaxRoughness, else r.SSR.MaxRoughness).
     float    rayMaxDistance     = 100000.0f;   ///< [8]  cm — ray TMax (r.RayTracing.Reflections.MaxDistance).
     float    intensity          = 1.0f;        ///< [9]  r.SSR.Intensity — blend-weight scale shared with SSR.
-    float    roughnessMaskScale = -2.0f / 0.35f; ///< [10] -2 / MaxRoughness — the SSR roughness fade.
+    float    roughnessMaskScale = -2.0f / 0.35f; ///< [10] -2 / maxRoughness — the SSR roughness fade.
     uint32_t materialTableSrv   = UINT32_MAX;  ///< [11] GIMeshMaterialGPU table by TLAS InstanceID (sentinel = GDF only).
     uint32_t skyCubemapSrv      = UINT32_MAX;  ///< [12] Sky cubemap for escaping rays (sentinel = flat skylight).
+    uint32_t probeShSrv         = UINT32_MAX;  ///< [13] Radiance-cache probe SH buffer (sentinel = no indirect term).
+    uint32_t hitDistUavIdx      = UINT32_MAX;  ///< [14] SSR hit-distance UAV (written on the denoise route).
+    uint32_t flags              = 0;           ///< [15] rtreflection::kReflectionFlag* bits (glossy, indirect, hit distance).
 };
+
+/// `RTReflectionRootConstants::flags` bits — the shader contract's `rtreflection::kReflectionFlag*`
+/// (rt_reflection_contract.hlsli); the gtest pins the two equal.
+enum : uint32_t {
+    kRTReflectionFlagGlossy      = 1u,   ///< r.RayTracing.Reflections.Glossy: GGX-VNDF sampled ray.
+    kRTReflectionFlagIndirect    = 2u,   ///< r.RayTracing.Reflections.Indirect: probe SH at the hit.
+    kRTReflectionFlagHitDistance = 4u,   ///< r.RayTracing.Reflections.Denoise: write the ray t for SSR_Temporal.
+};
+
+/// The ray-traced roughness cutoff: `r.RayTracing.Reflections.MaxRoughness` when set, else the
+/// screen trace's `r.SSR.MaxRoughness` — the stage 1 range and blend weights (the contract's
+/// `ReflectionMaxRoughness`).
+inline float RTReflectionMaxRoughness(float rtMaxRoughness, float ssrMaxRoughness) {
+    return rtMaxRoughness > 0.0f ? rtMaxRoughness : ssrMaxRoughness;
+}
 
 /// DWORDs bound at `kSlotRootConstants`; the engine's bindless root-constant budget is 20.
 static constexpr uint32_t kRTReflectionRootDwords = sizeof(RTReflectionRootConstants) / sizeof(uint32_t);
-static_assert(sizeof(RTReflectionRootConstants) == 52, "RTReflectionRootConstants is 13 DWORDs");
+static_assert(sizeof(RTReflectionRootConstants) == 64, "RTReflectionRootConstants is 16 DWORDs");
 static_assert(kRTReflectionRootDwords <= 20, "bindless root constants are limited to 20 DWORDs");
 
 /// Writes clipmap `index` (0..3) of the shared trace constants; an index beyond the four rows is
@@ -76,14 +97,32 @@ inline void SetRTReflectionLighting(RadianceCacheTraceConstants& out, const PerF
     out.groundAlbedo   = 0.18f;
 }
 
+/// Stage 2: the radiance-cache probe grid the shader's indirect term indexes the SH buffer with
+/// (rows 1-2 of the shared layout). The origin must be the grid the published buffer was traced
+/// with (`RadianceCache::GetCompletedGridOrigin()`, not the current origin on a recentre frame) and
+/// the spacing `GetProbeSpacing()` = 2 x extent / (probes per axis - 1), the lighting's probe step.
+inline void SetRTReflectionProbeGrid(RadianceCacheTraceConstants& out, const Vec3& origin,
+                                     float spacing, uint32_t probesPerAxis) {
+    out.gridOriginX   = origin.x;
+    out.gridOriginY   = origin.y;
+    out.gridOriginZ   = origin.z;
+    out.probeSpacing  = spacing;
+    out.probesPerAxis = probesPerAxis;
+    out.totalProbes   = probesPerAxis * probesPerAxis * probesPerAxis;
+}
+
 /// Fills the shared trace constants for the reflection pass: every clipmap at the sentinel, then
-/// the global distance field's clipmaps (when it is initialised), the sun and the skylight. The ray
-/// TMax is a root constant, so `maxTraceDistance` is left at zero (unread by the shader).
+/// the global distance field's clipmaps (when it is initialised), the sun and the skylight, and the
+/// frame index (the glossy sample sequence's temporal rotation). The ray TMax is a root constant,
+/// so `maxTraceDistance` is left at zero (unread by the shader); the probe grid rows stay zero
+/// (`probesPerAxis` 0 = no indirect term) until `SetRTReflectionProbeGrid`.
 inline void FillRTReflectionTraceConstants(RadianceCacheTraceConstants& out,
                                            const GlobalDistanceField& gdf,
-                                           const PerFrameCB& perFrame) {
+                                           const PerFrameCB& perFrame,
+                                           uint32_t frameIndex = 0u) {
     out = RadianceCacheTraceConstants{};
     out.gdfClipmapSrv0 = out.gdfClipmapSrv1 = out.gdfClipmapSrv2 = out.gdfClipmapSrv3 = UINT32_MAX;
+    out.frameIndex = frameIndex;
     if (gdf.IsInitialized()) {
         out.numGdfClipmaps = GlobalDistanceField::kNumClipmaps;
         for (uint32_t i = 0; i < GlobalDistanceField::kNumClipmaps; ++i) {
