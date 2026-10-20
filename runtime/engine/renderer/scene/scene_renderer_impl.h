@@ -977,6 +977,11 @@
     /// Registers Screen-Space Reflections passes (trace + resolve + temporal).
     void RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
 
+    /// Registers the hardware ray-traced reflection pass (stage 1, `r.RayTracing.Reflections`,
+    /// default off): after the SSR passes, fills the texels of the resolved SSR buffer whose screen
+    /// trace found no confident hit with a mirror ray against the TLAS. Not registered when off.
+    void RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameContext& ctx);
+
     /// Registers the deferred lighting pass (or debug view / GBuffer debug).
     void RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, FrameContext& ctx);
     /// Block B.7: the light cull compute pass (clusters of the view frustum -> light index lists).

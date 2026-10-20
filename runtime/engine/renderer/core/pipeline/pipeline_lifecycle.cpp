@@ -140,6 +140,7 @@ void PipelineLibrary::Shutdown() {
     destroyPipeline(m_taaResolve);
     destroyPipeline(m_ssrTrace);
     destroyPipeline(m_ssrResolve);
+    destroyPipeline(m_rtReflection);
     destroyPipeline(m_colorGradingLut);
     destroyPipeline(m_motionBlur);
     destroyPipeline(m_motionBlurTileMax);
@@ -185,6 +186,7 @@ void PipelineLibrary::Shutdown() {
     destroyShader(m_taaResolveCS);
     destroyShader(m_ssrTraceCS);
     destroyShader(m_ssrResolveCS);
+    destroyShader(m_rtReflectionCS);
     destroyShader(m_colorGradingLutCS);
     destroyShader(m_motionBlurCS);
     destroyShader(m_motionBlurTileMaxCS);

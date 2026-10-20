@@ -250,6 +250,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
     RegisterSSGIPasses(rgBuilder, ctx);
     RegisterBrixelizerGIPasses(rgBuilder, ctx);
     RegisterSSRPasses(rgBuilder, ctx);
+    RegisterRTReflectionPass(rgBuilder, ctx);   // opt-in HWRT fill of the SSR holes (r.RayTracing.Reflections)
     
     // ── Env MIS temporal accumulation (render graph compute pass) ───────
     if (ctx.perFrame.sdfReflectionsEnabled == 0 && m_envMisEnabled

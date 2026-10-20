@@ -18,6 +18,7 @@
 #include "gi/ssgi_renderer.h"
 #include "gi/mesh_sdf_baker.h"
 #include "raytracing/rt_manager.h"
+#include "passes/raytracing/rt_reflection_pass.h"
 #include "gpu_mesh.h"
 #include "world.h"
 #include "render_graph_builder.h"
@@ -46,6 +47,11 @@ static auto* cv_SSRSpatialDenoise  = UZ_CVAR_FLOAT("r.SSR.SpatialDenoise", 1.0f,
 static auto* cv_SSRNumSteps        = UZ_CVAR_INT("r.SSR.NumSteps", 16, "SSR ray march step count", 8, 64);
 static auto* cv_SSRStartMip        = UZ_CVAR_FLOAT("r.SSR.StartMipLevel", 1.0f, "SSR initial HZB mip level", 0.f, 3.f);
 static auto* cv_SSRSlopeTolerance  = UZ_CVAR_FLOAT("r.SSR.SlopeToleranceScale", 4.0f, "SSR slope tolerance scale", 1.f, 16.f);
+// Hardware ray-traced reflections, stage 1. The on/off switch `r.RayTracing.Reflections` is
+// registered in rt_manager.cpp and read through RTManager::IsReflectionsEnabled(); the ray's
+// reach is the pass's only parameter of its own.
+static auto* cv_RTReflectionsMaxDistance = UZ_CVAR_FLOAT("r.RayTracing.Reflections.MaxDistance", 100000.0f,
+    "Hardware ray-traced reflections (stage 1): mirror-ray TMax in cm", 100.0f, 1000000.0f);
 
 /// Selects DXR ray-traced probe update over the SDF sphere-trace path.
 /// Requires DXR 1.1 (`RayQuery<>`) and a built TLAS. When the device does not
@@ -798,6 +804,106 @@ void SceneRenderer::RegisterSSRPasses(rg::RgBuilder& rgBuilder, FrameContext& ct
             });
         });
     }
+}
+
+// ── Hardware Ray-Traced Reflections (stage 1) ───────────────────────────────────
+// After the SSR chain: one mirror ray per pixel whose screen trace found no confident hit this
+// frame (the ray left the screen or found nothing), inline RayQuery against the TLAS, the hit
+// shaded from the global distance field + sun + shadow ray as the DDGI probe writer shades its
+// rays (ddgi_probe_common.hlsli::TraceProbeRay). The result replaces that texel of the resolved
+// SSR buffer, which the deferred lighting already blends before the BRDF, so the ladder is
+// SSR (on screen) -> ray (off screen) -> the lighting's prefiltered probe / sky (texel untouched
+// on a miss or a hit the field does not cover). Stage 1 = mirror / low roughness only (the
+// r.SSR.MaxRoughness cutoff); glossy GGX-VNDF rays, the radiance-cache indirect term at the hit
+// and a denoiser are stage 2. @ref docs/specs/rendering/rt-reflections.md
+
+void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
+    // Opt-in (`r.RayTracing.Reflections`, default off) on top of the `r.RayTracing` master
+    // switch, with a built, non-empty TLAS: with the master switch off RTManager::BeginFrame never
+    // rebuilds it and every ray would miss (the DDGI writer's lesson, followup-08). Off = the pass
+    // is not registered at all: nothing is compiled, bound or dispatched and the frame is the
+    // frame without it.
+    if (!m_rtManager || !m_rtManager->IsReflectionsEnabled() || !m_rtManager->IsReady()
+        || m_rtManager->GetTLASInstanceCount() == 0u) return;
+    // The same gate as RegisterSSRPasses: the pass fills the holes of this frame's screen trace
+    // in the resolved buffer the lighting reads this frame (PerFrameCB::ssrSrvIndex).
+    if (!m_showFlags.Get(ShowFlag::SSR) || !ctx.ssrActive || !m_ssrHasPrevColor) return;
+    // Hit attributes: the per-mesh geometry + material table by TLAS InstanceID the path tracer
+    // shades its bounce vertices with (refreshed here, as the path tracer does, only while the
+    // pass is on), the global distance field for meshes without an entry.
+    const uint32_t materialTableSrv = UpdateGIMaterialTable(ctx);
+
+    rgBuilder.AddPass("RT_Reflections", [&, materialTableSrv](rg::RgPassBuilder& pb) {
+        // The GBuffer reads order this pass after the GBuffer and, in registration order, after
+        // SSR_SpatialDenoise (the last writer of the resolved buffer) and before the lighting.
+        // The TLAS (built in RTManager::BeginFrame, before the graph executes) and the SSR
+        // textures are not graph resources; the latter go through the state registry exactly
+        // as the SSR passes do.
+        pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);
+        pb.Read(ctx.normalRes, RHIResourceState::ShaderResource);
+        pb.Read(ctx.velocityRes, RHIResourceState::ShaderResource);
+
+        pb.SetExecutionCallback([this, &ctx, materialTableSrv](IRHICommandList* cmd, const rg::RgPassResources&) {
+            UZ_PROFILE_SCOPE("RTReflections::Trace");
+
+            auto rtReflectionPSO = ctx.pipelines->GetRtReflection();
+            if (!rtReflectionPSO.IsValid()) return;
+
+            // The shared b2 trace constants, built at execution time like the path tracer's:
+            // the PerFrameCB is populated by then, not at registration.
+            const auto* perFrame = static_cast<const PerFrameCB*>(ctx.perFrameAlloc.cpuPtr);
+            if (perFrame == nullptr) return;
+            RadianceCacheTraceConstants traceConstants{};
+            FillRTReflectionTraceConstants(traceConstants, m_globalDistanceField, *perFrame);
+            auto traceAlloc = m_cbRing->Allocate(sizeof(traceConstants));
+            if (!traceAlloc.cpuPtr) return;
+            std::memcpy(traceAlloc.cpuPtr, &traceConstants, sizeof(traceConstants));
+
+            {
+                m_rgStates->Transition(cmd, m_ssrTraceOutput, RHIResourceState::ShaderResource);
+                m_rgStates->Transition(cmd, m_ssrResolvedOutput, RHIResourceState::UnorderedAccess);
+            }
+
+            cmd->SetPipeline(rtReflectionPSO);
+
+            const float ssrMaxRoughness = std::max(0.05f, cv_SSRMaxRoughness->value);
+
+            RTReflectionRootConstants rc{};
+            rc.depthSrvIdx        = m_gbuffer.depthSRV;
+            rc.normalSrvIdx       = m_gbuffer.normalSRV;
+            rc.ssrTraceSrvIdx     = m_ssrTraceOutputSrv;
+            rc.outputUavIdx       = m_ssrResolvedOutputUav;
+            rc.tlasSrvIdx         = m_rtManager->GetTLASSRVIndex();
+            rc.outputWidth        = m_renderWidth;
+            rc.outputHeight       = m_renderHeight;
+            rc.maxRoughness       = ssrMaxRoughness;
+            rc.rayMaxDistance     = cv_RTReflectionsMaxDistance->value;
+            rc.intensity          = cv_SSRIntensity->value;
+            rc.roughnessMaskScale = -2.0f / ssrMaxRoughness;
+            rc.materialTableSrv   = materialTableSrv;
+            // The sky an escaping ray returns: the same SRV every path-tracer sky read uses (HDRI
+            // when active, else the atmosphere capture once filled, else the flat skylight).
+            rc.skyCubemapSrv      = m_hdriActive ? m_hdriCubemapSrv
+                                  : (m_skyCubemapFilled ? m_skyCubemapSrv : UINT32_MAX);
+
+            cmd->SetRootConstants(kSlotRootConstants, reinterpret_cast<const uint32_t*>(&rc),
+                                  kRTReflectionRootDwords);
+            cmd->SetRootCBV(kSlotPerFrame, ctx.perFrameAlloc.bufferHandle,
+                            ctx.perFrameAlloc.offsetBytes, ctx.perFrameAlloc.cpuPtr,
+                            sizeof(PerFrameCB));
+            cmd->SetRootCBV(kSlotPerObject, traceAlloc.bufferHandle, traceAlloc.offsetBytes,
+                            traceAlloc.cpuPtr, sizeof(traceConstants));
+
+            const uint32_t groupsX = (m_renderWidth + 7) / 8;
+            const uint32_t groupsY = (m_renderHeight + 7) / 8;
+            cmd->Dispatch(groupsX, groupsY, 1);
+
+            // Back to SRV for the lighting to read
+            {
+                m_rgStates->Transition(cmd, m_ssrResolvedOutput, RHIResourceState::ShaderResource);
+            }
+        });
+    });
 }
 
 // ── SSGI Previous Frame Color Copy ─────────────────────────────────────────

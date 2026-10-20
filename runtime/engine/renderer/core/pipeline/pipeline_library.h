@@ -717,6 +717,12 @@ public:
     /// bilinear tap read uninitialised texels at the tile edges (followup-01, H-55).
     [[nodiscard]] RHIPipelineHandle GetDdgiBorderFill();
 
+    /// Returns the hardware ray-traced reflection compute pipeline (`rt_reflection_cs.hlsl`,
+    /// stage 1): one mirror ray per pixel the screen trace left without a confident hit, inline
+    /// `RayQuery` against the TLAS, the hit shaded from the global distance field + sun as the
+    /// DDGI writer does. Created on first use only when `r.RayTracing.Reflections` is on.
+    [[nodiscard]] RHIPipelineHandle GetRtReflection();
+
     /// Returns the radiance cache probe side classifier (`probe_side_cs.hlsl`, followup-01
     /// candidate `r.GI.RadianceCache.ProbeClassification` = 1): for every probe, the nearest mesh
     /// triangle over the scene's instances — the side the probe lies on and the direction from the
