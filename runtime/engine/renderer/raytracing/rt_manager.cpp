@@ -10,9 +10,17 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Master RT enable/disable toggle. When false, no TLAS is built and all RT
-/// passes are skipped. Checked per-frame so it can be toggled at runtime.
+/// passes are skipped — except the default-on reflections (Phase B), which
+/// build the TLAS on their own (see RTFrameNeedsTLAS). Checked per-frame so it
+/// can be toggled at runtime.
 static auto* cv_RTEnabled     = UZ_CVAR_BOOL("r.RayTracing", false,
     "Enable DXR ray tracing (requires DXR 1.0+ GPU)");
+
+/// Diagnostic: pretend the device has no DXR support, so RTManager::Init fails as on a
+/// non-DXR GPU and every ray-traced feature — the default-on reflections included — takes
+/// its fallback. Read once at Init (set it from the project or the command line).
+static auto* cv_RTSimulateUnsupported = UZ_CVAR_BOOL("r.RayTracing.SimulateUnsupported", false,
+    "Diagnostic: treat the device as having no DXR support (RT init fails, every RT feature falls back)");
 
 /// Maximum number of TLAS instances. Determines allocation size for the
 /// instance buffer and TLAS scratch. Increase for dense scenes.
@@ -27,9 +35,13 @@ static auto* cv_RTTestPass    = UZ_CVAR_BOOL("r.RayTracing.TestPass", false,
 static auto* cv_RTShadows     = UZ_CVAR_BOOL("r.RayTracing.Shadows", false,
     "Enable ray-traced shadows");
 
-/// RT reflections enable toggle. When true, the RT reflection pass replaces SSR.
-static auto* cv_RTReflections = UZ_CVAR_BOOL("r.RayTracing.Reflections", false,
-    "Enable ray-traced reflections");
+/// RT reflections toggle — the real-time default since Phase B: on a DXR device the
+/// reflection pass runs on a TLAS built for it (no master switch needed), filling the
+/// screen trace's holes or owning the reflection buffer with SSR off. Without DXR, or
+/// with an empty TLAS, the frame falls back to its screen-space / probe reflections;
+/// 0 restores that pre-Phase-B path exactly (no TLAS, no pass).
+static auto* cv_RTReflections = UZ_CVAR_BOOL("r.RayTracing.Reflections", true,
+    "Hardware ray-traced reflections (default on where DXR is supported; SSR/probe fallback otherwise)");
 
 /// RT ambient occlusion enable toggle. When true, RT AO replaces GTAO.
 static auto* cv_RTAO          = UZ_CVAR_BOOL("r.RayTracing.AO", false,
@@ -48,6 +60,10 @@ bool RTManager::Init(IRHIDevice* device, uint32_t maxInstances) {
         UZ_LOG(Renderer, Info, "RTManager: Ray tracing not supported on this device");
         return false;
     }
+    if (cv_RTSimulateUnsupported->value >= 0.5f) {
+        UZ_LOG(Renderer, Info, "RTManager: r.RayTracing.SimulateUnsupported=1 — treating the device as having no DXR support");
+        return false;
+    }
 
     // Use CVar for max instances if caller passed default
     if (maxInstances == 4096) {
@@ -62,18 +78,18 @@ bool RTManager::Init(IRHIDevice* device, uint32_t maxInstances) {
     }
 
     m_initialized = true;
-    UZ_LOG(Renderer, Info, "RTManager: Initialized (maxInstances={}, r.RayTracing={})",
-           maxInstances, cv_RTEnabled->value >= 0.5f ? "true" : "false");
+    UZ_LOG(Renderer, Info, "RTManager: Initialized (maxInstances={}, r.RayTracing={}, r.RayTracing.Reflections={})",
+           maxInstances, cv_RTEnabled->value >= 0.5f ? "true" : "false",
+           cv_RTReflections->value >= 0.5f ? "true" : "false");
     return true;
 }
 
 void RTManager::BeginFrame(const DrawCommand* drawCommands, uint32_t drawCount,
                             const GPUMesh* meshes, uint32_t meshCount,
                             IRHICommandList* cmdList) {
-    if (!m_initialized) return;
-
-    // Check master RT toggle each frame — allows runtime enable/disable
-    if (cv_RTEnabled->value < 0.5f) return;
+    // Checked each frame — the master switch and the reflections switch can be toggled at
+    // runtime; with both off nothing is built and the TLAS stays empty.
+    if (!NeedsTLAS()) return;
 
     m_tlasMgr.Rebuild(drawCommands, drawCount, meshes, meshCount, m_blasMgr, cmdList);
 }
@@ -92,6 +108,14 @@ bool RTManager::IsEnabled() const {
     return m_initialized && cv_RTEnabled->value >= 0.5f;
 }
 
+bool RTManager::NeedsTLAS() const {
+    return RTFrameNeedsTLAS(m_initialized, cv_RTEnabled->value >= 0.5f, cv_RTReflections->value >= 0.5f);
+}
+
+bool RTManager::ReflectionsAvailable() const {
+    return RTReflectionsAvailable(m_initialized, cv_RTReflections->value >= 0.5f, GetTLASInstanceCount());
+}
+
 bool RTManager::IsTestPassEnabled() const {
     return IsEnabled() && cv_RTTestPass->value >= 0.5f;
 }
@@ -101,7 +125,8 @@ bool RTManager::IsShadowsEnabled() const {
 }
 
 bool RTManager::IsReflectionsEnabled() const {
-    return IsEnabled() && cv_RTReflections->value >= 0.5f;
+    // Phase B: the reflections stand on the DXR capability alone, not on the master switch.
+    return m_initialized && cv_RTReflections->value >= 0.5f;
 }
 
 bool RTManager::IsAOEnabled() const {

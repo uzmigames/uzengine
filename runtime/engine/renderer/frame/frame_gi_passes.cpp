@@ -48,8 +48,8 @@ static auto* cv_SSRNumSteps        = UZ_CVAR_INT("r.SSR.NumSteps", 16, "SSR ray 
 static auto* cv_SSRStartMip        = UZ_CVAR_FLOAT("r.SSR.StartMipLevel", 1.0f, "SSR initial HZB mip level", 0.f, 3.f);
 static auto* cv_SSRSlopeTolerance  = UZ_CVAR_FLOAT("r.SSR.SlopeToleranceScale", 4.0f, "SSR slope tolerance scale", 1.f, 16.f);
 // Hardware ray-traced reflections, stage 1. The on/off switch `r.RayTracing.Reflections` is
-// registered in rt_manager.cpp and read through RTManager::IsReflectionsEnabled(); the ray's
-// reach is the pass's only parameter of its own.
+// registered in rt_manager.cpp (Phase B: default on where DXR is supported) and read through
+// RTManager::ReflectionsAvailable(); the ray's reach is the pass's only parameter of its own.
 static auto* cv_RTReflectionsMaxDistance = UZ_CVAR_FLOAT("r.RayTracing.Reflections.MaxDistance", 100000.0f,
     "Hardware ray-traced reflections (stage 1): mirror-ray TMax in cm", 100.0f, 1000000.0f);
 // Stage 2, each opt-in; at the defaults the pass is the stage 1 pass (mirror rays, sun + sky at the
@@ -60,9 +60,12 @@ static auto* cv_RTReflectionsMaxRoughness = UZ_CVAR_FLOAT("r.RayTracing.Reflecti
 static auto* cv_RTReflectionsGlossy = UZ_CVAR_BOOL("r.RayTracing.Reflections.Glossy", false,
     "Hardware ray-traced reflections (stage 2): GGX-VNDF sampled glossy ray for roughness above the "
     "mirror threshold (0.04) instead of the mirror vector");
-static auto* cv_RTReflectionsIndirect = UZ_CVAR_BOOL("r.RayTracing.Reflections.Indirect", false,
+// Phase B: on by default — the hit is then shaded as the SDF reflections shade theirs
+// (ShadeSdfReflectionHit: sun + the probe irradiance), so the ray texels replacing them on the
+// default render keep the probe term; without a radiance cache the term is zero either way.
+static auto* cv_RTReflectionsIndirect = UZ_CVAR_BOOL("r.RayTracing.Reflections.Indirect", true,
     "Hardware ray-traced reflections (stage 2): add the radiance-cache probe irradiance at the hit "
-    "(the diffuse bounce the reflected surface receives)");
+    "(the diffuse bounce the reflected surface receives); default on since Phase B");
 static auto* cv_RTReflectionsDenoise = UZ_CVAR_BOOL("r.RayTracing.Reflections.Denoise", false,
     "Hardware ray-traced reflections (stage 2): run the pass between SSR_Resolve and SSR_Temporal so "
     "the ray texels go through the SSR temporal accumulation + spatial denoise (0 = after them, raw)");
@@ -846,26 +849,32 @@ void SceneRenderer::RegisterSSRDenoisePasses(rg::RgBuilder& rgBuilder, FrameCont
 // and a denoiser are stage 2; stage 3 runs the pass with SSR off (RTReflectionsStandalone: the
 // pass owns the resolved buffer, every eligible texel traced). @ref docs/specs/rendering/rt-reflections.md
 
-bool SceneRenderer::RTReflectionsStandalone() const {
-    // SSR switched off (`r.SSR` 0, or the show flag) — not SSR warming up: on an SSR run the ray
-    // pass waits for the chain (its first frame has no previous colour) as in stages 1 and 2, so
-    // SSR-on frames are unchanged. The resolved buffer is created with the other SSR resources
-    // whether or not SSR is on, and is the texture PerFrameCB::ssrSrvIndex publishes.
-    const bool ssrOff = !m_ssrEnabled || !m_showFlags.Get(ShowFlag::SSR);
-    return ssrOff && m_rtManager && m_rtManager->IsReflectionsEnabled() && m_rtManager->IsReady()
-        && m_rtManager->GetTLASInstanceCount() > 0u
+bool SceneRenderer::RTReflectionRaysAvailable() const {
+    // Phase B capability gate: DXR initialised, `r.RayTracing.Reflections` on and a built,
+    // non-empty TLAS (RTManager::ReflectionsAvailable — with no TLAS every ray would miss, the DDGI
+    // writer's lesson, followup-08), plus the buffer the pass writes. False on a device without
+    // DXR (m_rtManager is null then), with the switch off, or with nothing in the TLAS: the pass
+    // is not registered at all — nothing compiled, bound or dispatched — and the frame renders
+    // the screen-space / probe reflections it rendered before Phase B. The resolved buffer is
+    // created with the other SSR resources whether or not SSR is on, and is the texture
+    // PerFrameCB::ssrSrvIndex publishes.
+    return m_rtManager && m_rtManager->ReflectionsAvailable()
         && m_ssrResolvedOutput.IsValid() && m_ssrResolvedOutputSrv != UINT32_MAX
         && m_ssrResolvedOutputUav != UINT32_MAX;
 }
 
+bool SceneRenderer::RTReflectionsStandalone() const {
+    // SSR switched off (`r.SSR` 0, or the show flag) — not SSR warming up: on an SSR run the ray
+    // pass waits for the chain (its first frame has no previous colour) as in stages 1 and 2, so
+    // SSR-on frames are unchanged.
+    const bool ssrOff = !m_ssrEnabled || !m_showFlags.Get(ShowFlag::SSR);
+    return SelectRTReflectionRoute(/*screenTraceThisFrame=*/false, ssrOff, RTReflectionRaysAvailable())
+        == RTReflectionRoute::RaysOnly;
+}
+
 void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameContext& ctx, bool beforeDenoise) {
-    // Opt-in (`r.RayTracing.Reflections`, default off) on top of the `r.RayTracing` master
-    // switch, with a built, non-empty TLAS: with the master switch off RTManager::BeginFrame never
-    // rebuilds it and every ray would miss (the DDGI writer's lesson, followup-08). Off = the pass
-    // is not registered at all: nothing is compiled, bound or dispatched and the frame is the
-    // frame without it.
-    if (!m_rtManager || !m_rtManager->IsReflectionsEnabled() || !m_rtManager->IsReady()
-        || m_rtManager->GetTLASInstanceCount() == 0u) return;
+    // The fallback (no DXR, switch off, empty TLAS): nothing registered, the frame without the pass.
+    if (!RTReflectionRaysAvailable()) return;
     // Placement (stage 2): called once from RegisterSSRPasses after SSR_Resolve and once from
     // RegisterLightingPasses after the SSR chain; the denoise CVar selects which call registers.
     // The render graph chains every access to a resource in registration order (depth is read by
@@ -877,9 +886,12 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
     // buffer (the lighting reads it under the same RTReflectionsStandalone test), the SSR denoiser
     // chained behind it on the denoise route. SSR on but not yet running (its first frame, no
     // previous colour) registers nothing, as before.
-    const bool ssrChain   = m_showFlags.Get(ShowFlag::SSR) && ctx.ssrActive && m_ssrHasPrevColor;
-    const bool standalone = !ssrChain && RTReflectionsStandalone();
-    if (ssrChain ? (denoise != beforeDenoise) : (!standalone || beforeDenoise)) return;
+    const bool ssrChain = m_showFlags.Get(ShowFlag::SSR) && ctx.ssrActive && m_ssrHasPrevColor;
+    const bool ssrOff   = !m_ssrEnabled || !m_showFlags.Get(ShowFlag::SSR);
+    const RTReflectionRoute route = SelectRTReflectionRoute(ssrChain, ssrOff, /*raysAvailable=*/true);
+    const bool standalone = route == RTReflectionRoute::RaysOnly;
+    if (route == RTReflectionRoute::ScreenTraceAndRays ? (denoise != beforeDenoise)
+                                                       : (!standalone || beforeDenoise)) return;
     // No screen trace this frame — SSR off, or its trace pass skipped (r.SSR.Trace 0): every
     // eligible texel is traced and the pass writes every texel (kRTReflectionFlagNoScreenTrace).
     const bool ownsOutput = standalone || cv_SSRTrace->value < 0.5f;

@@ -107,7 +107,10 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     SetupFrameData(ctx, rgBuilder);
 
     // ── Ray Tracing: build BLAS + TLAS from draw list ─────────────────
-    if (m_rtManager && m_rtManager->IsEnabled()) {
+    // Under the `r.RayTracing` master switch (every RT feature) or, since Phase B, for the
+    // default-on reflections alone (RTManager::NeedsTLAS); the UV test pass below stays under
+    // the master switch (IsTestPassEnabled).
+    if (m_rtManager && m_rtManager->NeedsTLAS()) {
         if (m_gpuProfileEnabled) {
             m_device->GpuProfilerBeginTimestamp(cmdList, "RT_BLAS_TLAS");
         }

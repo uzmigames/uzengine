@@ -9,10 +9,13 @@
 ///
 /// The pass itself is `SceneRenderer::RegisterRTReflectionPass` (frame/frame_gi_passes.cpp),
 /// registered after the SSR passes (or between SSR_Resolve and SSR_Temporal on the denoise route)
-/// and gated on `r.RayTracing.Reflections` (default off): with the gate off nothing here is bound,
-/// compiled or dispatched. Stage 3: with SSR off (`r.SSR` 0) the pass runs on its own
-/// (`SceneRenderer::RTReflectionsStandalone`), owning the reflection buffer the lighting reads
-/// (`kRTReflectionFlagNoScreenTrace`), the SSR denoiser chained behind it on the denoise route.
+/// and gated on `r.RayTracing.Reflections` (Phase B: default on where DXR is supported, with a
+/// built TLAS — `RTManager::ReflectionsAvailable`): with the gate off, or without DXR / a TLAS,
+/// nothing here is bound, compiled or dispatched and the frame keeps its screen-space / probe
+/// reflections (`SelectRTReflectionRoute`). Stage 3: with SSR off (`r.SSR` 0) the pass runs on
+/// its own (`SceneRenderer::RTReflectionsStandalone`), owning the reflection buffer the lighting
+/// reads (`kRTReflectionFlagNoScreenTrace`), the SSR denoiser chained behind it on the denoise
+/// route — the default route, since the engine's `r.SSR` defaults off.
 ///
 /// @ref docs/specs/rendering/rt-reflections.md — design (root budget <= 20 DWORDs, hit attributes)
 
@@ -61,6 +64,27 @@ enum : uint32_t {
 /// `ReflectionMaxRoughness`).
 inline float RTReflectionMaxRoughness(float rtMaxRoughness, float ssrMaxRoughness) {
     return rtMaxRoughness > 0.0f ? rtMaxRoughness : ssrMaxRoughness;
+}
+
+/// Phase B: the reflection route of a frame, from the three facts the renderer knows at
+/// registration — whether the screen trace runs this frame (SSR on, active, with a previous
+/// colour), whether SSR is switched off (`r.SSR` 0 / ShowFlag::SSR, as opposed to warming up on
+/// its first frame), and whether the ray pass is available (`RTManager::ReflectionsAvailable` with
+/// the resolved buffer allocated). The fallback is structural: without the rays the route is the
+/// route of the frame before Phase B.
+enum class RTReflectionRoute : uint8_t {
+    None,                ///< No reflection layer: SSR warming up, or off without rays (the lighting keeps its SDF / probe / sky reflections).
+    ScreenTraceOnly,     ///< The SSR chain alone — the fallback with rays unavailable (no DXR, empty TLAS, switch off).
+    ScreenTraceAndRays,  ///< The SSR chain with the ray pass filling its holes (stages 1-2).
+    RaysOnly,            ///< The ray pass owns the reflection buffer (stage 3 standalone; the default with `r.SSR` off).
+};
+
+[[nodiscard]] inline RTReflectionRoute SelectRTReflectionRoute(bool screenTraceThisFrame, bool ssrSwitchedOff,
+                                                              bool raysAvailable) noexcept {
+    if (screenTraceThisFrame) {
+        return raysAvailable ? RTReflectionRoute::ScreenTraceAndRays : RTReflectionRoute::ScreenTraceOnly;
+    }
+    return (ssrSwitchedOff && raysAvailable) ? RTReflectionRoute::RaysOnly : RTReflectionRoute::None;
 }
 
 /// DWORDs bound at `kSlotRootConstants`; the engine's bindless root-constant budget is 20.

@@ -999,8 +999,9 @@
     /// reflections when they run without the screen trace.
     void RegisterSSRDenoisePasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
 
-    /// Registers the hardware ray-traced reflection pass (`r.RayTracing.Reflections`, default
-    /// off): fills the texels of the resolved SSR buffer whose screen trace found no confident hit
+    /// Registers the hardware ray-traced reflection pass (`r.RayTracing.Reflections`, Phase B:
+    /// default on where DXR is supported, gated by RTReflectionRaysAvailable): fills the texels
+    /// of the resolved SSR buffer whose screen trace found no confident hit
     /// with a ray against the TLAS (stage 1: mirror; stage 2 opt-ins: GGX-VNDF glossy ray, probe SH
     /// indirect at the hit, SSR denoise). Called twice per frame — from RegisterSSRPasses after
     /// SSR_Resolve (`beforeDenoise` true) and from RegisterLightingPasses after the SSR chain — and
@@ -1016,6 +1017,12 @@
     /// SSR on but not yet running (its first frame) is not standalone: the pass waits for the
     /// chain as before, so an SSR run is unchanged. Member state only, so both call sites agree.
     [[nodiscard]] bool RTReflectionsStandalone() const;
+
+    /// Phase B capability gate of the ray-traced reflections: DXR initialised,
+    /// `r.RayTracing.Reflections` on, a built non-empty TLAS (RTManager::ReflectionsAvailable) and
+    /// the resolved buffer allocated. False = the frame's SSR / probe fallback (the route the
+    /// frame took before Phase B; see SelectRTReflectionRoute).
+    [[nodiscard]] bool RTReflectionRaysAvailable() const;
 
     /// Registers the deferred lighting pass (or debug view / GBuffer debug).
     void RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, FrameContext& ctx);
