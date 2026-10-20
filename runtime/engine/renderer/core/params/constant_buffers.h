@@ -533,6 +533,42 @@ struct SpotLightData {
 
 static_assert(sizeof(SpotLightData) == 80, "SpotLightData must be 80 bytes (five float4s)");
 
+/// Maximum number of rectangular area lights in the deferred lighting pass (phase3a 3.33.0 stage 1).
+static constexpr uint32_t kMaxRectLights = 16;
+
+/// RectLightData flag bits.
+static constexpr uint32_t kRectLightFlag_TwoSided = 1u << 0;   ///< Emits from both faces of the rectangle.
+
+/// Rectangular area light for the deferred lighting pass, shaded with Linearly Transformed Cosines.
+///
+/// The rectangle is `position +- right * halfWidth +- up * halfHeight`; it emits along
+/// `cross(right, up)` (the component's forward axis) unless two-sided. `color` is the emitted
+/// RADIANCE (colour x intensity, linear HDR): an emissive quad of the same radiance in the path
+/// tracer is the reference the LTC result is validated against. The inverse-square falloff is part of
+/// the LTC integral; `range` only windows the light out (the point-light window, no 1/d^2).
+/// @ref Heitz, Dupuy, Hill, Neubelt 2016 "Real-Time Polygonal-Light Shading with Linearly Transformed Cosines"
+///
+/// The frame's rect lights live in a bindless StructuredBuffer (LightingCB::rectLightsSrv), not in
+/// LightingCB itself: scenes without a rect light keep the CB size, the resource layout and the
+/// stock lighting DXIL byte-identical to before the feature (see RectLightBuffer in ltc_lut.h).
+/// Matches the HLSL struct in light_types.hlsli (80 bytes, five float4s).
+struct RectLightData {
+    Vec3     position;             ///< World-space centre of the rectangle.
+    float    range;                ///< Attenuation radius (window to zero at this distance from the centre).
+    Vec3     right;                ///< Unit axis of the width.
+    float    halfWidth;            ///< Half extent along `right` (cm).
+    Vec3     up;                   ///< Unit axis of the height.
+    float    halfHeight;           ///< Half extent along `up` (cm).
+    Vec3     color;                ///< Emitted radiance (colour x intensity, linear HDR).
+    uint32_t flags;                ///< kRectLightFlag_*.
+    float    specularScale;        ///< Per-light specular multiplier. Default: 1.0.
+    float    diffuseScale;         ///< Per-light diffuse multiplier. Default: 1.0.
+    uint32_t shadowIndex = UINT32_MAX; ///< Reserved for area-light shadows (stage 1: always unshadowed).
+    float    _rectPad = 0.0f;      ///< Pad to 80 bytes.
+};
+
+static_assert(sizeof(RectLightData) == 80, "RectLightData must be 80 bytes (five float4s)");
+
 /// Lighting constant buffer for the deferred lighting pass, bound at register `b2`.
 ///
 /// Contains arrays of point and spot lights with their respective counts.
@@ -547,7 +583,8 @@ static_assert(sizeof(SpotLightData) == 80, "SpotLightData must be 80 bytes (five
 /// - _pad:             8 bytes
 /// - spotLights[128]:  128 * 80 = 10240 bytes (32784)
 /// - cluster parameters (block B.7): 64 bytes (43024)
-/// - _pad2:            176 bytes
+/// - rect area lights (phase3a 3.33.0): count + buffer SRV + LTC LUT SRVs, 16 bytes (43088)
+/// - _pad2:            160 bytes
 /// Total: 43264 bytes
 struct LightingCB {
     PointLightData pointLights[kMaxPointLights]; ///< Point light array (512 * 64 = 32768 bytes).
@@ -573,14 +610,22 @@ struct LightingCB {
     uint32_t clusterFlags    = 0;                ///< kClusterFlag_*.
     float    clusterViewWidth  = 0.0f;           ///< Render resolution the tiles cover.
     float    clusterViewHeight = 0.0f;
-    float    _pad2[44] = {};                     ///< Pad to 43264 bytes (256-byte multiple).
+
+    // ── Rectangular area lights (phase3a 3.33.0 stage 1) in the former pad; mirrors light_types.hlsli ──
+    uint32_t rectLightCount  = 0;                ///< Rect lights in the buffer (0 = the area-light permutation is not used).
+    uint32_t rectLightsSrv   = UINT32_MAX;       ///< Bindless SRV of this frame's StructuredBuffer<RectLightData>.
+    uint32_t ltcMatrixSrv    = UINT32_MAX;       ///< Bindless SRV of the 64x64 RGBA32F LTC inverse-matrix table.
+    uint32_t ltcMagnitudeSrv = UINT32_MAX;       ///< Bindless SRV of the 64x64 RG32F LTC (magnitude, fresnel) table.
+    float    _pad2[40] = {};                     ///< Pad to 43264 bytes (256-byte multiple).
 };
 
 static_assert(sizeof(LightingCB) % 256 == 0, "LightingCB must be a multiple of 256 bytes (D3D12 CB alignment)");
-static_assert(sizeof(LightingCB) == 43264, "LightingCB layout (block B.7)");
+static_assert(sizeof(LightingCB) == 43264, "LightingCB layout (block B.7; the rect light fields reuse the pad)");
 static_assert(offsetof(LightingCB, spotLights) == 32784, "LightingCB::spotLights offset");
 static_assert(offsetof(LightingCB, clusterForwardX) == 43024, "LightingCB cluster parameters offset");
 static_assert(offsetof(LightingCB, clusterViewHeight) == 43084, "LightingCB::clusterViewHeight offset");
+static_assert(offsetof(LightingCB, rectLightCount) == 43088, "LightingCB::rectLightCount offset");
+static_assert(offsetof(LightingCB, ltcMagnitudeSrv) == 43100, "LightingCB::ltcMagnitudeSrv offset");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LocalLightShadowData — per-light shadow projection data for local lights

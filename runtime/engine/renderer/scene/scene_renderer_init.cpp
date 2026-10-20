@@ -369,6 +369,7 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         m_fallbackNormal = m_device->CreateTexture(fbDesc);
     }
 
+
     // ── Transmittance LUT texture (256x64 RGBA16F) ──────────────────────────
     // Created here; filled by the compute pass on first frame with sky atmosphere.
     {
@@ -1452,6 +1453,20 @@ void SceneRenderer::Shutdown() {
     if (m_fallbackNormal.IsValid()) {
         m_device->DestroyTexture(m_fallbackNormal);
         m_fallbackNormal = RHITextureHandle{};
+    }
+    DestroyLtcLut(m_device, m_ltcLut);
+    DestroyRectLightBuffer(m_device, m_rectLightBuffer);
+    for (auto& pipeline : m_rectLightLightingPipeline) {
+        if (pipeline.IsValid()) m_device->DestroyPipeline(pipeline);
+        pipeline = {};
+    }
+    for (auto& shader : m_rectLightLightingPS) {
+        if (shader.IsValid()) m_device->DestroyShader(shader);
+        shader = {};
+    }
+    if (m_rectLightFullscreenVS.IsValid()) {
+        m_device->DestroyShader(m_rectLightFullscreenVS);
+        m_rectLightFullscreenVS = {};
     }
 
     if (m_gbuffer.IsValid()) {

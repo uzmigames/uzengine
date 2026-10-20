@@ -1,0 +1,65 @@
+{
+  "name": "Rect area light (LTC) over a glossy floor - raster rect light vs path-traced emissive quad",
+  "version": "1.0",
+  "entities": [
+    {
+      "name": "Camera",
+      "components": {
+        "transform": {"position": [0, -650, 160]},
+        "camera": {"fov": 70, "near": 5, "far": 10000, "active": true, "look_at": [0, -100, 30]}
+      }
+    },
+    {
+      "name": "Black environment",
+      "components": {"sky_light": {"intensity": 0, "light_color": [0, 0, 0]}}
+    },
+    {
+      "name": "Rect area light (raster only: the path tracer ignores it)",
+      "components": {
+        "transform": {"position": [0, 0, 200], "rotation": [90, 0, 0]},
+        "light": {"type": "rect", "color": [1, 1, 1], "intensity": 6, "width": 120, "height": 80, "range": 5000}
+      }
+    },
+    {
+      "name": "Emissive fixture (path tracer light: cube.uzmesh is [-1,1]x[-1,1]x[0,2], so scale (40, 60, 0.1) at z = 200 makes its bottom face the same 120 x 80 rect at z = 200, radiance 6, facing down)",
+      "components": {
+        "transform": {"position": [0, 0, 200], "scale": [40, 60, 0.1]},
+        "mesh": {"asset": "sample/content/meshes/cube.uzmesh"},
+        "material": {"baseColorR": 0, "baseColorG": 0, "baseColorB": 0, "roughnessMultiplier": 1, "metallicMultiplier": 0,
+                     "emissiveColorR": 1, "emissiveColorG": 1, "emissiveColorB": 1, "emissiveIntensity": 6}
+      }
+    },
+    {
+      "name": "Glossy floor",
+      "components": {
+        "transform": {"position": [0, 0, -20], "scale": [700, 700, 10]},
+        "mesh": {"asset": "sample/content/meshes/cube.uzmesh"},
+        "material": {"baseColorR": 0.6, "baseColorG": 0.6, "baseColorB": 0.6, "roughnessMultiplier": 0.3, "metallicMultiplier": 0}
+      }
+    },
+    {
+      "name": "Chrome sphere (roughness 0.1)",
+      "components": {
+        "transform": {"position": [-260, 80, 40], "scale": [40, 40, 40]},
+        "mesh": {"asset": "sample/content/meshes/sphere.uzmesh"},
+        "material": {"baseColorR": 0.9, "baseColorG": 0.9, "baseColorB": 0.9, "roughnessMultiplier": 0.1, "metallicMultiplier": 1}
+      }
+    },
+    {
+      "name": "Brushed sphere (roughness 0.5)",
+      "components": {
+        "transform": {"position": [260, 80, 40], "scale": [40, 40, 40]},
+        "mesh": {"asset": "sample/content/meshes/sphere.uzmesh"},
+        "material": {"baseColorR": 0.9, "baseColorG": 0.7, "baseColorB": 0.4, "roughnessMultiplier": 0.5, "metallicMultiplier": 1}
+      }
+    },
+    {
+      "name": "Diffuse sphere (roughness 0.9)",
+      "components": {
+        "transform": {"position": [0, 260, 40], "scale": [40, 40, 40]},
+        "mesh": {"asset": "sample/content/meshes/sphere.uzmesh"},
+        "material": {"baseColorR": 0.8, "baseColorG": 0.3, "baseColorB": 0.2, "roughnessMultiplier": 0.9, "metallicMultiplier": 0}
+      }
+    }
+  ]
+}

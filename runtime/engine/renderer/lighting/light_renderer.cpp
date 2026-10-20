@@ -10,10 +10,16 @@
 #include "scene_component.h"
 #include "sky_atmosphere_component.h"
 #include "color_utils.h"
+#include "cvar.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+
+// Kill switch for the rect area lights (phase3a 3.33.0). Scenes without a rect light are unaffected
+// either way: the shader skips the branch when rectLightCount is 0.
+static auto* cv_LightsAreaLTC = UZ_CVAR_BOOL("r.Lights.AreaLTC", true,
+    "Rectangular area lights shaded with Linearly Transformed Cosines (Heitz 2016). 0 drops them from the lighting CB.");
 
 namespace uz {
 
@@ -218,6 +224,48 @@ LightFrameData ExtractLightingFromECS(
             lightingData.spotLightCount++;
         }
 
+        // ── Rect area lights (phase3a 3.33.0): LTC in the deferred lighting ──
+        // Orientation follows the spot convention: emits along the forward axis, width along
+        // right, height along up. `color * intensity` is the radiance of the emitting surface.
+        if (cv_LightsAreaLTC->value != 0.0f) {
+            auto rectLightView = world->GetRegistry().view<RectLightComponent>();
+            for (auto enttEntity : rectLightView) {
+                if (result.rectLightCount >= kMaxRectLights) break;
+
+                auto& rl = rectLightView.get<RectLightComponent>(enttEntity);
+
+                Vec3 pos{};
+                Quat rot{};
+                if (world->GetRegistry().all_of<SceneComponent>(enttEntity)) {
+                    auto& scene = world->GetRegistry().get<SceneComponent>(enttEntity);
+                    pos = scene.GetWorldPosition();
+                    rot = scene.GetRotation();
+                } else {
+                    pos = rl.GetWorldPosition();
+                    rot = rl.GetRotation();
+                }
+
+                Vec3 lightCol = rl.color;
+                if (rl.useTemperature) {
+                    lightCol = lightCol * KelvinToRgb(rl.temperature);
+                }
+
+                RectLightData& rld = result.rectLights[result.rectLightCount];
+                rld.position      = pos;
+                rld.range         = rl.range;
+                rld.right         = (rot * Vec3::Right()).Normalized();
+                rld.halfWidth     = std::max(rl.width, 0.0f) * 0.5f;
+                rld.up            = (rot * Vec3::Up()).Normalized();
+                rld.halfHeight    = std::max(rl.height, 0.0f) * 0.5f;
+                rld.color         = lightCol * rl.intensity;
+                rld.flags         = rl.twoSided ? kRectLightFlag_TwoSided : 0u;
+                rld.specularScale = rl.specularScale;
+                rld.diffuseScale  = rl.diffuseScale;
+                rld.shadowIndex   = UINT32_MAX;
+                result.rectLightCount++;
+            }
+        }
+
         // ── Sort spot shadow candidates by importance (descending) ──────
         // Importance = intensity * radius^2 / max(1, distance^2).
         // Highest-importance lights get shadow atlas tiles first.
@@ -282,6 +330,13 @@ LightFrameData ExtractLightingFromECS(
     std::memcpy(result.lightingCBAlloc.cpuPtr, &lightingData, sizeof(LightingCB));
 
     return result;
+}
+
+bool WorldHasRectLights(World* world)
+{
+    if (!world || cv_LightsAreaLTC->value == 0.0f) return false;
+    auto view = world->GetRegistry().view<RectLightComponent>();
+    return view.begin() != view.end();
 }
 
 } // namespace uz

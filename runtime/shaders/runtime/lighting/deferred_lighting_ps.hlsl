@@ -9,6 +9,9 @@
 #include "../material/brdf.hlsli"
 #include "../material/diffuse.hlsli"
 #include "light_types.hlsli"
+#ifdef UZ_RECT_LIGHTS
+#include "ltc.hlsli"
+#endif
 #include "ibl.hlsli"
 #include "../gi/rc_probe_guard.hlsli"
 
@@ -446,6 +449,53 @@ float3 ShadeSpotLight(SpotLightData sl, float3 worldPos, float3 N, float3 geomet
     return (diffs + specs) * sl.color * NoLs * atten * spotShadow;
 }
 
+#if defined(UZ_BINDLESS) && defined(UZ_RECT_LIGHTS)
+// Rectangular area light (phase3a 3.33.0 stage 1): Linearly Transformed Cosines (ltc.hlsli). The
+// rect's radiance times the LTC integrals of the GGX lobe (specular, with the Schlick Fresnel of the
+// whole lobe from the magnitude table) and of the clamped cosine (diffuse, Lambert). The 1/d^2
+// falloff is inside the integral; `range` only windows the light out like a point light's radius.
+// Unshadowed in stage 1 (shadowIndex reserved). Bindless only, like the clustered lists: the LUTs are
+// reached through the SRV indices in LightingCB.
+// UZ_RECT_LIGHTS is a PSO permutation (frame_lighting_pass.cpp) used only for frames that carry a
+// rect light: the stock pipeline's DXIL stays byte-identical, so every other scene renders exactly
+// as before (an untaken uniform branch in the same shader already moved 55 pixels by 1 LSB).
+// @ref Heitz, Dupuy, Hill, Neubelt 2016 "Real-Time Polygonal-Light Shading with Linearly Transformed Cosines"
+float3 ShadeRectLight(RectLightData rl, float3 worldPos, float3 N, float3 V, float NoV,
+                      float roughness, float3 F0, float3 F90, float3 diffColor)
+{
+    const float3 toCenter = rl.position - worldPos;
+    const float  distSq   = dot(toCenter, toCenter);
+    const float  f        = distSq / max(rl.range * rl.range, 1e-4);
+    const float  window   = saturate(1.0 - f * f);
+    if (window <= 0.0) return float3(0.0, 0.0, 0.0);
+
+    const bool twoSided = (rl.flags & kRectLightFlag_TwoSided) != 0u;
+    // One-sided: pixels behind the emitting face (along cross(right, up)) receive nothing.
+    if (!twoSided && dot(cross(rl.right, rl.up), -toCenter) <= 0.0) return float3(0.0, 0.0, 0.0);
+
+    const float3 ex = rl.right * rl.halfWidth;
+    const float3 ey = rl.up * rl.halfHeight;
+    const float3 p0 = rl.position - ex - ey;
+    const float3 p1 = rl.position + ex - ey;
+    const float3 p2 = rl.position + ex + ey;
+    const float3 p3 = rl.position - ex + ey;
+
+    Texture2D<float4> ltcMatrix    = ResourceDescriptorHeap[ltcMatrixSrv];
+    Texture2D<float2> ltcMagnitude = ResourceDescriptorHeap[ltcMagnitudeSrv];
+    const float2 uv = LtcLutUV(roughness, NoV);
+    const float4 t1 = ltcMatrix.SampleLevel(clampSampler, uv, 0.0);
+    const float2 t2 = ltcMagnitude.SampleLevel(clampSampler, uv, 0.0);
+
+    const float specForm = LtcEvaluate(N, V, worldPos, LtcInverseMatrix(t1), p0, p1, p2, p3, twoSided);
+    const float3x3 identity = float3x3(1.0, 0.0, 0.0,  0.0, 1.0, 0.0,  0.0, 0.0, 1.0);
+    const float diffForm = LtcEvaluate(N, V, worldPos, identity, p0, p1, p2, p3, twoSided);
+
+    const float3 spec = specForm * (F0 * t2.x + (F90 - F0) * t2.y) * rl.specularScale;
+    const float3 diff = diffForm * diffColor * rl.diffuseScale;
+    return (diff + spec) * rl.color * (window * window);
+}
+#endif
+
 LightingOutput main(FSInput input) {
     int2 px = int2(input.positionCS.xy);
 
@@ -720,6 +770,20 @@ LightingOutput main(FSInput input) {
             }
         }
     }
+
+    // ── Rectangular area lights (phase3a 3.33.0): LTC, outside the cluster lists ───────────────
+    // Only compiled into the UZ_RECT_LIGHTS permutation, which the CPU selects when rectLightCount > 0;
+    // the stock pipeline (every scene without a rect light, and r.Lights.AreaLTC 0) is untouched.
+#if defined(UZ_BINDLESS) && defined(UZ_RECT_LIGHTS)
+    if (rectLightCount > 0u && rectLightsSrv != kSentinelSrvIndex
+        && ltcMatrixSrv != kSentinelSrvIndex && ltcMagnitudeSrv != kSentinelSrvIndex) {
+        StructuredBuffer<RectLightData> rectLights = ResourceDescriptorHeap[rectLightsSrv];
+        [loop]
+        for (uint ri = 0u; ri < rectLightCount; ++ri) {
+            Lo += ShadeRectLight(rectLights[ri], worldPos, N, V, NoV, roughness, F0, F90, diffColor);
+        }
+    }
+#endif
 
     // ── IBL ambient (Falcor split-sum pattern) ──────────────────────────
     // @ref Karis 2013 "Real Shading in Unreal Engine 4" — split-sum IBL

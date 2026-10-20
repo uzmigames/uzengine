@@ -51,6 +51,23 @@
     RHITextureHandle m_fallbackBlack;  ///< 1x1 RGBA8 black (0,0,0,255) — default for metallic map.
     RHITextureHandle m_fallbackNormal; ///< 1x1 RGBA8 flat normal (128,128,255,255) — default for missing normal maps.
 
+    /// LTC tables of the rect area lights (phase3a 3.33.0): created and uploaded on the first frame
+    /// that has a rect light (frame_setup.cpp), SRVs written into LightingCB every frame after that.
+    /// Scenes without a rect light never create them (their resource layout stays as before).
+    LtcLut m_ltcLut;
+    bool   m_ltcLutFailed = false;      ///< A failed creation/upload is not retried every frame.
+    /// Per-frame StructuredBuffer<RectLightData> ring, created with the tables (frame_constants.cpp).
+    RectLightBuffer m_rectLightBuffer;
+    bool   m_rectLightBufferFailed = false;
+    /// Deferred lighting PSO permutations with UZ_RECT_LIGHTS=1 ([0] plain, [1] with
+    /// UZ_CLOUD_GROUND_SHADOWS=1), built on first use for frames that carry a rect light so the
+    /// stock pipeline's DXIL stays byte-identical for every other scene (frame_lighting_pass.cpp).
+    RHIShaderHandle   m_rectLightFullscreenVS;
+    RHIShaderHandle   m_rectLightLightingPS[2];
+    RHIPipelineHandle m_rectLightLightingPipeline[2];
+    bool              m_rectLightPipelineFailed[2] = {false, false};
+    RHIPipelineHandle EnsureRectLightLightingPipeline(bool cloudGroundShadows);
+
     // ── GBuffer + Shadow Atlas ─────────────────────────────────────────────
 
     GBuffer m_gbuffer;

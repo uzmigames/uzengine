@@ -8,7 +8,9 @@
 
 static const uint kMaxPointLights = 512;   // block B.7: was 64 (the cbuffer holds 43 KB of the 64 KB allowed)
 static const uint kMaxSpotLights  = 128;   // was 16
+static const uint kMaxRectLights  = 16;    // phase3a 3.33.0: rectangular area lights (LTC)
 static const uint kLightFlag_InverseSquared = 1u;
+static const uint kRectLightFlag_TwoSided   = 1u;
 
 // Cluster list record (cluster_assign_cs.hlsl): [count | flags] then kClusterSlotsMax light slots. A slot
 // is the light's index in its array, bit 15 set for a spot light, points first then spots, each in index
@@ -39,6 +41,18 @@ struct SpotLightData    // 80 bytes — matches C++ exactly
     uint shadowIndex;    float3 _spotPad;
 };
 
+// Rectangular area light (phase3a 3.33.0): position +- right * halfWidth +- up * halfHeight, emitting
+// along cross(right, up) unless two-sided; color = radiance. 80 bytes — matches C++ exactly.
+// @ref Heitz, Dupuy, Hill, Neubelt 2016 "Real-Time Polygonal-Light Shading with Linearly Transformed Cosines"
+struct RectLightData
+{
+    float3 position;     float range;
+    float3 right;        float halfWidth;
+    float3 up;           float halfHeight;
+    float3 color;        uint flags;
+    float specularScale; float diffuseScale; uint shadowIndex; float _rectPad;
+};
+
 // LightingCB at b2 — guarded so mesh_ps can include this without b2 conflict
 #ifndef UZ_LIGHT_TYPES_NO_CB
 cbuffer LightingCB : register(b2)
@@ -64,7 +78,12 @@ cbuffer LightingCB : register(b2)
     uint   clusterFlags;       // kClusterFlag_*
     float  clusterViewWidth;   // render resolution the tiles cover
     float  clusterViewHeight;
-    float2 _lightPadB;
+
+    // ── Rectangular area lights (phase3a 3.33.0) in the former pad, offset 43088; mirrors constant_buffers.h ──
+    uint   rectLightCount;     // 0 = no rect light this frame (the stock pipeline; the UZ_RECT_LIGHTS permutation otherwise)
+    uint   rectLightsSrv;      // bindless SRV of this frame's StructuredBuffer<RectLightData>
+    uint   ltcMatrixSrv;       // bindless SRV of the 64x64 RGBA32F LTC inverse-matrix table (ltc.hlsli)
+    uint   ltcMagnitudeSrv;    // bindless SRV of the 64x64 RG32F LTC (magnitude, fresnel) table
     float  _lightPad2[43];     // pad; the C++ struct is 43264 bytes
 };
 

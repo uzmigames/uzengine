@@ -136,13 +136,14 @@ ENTRIES = [
         'extra_structs': ['LocalLightShadowData'], 'extra_constants': ['kMaxLocalLightShadows'],
     },
     {
-        'name': 'LightingCB (block B.7: 512 point / 128 spot lights and the cluster parameters)', 'shader': 'lighting/deferred_lighting_ps.hlsl',
+        'name': 'LightingCB (block B.7: 512 point / 128 spot lights, the cluster parameters, the rect area light fields)', 'shader': 'lighting/deferred_lighting_ps.hlsl',
         'profile': 'ps_6_6', 'header': 'runtime/engine/renderer/core/params/constant_buffers.h', 'struct': 'LightingCB',
         'map': {'pointLights': 'pointLights', 'pointLightCount': 'pointLightCount', 'spotLightCount': 'spotLightCount', 'spotLights': 'spotLights',
                 'clusterForward': 'clusterForwardX', 'clusterNear': 'clusterNear', 'clusterFar': 'clusterFar', 'clusterLogScale': 'clusterLogScale',
                 'clusterTileSize': 'clusterTileSize', 'clusterTilesX': 'clusterTilesX', 'clusterTilesY': 'clusterTilesY', 'clusterSlices': 'clusterSlices',
                 'clusterListSrv': 'clusterListSrv', 'clusterListUav': 'clusterListUav', 'clusterSlots': 'clusterSlots', 'clusterFlags': 'clusterFlags',
-                'clusterViewWidth': 'clusterViewWidth', 'clusterViewHeight': 'clusterViewHeight'},
+                'clusterViewWidth': 'clusterViewWidth', 'clusterViewHeight': 'clusterViewHeight',
+                'rectLightCount': 'rectLightCount', 'rectLightsSrv': 'rectLightsSrv', 'ltcMatrixSrv': 'ltcMatrixSrv', 'ltcMagnitudeSrv': 'ltcMagnitudeSrv'},
         'extra_structs': ['PointLightData', 'SpotLightData'],
         'extra_constants': ['kMaxPointLights', 'kMaxSpotLights', 'kClusterTileSize', 'kClusterSlices', 'kClusterSlotsMax', 'kClusterRecordUints',
                             'kClusterFlag_Enabled', 'kClusterFlag_Debug'],
@@ -432,6 +433,9 @@ TIER_C = [
                  'runtime/engine/renderer/gi/global_distance_field.h', 'GdfMeshSdfGPU'),
     layout_entry('gi/gi_trace_common.hlsli', 'GIMeshMaterial',
                  PASSES + 'pathtracing/path_tracer_pass.h', 'GIMeshMaterialGPU'),
+    # 80-byte rect area light (phase3a 3.33.0): the per-frame StructuredBuffer the UZ_RECT_LIGHTS
+    # lighting permutation reads through LightingCB::rectLightsSrv.
+    layout_entry('lighting/light_types.hlsli', 'RectLightData', PARAMS + 'constant_buffers.h', 'RectLightData'),
 ]
 
 # These are not successful reflection contracts. Keep explicit exclusions visible

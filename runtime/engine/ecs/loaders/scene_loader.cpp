@@ -415,9 +415,26 @@ void ApplySpotLightFields(SpotLightComponent& light,
     light.diffuseScale             = ReadFloat(comp, "diffuseScale", 1.f);
 }
 
+/// Parses a `"rect"` (rectangular area) light sub-object into the given component.
+///
+/// `width` / `height` are the full extents in cm along the component's right / up axes; the
+/// rectangle emits along its forward axis (transform rotation, spot-light convention) unless
+/// `twoSided`. `intensity` scales `color` into the emitted radiance.
+void ApplyRectLightFields(RectLightComponent& light,
+                           const nlohmann::json& comp) {
+    light.color         = ReadVec3(comp, "color", 1.f, 1.f, 1.f);
+    light.intensity     = ReadFloat(comp, "intensity", 1.f);
+    light.width         = ReadFloat(comp, "width",     100.f);
+    light.height        = ReadFloat(comp, "height",    100.f);
+    light.range         = ReadFloat(comp, "range",     1000.f);
+    light.twoSided      = ReadBool(comp, "twoSided", false);
+    light.specularScale = ReadFloat(comp, "specularScale", 1.f);
+    light.diffuseScale  = ReadFloat(comp, "diffuseScale", 1.f);
+}
+
 /// Parses the `"light"` component JSON and emplaces the appropriate light type.
 ///
-/// Dispatches on the `"type"` string: "directional", "point", or "spot".
+/// Dispatches on the `"type"` string: "directional", "point", "spot", or "rect".
 /// Logs a warning and skips if the type is missing or unrecognized.
 void ParseLightComponent(World& world,
                           Entity entity,
@@ -436,6 +453,9 @@ void ParseLightComponent(World& world,
     } else if (lightType == "spot") {
         auto& light = world.GetRegistry().emplace<SpotLightComponent>(enttEntity);
         ApplySpotLightFields(light, comp);
+    } else if (lightType == "rect") {
+        auto& light = world.GetRegistry().emplace<RectLightComponent>(enttEntity);
+        ApplyRectLightFields(light, comp);
     } else {
         CountLoadWarning();
         UZ_LOG(Scene, Warning,
@@ -1371,6 +1391,27 @@ nlohmann::json SerializeEntity(const World& world, entt::entity enttEntity) {
         lightJson["sourceRadius"] = light->sourceRadius;
         lightJson["specularScale"] = light->specularScale;
         lightJson["diffuseScale"] = light->diffuseScale;
+        components["light"] = std::move(lightJson);
+
+        nlohmann::json transform;
+        transform["position"] = WriteVec3(light->GetPosition());
+        transform["rotation"] = WriteEulerDeg(light->GetRotation());
+        transform["scale"]    = WriteVec3(light->GetScale());
+        components["transform"] = std::move(transform);
+    }
+
+    // Rect area light (phase3a 3.33.0)
+    if (const auto* light = registry.try_get<RectLightComponent>(enttEntity)) {
+        nlohmann::json lightJson;
+        lightJson["type"]          = "rect";
+        lightJson["color"]         = WriteVec3(light->color);
+        lightJson["intensity"]     = light->intensity;
+        lightJson["width"]         = light->width;
+        lightJson["height"]        = light->height;
+        lightJson["range"]         = light->range;
+        lightJson["twoSided"]      = light->twoSided;
+        lightJson["specularScale"] = light->specularScale;
+        lightJson["diffuseScale"]  = light->diffuseScale;
         components["light"] = std::move(lightJson);
 
         nlohmann::json transform;

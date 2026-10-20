@@ -114,4 +114,24 @@ void SpotLightComponent::OnProxyCreated(RenderWorld& renderWorld,
            range, innerAngleDeg, outerAngleDeg);
 }
 
+// RectLightComponent (phase3a 3.33.0)
+
+void RectLightComponent::OnProxyCreated(RenderWorld& renderWorld,
+                                         RenderProxyHandle handle) {
+    RenderProxy* proxy = renderWorld.GetProxy(handle);
+    if (!proxy) {
+        return;
+    }
+    proxy->light.color      = color;
+    proxy->light.intensity  = intensity;
+    proxy->light.range      = range;
+    // The rectangle emits along the forward axis, like a spot light's cone axis.
+    proxy->light.direction  = GetRotation() * Vec3::Forward();
+    proxy->light.innerAngle = 0.f;
+    proxy->light.outerAngle = 0.f;
+
+    UZ_LOG(Light, Trace, "RectLight proxy created: {}x{} cm, range={}, twoSided={}",
+           width, height, range, twoSided);
+}
+
 } // namespace uz

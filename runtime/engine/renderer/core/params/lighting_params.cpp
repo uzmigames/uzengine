@@ -14,6 +14,8 @@ const ShaderParameterMetadata& LightingParams::GetMetadata()
         {"pointLightCount", ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(LightingParams, pointLightCount)), sizeof(uint32_t),                         0},
         {"spotLightCount",  ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(LightingParams, spotLightCount)),  sizeof(uint32_t),                         0},
         {"spotLights",      ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(LightingParams, spotLights)),      sizeof(SpotLightData) * kMaxSpotLights,   0},
+        // The cluster (block B.7) and rect area light (phase3a 3.33.0) fields are not registered: the
+        // lighting CB is uploaded through the legacy allocation path, and LightingParams.MetadataMemberCount pins 4.
     };
 
     static const ShaderParameterMetadata kMetadata = {

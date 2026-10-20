@@ -45,6 +45,7 @@ enum class RenderProxyType : uint8_t {
     DirectionalLight, ///< Infinite-distance directional light (sun/moon).
     PointLight,       ///< Omnidirectional point light with range falloff.
     SpotLight,        ///< Cone-shaped spot light with inner/outer angles.
+    RectLight,        ///< Rectangular area light (LTC), phase3a 3.33.0.
 };
 
 /// POD render proxy — flat data for GPU submission, no virtual dispatch.

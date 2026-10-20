@@ -1,30 +1,41 @@
 ## 1. Implementation
 
-- [ ] 1.1 Generate LTC precomputed textures — compute or import 2× 64×64 LUT textures (Heitz 2016 reference data). LTC Matrix: RGBA32F (M⁻¹ coefficients indexed by roughness × NdotV). LTC Amplitude: RG32F (Fresnel scale/bias). Load as engine resources at init.
-- [ ] 1.2 Implement LTC evaluation HLSL include (`ltc.hlsli`) — given surface point, normal, view dir, roughness, and rect light corners: (1) lookup M⁻¹ from LTC matrix texture at (roughness, NdotV), (2) transform rect corners by M⁻¹, (3) clip transformed polygon to upper hemisphere, (4) analytically integrate cosine over polygon (IntegrateEdge formula), (5) multiply by Fresnel from amplitude texture.
-- [ ] 1.3 Implement rect light polygon clipping — clip quadrilateral to hemisphere (z > 0 plane). Handle 3-6 sided result polygon after clipping. Sum edge integrals: `IntegrateEdge = acos(dot(v1,v2)) * normalize(cross(v1,v2)).z`.
-- [ ] 1.4 Implement LTC diffuse — same framework but with identity matrix (M = I). Diffuse = cosine distribution, analytically integrated over rect solid angle. Faster than specular (no LUT lookup needed).
-- [ ] 1.5 Add RectArea light type to LightGPU struct — `lightType=3`. Additional data: `float2 lightSize` (width, height), `float3 lightRight` (local X axis), `float3 lightUp` (local Y axis). 4 rect corners derived from position + right/up × size/2.
-- [ ] 1.6 Integrate area lights into deferred lighting — after point/spot evaluation: if `lightType == 3`, evaluate LTC specular + diffuse. Add to final lighting.
-- [ ] 1.7 Bind LTC textures — register t8, t9 (or bindless). Bound for entire lighting pass. Static textures loaded once.
-- [ ] 1.8 Implement area light attenuation — distance from pixel to closest point on rect surface. Smooth falloff: `atten = saturate(1 - (dist/range)²)² / (dist² + 1)`. Same windowing as point lights.
-- [ ] 1.9 Create area light demo — glossy floor plane with rectangular area lights above. Camera showing rect-shaped specular reflection. Roughness gradient showing reflection transition from sharp rect to diffuse glow.
+- [x] 1.1 Generate LTC precomputed textures — `scripts/rendering/bake_ltc_lut.py` re-implements Heitz et al. 2016's reference fitter (GGX + height-correlated Smith, 64×64, Nelder-Mead on (m11, m22, m13), MIS cubic error, the reference warm-start order; 14 s on 32 cores, deterministic). Cross-checked against the published tables shipped by three.js (`RectAreaLightTexturesLib`): magnitude/fresnel agree to 2e-4 everywhere, matrix entries to a median relative 1.3e-4 for roughness ≥ 0.2 (only the degenerate θ = 1.57 row differs). Embedded as `runtime/engine/renderer/lighting/ltc_lut_data.inc` (float32, 344 KB), created on demand as 64×64 RGBA32F (M⁻¹, packed like the reference `ltc_1`) + RG32F (magnitude, fresnel) textures by `ltc_lut.cpp`. 32-bit because the near-mirror columns hold entries up to ~1e5.
+- [x] 1.2 Implement LTC evaluation HLSL include (`ltc.hlsli`) — `LtcLutUV` (x = roughness, y = sqrt(1 − NoV), texel centres at both ends), `LtcInverseMatrix`, `LtcIntegrateEdge`, `LtcClipQuadToHorizon`, `LtcEvaluate` (returns the form factor: clamped-cosine integral / π; one-sided = max(0, −sum) for the engine's vertex order). Fresnel of the whole lobe: `F0·t2.x + (F90 − F0)·t2.y` (keeps the base BRDF's F90 convention).
+- [x] 1.3 Implement rect light polygon clipping — the sixteen horizon configurations (3–5 vertices). Validated by `test_ltc_area_light.cpp` against brute-force integration for 1/2/3/4-vertices-above cases (≤ 1e-4 abs; the Python reference agrees to 1e-8).
+- [x] 1.4 Implement LTC diffuse — identity matrix (exact Lambert form factor; the normal-incidence rect matches the analytic view factor to 1e-6).
+- [x] 1.5 Add the rect light type — `RectLightData` (80 bytes: position/range, right/halfWidth, up/halfHeight, color (= radiance)/flags, specularScale/diffuseScale/shadowIndex) in `constant_buffers.h` + `light_types.hlsli`; `RectLightComponent` (width/height/range/twoSided; emits along forward, width along right, height along up — the spot-light convention); `"light": {"type": "rect", ...}` in the scene loader + saver; `RenderProxyType::RectLight`. Not the legacy `LightGPU.lightType = 3`: production lighting reads the LightingCB arrays, `LightGPU` is the unused multi-light descriptor. The frame's rect lights travel in a per-frame bindless `StructuredBuffer<RectLightData>` (`RectLightBuffer`, 3-frame ring) and the LightingCB only carries `rectLightCount / rectLightsSrv / ltcMatrixSrv / ltcMagnitudeSrv` in its former pad, so the CB keeps its 43264 bytes.
+- [x] 1.6 Integrate area lights into deferred lighting — `ShadeRectLight` + the loop after the point/spot block, compiled only into a `UZ_RECT_LIGHTS=1` PSO permutation (`SceneRenderer::EnsureRectLightLightingPipeline`, also combined with `UZ_CLOUD_GROUND_SHADOWS`) that the pass selects when the frame has a rect light. The stock pipeline's DXIL is instruction-identical to before (20 170 IR lines, 0 differ, cbuffer size annotation included). A uniform `if (rectLightCount > 0)` branch in the same shader was tried first and moved 55 pixels by 1 LSB on a scene without rect lights — hence the permutation.
+- [x] 1.7 Bind LTC textures — the deferred pass is bindless: the two SRV indices live in LightingCB (no t8/t9 registers). The SM5 fallback path does not evaluate rect lights (same as the clustered lists).
+- [x] 1.8 Implement area light attenuation — the point-light window `(1 − (d/range)⁴)²` on the distance to the rect's centre, WITHOUT a 1/d² term: the inverse-square falloff is inside the LTC integral, so the `1/(dist² + 1)` of the original item would have double-counted it. Range 5000 in the test scene (window ≈ 1 in the ROI).
+- [x] 1.9 Create area light demo — `scripts/rendering/area-light-ltc.uzscene` + `.uzproject`: a 120×80 cm rect (radiance 6) 200 cm above a roughness-0.3 dielectric floor, plus three spheres (roughness 0.1 chrome, 0.5 brushed metal, 0.9 diffuse) and the same rect as an emissive quad for the path tracer (`cube.uzmesh` is [−1,1]×[−1,1]×[0,2], so scale (40, 60, 0.1)). GI/AO/SSR/bloom off, passthrough tonemap (linear 8-bit), light BVH on, 2 bounces (= direct lighting only: NEE at the first hit, MIS-weighted emitter hits, black environment).
 
 ## 2. Visual Verification
 
-- [ ] 2.1 Screenshot: glossy floor reflecting rectangular light — rect shape visible in reflection
-- [ ] 2.2 Screenshot: roughness gradient — mirror=sharp rect, rough=blurred rect, very rough=diffuse blob
-- [ ] 2.3 Screenshot: area light vs point light — area produces softer, wider illumination
-- [ ] 2.4 Screenshot: large area light — soft shadows and wide specular
-- [ ] 2.5 Regression: existing point/spot lights unchanged
+- [x] 2.1 Screenshot: glossy floor reflecting rectangular light — `E:/UzmiEngine/area-ltc/area-light-ltc-raster-vs-pt.jpg` (raster | path tracer | |diff|×4): the elongated reflection of the rect on the roughness-0.3 floor sits where the path tracer puts it.
+- [x] 2.2 Screenshot: roughness gradient — the three spheres in the same montage: sharp rect reflection (0.1), broad highlight (0.5), diffuse glow (0.9). Three samples, not a continuous gradient plane.
+- [ ] 2.3 Screenshot: area light vs point light — not captured in stage 1.
+- [ ] 2.4 Screenshot: large area light — soft shadows are a later stage (stage 1 is unshadowed; `shadowIndex` reserved).
+- [x] 2.5 Regression: existing point/spot lights unchanged — reflection-reference frame 95 (1920×1080, same recipe as `E:/UzmiEngine/f005-after`): **max_code_delta 0** against the HEAD (ebe785b0) pre-change capture, run-to-run deterministic (two HEAD runs: max 0). Against `f005-after/frames/f_95.png`: 1 pixel / 1 code — the same single pixel HEAD itself differs by (the reference predates the PCSS/RT commits), not from this work. Scenes without a rect light create no texture, no buffer and no PSO.
 
 ## 3. Documentation
 
-- [ ] 3.1 Document LTC algorithm with Heitz 2016 reference
-- [ ] 3.2 Add area light parameters with UE5 RectLight equivalents
-- [ ] 3.3 Document LTC texture format and generation process
+- [x] 3.1 Document LTC algorithm with Heitz 2016 reference — `ltc.hlsli` header, `ltc_lut.h`, `bake_ltc_lut.py` docstring (derivation, packing, cross-check).
+- [x] 3.2 Add area light parameters with UE5 RectLight equivalents — `RectLightComponent` (SourceWidth / SourceHeight / AttenuationRadius; `color * intensity` = emitted radiance, matching an emissive quad's `emissiveIntensity`).
+- [x] 3.3 Document LTC texture format and generation process — `ltc_lut.h` + the bake script (run `python scripts/rendering/bake_ltc_lut.py` to regenerate the .inc).
 
 ## 4. Tail (mandatory — enforced by rulebook v5.3.0)
-- [ ] 4.1 Update or create documentation covering the implementation
-- [ ] 4.2 Write tests covering the new behavior
-- [ ] 4.3 Run tests and confirm they pass
+- [x] 4.1 Update or create documentation covering the implementation — in the code headers and this file (docs/ is out of this stage's scope).
+- [x] 4.2 Write tests covering the new behavior — `runtime/tests/engine/renderer/test_ltc_area_light.cpp` (10 tests: table finiteness/bounds, known cells vs theory (1 − ln 2 at α = 1, mirror end, isotropic row 0), a C++ port of the HLSL evaluator vs the analytic view factor, vs brute force with horizon clipping, one-sided/two-sided, hemisphere = 1, a real table lobe vs brute force; RectLightData / LightingCB offsets); `test_cbuffer_layouts.py` (LightingCB Tier A fields + RectLightData Tier C stride).
+- [x] 4.3 Run tests and confirm they pass — see the evidence below.
+
+## Stage 1 evidence (2026-10-20, RTX 5080, pinned zig 0.15.2 ReleaseFast)
+
+- Build: `zig build -Doptimize=ReleaseFast` exit 0, Shader integrity OK (156 shaders). `npm run test:layouts` exit 0 (Tier A 90/90 incl. the LightingCB rect fields, Tier C incl. RectLightData 80 B).
+- No-area-light byte match: reflection-reference frame 95 max_code_delta 0 vs the HEAD capture (`E:/UzmiEngine/area-ltc/ref-final` vs `ref-before`); 1 px / 1 code vs f005-after, identical to HEAD's own delta.
+- Rect light vs analytic: floor radiance under the rect centre 0.246 (roughness 0.3) / 0.2531 (roughness 1.0) vs the analytic Lambert value 0.6 · F · 6 = 0.2532 (F = 0.070344, the view factor of a 120×80 rect at 200 cm): −2.6 % / −0.04 %.
+- Rect light vs path tracer (`area-raster-final2` vs `area-pt-final2`, linear 8-bit codes): floor ROI [100,360,1080,340] RMSE 2.55 codes, mean(raster − PT) +1.29 codes, linear ratio 1.36; lamp pool ROI RMSE 9.8 codes, ratio 1.44; glossy highlight ROI RMSE 4.2 codes, ratio 1.24 (highlight peak within 4 %). The residual is the path tracer's diffuse model, not the LTC: the PT scales Lambert by its D7 energy budget (1 − E_spec(NoV, roughness)) and loses more at grazing light incidence, while the raster's direct lights use plain Lambert. PT/raster at the pool centre is 0.77 on the roughness-0.3 floor (grazing view, NoV ≈ 0.24, Fresnel-heavy E_spec) and 0.95 on a roughness-1.0 floor; in the hemisphere limit (a 2000×2000 emitter) raster 0.310, PT 0.303, analytic ≈ 0.31. Both the raster and the PT agree with the analytic solution where the models coincide.
+- gtests: `GTEST_FILTER='-RuntimeViewportTest.*' zig build test -Doptimize=ReleaseFast` — 7965 tests, 7945 passed, 3 failed = the pre-existing VfxEditorSlate trio (baseline 7942 / 7920 / the same 3); the 10 new LTC/rect tests pass; no DX12DeviceTest TDR. `LightingParams.MetadataMemberCount` stays at 4 (the rect fields are not registered in the metadata, like the B.7 cluster fields).
+- Montage: `E:/UzmiEngine/area-ltc/area-light-ltc-raster-vs-pt.jpg`.
+
+Deferred to later stages: disk / line / tube (sphere+capsule) area lights, area-light shadows (`shadowIndex` reserved), rect lights in the SM5 (non-bindless) lighting path and in the path tracer's own light list (it only sees emissive meshes), light cookies (`sourceTexture`). Pre-existing observations, out of scope: the raster G-buffer only writes emissive when an emissive texture is bound (a constant-only emissive material shows black in raster, visible in the PT), and the path tracer skips emissive NEE when `PathCanContinue(bounce + 1, maxBounces)` is false, so `MaxBounces` must be ≥ 2 for direct lighting from emissive meshes.

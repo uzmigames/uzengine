@@ -74,6 +74,7 @@
 #include "cb_ring_allocator.h"
 #include "instance_batcher.h"
 #include "light_renderer.h"        // LightFrameData
+#include "ltc_lut.h"               // LtcLut (rect area lights, phase3a 3.33.0)
 #include "shadow_renderer.h"      // ShadowFrameData
 #include "render_graph_types.h"   // rg::RgResourceId
 

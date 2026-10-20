@@ -54,7 +54,8 @@ struct LightingParams {
     uint32_t clusterTileSize = kClusterTileSize, clusterTilesX = 0, clusterTilesY = 0, clusterSlices = kClusterSlices;
     uint32_t clusterListSrv = UINT32_MAX, clusterListUav = UINT32_MAX, clusterSlots = kClusterSlotsMax, clusterFlags = 0;
     float    clusterViewWidth = 0.0f, clusterViewHeight = 0.0f;
-    float          _pad2[44]       = {};             ///< Pad to 43264 bytes (256-byte multiple).
+    uint32_t rectLightCount = 0, rectLightsSrv = UINT32_MAX, ltcMatrixSrv = UINT32_MAX, ltcMagnitudeSrv = UINT32_MAX;   ///< Rect area lights (LightingCB).
+    float          _pad2[40]       = {};             ///< Pad to 43264 bytes (256-byte multiple).
 
     // ── Metadata ─────────────────────────────────────────────────────────
 
