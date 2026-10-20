@@ -554,6 +554,174 @@ The base BRDF, unrelated VFX-editor work, and ignored scratch files were
 not touched. The evidence helper and generated captures/logs are outside
 the repository.
 
+## Stage 4: Opt-in one-bounce GI-ReSTIR, stage 1 (2026-10-20)
+
+Reservoir resampling of the path tracer's INDIRECT term: the first indirect
+(secondary) vertex becomes a reservoir sample with temporal and spatial reuse
+under the stage-3 bias-correction discipline. Opt-in `r.PathTracer.GIReSTIR`
+(CLI `--gi-restir` on both entry points), read at path-tracer init; sub-CVars
+`r.PathTracer.GIReSTIR.Temporal` (default on) and `.Spatial` (default on).
+Multi-bounce path reuse / reconnection stays deferred; bounces beyond the
+second vertex keep the plain estimator ("partial radiance").
+
+Technique. At a receiving primary surface `S = (O, n1, v1, material)` with
+`O` the continuation ray origin, the one-bounce term in area measure is
+`I(S) = integral f1(S,w) cos1 * L_o(x2 -> S) * V(S,x2) cos2 / d^2 dA(x2)`.
+The sample `y` is the secondary vertex plus everything its exitant radiance
+needs toward ANY receiver: position, shading normal, base material,
+unweighted emission + BVH emitter id (the receiver re-applies its own
+BSDF/NEE balance), and the single NEE light sample taken at `x2`
+(direction, `emission * geometry / pdf * visibility`, solid-angle pdf), so
+`L_o(x2 -> S)` is re-shaded with the vertex BSDF toward each receiver
+(`restir_gi.hlsli: GIRadiance / GIContribution`). The canonical candidate is
+the path tracer's own BSDF continuation with `W = d^2 / (p_w cos2) = 1/p_A`
+(the generating density in area measure); a missed/unsupported continuation
+is a NULL sample that still owns its domain (`M = 1`), and its plain
+estimate is added directly. Temporal reuse (same pixel, plane/normal
+validated, 20-frame M cap) and spatial reuse (4 neighbors, 30-px disk) use
+the committed stage-3 math: targets `p_hat_i(y) = lum(g_i(y)) * V_i(y)` with
+exact visibility at EVERY domain (inline ray from the source's own
+continuation origin, same TMin/TMax/flags as the generating ray), cached
+visibility only for a sample's own source, generalized balance MIS
+`m_i = M_i p_hat_i / sum_j M_j p_hat_j`, `w_i = p_hat_here W_i m_i`,
+`W = sum w / p_hat_here(Y)`, identity shift on scene points (Jacobian 1 in
+area measure). A resolve pass adds `GIContribution * W` to the partial
+radiance and runs the same Kahan accumulation as the raygen.
+
+Unbiasedness (E[estimator] = the one-bounce integral). The NEE variates at
+`x2` are part of `y`; their law depends only on `(x2, n2)`, never on the
+receiver, so the extended-space density is `p_A(x2) p(xi | x2)` and
+`integral g_S(y) p(xi|x2) dxi dA = I(S)` exactly (the stored NEE sample is
+an unbiased estimate of the vertex's direct term for every receiver because
+the vertex BSDF is re-evaluated toward that receiver). The canonical
+candidate therefore satisfies `E[W g_S(Y)] = I_hit(S)` on the support of
+surface hits; the null outcome keeps `M = 1` so no domain is ever randomly
+absent (dropping reuse on a miss would scale the history terms by the hit
+rate: the gtest negative control shows basis 0 at `1 - miss * m_history`).
+With visibility inside every target, `m_i` vanishes outside the visible
+support of domain `i`, partitions unity on the union, and the canonical
+pixel covers the receiving support, so by GRIS (Lin et al. 2022)
+`E[g_here(Y) W] = sum_i integral_supp_i g_here m_i = I_hit(S)`. The plain
+fallback covers the complement (environment hits, hair/stack vertices,
+grazing/touching vertices), so the total expectation is `I(S)`; the M cap
+only changes the MIS preference. No base-BRDF change (D7 untouched);
+`PipelinePathRoot` stays 96 bytes / 24 DWORDs; the GI block is a private
+8-DWORD `RestirGIRoot` (b4); the GI reservoir is 160 bytes (88-byte sample,
+`visibility` at 156). Gate: NEESamples 1, >= 2 bounces, no roulette before
+the second vertex, no NRD/volume/layered, BVH or <= 1 directional light.
+
+- [x] Build: `cd runtime && zig build -Doptimize=ReleaseFast` **exit 0**
+  (`E:/UzmiEngine/gi-restir-stage1/build2.log`, 156 shader integrity checks);
+  all three GI compute shaders compile cs_6_6 at runtime; no `run.log`
+  contains `compile failed` or device-removal markers.
+- [x] Scene `scripts/rendering/gi-restir-indirect.uzscene/.uzproject`: open
+  Cornell-like box, black environment, one sun through the open front; the
+  ceiling and upper walls (top 42% of the frame) are lit by the bounce only.
+  Harness `scripts/rendering/measure_restir_gi.py` (capture + analyze);
+  640x360, 2 bounces (plus a 4-bounce pair), one NEE sample, roulette off,
+  2,055 frames, PNGs every 5 frames. Evidence `E:/UzmiEngine/gi-restir-stage1*`
+  (`metrics.json` = `analyze` of `gi-restir-stage1-new`; `metrics-x3.json` =
+  the sun-x3 pair in `gi-restir-stage1-bright3`; `evidence_montage.png`).
+- [x] Canonical consistency: `--gi-restir` with temporal+spatial off
+  reproduces the plain estimator sample for sample: frames 5/50/500 max
+  code delta **1** (mean 4.3e-6 .. 1.4e-6 code), frame 2050 **max 0**.
+- [x] Unbiased converged mean (frame 2050, 98,385 interior pixels, the plain
+  path tracer as reference; RGB-code means, this output curve being linear in
+  radiance up to clipping: a x3 sun gives x3.00 code): temporal **+0.00064%**
+  (one-bounce rows +0.0051%, whole image +0.0002%); temporal+spatial (default)
+  **-0.00080%** (rows -0.0046%, whole +0.0045%); spatial only -0.0023% (rows
+  -0.0136%); 4-bounce temporal vs 4-bounce plain **+0.00030%** (rows +0.0005%);
+  sun-x3 variant (rows at code 112 instead of 37, floor ~0.02%): default vs
+  plain **+0.00044%** (rows **+0.0016%**, 0.0017 code). No-reuse is exactly 0.
+  Inverse-sRGB "linear" means are NOT the right statistic here: a convex decode
+  of two images with different per-pixel noise inflates the noisier (plain)
+  mean (Jensen), which read as a spurious -0.12% for the smoother GI images in
+  the dark rows (-0.16% at x3 where the code-space delta is +0.0016%); the
+  plain reference's own first/second-half inverse-sRGB means differ by -0.22%
+  there. All deltas are far inside the stage-3 0.5% tolerance; these are
+  finite 8-bit measurements corroborating the analytic invariant.
+- [x] Variance win at equal low frame counts (interior error variance in
+  RGB code against the frame-2050 plain reference):
+
+| Frames | Plain | Temporal only | Spatial only | Temporal+spatial (default) |
+| --- | ---: | ---: | ---: | ---: |
+| 5 | 337.681 | 516.772 (+53.0%) | 81.183 (-76.0%) | **59.492 (-82.4%)** |
+| 10 | 165.948 | 286.728 (+72.8%) | 40.957 (-75.3%) | **27.010 (-83.7%)** |
+| 20 | 82.782 | 152.254 (+83.9%) | 20.415 (-75.3%) | **12.738 (-84.6%)** |
+| 50 | 32.533 | 57.495 (+76.7%) | 8.462 (-74.0%) | **4.779 (-85.3%)** |
+| 200 | 7.708 | 9.955 (+29.1%) | 2.521 (-67.3%) | **1.277 (-83.4%)** |
+
+  One-bounce rows only (plain / default): 788.2 / 132.4, 387.6 / 59.5,
+  193.8 / 27.9, 76.4 / 10.5, 18.0 / 2.9; whole image 208.9 / 44.4,
+  103.3 / 20.9, 51.1 / 9.8, 20.1 / 3.6, 4.77 / 0.92. Temporal reuse alone
+  LOSES on the accumulated mean: with one candidate per frame it is a
+  recursive average of the pixel's own samples (the running mean for the
+  first 20 frames, then an EMA), so accumulating its outputs over-weights
+  early samples; the analytic prediction is +54% / +68% / +90% at 5 / 10 /
+  20 frames against the measured +53% / +73% / +84%. It carries no new
+  information for an accumulated image (its per-frame output is the
+  low-noise signal a real-time denoiser consumes); the spatial pass adds the
+  neighbors' independent samples, which is why it is on by default.
+  Equal frame count is not equal GPU cost (visibility queries add work).
+- [x] Default safety: flag-free `reflection-reference` frame 95 is
+  PNG-byte-identical to `E:/UzmiEngine/f005-after/frames/f_95.png`,
+  **max_code_delta 0** (committed exe and final build).
+- [x] `--path-trace` with GI off == committed path tracer: the DXR libraries
+  compile the GI code only when the CVar is on at init (`UZ_GI_RESTIR`), so
+  the plain libraries are preprocessed from the committed text; all **410/410**
+  captured frames of the plain run are byte-identical to the committed
+  build's capture (max 0). Without that gate the recompiled libraries differed
+  in 3/410 frames by one pixel at one code (a driver-level fma-fusion effect;
+  two runs of the same binary agree 410/410, so the engine is deterministic).
+- [x] gtest `runtime/tests/engine/renderer/test_restir_gi.cpp`
+  (`RestirGIStage1.*`, 6 tests): layouts (88/160/32 bytes, root 24 DWORDs),
+  canonical W reproduces the plain estimator, temporal combine stays exact
+  with a 25% null canonical for M = 1 and 19, negative controls (uniform
+  1/(M+1) weights integrate 6 instead of 7; skipping reuse on a null canonical
+  gives basis 0 = 1 - 0.25 * 0.9), recursive history over four frames, and
+  equal-mean exact variance halving. All six pass (`E:/UzmiEngine/gi-restir-stage1/gtests.log`).
+- [x] Layout gate: `npm run test:layouts` **exit 0**; Tier A **90/90**,
+  Tier B **36/36** (+2: `PathTracerRoot` in `restir_gi_temporal_cs`,
+  `RestirGIRoot`), Tier C **14/14** (+2: `GISample`, `GIReservoir`);
+  inventory 0 unmapped. `test_cvar_registrations.py` 3/3.
+- [x] Regression gate: `GTEST_FILTER='-RuntimeViewportTest.*' zig build test
+  -Doptimize=ReleaseFast`: **7,945 tests, 7,925 passed (+6 new), 17 skipped**,
+  and only the three pre-existing `VfxEditorSlate` failures
+  (`WorkbenchHasTwoColumns`, `TitleBarReflectsEmitterName`,
+  `StatusBarBindingsReflectTelemetry`); **exit 1** is solely those; 44.006 s;
+  `RestirDIStage1/2/3`, `LightBVH*`, `RTReflectionStage1/2/3` all green; no
+  TDR/device-removal markers, so no re-run was needed.
+
+Changed files (every GI reservoir consumer):
+
+- `runtime/shaders/runtime/include/restir_gi.hlsli` (new: `RestirGIRoot` b4,
+  `GISample`, `GIReservoir`, `GIRadiance`, `GIContribution`, `GIVisibility`,
+  `GIVisibleTarget`)
+- `runtime/shaders/runtime/pathtracing/restir_gi_temporal_cs.hlsl` (new)
+- `runtime/shaders/runtime/pathtracing/restir_gi_spatial_cs.hlsl` (new)
+- `runtime/shaders/runtime/pathtracing/restir_gi_resolve_cs.hlsl` (new)
+- `runtime/shaders/runtime/pathtracing/pathtracer_raygen.hlsl` (`UZ_GI_RESTIR`:
+  reservoir clear, partial-radiance write)
+- `runtime/shaders/runtime/pathtracing/pathtracer_closesthit.hlsl`
+  (`UZ_GI_RESTIR`: receiver record at bounce 0, candidate capture at bounce 1)
+- `runtime/engine/renderer/passes/pathtracing/pipeline_path_tracer_pass.h`
+  (`RestirGISample`, `RestirGIReservoir`, `RestirGIRoot` + size asserts)
+- `runtime/engine/renderer/passes/pathtracing/pipeline_path_tracer_pass.cpp`
+  (CVars, b4 root slot, define-gated DXR compile, GI PSOs/buffers, gate,
+  temporal/spatial/resolve passes, logging)
+- `runtime/engine/app/application_args.cpp`, `runtime/tools/uzengine.cpp`
+  (`--gi-restir`)
+- `runtime/tests/engine/renderer/test_restir_gi.cpp` (new)
+- `scripts/rendering/test_cbuffer_layouts.py` (Tier B/C entries)
+- `scripts/rendering/gi-restir-indirect.uzscene`, `.uzproject`, the sun-x3
+  `gi-restir-indirect-bright.uzscene`, `.uzproject`,
+  `scripts/rendering/measure_restir_gi.py` (new)
+- `.rulebook/tasks/phase1_falcor-restir-di/tasks.md` (this section)
+
+The base BRDF, docs/specs, the VFX-editor WIP and untracked scratch files
+were not touched. Captures and logs live outside the repository; no commit
+or archive was made.
+
 ## Expanded roadmap: Reservoir Data Structure + Initial Sampling
 
 - [ ] 1.1 Create `include/restir_di.hlsli` — `struct LightSample { uint lightIndex; float3 position; float3 normal; float3 emission; float pdf; }`. `struct Reservoir { LightSample sample; float weightSum; uint M; float W; }`. `void UpdateReservoir(inout Reservoir r, LightSample s, float weight, float u)` — streaming RIS update (Talbot et al. 2005 Eq. 3). @ref Bitterli et al. 2020

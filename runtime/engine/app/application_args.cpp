@@ -154,6 +154,8 @@ void Application::ParseArgs(int argc, char* argv[]) {
             m_cvarOverrides.emplace_back("r.PathTracer.LayeredMaterial", 1.0f);
         } else if (std::strcmp(argv[i], "--restir-di") == 0) {
             m_cvarOverrides.emplace_back("r.ReSTIR.DI", 1.0f);
+        } else if (std::strcmp(argv[i], "--gi-restir") == 0) {
+            m_cvarOverrides.emplace_back("r.PathTracer.GIReSTIR", 1.0f);
         } else if (std::strcmp(argv[i], "--light-bvh") == 0) {
             m_cvarOverrides.emplace_back("r.LightBVH", 1.0f);
         } else if (std::strcmp(argv[i], "--rt-test") == 0) {

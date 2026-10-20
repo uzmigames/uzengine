@@ -344,7 +344,12 @@ TIER_B = [
                  PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'PipelinePathRoot'),
     layout_entry('pathtracing/restir_spatial_cs.hlsl', 'PathTracerRoot',
                  PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'PipelinePathRoot'),
+    layout_entry('pathtracing/restir_gi_temporal_cs.hlsl', 'PathTracerRoot',
+                 PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'PipelinePathRoot'),
     layout_entry('pathtracing/pathtracer_volume.hlsli', 'PathVolumeRoot',
+                 PASSES + 'pathtracing/pipeline_path_tracer_pass.h'),
+    # Pass-private GI-ReSTIR block (b4): 8 DWORDs; the private DXR root stays 24.
+    layout_entry('include/restir_gi.hlsli', 'RestirGIRoot',
                  PASSES + 'pathtracing/pipeline_path_tracer_pass.h'),
     *[layout_entry(shader, 'VFXBillboardConstants', PASSES + 'vfx/particle_render_pass.h',
                    'ParticleBillboardIndices')
@@ -405,6 +410,12 @@ TIER_C = [
      'hlsl_structs': ('LightSample',), 'extra_structs': ('RestirLightSample',)},
     layout_entry('include/restir_di.hlsli', 'RestirSurface',
                  PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'RestirSurface'),
+    # 88-byte one-bounce sample inside the 160-byte GI reservoir (visibility at 156).
+    layout_entry('include/restir_gi.hlsli', 'GISample',
+                 PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'RestirGISample'),
+    {**layout_entry('include/restir_gi.hlsli', 'GIReservoir',
+                   PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'RestirGIReservoir'),
+     'hlsl_structs': ('GISample',), 'extra_structs': ('RestirGISample',)},
     layout_entry('pathtracing/pathtracer_shared.hlsli', 'PathDirectionalLight',
                  PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'PipelinePathDirectionalLight'),
     # 204-byte pass-private DXR material: legacy coat at 100..127,

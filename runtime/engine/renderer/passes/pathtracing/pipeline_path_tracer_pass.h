@@ -102,6 +102,37 @@ static_assert(sizeof(RestirReservoir) == 116);
 static_assert(offsetof(RestirReservoir, visibility) == 112);
 static_assert(sizeof(RestirSurface) == 64);
 
+// Mirrors GISample / GIReservoir / RestirGIRoot in include/restir_gi.hlsli:
+// the one-bounce secondary vertex with its own material and single NEE light
+// sample, so its exitant radiance is re-evaluated toward any receiver.
+struct RestirGISample {
+    float position[3]; uint32_t lightIndex;
+    float normal[3], roughness;
+    float albedo[3], metallic;
+    float emission[3], lightPdf;
+    float lightDirection[3];
+    float lightValue[3];
+};
+struct RestirGIReservoir {
+    RestirGISample sample;
+    float weightSum;
+    uint32_t M;
+    float W;
+    float surfacePosition[3], surfaceNormal[3];
+    float surfaceView[3], surfaceRoughness;
+    float surfaceAlbedo[3], surfaceMetallic;
+    float visibility;
+};
+struct RestirGIRoot {
+    uint32_t giRestirEnabled = 0, giRestirInitialUav = 0, giRestirCurrentUav = 0, giRestirPreviousUav = 0;
+    uint32_t giRestirPartialUav = 0, giRestirRadianceUav = 0, giRestirTemporal = 0, giRestirSpatial = 0;
+};
+static_assert(sizeof(RestirGISample) == 88);
+static_assert(sizeof(RestirGIReservoir) == 160);
+static_assert(offsetof(RestirGIReservoir, weightSum) == 88);
+static_assert(offsetof(RestirGIReservoir, visibility) == 156);
+static_assert(sizeof(RestirGIRoot) == 32);
+
 struct PipelinePathDirectionalLight {
     float direction[3];
     float angularRadius;

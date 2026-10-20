@@ -36,6 +36,12 @@ static auto* cv_RestirSpatial = UZ_CVAR_BOOL("r.ReSTIR.Spatial", true,
     "Reuse four spatial neighbors with source-target MIS correction");
 static auto* cv_RestirReadback = UZ_CVAR_BOOL("r.ReSTIR.Readback", false,
     "Diagnostic reservoir GPU readback (synchronizes the GPU)");
+static auto* cv_GIRestir = UZ_CVAR_BOOL("r.PathTracer.GIReSTIR", false,
+    "Opt-in one-bounce indirect ReSTIR (secondary-vertex reservoir reuse) in the DXR path tracer, read at path-tracer init; needs NEESamples 1, no NRD/volume/layered");
+static auto* cv_GIRestirTemporal = UZ_CVAR_BOOL("r.PathTracer.GIReSTIR.Temporal", true,
+    "Reuse validated previous-frame one-bounce reservoirs (a recursive average of the pixel's own samples: lower per-frame noise, no accumulated-mean gain)");
+static auto* cv_GIRestirSpatial = UZ_CVAR_BOOL("r.PathTracer.GIReSTIR.Spatial", true,
+    "Reuse four spatial one-bounce neighbors with source-target MIS correction (the accumulated-variance win)");
 static auto* cv_NeeSamples = UZ_CVAR_INT("r.PathTracer.NEESamples", 4,
     "Directional visibility samples per vertex (1 for equal-ray ReSTIR comparison)", 1, 32);
 static auto* cv_Nrd = UZ_CVAR_BOOL("r.NRD", false,
@@ -126,9 +132,11 @@ struct PipelinePathTracerPass::Impl {
     ComPtr<ID3D12RootSignature> root;
     ComPtr<ID3D12StateObject> pipeline;
     ComPtr<ID3D12PipelineState> restirInitialPSO, restirTemporalPSO, restirSpatialPSO;
+    ComPtr<ID3D12PipelineState> giTemporalPSO, giSpatialPSO, giResolvePSO;
 #endif
     bool ready = false;
     bool logged = false;
+    bool giCompiled = false; // r.PathTracer.GIReSTIR at Init: the DXR libraries carry the GI code.
     RHITextureHandle accumulation, compensation;
     uint32_t width = 0, height = 0, samples = 0, lastFrame = UINT32_MAX;
     uint32_t resetGeneration = 0;
@@ -136,6 +144,8 @@ struct PipelinePathTracerPass::Impl {
     uint64_t previousDenoiserSignature = 0;
     RHIBufferHandle restirSurface, restirInitial;
     std::array<RHIBufferHandle, 2> reservoirs{};
+    RHIBufferHandle giInitial;
+    std::array<RHIBufferHandle, 2> giReservoirs{};
     RHIBufferHandle readback;
     bool readbackPending = false;
     uint32_t readbackFrame = 0;
@@ -156,6 +166,9 @@ struct PipelinePathTracerPass::Impl {
         if (restirSurface.IsValid()) device->DestroyBuffer(restirSurface);
         if (restirInitial.IsValid()) device->DestroyBuffer(restirInitial);
         for (auto buffer : reservoirs)
+            if (buffer.IsValid()) device->DestroyBuffer(buffer);
+        if (giInitial.IsValid()) device->DestroyBuffer(giInitial);
+        for (auto buffer : giReservoirs)
             if (buffer.IsValid()) device->DestroyBuffer(buffer);
         if (readback.IsValid()) device->DestroyBuffer(readback);
     }
@@ -185,7 +198,7 @@ bool PipelinePathTracerPass::Init(IRHIDevice* device) {
     ranges[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
     ranges[1].NumDescriptors = 1;
     ranges[1].BaseShaderRegister = 0;
-    D3D12_ROOT_PARAMETER params[6]{};
+    D3D12_ROOT_PARAMETER params[7]{};
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
     params[0].Constants = {0, 0, kRootDwords};
     params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
@@ -199,7 +212,11 @@ bool PipelinePathTracerPass::Init(IRHIDevice* device) {
     params[4].Constants = {2, 0, sizeof(NrdSignalRoot) / sizeof(uint32_t)};
     params[5].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
     params[5].Constants = {3, 0, sizeof(PathVolumeRoot) / sizeof(uint32_t)};
-    static_assert(kRootDwords + 2 + 2 + sizeof(NrdSignalRoot)/4 + sizeof(PathVolumeRoot)/4 <= 64);
+    // GI-ReSTIR gets its own b4 block; PathTracerRoot keeps its 24 DWORDs.
+    params[6].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    params[6].Constants = {4, 0, sizeof(RestirGIRoot) / sizeof(uint32_t)};
+    static_assert(kRootDwords + 2 + 2 + sizeof(NrdSignalRoot)/4 + sizeof(PathVolumeRoot)/4
+                  + sizeof(RestirGIRoot)/4 <= 64);
     D3D12_STATIC_SAMPLER_DESC sampler{};
     sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
     sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
@@ -207,7 +224,7 @@ bool PipelinePathTracerPass::Init(IRHIDevice* device) {
     sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
     sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     D3D12_ROOT_SIGNATURE_DESC rootDesc{};
-    rootDesc.NumParameters = 6;
+    rootDesc.NumParameters = 7;
     rootDesc.pParameters = params;
     rootDesc.NumStaticSamplers = 1;
     rootDesc.pStaticSamplers = &sampler;
@@ -247,6 +264,31 @@ bool PipelinePathTracerPass::Init(IRHIDevice* device) {
         if (FAILED(hr)) return false;
         UZ_LOG(Renderer, Info, "ReSTIR DI: '{}' compiled cs_6_6; PSO ready", desc.sourceName);
     }
+    // Only an opted-in init compiles the GI code; the plain DXR libraries are
+    // preprocessed from the committed text and produce byte-identical output.
+    p.giCompiled = cv_GIRestir->value >= 0.5f;
+    const EngineShader giShaders[] = {
+        EngineShader::RestirGiTemporalCS, EngineShader::RestirGiSpatialCS, EngineShader::RestirGiResolveCS};
+    for (uint32_t i = 0; i < 3 && p.giCompiled; ++i) {
+        ShaderCompileDesc desc{};
+        desc.source = EngineShaders::GetSource(giShaders[i]);
+        desc.sourceName = EngineShaders::GetName(giShaders[i]);
+        desc.stage = ShaderStageCompile::Compute;
+        desc.model = ShaderModelCompile::SM6_6;
+        auto result = compiler.Compile(desc);
+        if (!result.success) {
+            UZ_LOG(Renderer, Error, "GI-ReSTIR: compile failed for '{}': {}", desc.sourceName, result.errors);
+            return false;
+        }
+        D3D12_COMPUTE_PIPELINE_STATE_DESC pd{};
+        pd.pRootSignature = p.root.Get();
+        pd.CS = {result.bytecode.data(), result.bytecode.size()};
+        auto** destination = i == 0 ? p.giTemporalPSO.GetAddressOf()
+            : i == 1 ? p.giSpatialPSO.GetAddressOf() : p.giResolvePSO.GetAddressOf();
+        hr = dx->GetDevice()->CreateComputePipelineState(&pd, IID_PPV_ARGS(destination));
+        if (FAILED(hr)) return false;
+        UZ_LOG(Renderer, Info, "GI-ReSTIR: '{}' compiled cs_6_6; PSO ready", desc.sourceName);
+    }
     const EngineShader shaders[] = {
         EngineShader::PathtracerRaygen, EngineShader::PathtracerMiss, EngineShader::PathtracerClosesthit
     };
@@ -257,6 +299,7 @@ bool PipelinePathTracerPass::Init(IRHIDevice* device) {
         desc.sourceName = EngineShaders::GetName(shaders[i]);
         desc.stage = ShaderStageCompile::Library;
         desc.model = ShaderModelCompile::SM6_6;
+        if (p.giCompiled) desc.defines.push_back("UZ_GI_RESTIR=1");
         auto result = compiler.Compile(desc);
         if (!result.success) {
             UZ_LOG(Renderer, Error, "PipelinePathTracer: compile failed for '{}': {}",
@@ -598,6 +641,16 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
     const uint32_t restirTemporal = cv_RestirTemporal->value >= 0.5f;
     const uint32_t restirSpatial = cv_RestirSpatial->value >= 0.5f;
     const uint32_t neeSamples = std::clamp(cv.GetInt("r.PathTracer.NEESamples", 4), 1, 32);
+    const bool denoise = cv_Nrd->value >= 0.5f && !volume.volumeEnabled
+        && !(layered && cv_StackDepth->value >= 2.f);
+    // Stage-1 one-bounce reservoirs hold one base-material NEE sample per
+    // vertex, and the canonical weight 1/p_A reproduces the plain estimator
+    // only without roulette before the second vertex.
+    const bool giRestir = p.giCompiled && cv_GIRestir->value >= 0.5f && !volume.volumeEnabled && !layered && !denoise
+        && neeSamples == 1u && maxBounces >= 2u && (rrEnabled == 0u || rrMinBounce >= 2u)
+        && (bvhConfigSrv != 0u || lightCount <= 1u);
+    const uint32_t giTemporal = cv_GIRestirTemporal->value >= 0.5f;
+    const uint32_t giSpatial = cv_GIRestirSpatial->value >= 0.5f;
     hash(&maxBounces, sizeof(maxBounces));
     hash(&rrEnabled, sizeof(rrEnabled));
     hash(&rrMinBounce, sizeof(rrMinBounce));
@@ -605,6 +658,9 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
     hash(&restirTemporal, sizeof(restirTemporal));
     hash(&restirSpatial, sizeof(restirSpatial));
     hash(&neeSamples, sizeof(neeSamples));
+    hash(&giRestir, sizeof(giRestir));
+    hash(&giTemporal, sizeof(giTemporal));
+    hash(&giSpatial, sizeof(giSpatial));
     hash(&volume, sizeof(volume));
     const auto* pf = static_cast<const PerFrameCB*>(perFrame.cpuPtr);
     hash(&pf->skyLightIntensity, sizeof(float) * 4);
@@ -619,6 +675,12 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
             buffer = {};
         }
         p.restirSurface = {}; p.restirInitial = {};
+        if (p.giInitial.IsValid()) p.device->DestroyBuffer(p.giInitial);
+        for (auto& buffer : p.giReservoirs) {
+            if (buffer.IsValid()) p.device->DestroyBuffer(buffer);
+            buffer = {};
+        }
+        p.giInitial = {};
         if (p.accumulation.IsValid()) p.device->DestroyTexture(p.accumulation);
         if (p.compensation.IsValid()) p.device->DestroyTexture(p.compensation);
         RHITextureDesc desc{};
@@ -651,6 +713,20 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
             || !p.reservoirs[0].IsValid() || !p.reservoirs[1].IsValid()) return false;
         p.samples = 0;
     }
+    if (giRestir && !p.giInitial.IsValid()) {
+        RHIBufferDesc desc{};
+        desc.stride = sizeof(RestirGIReservoir);
+        desc.sizeBytes = uint64_t(width) * height * desc.stride;
+        desc.usage = RHIBufferUsage::StructuredBuffer | RHIBufferUsage::UnorderedAccess;
+        desc.debugName = "GIReSTIR_Initial";
+        p.giInitial = p.device->CreateBuffer(desc);
+        for (auto& buffer : p.giReservoirs) {
+            desc.debugName = "GIReSTIR_Temporal";
+            buffer = p.device->CreateBuffer(desc);
+        }
+        if (!p.giInitial.IsValid() || !p.giReservoirs[0].IsValid() || !p.giReservoirs[1].IsValid()) return false;
+        p.samples = 0;
+    }
     const uint32_t resetGeneration = GetPathTracerResetGeneration();
     const bool denoiserReset = frameIndex != p.lastFrame + 1
         || resetGeneration != p.resetGeneration || !cv.GetBool("r.PathTracer.Accumulate", true)
@@ -675,8 +751,6 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
     radianceDesc.format = RHIFormat::RGBA16Float;
     radianceDesc.usage = RHITextureUsage::ShaderResource | RHITextureUsage::UnorderedAccess;
     const auto radiance = builder.CreateTexture("PipelinePathTracer_Radiance", radianceDesc);
-    const bool denoise = cv_Nrd->value >= 0.5f && !volume.volumeEnabled
-        && !(layered && cv_StackDepth->value >= 2.f);
     rg::RgResourceId diffuse, fraction, signalAlbedo, specular, modulation, virtualPosition, pathGuide;
     if (denoise) {
         if (!p.denoiser) {
@@ -719,6 +793,29 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
     restirConstants.restirTemporal = restirTemporal;
     restirConstants.restirLightCount = bvhConfigSrv != 0u ? uint32_t(p.lightBVH.lights.size()) : lightCount;
     const bool restirBVH = restirEnabled && bvhConfigSrv != 0u;
+    RestirGIRoot giConstants{};
+    rg::RgResourceId giInitial, giCurrent, giPrevious, giPartial;
+    const auto giCurrentBuffer = p.giReservoirs[frameIndex & 1u];
+    const auto giPreviousBuffer = p.giReservoirs[(frameIndex & 1u) ^ 1u];
+    if (giRestir) {
+        giInitial = builder.ImportTrackedBuffer("GIReSTIR_Initial", p.giInitial);
+        giCurrent = builder.ImportTrackedBuffer("GIReSTIR_Current", giCurrentBuffer);
+        giPrevious = builder.ImportTrackedBuffer("GIReSTIR_Previous", giPreviousBuffer);
+        // The path's radiance without its one-bounce term, resolved after reuse.
+        auto partialDesc = radianceDesc;
+        partialDesc.format = RHIFormat::RGBA32Float;
+        giPartial = builder.CreateTexture("PipelinePathTracer_GIPartial", partialDesc);
+        giConstants.giRestirEnabled = 1u;
+        giConstants.giRestirInitialUav = p.device->GetBufferUAVIndex(p.giInitial);
+        giConstants.giRestirCurrentUav = p.device->GetBufferUAVIndex(giCurrentBuffer);
+        giConstants.giRestirPreviousUav = p.device->GetBufferUAVIndex(giPreviousBuffer);
+        giConstants.giRestirTemporal = giTemporal;
+        giConstants.giRestirSpatial = giSpatial;
+    } else if (cv_GIRestir->value >= 0.5f && accumulatedFrames == 0) {
+        UZ_LOG(Renderer, Info, "GI-ReSTIR: requested but inactive (compiled at init={}, NEESamples={}, maxBounces={}, RR={} from {}, volume={}, layered={}, NRD={}, BVH={}, directional lights={}); plain transport retained",
+            p.giCompiled, neeSamples, maxBounces, rrEnabled, rrMinBounce, volume.volumeEnabled, layered, denoise, bvhConfigSrv != 0u, lightCount);
+    }
+    const RestirGIRoot giInactive{};
     if (restirEnabled) {
         surface = builder.ImportTrackedBuffer("ReSTIR_Surface", p.restirSurface);
         initial = builder.ImportTrackedBuffer("ReSTIR_Initial", p.restirInitial);
@@ -742,6 +839,7 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
                 const NrdSignalRoot signal{};
                 native->SetComputeRoot32BitConstants(4, sizeof(signal) / 4, &signal, 0);
                 native->SetComputeRoot32BitConstants(5, sizeof(volume) / 4, &volume, 0);
+                native->SetComputeRoot32BitConstants(6, sizeof(giInactive) / 4, &giInactive, 0);
                 native->SetComputeRootConstantBufferView(1, m_impl->device->GetBufferGPUAddress(perFrame.bufferHandle) + perFrame.offsetBytes);
                 auto& heap = dx->GetDescriptorAllocator(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
                 native->SetComputeRootDescriptorTable(2, heap.GpuHandle(tlasSrv));
@@ -776,6 +874,7 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
                     auto* native = static_cast<DX12CommandList*>(cmd)->GetNative();
                     native->SetComputeRootSignature(m_impl->root.Get());
                     native->SetComputeRoot32BitConstants(0, kRootDwords, &restirConstants, 0);
+                    native->SetComputeRoot32BitConstants(6, sizeof(giInactive) / 4, &giInactive, 0);
                     native->SetComputeRootConstantBufferView(1, m_impl->device->GetBufferGPUAddress(perFrame.bufferHandle) + perFrame.offsetBytes);
                     auto* dx = static_cast<DX12Device*>(m_impl->device);
                     auto& heap = dx->GetDescriptorAllocator(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
@@ -799,6 +898,10 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
         pb.Write(radiance, RHIResourceState::UnorderedAccess);
         pb.Write(accumulation, RHIResourceState::UnorderedAccess);
         pb.Write(compensation, RHIResourceState::UnorderedAccess);
+        if (giRestir) {
+            pb.Write(giInitial, RHIResourceState::UnorderedAccess);
+            pb.Write(giPartial, RHIResourceState::UnorderedAccess);
+        }
         if (denoise) {
             pb.Write(diffuse, RHIResourceState::UnorderedAccess);
             pb.Write(fraction, RHIResourceState::UnorderedAccess);
@@ -841,6 +944,9 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
             }
             native->SetComputeRoot32BitConstants(4, sizeof(signal) / 4, &signal, 0);
             native->SetComputeRoot32BitConstants(5, sizeof(volume) / 4, &volume, 0);
+            auto gi = giConstants;
+            if (giRestir) gi.giRestirPartialUav = state.device->GetTextureUAVIndex(res.GetTexture(giPartial));
+            native->SetComputeRoot32BitConstants(6, sizeof(gi) / 4, &gi, 0);
             if (accumulatedFrames == 0 && volume.volumeEnabled)
                 UZ_LOG(Renderer, Info, "PathVolume: sphere sigmaA={} sigmaS={} g={} radius={} variation={}; delta free flight + ratio shadow tracking (exact homogeneous limit), HG + NEE; surface ReSTIR/NRD bypassed",
                     volume.volumeSigmaA,volume.volumeSigmaS,volume.volumeG,volume.volumeRadius,volume.volumeVariation);
@@ -882,6 +988,66 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
 #endif
         });
     });
+    if (giRestir) {
+        const uint32_t stages = giSpatial ? 3u : 2u;
+        for (uint32_t stage = 0; stage < stages; ++stage) {
+            const bool resolve = stage + 1u == stages;
+            const bool spatial = giSpatial && stage == 1u;
+            builder.AddPass(resolve ? "GIReSTIR_Resolve" : spatial ? "GIReSTIR_Spatial" : "GIReSTIR_Temporal",
+                [=, this](rg::RgPassBuilder& pb) {
+                if (resolve) {
+                    // Spatial output reuses the initial buffer, never the temporal history.
+                    pb.Read(giSpatial ? giInitial : giCurrent, RHIResourceState::UnorderedAccess);
+                    pb.Read(giPartial, RHIResourceState::UnorderedAccess);
+                    pb.Write(radiance, RHIResourceState::UnorderedAccess);
+                    pb.Write(accumulation, RHIResourceState::UnorderedAccess);
+                    pb.Write(compensation, RHIResourceState::UnorderedAccess);
+                } else if (spatial) {
+                    pb.Read(giCurrent, RHIResourceState::UnorderedAccess);
+                    pb.Write(giInitial, RHIResourceState::UnorderedAccess);
+                } else {
+                    pb.Read(giInitial, RHIResourceState::UnorderedAccess);
+                    pb.Read(giPrevious, RHIResourceState::UnorderedAccess);
+                    pb.Write(giCurrent, RHIResourceState::UnorderedAccess);
+                }
+                pb.SetExecutionCallback([=, this](IRHICommandList* cmd, const rg::RgPassResources& res) {
+#ifdef _WIN32
+                    auto& state = *m_impl;
+                    auto* native = static_cast<DX12CommandList*>(cmd)->GetNative();
+                    auto* dx = static_cast<DX12Device*>(state.device);
+                    auto& heap = dx->GetDescriptorAllocator(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+                    native->SetComputeRootSignature(state.root.Get());
+                    auto constants = restirConstants;
+                    constants.accumulationUav = state.device->GetTextureUAVIndex(res.GetTexture(accumulation));
+                    constants.compensationUav = state.device->GetTextureUAVIndex(res.GetTexture(compensation));
+                    constants.accumulatedFrames = accumulatedFrames;
+                    native->SetComputeRoot32BitConstants(0, kRootDwords, &constants, 0);
+                    native->SetComputeRootConstantBufferView(1,
+                        state.device->GetBufferGPUAddress(perFrame.bufferHandle) + perFrame.offsetBytes);
+                    native->SetComputeRootDescriptorTable(2, heap.GpuHandle(tlasSrv));
+                    const NrdSignalRoot signal{};
+                    native->SetComputeRoot32BitConstants(4, sizeof(signal) / 4, &signal, 0);
+                    native->SetComputeRoot32BitConstants(5, sizeof(volume) / 4, &volume, 0);
+                    auto gi = giConstants;
+                    gi.giRestirPartialUav = state.device->GetTextureUAVIndex(res.GetTexture(giPartial));
+                    if (resolve) {
+                        if (giSpatial) gi.giRestirCurrentUav = gi.giRestirInitialUav;
+                        gi.giRestirRadianceUav = state.device->GetTextureUAVIndex(res.GetTexture(radiance));
+                    }
+                    native->SetComputeRoot32BitConstants(6, sizeof(gi) / 4, &gi, 0);
+                    native->SetPipelineState(resolve ? state.giResolvePSO.Get()
+                        : spatial ? state.giSpatialPSO.Get() : state.giTemporalPSO.Get());
+                    native->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
+                    native->SetComputeRootSignature(dx->GetRootSignature());
+                    if (accumulatedFrames == 0 || accumulatedFrames == 15)
+                        UZ_LOG(Renderer, Info, "GI-ReSTIR: {} dispatched {}x{}, history={}, one canonical candidate, 20-frame M cap, visibility-aware reuse",
+                            resolve ? "resolve" : spatial ? "spatial (4 neighbors, source-target MIS)" : "temporal",
+                            (width + 7) / 8, (height + 7) / 8, restirConstants.restirHistory);
+#endif
+                });
+            });
+        }
+    }
     if (restirEnabled && cv_RestirReadback->value >= 0.5f) {
         if (!p.readback.IsValid()) {
             RHIBufferDesc desc{};

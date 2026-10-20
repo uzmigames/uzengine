@@ -1,5 +1,10 @@
 #include "pathtracer_shared.hlsli"
 #include "../include/restir_di.hlsli"
+// Compiled in only with r.PathTracer.GIReSTIR at init: the plain libraries
+// keep the committed text, so GI-off output is identical by construction.
+#ifdef UZ_GI_RESTIR
+#include "../include/restir_gi.hlsli"
+#endif
 #include "../include/light_bvh.hlsli"
 
 float3 PathVolumeDirect(float3 P, float3 incoming, uint bounce) {
@@ -113,6 +118,13 @@ void main() {
         RWStructuredBuffer<RestirSurface> surfaces = ResourceDescriptorHeap[restirSurfaceUav];
         surfaces[pixel.y * restirWidth + pixel.x] = (RestirSurface)0;
     }
+#ifdef UZ_GI_RESTIR
+    if (giRestirEnabled != 0u) {
+        // M = 0 until the closest-hit records a receiving primary surface.
+        RWStructuredBuffer<GIReservoir> reservoirs = ResourceDescriptorHeap[giRestirInitialUav];
+        reservoirs[pixel.y * restirWidth + pixel.x] = (GIReservoir)0;
+    }
+#endif
     float2 jitter = float2(Halton(sampleIndex + 1u, 2u),
                            Halton(sampleIndex + 1u, 3u)) - 0.5;
     float2 uv = (float2(pixel) + 0.5 + jitter) / float2(DispatchRaysDimensions().xy);
@@ -204,6 +216,14 @@ void main() {
         payload.terminated = true;
     }
     if (restirMode != 0u) return;
+#ifdef UZ_GI_RESTIR
+    if (giRestirEnabled != 0u) {
+        // The one-bounce term is resampled and resolved by restir_gi_resolve_cs.
+        RWTexture2D<float4> partial = ResourceDescriptorHeap[giRestirPartialUav];
+        partial[pixel] = float4(payload.radiance, 1.0);
+        return;
+    }
+#endif
     // Fused resolve: no extra dispatch, half-float history, or sample intermediate.
     // @ref Kahan 1965 "Pracniques: Further Remarks on Reducing Truncation Errors"
     // @constants 1 = one new sample; zero history is overwritten without reading it.

@@ -3,6 +3,11 @@
 #include "hair_bcsdf.hlsli"
 #include "hair_dual_scatter.hlsli"
 #include "../include/restir_di.hlsli"
+// Compiled in only with r.PathTracer.GIReSTIR at init: the plain libraries
+// keep the committed text, so GI-off output is identical by construction.
+#ifdef UZ_GI_RESTIR
+#include "../include/restir_gi.hlsli"
+#endif
 #include "../include/light_bvh.hlsli"
 
 [shader("closesthit")]
@@ -151,6 +156,35 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
         return;
     }
     if (hair) payload.hairBounces++;
+#ifdef UZ_GI_RESTIR
+    // GI-ReSTIR: a receiving primary surface seeds its canonical reservoir as a
+    // null outcome with M = 1, never an absent domain. The continuation ray
+    // origin is the surface position every target and visibility query uses.
+    uint giIndex = DispatchRaysIndex().y * restirWidth + DispatchRaysIndex().x;
+    bool giCandidate = false;
+    float3 giLightDirection = 0.0, giLightValue = 0.0, giRawValue = 0.0;
+    float giLightPdf = 0.0;
+    uint giEmitter = 0xffffffffu;
+    float3 giEmission = emission;
+    if (giRestirEnabled != 0u && payload.bounceCount == 0u && !hair) {
+        RWStructuredBuffer<GIReservoir> reservoirs = ResourceDescriptorHeap[giRestirInitialUav];
+        GIReservoir r = (GIReservoir)0;
+        RestirSurface receiver;
+        receiver.position = P + N * 0.05; receiver.valid = 1u;
+        receiver.normal = N; receiver.roughness = roughness;
+        receiver.view = V; receiver.metallic = metallic;
+        receiver.albedo = albedo; receiver.padding = 0.0;
+        GISetSurface(r, receiver);
+        r.M = 1u;
+        reservoirs[giIndex] = r;
+    }
+    if (giRestirEnabled != 0u && payload.bounceCount == 1u && !hair) {
+        RWStructuredBuffer<GIReservoir> reservoirs = ResourceDescriptorHeap[giRestirInitialUav];
+        // Grazing or touching vertices keep the plain estimator for this sample.
+        giCandidate = reservoirs[giIndex].M == 1u && payload.previousBsdfPdf > 0.0
+                   && dot(N, V) > 1e-4 && RayTCurrent() > 0.1;
+    }
+#endif
     if (restirEnabled != 0u && payload.bounceCount == 0u && !hair) {
         RWStructuredBuffer<Reservoir> reservoirs = ResourceDescriptorHeap[restirCurrentUav];
         uint2 pixel = DispatchRaysIndex().xy;
@@ -205,6 +239,9 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
                     float lightPdf = LightBVHSolidAnglePDF(selectPdf,light.area,d2,cosine);
                     emission *= LightBVHBalanceWeight(payload.previousBsdfPdf,
                         float(neeSamples)*lightPdf);
+#ifdef UZ_GI_RESTIR
+                    giEmitter = id;
+#endif
                 }
                 break;
             }
@@ -240,6 +277,9 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
                 float radius = sqrt(disk.x)*tan(light.angularRadius);
                 float phi = 2.0*PI*disk.y;
                 L = normalize(L+radius*(cos(phi)*T+sin(phi)*B));
+#ifdef UZ_GI_RESTIR
+                giRawValue = value;
+#endif
             } else {
                 float3 delta = chosen.samplePos-P;
                 float d2 = dot(delta,delta);
@@ -254,6 +294,11 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
                 float cosine = abs(dot(light.normal,-L));
                 if (cosine <= 0.0) continue;
                 float lightPdf = LightBVHSolidAnglePDF(chosen.selectionPdf,light.area,d2,cosine);
+#ifdef UZ_GI_RESTIR
+                // The receiver re-applies this balance with its own view direction.
+                giRawValue = value;
+                giLightPdf = lightPdf;
+#endif
                 value *= LightBVHBalanceWeight(float(neeSamples)*lightPdf,
                     PathSurfacePDF(N,V,L,roughness,metallic,mat,albedo,strandTangent,fiberOffset));
             }
@@ -277,6 +322,10 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
                 if (!shadow.hit) {
                     value *= PathVolumeShadow(P,L,distance,
                         PathVolumeSeed(sampleIndex,DispatchRaysIndex().xy,20480u+sample+payload.bounceCount*128u));
+#ifdef UZ_GI_RESTIR
+                    giLightDirection = L;
+                    giLightValue = giRawValue;
+#endif
                     direct += brdf*value/float(neeSamples);
                     if (nrdEnabled != 0u && !hair)
                         diffuseDirect += NrdDiffuseBRDF(N,V,L,albedo,metallic)
@@ -308,6 +357,10 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
             TraceRay(tScene, RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH
                      | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER, 0xff, 0, 0, 1, ray, shadow);
             if (!shadow.hit) {
+#ifdef UZ_GI_RESTIR
+                giLightDirection = shadowDirection;
+                giLightValue = light.radiance;
+#endif
                 direct += EvaluatePathSurface(N, V, shadowDirection, albedo, roughness, metallic, mat,
                                               strandTangent, fiberOffset)
                         * light.radiance * PathVolumeShadow(P,shadowDirection,1e7,
@@ -322,6 +375,24 @@ void main(inout PathPayload payload, BuiltInTriangleIntersectionAttributes attr)
     }
     }
     }
+#ifdef UZ_GI_RESTIR
+    if (giCandidate) {
+        // The one-bounce term becomes the canonical reservoir sample instead
+        // of radiance: W = 1/p_A, the generating density in area measure.
+        RWStructuredBuffer<GIReservoir> reservoirs = ResourceDescriptorHeap[giRestirInitialUav];
+        GIReservoir r = reservoirs[giIndex];
+        r.sample.position = P; r.sample.lightIndex = giEmitter;
+        r.sample.normal = N; r.sample.roughness = roughness;
+        r.sample.albedo = albedo; r.sample.metallic = metallic;
+        r.sample.emission = giEmission; r.sample.lightPdf = giLightPdf;
+        r.sample.lightDirection = giLightDirection;
+        r.sample.lightValue = giLightValue;
+        float distance = RayTCurrent();
+        r.W = distance * distance / (payload.previousBsdfPdf * dot(N, V));
+        r.visibility = 1.0;
+        reservoirs[giIndex] = r;
+    } else
+#endif
     payload.radiance += payload.throughput * (emission + direct);
     if (nrdEnabled != 0u) {
         NrdAddDiffuse(payload.bounceCount == 0u ? diffuseDirect

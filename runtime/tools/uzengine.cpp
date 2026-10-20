@@ -1419,6 +1419,8 @@ int main(int argc, char** argv) {
             static_cast<float>(config.GetInt("pt-bounces", 4)));
     if (config.GetBool("restir-di", false))
         config.AddPendingCvarOverride("r.ReSTIR.DI", 1.0f);
+    if (config.GetBool("gi-restir", false))
+        config.AddPendingCvarOverride("r.PathTracer.GIReSTIR", 1.0f);
     if (config.GetBool("volume", false))
         config.AddPendingCvarOverride("r.PathTracer.Volume", 1.0f);
     if (config.GetBool("layered", false))
