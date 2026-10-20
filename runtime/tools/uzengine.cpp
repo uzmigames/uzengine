@@ -1409,6 +1409,25 @@ int main(int argc, char** argv) {
     g_argv.assign(argv, argv + argc);
     uz::Config config = uz::BuildConfig(argc, argv);
 
+    // --path-trace: enable the opt-in DXR reference renderer before renderer init.
+    if (config.GetBool("path-trace", false)) {
+        config.AddPendingCvarOverride("r.RayTracing", 1.0f);
+        config.AddPendingCvarOverride("r.PathTracer.Pipeline", 1.0f);
+    }
+    if (!config.GetString("pt-bounces", "").empty())
+        config.AddPendingCvarOverride("r.PathTracer.MaxBounces",
+            static_cast<float>(config.GetInt("pt-bounces", 4)));
+    if (config.GetBool("restir-di", false))
+        config.AddPendingCvarOverride("r.ReSTIR.DI", 1.0f);
+    if (config.GetBool("gi-restir", false))
+        config.AddPendingCvarOverride("r.PathTracer.GIReSTIR", 1.0f);
+    if (config.GetBool("volume", false))
+        config.AddPendingCvarOverride("r.PathTracer.Volume", 1.0f);
+    if (config.GetBool("layered", false))
+        config.AddPendingCvarOverride("r.PathTracer.LayeredMaterial", 1.0f);
+    if (config.GetBool("nrd", false) || config.GetString("denoiser", "") == "nrd")
+        config.AddPendingCvarOverride("r.NRD", 1.0f);
+
     // --rt-test: enable RT and the UV test pass via CVar overrides
     if (config.GetBool("rt-test", false)) {
         config.AddPendingCvarOverride("r.RayTracing", 1.0f);

@@ -59,9 +59,9 @@ static_assert(sizeof(Vertex) == 48, "Vertex must be 48 bytes for GPU struct alig
 /// ```hlsl
 /// struct VertexPacked {
 ///     float3 position;         // 12B
-///     int8_t4 packedNormal;    // 4B (xyz/127, w=0)
+///     uint   packedNormal;    // 4B (four signed bytes, unpacked then xyz/127)
 ///     float2 texcoord;         // 8B
-///     int8_t4 packedTangent;   // 4B (xyz/127, w=sign)
+///     uint   packedTangent;   // 4B (four signed bytes, xyz/127, w=sign)
 ///     uint   _pad;             // 4B (align to 32)
 /// };
 /// ```

@@ -459,6 +459,25 @@ TEST_F(GlassDraw, ZeroTransmissionIsIdenticalToStandardTranslucentBranch) {
     EXPECT_NEAR(standard[32 * kSize + 32][3], 0.35f + 0.29f * 0.65f, 1e-6f);
 }
 
+TEST_F(GlassDraw, LegacyGlassDoesNotSampleTheSceneBehind) {
+    auto object = Material();
+    object.displacementScale = -1.0f;
+    std::vector<Pixel> legacy, thin;
+    ASSERT_NO_FATAL_FAILURE(Render(object, false, false, legacy));
+    ASSERT_NO_FATAL_FAILURE(Render(Material(), false, false, thin));
+    // This fixture has no environment. Legacy glass can only return emission,
+    // whereas the opt-in path must consume the nonzero scene-color texture.
+    for (uint32_t y = 29; y < 35; ++y)
+        for (uint32_t x = 29; x < 35; ++x) {
+            const auto i = y * kSize + x;
+            EXPECT_NEAR(legacy[i][0], object.emissiveColorR, 1e-6f);
+            EXPECT_NEAR(legacy[i][1], object.emissiveColorG, 1e-6f);
+            EXPECT_NEAR(legacy[i][2], object.emissiveColorB, 1e-6f);
+            EXPECT_FLOAT_EQ(legacy[i][3], 1);
+            EXPECT_GT(thin[i][2] - legacy[i][2], 0.3f);
+        }
+}
+
 TEST_F(GlassDraw, PartialTransmissionLerpsPremultipliedColorAndAlpha) {
     std::vector<Pixel> standard, glass, mixed;
     ASSERT_NO_FATAL_FAILURE(Render(Material(0, 0), false, false, standard));

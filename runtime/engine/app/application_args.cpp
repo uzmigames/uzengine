@@ -145,6 +145,19 @@ void Application::ParseArgs(int argc, char* argv[]) {
             else if (std::strcmp(q, "quality") == 0)     qVal = 3;
             else if (std::strcmp(q, "dlaa") == 0)        qVal = 4;
             m_cvarOverrides.emplace_back("r.DLSS.Quality", static_cast<float>(qVal));
+        } else if (std::strcmp(argv[i], "--path-trace") == 0) {
+            m_cvarOverrides.emplace_back("r.RayTracing", 1.0f);
+            m_cvarOverrides.emplace_back("r.PathTracer.Pipeline", 1.0f);
+        } else if (std::strcmp(argv[i], "--volume") == 0) {
+            m_cvarOverrides.emplace_back("r.PathTracer.Volume", 1.0f);
+        } else if (std::strcmp(argv[i], "--layered") == 0) {
+            m_cvarOverrides.emplace_back("r.PathTracer.LayeredMaterial", 1.0f);
+        } else if (std::strcmp(argv[i], "--restir-di") == 0) {
+            m_cvarOverrides.emplace_back("r.ReSTIR.DI", 1.0f);
+        } else if (std::strcmp(argv[i], "--gi-restir") == 0) {
+            m_cvarOverrides.emplace_back("r.PathTracer.GIReSTIR", 1.0f);
+        } else if (std::strcmp(argv[i], "--light-bvh") == 0) {
+            m_cvarOverrides.emplace_back("r.LightBVH", 1.0f);
         } else if (std::strcmp(argv[i], "--rt-test") == 0) {
             m_cvarOverrides.emplace_back("r.RayTracing", 1.0f);
             m_cvarOverrides.emplace_back("r.RayTracing.TestPass", 1.0f);

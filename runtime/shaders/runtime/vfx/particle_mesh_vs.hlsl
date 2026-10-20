@@ -43,7 +43,8 @@ cbuffer VFXMeshRenderConstants : register(b0) {
     // Reserved DWORDs — keeps the layout 16-DWORDs to hit the root-constants
     // ceiling exactly. Future per-batch fields land here without touching the
     // root signature.
-    uint     _meshCBpad[14];                ///<  8..63
+    uint2    _meshCBpad0;                   ///<  8..15 (finish the first row).
+    uint4    _meshCBpad[3];                 ///< 16..63 (one vector per cbuffer row).
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -73,6 +74,7 @@ cbuffer PerFrameCB : register(b1) {
     float    _perFramePad5;
     float    _perFramePad6;
     float    _perFramePad7;
+    float    skyLightMinAmbient;         ///< Byte 248 in the CPU PerFrameCB.
     float    exposure;                  ///< Auto-exposure multiplier.
 };
 

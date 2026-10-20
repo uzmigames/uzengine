@@ -81,6 +81,8 @@ struct CloudPassInput {
     uint32_t depthSrv;
     uint32_t velocitySrv = UINT32_MAX;
     rg::RgResourceId velocityRes{};
+    RHITextureHandle transmittanceLut{};
+    bool aerialPerspectiveAvailable = false;
     float    globalCoverage;
     float    minStepSize = 0.01f;
     float    maxStepSize = 0.5f;

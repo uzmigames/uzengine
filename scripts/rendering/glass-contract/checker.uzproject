@@ -8,6 +8,7 @@
     "height": 640
   },
   "cvars": {
+    "r.Glass.ThinTransmission": 1,
     "r.AutoExposure": 0,
     "r.Exposure": 1,
     "r.GTAO": 0,

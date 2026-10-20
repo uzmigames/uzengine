@@ -1,0 +1,36 @@
+{
+  "name": "Near-field Chiang white-hair swatch",
+  "version": "1.0",
+  "entities": [
+    {
+      "name": "Camera",
+      "components": {
+        "transform": {"position": [0, -250, 140]},
+        "camera": {"fov": 42, "near": 1, "far": 5000, "active": true,
+                   "look_at": [0, 0, 140]}
+      }
+    },
+    {
+      "name": "Front source",
+      "components": {
+        "transform": {"rotation": [-8, -90, 0]},
+        "light": {"type": "directional", "color": [1, 1, 1], "intensity": 2,
+                  "cast_shadows": true, "light_source_angle": 0.2}
+      }
+    },
+    {
+      "name": "Black environment",
+      "components": {"sky_light": {"intensity": 0, "light_color": [1, 1, 1]}}
+    },
+    {
+      "name": "Twelve bent white fibers",
+      "components": {
+        "transform": {"position": [0, 0, 0]},
+        "mesh": {"asset": "scripts/rendering/hair-stage1-strands.uzmesh"},
+        "material": {"baseColorR": 1, "baseColorG": 1, "baseColorB": 1,
+                     "roughnessMultiplier": 0.07, "metallicMultiplier": 0.18},
+        "script": {"path": "scripts/rendering/hair-stage1.lua"}
+      }
+    }
+  ]
+}

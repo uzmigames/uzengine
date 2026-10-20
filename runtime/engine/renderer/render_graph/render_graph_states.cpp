@@ -41,6 +41,8 @@ void RgStateRegistry::BindCommandList(IRHICommandList* list)
     if (list != m_list) {
         m_buffers.clear();   // a different list starts with every buffer in Common
         m_list = list;
+    } else {
+        SyncSubmits();       // rebinding the same submitted list must not hide buffer decay
     }
     m_listSubmits = m_list ? m_list->GetSubmitCount() : 0;
 }
@@ -184,6 +186,11 @@ void RgStateRegistry::OnQueueSubmit()
 void RgStateRegistry::Forget(RHITextureHandle h)
 {
     m_textures.erase(Key(h));
+}
+
+void RgStateRegistry::Forget(RHIBufferHandle h)
+{
+    m_buffers.erase(Key(h));
 }
 
 void RgStateRegistry::CommitFromGraph(RHITextureHandle h, RHIResourceState s)

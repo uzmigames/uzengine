@@ -4,7 +4,7 @@
 ///
 /// `RgBuilder` is the primary public API for the render graph. Each frame, the renderer
 /// creates an `RgBuilder`, registers passes (which declare resource reads/writes),
-/// compiles the graph (topological sort, barrier scheduling, pass culling, aliasing),
+/// compiles the graph (topological sort, barrier scheduling, pass culling, lifetimes),
 /// and executes it on a command list.
 ///
 /// # Usage
@@ -53,7 +53,7 @@ class RgStateRegistry;
 ///
 /// # Phases
 /// 1. **Declaration** — `CreateTexture/Buffer`, `ImportTexture/Buffer`, `AddPass`
-/// 2. **Compilation** — `Compile()` — topological sort, barrier scheduling, culling, aliasing
+    /// 2. **Compilation** — `Compile()` — topological sort, barrier scheduling, culling, lifetimes
 /// 3. **Execution** — `Execute()` — acquires physical resources, emits barriers, invokes callbacks
 ///
 /// After `Execute()`, the builder's state is consumed. Do not reuse across frames.
@@ -278,7 +278,7 @@ private:
     /// Populates `m_sortedPassIndices` and asserts on cycles.
     void TopologicalSort();
 
-    /// Computes resource lifetimes (first/last pass index) for aliasing.
+    /// Computes resource lifetimes (first/last pass index); allocations do not alias within a graph.
     void ComputeLifetimes();
 
     /// Culls passes whose outputs are never read by any other pass

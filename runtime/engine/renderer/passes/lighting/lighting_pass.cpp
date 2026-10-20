@@ -41,6 +41,9 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
         pb.Read(desc.depthGBuffer,    RHIResourceState::ShaderResource);
         pb.Read(desc.positionGBuffer, RHIResourceState::ShaderResource);
         pb.Read(desc.emissiveGBuffer, RHIResourceState::ShaderResource);
+        if (desc.clusterListResource.IsValid()) {
+            pb.Read(desc.clusterListResource, RHIResourceState::ShaderResource);
+        }
         if (desc.brixDiffuseResource.IsValid()) {
             pb.Read(desc.brixDiffuseResource, RHIResourceState::ShaderResource);
             pb.Read(desc.brixSpecularResource, RHIResourceState::ShaderResource);

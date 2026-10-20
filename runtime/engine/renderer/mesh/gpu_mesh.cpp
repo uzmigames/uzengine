@@ -5,6 +5,7 @@
 #include "mesh.h"
 #include "upload_context.h"
 #include "log.h"
+#include "pathtracing/light_bvh.h"
 
 // Log category declared at global scope (matching log.cpp definition)
 UZ_DECLARE_LOG_CATEGORY(Renderer);
@@ -171,6 +172,7 @@ GPUMesh UploadMesh(IRHIDevice* device, IRHICommandList* cmdList, const Mesh& mes
 
     // -- Vertex stride (48 = Vertex, 32 = VertexPacked) --
     result.vertexStride = mesh.header.vertexStride;
+    result.lightBVHGeometry = CaptureLightBVHGeometry(mesh);
 
     // -- Bindless SRV index --
     if (device->IsBindless()) {
@@ -262,6 +264,7 @@ DeferredMeshUpload UploadMeshDeferred(IRHIDevice* device, IRHICommandList* cmdLi
 
     // -- Mesh AABB bounds (used for bounding sphere / LOD screen-size computation) --
     result.mesh.boundsMin = mesh.header.boundsMin;
+    result.mesh.lightBVHGeometry = CaptureLightBVHGeometry(mesh);
     result.mesh.boundsMax = mesh.header.boundsMax;
 
     // -- Bindless SRV index --

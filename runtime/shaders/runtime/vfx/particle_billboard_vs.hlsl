@@ -167,6 +167,7 @@ cbuffer PerFrameCB : register(b1) {
     float    _perFramePad5;
     float    _perFramePad6;
     float    _perFramePad7;
+    float    skyLightMinAmbient;         ///< Byte 248 in the CPU PerFrameCB.
     float    exposure;                  ///< Auto-exposure multiplier.
 };
 

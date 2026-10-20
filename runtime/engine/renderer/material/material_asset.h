@@ -133,13 +133,16 @@ struct Material : public MaterialInterface {
 
     // ── Transmission (glass/refractive materials) ────────────────────────
 
-    /// ThinTranslucent: any mesh, front faces only, treated as a thin slab.
+    /// ThinTranslucent defaults to the legacy sphere/IBL appearance.
+    /// r.Glass.ThinTransmission=1 opts into thin-surface scene transmission:
+    /// any mesh, front faces only, treated as a thin slab.
     /// The refracted exit point samples the opaque scene captured before this
     /// pass; Fresnel reflection samples the environment. Not supported:
     /// refraction of other translucent surfaces, true volumes/image inversion,
     /// caustics, transmission roughness blur, thickness maps, glass shadows,
     /// or back faces.
-    /// Transmission intensity (16 quantized levels). 0 = standard translucent
+    /// With the opt-in enabled, transmission intensity (16 quantized levels).
+    /// 0 = standard translucent
     /// result unchanged; 1 = fully transmissive glass.
     /// @ref Three.js MeshPhysicalMaterial.transmission — KHR_materials_transmission
     float transmission = 0.0f;

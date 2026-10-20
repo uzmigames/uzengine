@@ -739,6 +739,68 @@ RHIPipelineHandle PipelineLibrary::GetDdgiBorderFill() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Hardware Ray-Traced Reflections Compute Pipeline (stage 1, opt-in)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// `rt_reflection_cs.hlsl`: one mirror ray per pixel the screen trace left without a confident
+// hit, inline RayQuery against the TLAS, the hit shaded from the global distance field + sun the
+// way the DDGI writer shades its probe rays. Created lazily by RegisterRTReflectionPass, so with
+// `r.RayTracing.Reflections` off the shader is never compiled.
+
+bool PipelineLibrary::EnsureRtReflectionShader() {
+    if (m_rtReflectionCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::RtReflectionCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile RtReflectionCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "rt_reflection_cs";
+
+    m_rtReflectionCS = m_device->CreateShader(shaderDesc);
+    if (!m_rtReflectionCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create RtReflectionCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetRtReflection() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetRtReflection called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_rtReflection.IsValid()) {
+        return m_rtReflection;
+    }
+
+    if (!EnsureRtReflectionShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_rtReflectionCS;
+    desc.debugName     = "RT_Reflections";
+
+    m_rtReflection = m_device->CreateComputePipeline(desc);
+    if (!m_rtReflection.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create RT_Reflections pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created RT_Reflections pipeline");
+    }
+    return m_rtReflection;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Radiance Cache Probe Side Compute Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 //

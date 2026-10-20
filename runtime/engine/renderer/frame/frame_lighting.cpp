@@ -29,6 +29,7 @@
 #include "atmosphere_renderer.h"
 #include "volumetric_fog_pass.h"
 #include "pathtracing/path_tracer_pass.h"
+#include "pathtracing/pipeline_path_tracer_pass.h"
 #include "fog_renderer.h"
 #include "profiler.h"
 #include "rhi.h"
@@ -70,6 +71,8 @@ static auto* cv_DebugView        = UZ_CVAR_BOOL("r.DebugView", false, "GBuffer d
 // @ref Kajiya 1986 "The Rendering Equation" — see docs/analysis/path-tracing/
 static auto* cv_PathTracer       = UZ_CVAR_BOOL("r.PathTracer.Enable", false,
     "Compute path tracer runtime mode (replaces deferred lighting + GI + shadows)");
+static auto* cv_PipelinePathTracer = UZ_CVAR_BOOL("r.PathTracer.Pipeline", false,
+    "DXR pipeline single-bounce reference renderer (--path-trace)");
 
 namespace uz {
 
@@ -77,6 +80,40 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
     UZ_PROFILE_FUNCTION();
 
     if (m_renderPath != RenderPath::Deferred) return;
+
+    if (cv_PipelinePathTracer->value >= 0.5f) {
+        if (!m_rtManager || !m_rtManager->IsEnabled()) {
+            UZ_LOG(Renderer, Error, "PipelinePathTracer: --path-trace requires an enabled DXR TLAS");
+            return;
+        }
+        if (!m_pipelinePathTracer) {
+            m_pipelinePathTracer = std::make_unique<PipelinePathTracerPass>();
+            if (!m_pipelinePathTracer->Init(m_device)) {
+                m_pipelinePathTracer.reset();
+                return;
+            }
+        }
+        // Update the environment before tracing. The radiance resolve must be
+        // the final lighting write, including miss pixels, not a raster sky overlay.
+        RegisterAtmosphereFogCloudPasses(rgBuilder, ctx);
+        const uint32_t skySrv = m_hdriActive ? m_hdriCubemapSrv
+                             : (m_skyCubemapFilled ? m_skyCubemapSrv : UINT32_MAX);
+        NrdInputs denoiserGuides{};
+        denoiserGuides.depth = ctx.depthRes;
+        denoiserGuides.normal = ctx.normalRes;
+        denoiserGuides.velocity = ctx.velocityRes;
+        denoiserGuides.reset = !ctx.temporal.matrixValid;
+        if (!m_pipelinePathTracer->AddPass(rgBuilder, ctx.hdrRes, ctx.perFrameAlloc,
+                *m_rtManager, ctx.cmdList, ctx.drawList.GetCommands(), m_meshes, skySrv,
+                ctx.frameIndex, static_cast<uint32_t>(ctx.renderWidth),
+                static_cast<uint32_t>(ctx.renderHeight), ctx.world,
+                ctx.unjitteredViewProj, ctx.updateFlags.flags & ~SceneUpdateFlags::kCamera,
+                denoiserGuides)) {
+            UZ_LOG(Renderer, Error, "PipelinePathTracer: failed to register single-bounce pass");
+            return;
+        }
+        return;
+    }
 
     // ── Path Tracer runtime mode override ──────────────────────────────
     // When r.PathTracer.Enable=1, the path tracer replaces the entire
@@ -213,6 +250,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
     RegisterSSGIPasses(rgBuilder, ctx);
     RegisterBrixelizerGIPasses(rgBuilder, ctx);
     RegisterSSRPasses(rgBuilder, ctx);
+    RegisterRTReflectionPass(rgBuilder, ctx);   // opt-in HWRT fill of the SSR holes, or the reflections on their own with SSR off (r.RayTracing.Reflections)
     
     // ── Env MIS temporal accumulation (render graph compute pass) ───────
     if (ctx.perFrame.sdfReflectionsEnabled == 0 && m_envMisEnabled
@@ -503,8 +541,13 @@ void SceneRenderer::RegisterPassInspectorTargets(FrameContext& ctx) {
     if (ctx.ssrActive) {
         m_passInspector.RegisterTarget("ssr.trace", m_ssrTraceOutput, m_ssrTraceOutputSrv,
                                         VisDisplayMode::Color, rw, rh);
+    }
+    // The resolved buffer: the SSR chain's output, or (stage 3, SSR off) the ray-traced reflections'.
+    if (ctx.ssrActive || RTReflectionsStandalone()) {
         m_passInspector.RegisterTarget("ssr.resolve", m_ssrResolvedOutput, m_ssrResolvedOutputSrv,
                                         VisDisplayMode::Color, rw, rh);
+    }
+    if (ctx.ssrActive) {
         // Register the temporal history write target (the one lighting reads from).
         // After the temporal pass flips the index, the *previous* write idx is
         // what was written this frame. At this point m_ssrHistoryIndex has been

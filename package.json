@@ -18,6 +18,9 @@
     "format": "cd extension && npm run format && cd ../mcp && npm run format",
     "format:check": "cd extension && npm run format:check && cd ../mcp && npm run format:check",
     "test": "cd extension && npm test && cd ../mcp && npm test",
+    "test:layouts": "python scripts/rendering/test_cbuffer_layouts.py",
+    "hooks:install": "node -e \"const fs=require('fs');const p=require('child_process').execFileSync('git',['rev-parse','--git-path','hooks/pre-push'],{encoding:'utf8'}).trim();fs.copyFileSync('.githooks/pre-push',p);fs.chmodSync(p,0o755)\"",
+    "prepush": "npm run test:layouts && npm run build && npm test",
     "test:coverage": "cd extension && npm run test:coverage && cd ../mcp && npm run test:coverage"
   }
 }

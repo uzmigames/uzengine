@@ -13,7 +13,12 @@ struct VSOutput {
 
 #ifdef UZ_BINDLESS
 struct Vertex { float3 position; float3 normal; float2 texcoord; float4 tangent; };
-struct VertexPacked { float3 position; int4 packedNormal; float2 texcoord; int4 packedTangent; uint _pad; };
+// CPU int8_t[4] fields occupy one DWORD each, not an HLSL int4 (16 bytes).
+struct VertexPacked { float3 position; uint packedNormal; float2 texcoord; uint packedTangent; uint _pad; };
+int4 UnpackSignedBytes(uint packed) {
+    return int4(int(packed << 24) >> 24, int(packed << 16) >> 24,
+                int(packed << 8) >> 24, int(packed) >> 24);
+}
 // Draw callers initialize all four mesh values; unused root constants are
 // not initialized by D3D12. The shared root block remains 24 DWORDs.
 struct PushConstants { uint vertexBufferIndex; uint usePackedNormals; uint colorBufferIndex; uint previousVertexBufferIndex; };
@@ -50,9 +55,11 @@ VSOutput main(uint vertexID : SV_VertexID) {
         StructuredBuffer<VertexPacked> packedVerts = ResourceDescriptorHeap[push.vertexBufferIndex];
         VertexPacked pv = packedVerts[vertexID];
         vPosition = pv.position;
-        vNormal   = float3(pv.packedNormal.xyz) / 127.0;
+        int4 normal = UnpackSignedBytes(pv.packedNormal);
+        int4 tangent = UnpackSignedBytes(pv.packedTangent);
+        vNormal   = float3(normal.xyz) / 127.0;
         vTexcoord = pv.texcoord;
-        vTangent  = float4(float3(pv.packedTangent.xyz) / 127.0, (pv.packedTangent.w >= 0) ? 1.0 : -1.0);
+        vTangent  = float4(float3(tangent.xyz) / 127.0, (tangent.w >= 0) ? 1.0 : -1.0);
     } else {
         // Standard vertex format (48 bytes)
         StructuredBuffer<Vertex> vertices = ResourceDescriptorHeap[push.vertexBufferIndex];

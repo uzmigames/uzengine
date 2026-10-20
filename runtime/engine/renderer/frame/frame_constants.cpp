@@ -788,6 +788,12 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
         // The SpatialDenoise pass writes its output to m_ssrResolvedOutput.
         // The lighting shader reads this denoised result.
         perFrame.ssrSrvIndex = m_ssrResolvedOutputSrv;
+    } else if (RTReflectionsStandalone()) {
+        // Hardware ray-traced reflections with SSR off (stage 3): the ray pass owns the resolved
+        // buffer this frame — every texel written, zero weight where no ray was traced — so the
+        // lighting blends it exactly as it blends the screen trace (frame_gi_passes.cpp
+        // RegisterRTReflectionPass registers the pass under the same test).
+        perFrame.ssrSrvIndex = m_ssrResolvedOutputSrv;
     } else {
         perFrame.ssrSrvIndex = UINT32_MAX;
     }

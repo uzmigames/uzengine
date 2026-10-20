@@ -31,7 +31,8 @@
 cbuffer VFXMeshRenderConstants : register(b0) {
     uint     g_instanceTransformsBufferIdx;
     uint     g_instanceColorsBufferIdx;
-    uint     _meshCBpad[14];
+    uint2    _meshCBpad0;  // Bytes 8..15; scalar arrays would consume 16 bytes per element.
+    uint4    _meshCBpad[3]; // Bytes 16..63, matching the CPU's 14 reserved DWORDs.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -64,6 +65,7 @@ cbuffer PerFrameCB : register(b1) {
     float    _perFramePad5;
     float    _perFramePad6;
     float    _perFramePad7;
+    float    skyLightMinAmbient; // Byte 248; exposure follows at byte 252.
     float    exposure;
 };
 

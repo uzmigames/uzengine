@@ -495,6 +495,8 @@ void RgBuilder::CullPasses()
 /// current tracked state, a barrier is appended to the consuming pass.
 void RgBuilder::ScheduleBarriers()
 {
+    std::vector<bool> lastWrite(m_resources.size(), true);
+    std::vector<uint32_t> lastAccess(m_resources.size(), UINT32_MAX);
     // Reset current state to initial state for all resources.
     for (auto& res : m_resources) {
         res.currentState = res.initialState;
@@ -513,8 +515,8 @@ void RgBuilder::ScheduleBarriers()
             if (res.culled) continue;
 
             if (res.currentState != access.state) {
-                // Skip no-op transitions from Undefined (resource just created).
-                // The RHI handles initial state internally for new resources.
+                // Transients are unresolved during Compile. Execute resolves their physical
+                // creation/reuse states and reschedules before emitting any barriers.
                 if (res.currentState != RHIResourceState::Undefined) {
                     pass.barriers.push_back({
                         access.resourceId,
@@ -525,7 +527,19 @@ void RgBuilder::ScheduleBarriers()
                 }
 
                 res.currentState = access.state;
+            } else if (access.state == RHIResourceState::UnorderedAccess
+                       && lastAccess[access.resourceId.index] != sortIdx
+                       && (lastWrite[access.resourceId.index]
+                           || std::any_of(pass.accesses.begin(), pass.accesses.end(),
+                               [&](const auto& other) {
+                                   return other.resourceId == access.resourceId && other.isWrite;
+                               }))) {
+                // Equal UAV states still need memory ordering between dependent passes.
+                pass.barriers.push_back({access.resourceId, access.state, access.state});
             }
+            lastWrite[access.resourceId.index] = access.isWrite
+                || (lastAccess[access.resourceId.index] == sortIdx && lastWrite[access.resourceId.index]);
+            lastAccess[access.resourceId.index] = sortIdx;
         }
     }
 }
@@ -542,7 +556,10 @@ void RgBuilder::Execute(IRHICommandList* cmdList)
 
     m_executed = true;
 
+    m_pool->GetStates().BindCommandList(cmdList);
     AcquirePhysicalResources();
+    // Pool handles (and thus their actual entry states) are known only at execution.
+    ScheduleBarriers();
 
     if (m_states) {
         std::vector<uint64_t> textureKeys, bufferKeys;
@@ -567,8 +584,9 @@ void RgBuilder::Execute(IRHICommandList* cmdList)
 
             for (const auto& barrier : pass.barriers) {
                 if (!barrier.resourceId.IsValid()) continue;
-                // Skip no-op barriers (DX12 rejects same before/after state).
-                if (barrier.stateBefore == barrier.stateAfter) continue;
+                // The RHI translates same-state UAV barriers to UAV memory barriers.
+                if (barrier.stateBefore == barrier.stateAfter
+                    && barrier.stateAfter != RHIResourceState::UnorderedAccess) continue;
 
                 const auto& res = m_resources[barrier.resourceId.index];
 
@@ -690,8 +708,10 @@ void RgBuilder::AcquirePhysicalResources()
 
         if (res.kind == RgResourceKind::Texture) {
             res.physicalTexture = m_pool->AcquireTexture(res.textureDesc, res.name);
+            res.initialState = m_pool->GetStates().Get(res.physicalTexture);
         } else {
             res.physicalBuffer = m_pool->AcquireBuffer(res.bufferDesc, res.name);
+            res.initialState = m_pool->GetStates().Get(res.physicalBuffer);
         }
     }
 }
@@ -703,9 +723,11 @@ void RgBuilder::ReleasePhysicalResources()
         if (res.imported || res.culled) continue;
 
         if (res.kind == RgResourceKind::Texture) {
+            m_pool->GetStates().CommitFromGraph(res.physicalTexture, res.currentState);
             m_pool->ReleaseTexture(res.physicalTexture, res.textureDesc);
             res.physicalTexture = RHITextureHandle::Invalid();
         } else {
+            m_pool->GetStates().CommitFromGraph(res.physicalBuffer, res.currentState);
             m_pool->ReleaseBuffer(res.physicalBuffer, res.bufferDesc);
             res.physicalBuffer = RHIBufferHandle::Invalid();
         }

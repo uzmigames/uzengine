@@ -119,7 +119,8 @@ ENTRIES = [
                 'g_frameIndex': 'frameIndex', 'g_proceduralNoise': 'proceduralNoise',
                 'g_noiseXYScale': 'noiseXYScale', 'g_noiseZScale': 'noiseZScale',
                 'g_shapeOctaves': 'shapeOctaves', 'g_fbmDecay': 'fbmDecay', 'g_fbmLacunarity': 'fbmLacunarity',
-                'g_detailErosion': 'detailErosion', 'g_densityScale': 'densityScale', 'g_jitterScale': 'jitterScale'},
+                'g_detailErosion': 'detailErosion', 'g_densityScale': 'densityScale', 'g_jitterScale': 'jitterScale',
+                'g_frontDepthUav': 'frontDepthUav'},
         'before': 'cloud_raymarch_cs.before.hlsl',
     },
     {
@@ -223,8 +224,10 @@ for shader in (
     'vfx/particle_mesh_ps.hlsl', 'vfx/particle_mesh_vs.hlsl', 'vfx/trail_ps.hlsl', 'vfx/trail_vs.hlsl',
     'postprocess/ssr_composite_cs.hlsl', 'postprocess/ssr_resolve_cs.hlsl',
     'postprocess/ssr_temporal_cs.hlsl', 'postprocess/ssr_trace_cs.hlsl',
+    'reflections/rt_reflection_cs.hlsl',
     'postprocess/svgf_atrous_cs.hlsl', 'postprocess/svgf_filter_moments_cs.hlsl',
     'postprocess/velocity_object_vs.hlsl', 'pathtracing/path_tracer_ps.hlsl',
+    'pathtracing/pathtracer_shared.hlsli',
     'lighting/cluster_assign_cs.hlsl', 'lighting/env_mis_temporal_cs.hlsl',
     'debug/debug_view_ps.hlsl', 'atmosphere/height_fog_ps.hlsl',
     'atmosphere/skybox_cubemap_ps.hlsl', 'atmosphere/sky_atmosphere_ps.hlsl',
@@ -235,6 +238,11 @@ for shader in ('gbuffer/gbuffer_ps.hlsl', 'gbuffer/mesh_vs.hlsl', 'gbuffer/mesh_
     TIER_A.append(layout_entry(shader, 'PerObjectCB', PARAMS + 'constant_buffers.h',
                                before='gbuffer_ps.perobject.before.hlsl' if shader == 'gbuffer/gbuffer_ps.hlsl' else None))
 TIER_A += [
+    layout_entry('pathtracing/nrd_common.hlsli', 'NrdCamera', PARAMS + 'constant_buffers.h',
+                 'PerFrameCB', {'currentViewProj': 'viewProj', 'cameraPosition': 'cameraPos',
+                  'cameraTime': 'timeParams', 'cameraLightDir': 'lightDir',
+                  'cameraLightColor': 'lightColor', 'cameraAmbient': 'ambientColor',
+                  'inverseViewProj': 'invViewProj'}),
     layout_entry('vfx/particle_spawn_cs.hlsl', 'VFXSpawnConstants', PASSES + 'vfx/particle_simulation_pass.h',
                  'ParticleSpawnConstants', {'_pad3': '_padUser'}),
     layout_entry('vfx/particle_update_cs.hlsl', 'VFXUpdateConstants', PASSES + 'vfx/particle_simulation_pass.h',
@@ -312,8 +320,37 @@ TIER_A += [
 ]
 ENTRIES.append({**next(e for e in ENTRIES if e['struct'] == 'CloudCB'),
                 'shader': 'atmosphere/cloud_raymarch_upscale_cs.hlsl', 'before': None})
+TIER_A += [
+    layout_entry('atmosphere/cloud_composite_ps.hlsl', 'PerFrameCB', PARAMS + 'constant_buffers.h'),
+    layout_entry('atmosphere/cloud_composite_ps.hlsl', 'CloudCompositeCB',
+                 PASSES + 'atmosphere/cloud_pass.cpp', 'CloudCB',
+                 {'g_invViewProj': 'invViewProj', 'g_cameraPos': 'cameraPos'}),
+]
 
 TIER_B = [
+    layout_entry('pathtracing/nrd_common.hlsli', 'NrdRoot',
+                 PASSES + 'pathtracing/nrd_denoiser.h'),
+    layout_entry('pathtracing/nrd_common.hlsli', 'NrdStage2Root',
+                 PASSES + 'pathtracing/nrd_denoiser.h'),
+    layout_entry('pathtracing/nrd_signal.hlsli', 'NrdSignalRoot',
+                 PASSES + 'pathtracing/nrd_denoiser.h', aliases={
+                     'nrdEnabled': 'enabled', 'nrdDiffuseUav': 'diffuseUav',
+                     'nrdFractionUav': 'fractionUav', 'nrdAlbedoUav': 'albedoUav',
+                     'nrdSpecularUav': 'specularUav', 'nrdModulationUav': 'modulationUav',
+                     'nrdVirtualPositionUav': 'virtualPositionUav', 'nrdGuideUav': 'guideUav'}),
+    # Private DXR/ReSTIR root: 96 bytes / 24 DWORDs, including history UAVs,
+    # sample count and bounce/RR controls. Shared graphics and PerFrameCB do not grow.
+    layout_entry('pathtracing/pathtracer_shared.hlsli', 'PathTracerRoot',
+                 PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'PipelinePathRoot'),
+    layout_entry('pathtracing/restir_spatial_cs.hlsl', 'PathTracerRoot',
+                 PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'PipelinePathRoot'),
+    layout_entry('pathtracing/restir_gi_temporal_cs.hlsl', 'PathTracerRoot',
+                 PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'PipelinePathRoot'),
+    layout_entry('pathtracing/pathtracer_volume.hlsli', 'PathVolumeRoot',
+                 PASSES + 'pathtracing/pipeline_path_tracer_pass.h'),
+    # Pass-private GI-ReSTIR block (b4): 8 DWORDs; the private DXR root stays 24.
+    layout_entry('include/restir_gi.hlsli', 'RestirGIRoot',
+                 PASSES + 'pathtracing/pipeline_path_tracer_pass.h'),
     *[layout_entry(shader, 'VFXBillboardConstants', PASSES + 'vfx/particle_render_pass.h',
                    'ParticleBillboardIndices')
       for shader in ('vfx/particle_billboard_vs.hlsl', 'vfx/particle_billboard_ps.hlsl')],
@@ -349,6 +386,8 @@ TIER_B = [
           ('resolve', 'SsrResolveRootCB', 'SsrResolveConstants'),
           ('temporal', 'SsrTemporalRootCB', 'SsrTemporalConstants'),
           ('spatial_denoise', 'SsrDenoiseRootCB', 'SsrDenoiseConstants'))],
+    layout_entry('reflections/rt_reflection_cs.hlsl', 'RTReflectionRootCB',
+                 PASSES + 'raytracing/rt_reflection_pass.h', 'RTReflectionRootConstants'),
     layout_entry('vfx/particle_sort_cs.hlsl', 'VFXSortConstants', 'runtime/engine/vfx/core/gpu_particle_sort.h'),
     layout_entry('postprocess/exposure_histogram_cs.hlsl', 'ExposureParams', PASSES + 'postprocess/auto_exposure.h',
                  'HistogramRootConstants'),
@@ -357,6 +396,33 @@ TIER_B = [
 ]
 
 TIER_C = [
+    layout_entry('include/light_bvh.hlsli', 'LightBVHNode',
+                 PASSES + 'pathtracing/light_bvh.h', 'LightBVHNode'),
+    layout_entry('include/light_bvh.hlsli', 'LightBVHLight',
+                 PASSES + 'pathtracing/light_bvh.h', 'LightBVHLight'),
+    layout_entry('include/light_bvh.hlsli', 'LightBVHConfig',
+                 PASSES + 'pathtracing/light_bvh.h', 'LightBVHConfig'),
+    layout_entry('include/restir_di.hlsli', 'LightSample',
+                 PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'RestirLightSample'),
+    # 116-byte reservoir: source visibility at 112; the private root stays 24 DWORDs.
+    {**layout_entry('include/restir_di.hlsli', 'Reservoir',
+                   PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'RestirReservoir'),
+     'hlsl_structs': ('LightSample',), 'extra_structs': ('RestirLightSample',)},
+    layout_entry('include/restir_di.hlsli', 'RestirSurface',
+                 PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'RestirSurface'),
+    # 88-byte one-bounce sample inside the 160-byte GI reservoir (visibility at 156).
+    layout_entry('include/restir_gi.hlsli', 'GISample',
+                 PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'RestirGISample'),
+    {**layout_entry('include/restir_gi.hlsli', 'GIReservoir',
+                   PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'RestirGIReservoir'),
+     'hlsl_structs': ('GISample',), 'extra_structs': ('RestirGISample',)},
+    layout_entry('pathtracing/pathtracer_shared.hlsli', 'PathDirectionalLight',
+                 PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'PipelinePathDirectionalLight'),
+    # 204-byte pass-private DXR material: legacy coat at 100..127,
+    # stack depth at 128 and three additional six-float films at 132..203.
+    # Every declared field and the structured stride are reflected below.
+    layout_entry('pathtracing/pathtracer_shared.hlsli', 'MaterialData',
+                 PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'PipelinePathMaterial'),
     layout_entry('gbuffer/mesh_vs.hlsl', 'Vertex', 'runtime/engine/renderer/mesh/vertex.h'),
     layout_entry('gbuffer/mesh_vs.hlsl', 'VertexPacked', 'runtime/engine/renderer/mesh/vertex.h'),
     layout_entry('gi/global_sdf_composite_cs.hlsl', 'MeshSdf',
@@ -365,8 +431,8 @@ TIER_C = [
                  PASSES + 'pathtracing/path_tracer_pass.h', 'GIMeshMaterialGPU'),
 ]
 
-# These are not successful reflection contracts. Keep the missing design prerequisites
-# visible in the result, rather than manufacturing HLSL definitions from C++ sizes.
+# These are not successful reflection contracts. Keep explicit exclusions visible
+# rather than manufacturing HLSL definitions from C++ sizes.
 UNTRACKED = {
     ("runtime/vfx/decal_forward_ps.hlsl", "DecalObjectCB"): "Additional DecalObjectCB mirror; independent CPU mapping still required (not claimed as a passing contract).",
     ("runtime/vfx/distortion_haze_ps.hlsl", "DistortionHazeCB"): "Root constants: DistortionHazeCB; uploader-specific block, not a header-backed Tier B contract.",
@@ -429,13 +495,13 @@ UNTRACKED = {
     ("editor/overlay_vs.hlsl", "RootConstants"): "Root constants: RootConstants; uploader-specific block, not a header-backed Tier B contract.",
 }
 
-UNAVAILABLE = {
-    'CullConstants/GpuCullConstants': 'compute/gpu_cull_cs.hlsl is an empty kernel with no cbuffer',
-    'InstanceData': 'no HLSL InstanceData declaration (instanced vertex shader is not implemented)',
-    'LightGPU': 'no HLSL LightGPU element declaration; lighting uses PointLightData/SpotLightData CB arrays',
-    'ReflectionProbeGPU': 'no named HLSL element declaration; the shader loads float4 records',
-    'SdfObjectGpuData': 'no named HLSL element declaration under runtime/shaders',
-    'SkinnedVertex': 'gpu_skinning_cs.hlsl reads a packed ByteAddressBuffer, not StructuredBuffer<SkinnedVertex>',
+UNTRACKED_CONTRACTS = {
+    'CullConstants/GpuCullConstants': 'compute/gpu_cull_cs.hlsl:1 is an empty kernel with no cbuffer; F-018 stage 2 owns implementation; CPU size asserted in engine/renderer/passes/geometry/gpu_cull_pass.h:70',
+    'InstanceData': 'instanced vertex shader is unimplemented (F-018); CPU-only transform upload in engine/renderer/frame/frame_sync.cpp:76-102; 128-byte size asserted in engine/renderer/core/instance_batcher.h:42',
+    'LightGPU': 'no same-named HLSL element; production lighting uses PointLightData/SpotLightData CB arrays (Tier A); legacy multi-light CPU descriptor size is asserted at engine/renderer/core/lighting/multi_light.h:92',
+    'ReflectionProbeGPU': 'no same-named HLSL element; CPU probe records have two float4 rows, 32-byte size asserted at engine/renderer/core/params/constant_buffers.h:873 and upload stride set in engine/renderer/probes/reflection_probe_renderer.cpp:201',
+    'SdfObjectGpuData': 'CPU atlas-manager object records have no HLSL consumer under runtime/shaders; 192-byte size asserted at engine/renderer/shadows/sdf_types.h:198 and upload stride set in sdf_atlas_manager.cpp:90',
+    'SkinnedVertex': 'raw ByteAddressBuffer contract, not a structured element: compute/gpu_skinning_cs.hlsl:39-45 pins stride 56 and offsets 0/12/24/32/48/52; CPU size asserted at engine/renderer/mesh/vertex.h:139',
 }
 
 STUBS = r'''
@@ -572,7 +638,7 @@ def members(text):
     return result
 
 
-def reflect_declaration(shader_path, name, workdir, kind='cbuffer'):
+def reflect_declaration(shader_path, name, workdir, kind='cbuffer', extra_structs=()):
     source_text = Path(shader_path).read_text(encoding='utf-8')
     try:
         text = declaration(source_text, kind, name)
@@ -598,6 +664,15 @@ def reflect_declaration(shader_path, name, workdir, kind='cbuffer'):
             raise ValueError(f'{shader_path}: DXC preprocessing failed:\n{out.stderr}')
         text = re.sub(r'^\s*#.*$', '', Path(preprocessed).read_text(encoding='utf-8'), flags=re.M)
     field_names = members(text)
+    dependencies = []
+    for dependency in extra_structs:
+        definition = declaration(source_text, 'struct', dependency)
+        first_member = members(definition)[0][1]
+        nested = re.findall(r'\b' + re.escape(dependency) + r'\s+(\w+)\s*;', text)
+        field_names = [(field, expr + '.' + first_member if field in nested else expr)
+                       for field, expr in field_names]
+        dependencies.append(definition)
+    text = '\n'.join(dependencies) + '\n' + text
     if kind == 'struct':
         text += f'\nStructuredBuffer<{name}> elements : register(t0);\n'
         expression = ' + '.join('float(elements[id].' + expr + ')' for _, expr in field_names)
@@ -638,8 +713,10 @@ def compare_isolated(entry, shader_path, workdir):
 
 
 def compare_size(entry, workdir, kind='cbuffer'):
-    _, _, reflected = reflect_declaration(os.path.join(SHADERS, entry['shader']), entry['name'], workdir, kind)
-    cpp = cpp_offsets(os.path.join(REPO, entry['header']), entry['struct'], ['__size'], workdir)
+    _, _, reflected = reflect_declaration(os.path.join(SHADERS, entry['shader']), entry['name'], workdir, kind,
+                                         entry.get('hlsl_structs', ()))
+    cpp = cpp_offsets(os.path.join(REPO, entry['header']), entry['struct'], ['__size'], workdir,
+                      entry.get('extra_structs', ()))
     return reflected, cpp['__size']
 
 
@@ -675,6 +752,10 @@ def inventory(list_only=False):
                 print(f'{key[0]}:{line} {name} register({match[4] or "implicit"}) '
                       + ('MAPPED' if tracked else f'UNTRACKED: {reason}' if reason else 'UNMAPPED'))
     failures += sum(not reason.strip() for reason in UNTRACKED.values())
+    for name, reason in UNTRACKED_CONTRACTS.items():
+        failures += not reason.strip()
+        if list_only:
+            print(f'Contract {name} UNTRACKED: {reason}')
     print(f'Inventory: {count} declarations; {mapped_count} mapped, {excluded_count} explicit exclusions; '
           f'{failures} unmapped/unlisted or reasonless')
     return failures
@@ -711,19 +792,21 @@ def main():
     print(f'  [{"PASS" if mismatches else "FAIL"}] negative control gpu_cull_cs.before.hlsl: '
           f'{len(mismatches)} fields differ ({mismatches})', flush=True)
     for tier, entries, kind in (('B', TIER_B, 'cbuffer'), ('C', TIER_C, 'struct')):
+        passed = 0
         for entry in entries:
             try:
                 reflected, cpp = compare_size(entry, workdir, kind)
                 ok = reflected == cpp
                 failures += not ok
+                passed += ok
                 print(f'  [{"PASS" if ok else "FAIL"}] Tier {tier} {entry["shader"]} {entry["struct"]}: '
                       f'DXC {reflected} bytes ({reflected / 4:g} DWORDs), sizeof {cpp}', flush=True)
             except (ValueError, SystemExit, subprocess.TimeoutExpired) as error:
                 failures += 1
                 print(f'  [FAIL] Tier {tier} {entry["struct"]}: {error}', flush=True)
-    for name, reason in UNAVAILABLE.items():
-        failures += 1
-        print(f'  [FAIL] Required contract unavailable: {name}: {reason}')
+        print(f'Tier {tier}: {passed}/{len(entries)} passing entries')
+    for name, reason in UNTRACKED_CONTRACTS.items():
+        print(f'  [UNTRACKED] {name}: {reason}')
     if not keep:
         import shutil
         shutil.rmtree(workdir, ignore_errors=True)

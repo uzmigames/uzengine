@@ -69,6 +69,9 @@ static auto* cv_CloudLightDistance = UZ_CVAR_FLOAT("r.Cloud.LightMarchHeightScal
 
 namespace uz {
 
+static auto* cv_CloudAerialPerspective = UZ_CVAR_BOOL("r.Clouds.AerialPerspective", true,
+    "Bruneton camera-to-cloud aerial perspective (off restores legacy haze)");
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Lifecycle
 // ─────────────────────────────────────────────────────────────────────────────
@@ -146,10 +149,19 @@ bool CloudPass::CreateOutputTexture(uint32_t halfWidth, uint32_t halfHeight) {
 
     UZ_LOG(Renderer, Debug, "CloudPass: output texture created — SRV={}, UAV={}",
            m_outputSrvIndex, m_outputUavIndex);
-    return true;
+    desc.format = RHIFormat::R32Float;
+    desc.debugName = "Cloud_FrontDepth";
+    m_frontDepthTexture = m_device->CreateTexture(desc);
+    if (!m_frontDepthTexture.IsValid()) return false;
+    m_frontDepthSrv = m_device->GetTextureSRVIndex(m_frontDepthTexture);
+    m_frontDepthUav = m_device->GetTextureUAVIndex(m_frontDepthTexture);
+    return m_frontDepthSrv != UINT32_MAX && m_frontDepthUav != UINT32_MAX;
 }
 
 void CloudPass::DestroyOutputTexture() {
+    if (m_frontDepthTexture.IsValid()) m_device->DestroyTexture(m_frontDepthTexture);
+    m_frontDepthTexture = RHITextureHandle::Invalid();
+    m_frontDepthSrv = m_frontDepthUav = UINT32_MAX;
     if (m_outputTexture.IsValid()) {
         m_device->DestroyTexture(m_outputTexture);
         m_outputTexture = RHITextureHandle::Invalid();
@@ -268,15 +280,7 @@ void CloudPass::OnResize(uint32_t width, uint32_t height) {
 
 bool CloudPass::CreateTemporalTextures(uint32_t width, uint32_t height) {
     RHITextureDesc desc{};
-    desc.width = m_halfWidth;
-    desc.height = m_halfHeight;
-    desc.format = RHIFormat::R32Float;
     desc.usage = RHITextureUsage::ShaderResource | RHITextureUsage::UnorderedAccess;
-    desc.debugName = "Cloud_FrontDepth";
-    m_frontDepthTexture = m_device->CreateTexture(desc);
-    if (!m_frontDepthTexture.IsValid()) return false;
-    m_frontDepthSrv = m_device->GetTextureSRVIndex(m_frontDepthTexture);
-    m_frontDepthUav = m_device->GetTextureUAVIndex(m_frontDepthTexture);
     desc.width = width;
     desc.height = height;
     desc.format = RHIFormat::RGBA16Float;
@@ -293,9 +297,6 @@ bool CloudPass::CreateTemporalTextures(uint32_t width, uint32_t height) {
 }
 
 void CloudPass::DestroyTemporalTextures() {
-    if (m_frontDepthTexture.IsValid()) m_device->DestroyTexture(m_frontDepthTexture);
-    m_frontDepthTexture = RHITextureHandle::Invalid();
-    m_frontDepthSrv = m_frontDepthUav = UINT32_MAX;
     for (uint32_t i = 0; i < 2; ++i) {
         if (m_historyTexture[i].IsValid()) m_device->DestroyTexture(m_historyTexture[i]);
         m_historyTexture[i] = RHITextureHandle::Invalid();
@@ -1119,6 +1120,11 @@ void CloudPass::RegisterPasses(rg::RgBuilder& rgBuilder, rg::RgStateRegistry* st
     cb.weatherSrv = m_weatherSrv;
     cb.shadowBufferSrv = m_shadowBufferSrv;
     cb.shadowCascadeCount = m_shadowFrameCount;
+    cb.frontDepthUav = m_frontDepthUav;
+    const bool aerialPerspective = cv_CloudAerialPerspective->value != 0
+        && input.aerialPerspectiveAvailable && input.transmittanceLut.IsValid();
+    // The physical composite replaces, rather than stacks with, legacy exponential haze.
+    if (aerialPerspective) cb.aerialPerspectiveDensity = 0.0f;
     if (m_temporalUpscale) {
         cb.temporalUpscale = 1;
         cb.fullWidth = renderWidth;
@@ -1153,6 +1159,8 @@ void CloudPass::RegisterPasses(rg::RgBuilder& rgBuilder, rg::RgStateRegistry* st
         UZ_LOG(Renderer, Info,
                "CloudPass: root constants — outputUAV={}, depthSRV={}, size={}x{}",
                rootConst[0], rootConst[1], rootConst[2], rootConst[3]);
+        UZ_LOG(Renderer, Info, "CloudPass: aerial perspective={}, weightedDepthSRV={}, legacyDensity={}",
+               aerialPerspective, m_frontDepthSrv, cb.aerialPerspectiveDensity);
         UZ_LOG(Renderer, Info,
                "CloudPass: CB — cameraKm=({:.6f},{:.6f},{:.6f}), sunDir=({:.3f},{:.3f},{:.3f}), "
                "coverage={:.2f}, density={:.2f}, ext={:.4f}, layerBot={:.1f}, layerH={:.1f}",
@@ -1172,8 +1180,9 @@ void CloudPass::RegisterPasses(rg::RgBuilder& rgBuilder, rg::RgStateRegistry* st
 
     static_assert(sizeof(rootConst) / sizeof(rootConst[0]) <= 12);
     const auto cloudOut = rgBuilder.ImportTrackedTexture("Cloud_Output", m_outputTexture);
-    const auto frontDepth = m_temporalUpscale
-        ? rgBuilder.ImportTrackedTexture("Cloud_FrontDepth", m_frontDepthTexture) : rg::RgResourceId{};
+    const auto frontDepth = rgBuilder.ImportTrackedTexture("Cloud_FrontDepth", m_frontDepthTexture);
+    const auto atmosphereLut = aerialPerspective
+        ? rgBuilder.ImportTrackedTexture("TransmittanceLUT", input.transmittanceLut) : rg::RgResourceId{};
     const auto shapeRes = m_shapeNoiseTexture.IsValid()
         ? rgBuilder.ImportTrackedTexture("Cloud_ShapeNoise", m_shapeNoiseTexture) : rg::RgResourceId{};
     const auto detailRes = m_detailNoiseTexture.IsValid()
@@ -1263,6 +1272,10 @@ void CloudPass::RegisterPasses(rg::RgBuilder& rgBuilder, rg::RgStateRegistry* st
         rgBuilder.AddPass("Cloud_Composite", [=, this](rg::RgPassBuilder& pb) {
             pb.Write(hdrRes, RHIResourceState::RenderTarget);
             pb.Read(compositeInput, RHIResourceState::ShaderResource);
+            if (aerialPerspective) {
+                pb.Read(frontDepth, RHIResourceState::ShaderResource);
+                pb.Read(atmosphereLut, RHIResourceState::ShaderResource);
+            }
             pb.Read(depthRes, RHIResourceState::ShaderResource);
             pb.SetExecutionCallback([=, this](IRHICommandList* cmd, const rg::RgPassResources& res) {
                 UZ_PROFILE_SCOPE("Cloud::Composite");
@@ -1273,9 +1286,11 @@ void CloudPass::RegisterPasses(rg::RgBuilder& rgBuilder, rg::RgStateRegistry* st
                 passDesc.hasDepth = false;
                 cmd->BeginRenderPass(passDesc);
                 cmd->SetPipeline(compositePSO);
-                const uint32_t compositeRC[4] = { compositeSrv, input.depthSrv, 0, 0 };
+                const uint32_t compositeRC[4] = {
+                    compositeSrv, input.depthSrv, m_frontDepthSrv, aerialPerspective ? 1u : 0u };
                 cmd->SetRootConstants(kSlotRootConstants, compositeRC, 4);
                 cmd->SetRootCBV(kSlotPerFrame, perFrameAlloc.gpuAddr);
+                cmd->SetRootCBV(kSlotPerObject, cbAlloc.gpuAddr);
                 RHIViewport vp{};
                 vp.width = static_cast<float>(renderWidth);
                 vp.height = static_cast<float>(renderHeight);

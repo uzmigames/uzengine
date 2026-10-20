@@ -1,0 +1,23 @@
+{
+  "name": "Heterogeneous path transport stage 2",
+  "version": "1.0",
+  "content_root": ".",
+  "default_scene": "path-volume-stage1.uzscene",
+  "window": {"width": 320, "height": 180},
+  "cvars": {
+    "r.AutoExposure": 0, "r.Exposure": 1, "r.Bloom": 0,
+    "r.TAA": 1, "r.Fog": 0, "r.VolumetricFog": 0,
+    "r.TechPanel.Show": 0, "r.Toolbar.Show": 0,
+    "r.GTAO": 0, "r.SSGI": 0, "r.RadianceCache": 0,
+    "r.GI.FinalGather": 0, "r.GI.Reflections": 0,
+    "r.PathTracer.MaxBounces": 1,
+    "r.PathTracer.Volume.Radius": 100,
+    "r.PathTracer.Volume.CenterX": 0,
+    "r.PathTracer.Volume.CenterY": 0,
+    "r.PathTracer.Volume.CenterZ": 150,
+    "r.PathTracer.Volume.SigmaA": 0.002,
+    "r.PathTracer.Volume.SigmaS": 0.003,
+    "r.PathTracer.Volume.G": 0,
+    "r.PathTracer.Volume.Variation": 0.8
+  }
+}
