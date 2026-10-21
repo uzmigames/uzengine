@@ -83,6 +83,43 @@ struct SSGIRenderParams {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Screen-space ReSTIR GI (Lumen-parity phase C, r.GI.ReSTIR, opt-in)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Root constants of the ReSTIR GI passes; mirrors `SSGIRestirRoot` (ssgi_restir_gi.hlsli).
+/// 16 of the compute root signature's 24 root DWORDs.
+struct SSGIRestirRootConstants {
+    uint32_t depthSrv;
+    uint32_t normalSrv;
+    uint32_t reservoirInUav;
+    uint32_t reservoirOutUav;
+    uint32_t historyUav;
+    uint32_t outputUav;
+    uint32_t aoOutputUav;
+    uint32_t packedDimensions;
+    uint32_t frameIndex;
+    uint32_t flags;
+    uint32_t candidates;
+    uint32_t maxHistory;
+    uint32_t spatialSamples;
+    uint32_t spatialRadiusBits;
+    uint32_t reserved0;
+    uint32_t reserved1;
+};
+static_assert(sizeof(SSGIRestirRootConstants) == 64, "SSGIRestirRoot is 16 root DWORDs");
+
+/// One per-pixel reservoir (64 bytes); mirrors `SSGIReservoir` (ssgi_restir_gi.hlsli). The sample
+/// is a direction with the radiance it returned from the reservoir's own surface (and the hit
+/// distance, -1 escaped, -2 exhausted); normals are octahedral 2x16 UNORM.
+struct SSGIRestirReservoir {
+    float sampleDirection[3]; uint32_t flags;
+    float sampleRadiance[3]; float sampleDistance;
+    float surfacePosition[3]; uint32_t surfaceNormal;
+    float weightSum; uint32_t M; float W; uint32_t surfaceGeometricNormal;
+};
+static_assert(sizeof(SSGIRestirReservoir) == 64, "SSGIReservoir is 64 bytes");
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SSGIRenderer
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -184,6 +221,11 @@ private:
 
     void DispatchPrevColorReduce(IRHICommandList* cmdList, const SSGIRenderParams& params);
     void DispatchTrace(IRHICommandList* cmdList, const SSGIRenderParams& params);
+    /// Screen-space ReSTIR GI in place of DispatchTrace (r.GI.ReSTIR, world gather only): initial,
+    /// temporal and spatial reuse + resolve into the same half-resolution trace textures.
+    [[nodiscard]] bool EnsureRestirResources(PipelineLibrary* pipelines);
+    void DestroyRestirBuffers();
+    void DispatchRestir(IRHICommandList* cmdList, const SSGIRenderParams& params);
     void DispatchSpatialDenoise(IRHICommandList* cmdList, const SSGIRenderParams& params);
     void DispatchTemporalAccum(IRHICommandList* cmdList, const SSGIRenderParams& params);
     void DispatchUpsample(IRHICommandList* cmdList, const SSGIRenderParams& params);
@@ -243,6 +285,16 @@ private:
     RHITextureHandle m_ssgiResultAO;
     uint32_t m_ssgiResultAOSrv = UINT32_MAX;
     uint32_t m_ssgiResultAOUav = UINT32_MAX;
+
+    /// ReSTIR GI reservoirs (half-res, 64 B each): this frame's initial candidates and the
+    /// temporal ping-pong. Created on first opt-in use only, so OFF allocates nothing.
+    RHIBufferHandle m_restirInitial;
+    uint32_t m_restirInitialUav = UINT32_MAX;
+    RHIBufferHandle m_restirHistory[2];
+    uint32_t m_restirHistoryUav[2] = {UINT32_MAX, UINT32_MAX};
+    int  m_restirIndex = 0;              ///< History buffer written this frame.
+    bool m_restirHistoryValid = false;   ///< The other history buffer holds last frame's reservoirs.
+    bool m_restirUnavailable = false;    ///< A reservoir or pipeline failed to create: stay on the plain gather, logged once.
 
     // ── State ──────────────────────────────────────────────────────────────
 

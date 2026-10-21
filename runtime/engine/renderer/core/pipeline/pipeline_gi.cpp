@@ -372,6 +372,64 @@ RHIPipelineHandle PipelineLibrary::GetSsgiBilateralUpsample() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Screen-space ReSTIR GI Compute Pipelines (phase C, r.GI.ReSTIR)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Shader + pipeline of one ReSTIR GI pass, the SSGI pattern above with the two handles passed in.
+static RHIPipelineHandle CreateSsgiRestirPipeline(IRHIDevice* device, ShaderManager* shaderMgr, bool initialized,
+                                                  EngineShader shader, const char* shaderName, const char* pipelineName,
+                                                  RHIShaderHandle& shaderHandle, RHIPipelineHandle& pipeline) {
+    if (!initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetSsgiRestir* called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+    if (pipeline.IsValid()) return pipeline;
+    if (!shaderHandle.IsValid()) {
+        auto bytecode = shaderMgr->GetBytecode(shader);
+        if (bytecode.empty()) {
+            UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile {}", shaderName);
+            return RHIPipelineHandle::Invalid();
+        }
+        RHIShaderDesc shaderDesc{};
+        shaderDesc.bytecode     = bytecode.data();
+        shaderDesc.bytecodeSize = bytecode.size();
+        shaderDesc.stage        = RHIShaderStage::Compute;
+        shaderDesc.entryPoint   = "main";
+        shaderDesc.debugName    = shaderName;
+        shaderHandle = device->CreateShader(shaderDesc);
+        if (!shaderHandle.IsValid()) {
+            UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create {} shader", shaderName);
+            return RHIPipelineHandle::Invalid();
+        }
+    }
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = shaderHandle;
+    desc.debugName     = pipelineName;
+    pipeline = device->CreateComputePipeline(desc);
+    if (!pipeline.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create {} pipeline", pipelineName);
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created {} pipeline", pipelineName);
+    }
+    return pipeline;
+}
+
+RHIPipelineHandle PipelineLibrary::GetSsgiRestirInitial() {
+    return CreateSsgiRestirPipeline(m_device, m_shaderMgr, m_initialized, EngineShader::SsgiRestirInitialCS,
+                                    "ssgi_restir_initial_cs", "SSGI_RestirInitial", m_ssgiRestirInitialCS, m_ssgiRestirInitial);
+}
+
+RHIPipelineHandle PipelineLibrary::GetSsgiRestirTemporal() {
+    return CreateSsgiRestirPipeline(m_device, m_shaderMgr, m_initialized, EngineShader::SsgiRestirTemporalCS,
+                                    "ssgi_restir_temporal_cs", "SSGI_RestirTemporal", m_ssgiRestirTemporalCS, m_ssgiRestirTemporal);
+}
+
+RHIPipelineHandle PipelineLibrary::GetSsgiRestirSpatial() {
+    return CreateSsgiRestirPipeline(m_device, m_shaderMgr, m_initialized, EngineShader::SsgiRestirSpatialCS,
+                                    "ssgi_restir_spatial_cs", "SSGI_RestirSpatial", m_ssgiRestirSpatialCS, m_ssgiRestirSpatial);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // GDF Composite Compute Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 

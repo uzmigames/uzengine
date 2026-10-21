@@ -159,6 +159,9 @@
     RHIShaderHandle m_ssgiSpatialDenoiseCS     = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssgiTemporalAccumCS      = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssgiBilateralUpsampleCS  = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_ssgiRestirInitialCS      = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_ssgiRestirTemporalCS     = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_ssgiRestirSpatialCS      = RHIShaderHandle::Invalid();
     RHIShaderHandle m_svgfReprojectCS          = RHIShaderHandle::Invalid();
     RHIShaderHandle m_svgfFilterMomentsCS      = RHIShaderHandle::Invalid();
     RHIShaderHandle m_svgfAtrousCS             = RHIShaderHandle::Invalid();
@@ -240,6 +243,9 @@
     RHIPipelineHandle m_ssgiSpatialDenoise    = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssgiTemporalAccum     = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssgiBilateralUpsample = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_ssgiRestirInitial     = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_ssgiRestirTemporal    = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_ssgiRestirSpatial     = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_svgfReproject         = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_svgfFilterMoments     = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_svgfAtrous            = RHIPipelineHandle::Invalid();

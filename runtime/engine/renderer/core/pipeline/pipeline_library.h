@@ -639,6 +639,13 @@ public:
     ///
     [[nodiscard]] RHIPipelineHandle GetSsgiBilateralUpsample();
 
+    /// Screen-space ReSTIR GI (Lumen-parity phase C, `r.GI.ReSTIR`): the gather's cosine rays
+    /// as reservoir candidates, temporal reuse, spatial reuse + resolve. Created on first use,
+    /// never warmed up: the path is opt-in and OFF dispatches the trace pipeline above unchanged.
+    [[nodiscard]] RHIPipelineHandle GetSsgiRestirInitial();
+    [[nodiscard]] RHIPipelineHandle GetSsgiRestirTemporal();
+    [[nodiscard]] RHIPipelineHandle GetSsgiRestirSpatial();
+
     // ── SVGF Denoiser Compute Pipelines ─────────────────────────────────
 
     /// Returns the SVGF temporal reprojection compute pipeline.

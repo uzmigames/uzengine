@@ -297,6 +297,10 @@ TIER_A += [
                           'depthSrvIndex': 'depthSrv', 'historySrvIndex': 'historySrv', 'velocitySrvIndex': 'velocitySrv'}),
     layout_entry('ssgi/ssgi_temporal_accum_cs.hlsl', 'HistoryCB', 'runtime/engine/renderer/gi/ssgi_renderer.cpp',
                  aliases={'g_regionCount': 'regionCount', '_regionPad': '_pad', 'g_regionLo': 'regionLo', 'g_regionHi': 'regionHi'}),
+    # The same block as the screen-space ReSTIR GI temporal pass binds it at b2 (phase C).
+    layout_entry('ssgi/ssgi_restir_gi.hlsli', 'SSGIRestirHistory', 'runtime/engine/renderer/gi/ssgi_renderer.cpp', 'HistoryCB',
+                 aliases={'g_previousViewProj': 'previousViewProj', 'g_regionCount': 'regionCount', '_regionPad': '_pad',
+                          'g_regionLo': 'regionLo', 'g_regionHi': 'regionHi'}),
     *[layout_entry(shader, 'TraceConstants', 'runtime/engine/renderer/gi/radiance_cache.h',
                    'RadianceCacheTraceConstants',
                    {'_shBufferUav': 'shBufferUav', '_firstWrite': 'firstWrite',
@@ -392,6 +396,9 @@ TIER_B = [
           ('spatial_denoise', 'SsrDenoiseRootCB', 'SsrDenoiseConstants'))],
     layout_entry('reflections/rt_reflection_cs.hlsl', 'RTReflectionRootCB',
                  PASSES + 'raytracing/rt_reflection_pass.h', 'RTReflectionRootConstants'),
+    # Screen-space ReSTIR GI root block (phase C, r.GI.ReSTIR): 16 DWORDs of the compute root's 24.
+    layout_entry('ssgi/ssgi_restir_gi.hlsli', 'SSGIRestirRoot',
+                 'runtime/engine/renderer/gi/ssgi_renderer.h', 'SSGIRestirRootConstants'),
     layout_entry('vfx/particle_sort_cs.hlsl', 'VFXSortConstants', 'runtime/engine/vfx/core/gpu_particle_sort.h'),
     layout_entry('postprocess/exposure_histogram_cs.hlsl', 'ExposureParams', PASSES + 'postprocess/auto_exposure.h',
                  'HistogramRootConstants'),
@@ -436,6 +443,10 @@ TIER_C = [
     # 80-byte rect area light (phase3a 3.33.0): the per-frame StructuredBuffer the UZ_RECT_LIGHTS
     # lighting permutation reads through LightingCB::rectLightsSrv.
     layout_entry('lighting/light_types.hlsli', 'RectLightData', PARAMS + 'constant_buffers.h', 'RectLightData'),
+    # 64-byte screen-space ReSTIR GI reservoir (phase C): the structured buffers of the three
+    # ssgi_restir_* passes (initial candidates + temporal ping-pong), octahedral 2x16 normals.
+    layout_entry('ssgi/ssgi_restir_gi.hlsli', 'SSGIReservoir',
+                 'runtime/engine/renderer/gi/ssgi_renderer.h', 'SSGIRestirReservoir'),
 ]
 
 # These are not successful reflection contracts. Keep explicit exclusions visible

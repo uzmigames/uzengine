@@ -43,8 +43,49 @@ static auto* cv_SSGIStepSize     = UZ_CVAR_FLOAT("r.SSGI.StepSize", 0.02f, "UV-s
 // value. Brixelizer GI is the preferred indoor GI.
 static auto* cv_SSGIThickness    = UZ_CVAR_FLOAT("r.SSGI.Thickness", 50.0f, "Depth comparison thickness (cm)", 0.01f, 1000.0f);
 static auto* cv_SSGITemporalAlpha = UZ_CVAR_FLOAT("r.SSGI.TemporalAlpha", 0.05f, "Temporal accumulation alpha (0=full history, 1=no history)", 0.01f, 0.5f);
+// Screen-space ReSTIR GI (Lumen-parity phase C). Opt-in: 0 dispatches the unchanged gather trace.
+// File scope so command-line overrides register before the first frame (see SampleFrameOffset).
+static auto* cv_GIReSTIR = UZ_CVAR_INT("r.GI.ReSTIR", 0,
+    "Screen-space ReSTIR GI for the surface final gather (r.GI.FinalGather 1): reservoir reuse of the gather rays", 0, 1);
+static auto* cv_GIReSTIRMaxHistory = UZ_CVAR_INT("r.GI.ReSTIR.MaxHistory", 20,
+    "Temporal M cap in frames (x r.GI.FinalGather.Samples candidates)", 1, 64);
+// Spatial reuse replays a neighbour's direction from this surface (2 rays per neighbour, unbiased);
+// measured noisier than the temporal reuse alone once converged (phase C stage 1), so it is opt-in.
+static auto* cv_GIReSTIRSpatial = UZ_CVAR_INT("r.GI.ReSTIR.Spatial", 0,
+    "Spatial reuse neighbours per pixel (0 = temporal reuse only; each neighbour costs two replayed rays)", 0, 4);
+static auto* cv_GIReSTIRSpatialRadius = UZ_CVAR_FLOAT("r.GI.ReSTIR.SpatialRadius", 6.0f,
+    "Spatial reuse disk radius in half-resolution pixels", 1.0f, 32.0f);
 
 namespace uz {
+
+// HistoryCB: the previous view-projection plus the world boxes where the distance field changed this
+// frame or the last one (the gather reads the radiance cache one frame late): pixels inside reject
+// their history (block B.2 phase 4). Mirrors ssgi_temporal_accum_cs.hlsl and ssgi_restir_gi.hlsli.
+struct HistoryCB {
+    float    previousViewProj[16];
+    uint32_t regionCount;
+    uint32_t _pad[3];
+    float    regionLo[16][4];
+    float    regionHi[16][4];
+};
+static_assert(sizeof(HistoryCB) == 592, "HistoryCB mirrors ssgi_temporal_accum_cs.hlsl");
+
+/// The block as both temporal passes bind it: last frame's jittered view-projection and the union
+/// of last frame's and this frame's change boxes (at most 16). No state is updated here; the
+/// temporal accumulation, the last reader of the frame, rotates `previousRegions`.
+static void FillHistoryCB(HistoryCB& history, const float* previousViewProj,
+                          const std::vector<GlobalDistanceField::ChangedRegion>& previousRegions,
+                          const std::vector<GlobalDistanceField::ChangedRegion>* changedRegions) {
+    history = HistoryCB{};
+    std::memcpy(history.previousViewProj, previousViewProj, sizeof(history.previousViewProj));
+    std::vector<GlobalDistanceField::ChangedRegion> boxes = previousRegions;
+    if (changedRegions) boxes.insert(boxes.end(), changedRegions->begin(), changedRegions->end());
+    history.regionCount = static_cast<uint32_t>(std::min<size_t>(boxes.size(), 16));
+    for (uint32_t r = 0; r < history.regionCount; ++r) {
+        history.regionLo[r][0] = boxes[r].lo.x; history.regionLo[r][1] = boxes[r].lo.y; history.regionLo[r][2] = boxes[r].lo.z;
+        history.regionHi[r][0] = boxes[r].hi.x; history.regionHi[r][1] = boxes[r].hi.y; history.regionHi[r][2] = boxes[r].hi.z;
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Construction / Destruction
@@ -256,6 +297,7 @@ bool SSGIRenderer::CreateTextures(uint32_t width, uint32_t height) {
 
 void SSGIRenderer::DestroyTextures() {
     if (!m_device) return;
+    DestroyRestirBuffers();
 
     auto destroyTex = [this](RHITextureHandle& tex) {
         if (tex.IsValid()) {
@@ -370,13 +412,20 @@ void SSGIRenderer::Render(IRHICommandList* cmdList, const SSGIRenderParams& para
         m_resourceStatesInitialized = true;
     }
     // Pass 1: Downsample prev scene color to half-res
-    if (params.resetHistory || m_lastFrame + 1 != params.frameIndex || m_sceneRevision != params.sceneRevision)
+    if (params.resetHistory || m_lastFrame + 1 != params.frameIndex || m_sceneRevision != params.sceneRevision) {
         m_hasHistory = false;
+        m_restirHistoryValid = false;   // the reservoirs were accumulated against a frame that no longer follows
+    }
     m_sceneRevision = params.sceneRevision;
     if (!params.worldGather) DispatchPrevColorReduce(cmdList, params);
 
-    // Pass 2: SSGI trace (half-res)
-    DispatchTrace(cmdList, params);
+    // Pass 2: SSGI trace (half-res), or the opt-in screen-space ReSTIR GI writing the same textures
+    if (params.worldGather && cv_GIReSTIR->value >= 1.0f && EnsureRestirResources(params.pipelines)) {
+        DispatchRestir(cmdList, params);
+    } else {
+        m_restirHistoryValid = false;
+        DispatchTrace(cmdList, params);
+    }
 
     // Pass 3: Spatial denoise (half-res)
     DispatchSpatialDenoise(cmdList, params);
@@ -613,6 +662,194 @@ void SSGIRenderer::DispatchTrace(IRHICommandList* cmdList, const SSGIRenderParam
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Pass 2 (r.GI.ReSTIR): Screen-space ReSTIR GI — initial candidates, temporal reuse,
+// spatial reuse + resolve into the trace textures the plain gather writes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool SSGIRenderer::EnsureRestirResources(PipelineLibrary* pipelines) {
+    if (m_restirUnavailable || !pipelines || !m_device) return false;
+    if (!pipelines->GetSsgiRestirInitial().IsValid() || !pipelines->GetSsgiRestirTemporal().IsValid()
+        || !pipelines->GetSsgiRestirSpatial().IsValid()) {
+        UZ_LOG(Renderer, Error, "SSGI ReSTIR GI: a pipeline failed to create; r.GI.ReSTIR stays on the plain gather");
+        m_restirUnavailable = true;
+        return false;
+    }
+    if (m_restirInitial.IsValid()) return true;
+
+    RHIBufferDesc desc{};
+    desc.stride    = sizeof(SSGIRestirReservoir);
+    desc.sizeBytes = uint64_t(m_halfWidth) * m_halfHeight * desc.stride;
+    desc.usage     = RHIBufferUsage::StructuredBuffer | RHIBufferUsage::UnorderedAccess;
+    desc.debugName = "SSGI_RestirInitial";
+    m_restirInitial = m_device->CreateBuffer(desc);
+    const char* names[2] = {"SSGI_RestirHistory_0", "SSGI_RestirHistory_1"};
+    for (int i = 0; i < 2; ++i) {
+        desc.debugName = names[i];
+        m_restirHistory[i] = m_device->CreateBuffer(desc);
+    }
+    if (!m_restirInitial.IsValid() || !m_restirHistory[0].IsValid() || !m_restirHistory[1].IsValid()) {
+        UZ_LOG(Renderer, Error, "SSGI ReSTIR GI: failed to create the reservoir buffers ({}x{} half, {} B each); "
+               "r.GI.ReSTIR stays on the plain gather", m_halfWidth, m_halfHeight, desc.stride);
+        DestroyRestirBuffers();
+        m_restirUnavailable = true;
+        return false;
+    }
+    m_restirInitialUav = m_device->GetBufferUAVIndex(m_restirInitial);
+    for (int i = 0; i < 2; ++i) m_restirHistoryUav[i] = m_device->GetBufferUAVIndex(m_restirHistory[i]);
+    m_restirIndex = 0;
+    m_restirHistoryValid = false;
+    UZ_LOG(Renderer, Info, "SSGI ReSTIR GI: reservoirs created ({}x{} half, {} B each, {} KB; initial UAV={}, history UAV={}/{})",
+           m_halfWidth, m_halfHeight, desc.stride, 3 * desc.sizeBytes / 1024, m_restirInitialUav,
+           m_restirHistoryUav[0], m_restirHistoryUav[1]);
+    return true;
+}
+
+void SSGIRenderer::DestroyRestirBuffers() {
+    if (!m_device) return;
+    auto destroyBuf = [this](RHIBufferHandle& buffer) {
+        if (buffer.IsValid()) {
+            m_device->DestroyBuffer(buffer);
+            buffer = RHIBufferHandle{};
+        }
+    };
+    destroyBuf(m_restirInitial);
+    m_restirInitialUav = UINT32_MAX;
+    for (int i = 0; i < 2; ++i) {
+        destroyBuf(m_restirHistory[i]);
+        m_restirHistoryUav[i] = UINT32_MAX;
+    }
+    m_restirIndex = 0;
+    m_restirHistoryValid = false;
+}
+
+/// Three dispatches over the half-resolution lattice. The reservoir buffers live in the
+/// unordered-access state (promoted from Common on first use, as the path tracer's reservoirs);
+/// UAV barriers order the three passes and fence last frame's reads before this frame's writes.
+/// The spatial pass writes the same two textures DispatchTrace writes, with the same barriers, so
+/// the denoise, temporal accumulation, upsample and deferred lighting consume it unchanged.
+void SSGIRenderer::DispatchRestir(IRHICommandList* cmdList, const SSGIRenderParams& params) {
+    UZ_PROFILE_SCOPE("SSGI::RestirGI");
+
+    auto initialPso  = params.pipelines->GetSsgiRestirInitial();
+    auto temporalPso = params.pipelines->GetSsgiRestirTemporal();
+    auto spatialPso  = params.pipelines->GetSsgiRestirSpatial();
+    const auto* frame = static_cast<const PerFrameCB*>(params.perFrameCpuPtr);
+    UZ_VERIFY(frame != nullptr);
+
+    const int writeIdx = m_restirIndex;
+    const int readIdx  = 1 - m_restirIndex;
+    // Last frame's reservoirs are reused only when the gather's own history would be: same mode,
+    // consecutive frame, same field revision, no reset, and a ReSTIR frame before this one.
+    const bool reuse = m_restirHistoryValid && m_hasHistory;
+    const uint32_t candidates = std::clamp<uint32_t>(frame->sdfDiffuseSamples, 1u, 32u);
+
+    SSGIRestirRootConstants rc{};
+    rc.depthSrv         = params.depthSrvIndex;
+    rc.normalSrv        = params.normalSrvIndex;
+    rc.reservoirInUav   = UINT32_MAX;
+    rc.reservoirOutUav  = UINT32_MAX;
+    rc.historyUav       = UINT32_MAX;
+    rc.outputUav        = UINT32_MAX;
+    rc.aoOutputUav      = UINT32_MAX;
+    rc.packedDimensions = (m_halfWidth & 0xFFFF) | ((m_halfHeight & 0xFFFF) << 16);
+    rc.frameIndex       = params.frameIndex + static_cast<uint32_t>(cv_SampleFrameOffset->value);   // the plain trace's
+    rc.flags            = reuse ? 1u : 0u;   // UZ_SSGI_RESTIR_HISTORY_VALID
+    rc.candidates       = candidates;
+    // The CVar counts frames; the shader caps the previous reservoir's M (candidates x frames).
+    rc.maxHistory       = static_cast<uint32_t>(cv_GIReSTIRMaxHistory->value) * candidates;
+    rc.spatialSamples   = static_cast<uint32_t>(cv_GIReSTIRSpatial->value);
+    const float spatialRadius = cv_GIReSTIRSpatialRadius->value;
+    std::memcpy(&rc.spatialRadiusBits, &spatialRadius, 4);
+
+    const uint32_t groupsX = (m_halfWidth  + kThreadGroupSize - 1) / kThreadGroupSize;
+    const uint32_t groupsY = (m_halfHeight + kThreadGroupSize - 1) / kThreadGroupSize;
+    auto uavBarrier = [cmdList](RHIBufferHandle buffer) {
+        RHIBarrierDesc barrier{};
+        barrier.buffer      = buffer;
+        barrier.stateBefore = RHIResourceState::UnorderedAccess;
+        barrier.stateAfter  = RHIResourceState::UnorderedAccess;
+        cmdList->ResourceBarrier(&barrier, 1);
+    };
+    auto bindFrame = [&]() {
+        cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), sizeof(rc) / sizeof(uint32_t));
+        cmdList->SetRootCBV(kSlotPerFrame, params.perFrameBuffer, params.perFrameOffset,
+                            params.perFrameCpuPtr, params.perFrameSize);
+        cmdList->SetDescriptorTable(4, m_ssgiTraceUav);
+    };
+
+    // Last frame's temporal and spatial reads of every reservoir buffer complete before the writes below.
+    uavBarrier(m_restirInitial);
+    uavBarrier(m_restirHistory[0]);
+    uavBarrier(m_restirHistory[1]);
+
+    // Pass A: the gather's N cosine rays streamed into one reservoir per pixel.
+    {
+        UZ_PROFILE_SCOPE("SSGI::RestirInitial");
+        cmdList->SetPipeline(initialPso);
+        rc.reservoirOutUav = m_restirInitialUav;
+        bindFrame();
+        cmdList->Dispatch(groupsX, groupsY, 1);
+        uavBarrier(m_restirInitial);
+    }
+
+    // Pass B: temporal reuse of last frame's reservoir at the reprojected pixel (b2 = HistoryCB:
+    // the previous jittered view-projection and the change boxes, as the temporal accumulation).
+    {
+        UZ_PROFILE_SCOPE("SSGI::RestirTemporal");
+        cmdList->SetPipeline(temporalPso);
+        rc.reservoirInUav  = m_restirInitialUav;
+        rc.reservoirOutUav = m_restirHistoryUav[writeIdx];
+        rc.historyUav      = m_restirHistoryUav[readIdx];
+        bindFrame();
+        HistoryCB history{};
+        FillHistoryCB(history, m_previousViewProj, m_previousRegions, params.changedRegions);
+        auto historyAllocation = params.cbRing->Allocate(sizeof(HistoryCB));
+        UZ_VERIFY(historyAllocation.cpuPtr != nullptr);
+        std::memcpy(historyAllocation.cpuPtr, &history, sizeof(HistoryCB));
+        cmdList->SetRootCBV(kSlotPerObject, historyAllocation.bufferHandle, historyAllocation.offsetBytes,
+                            historyAllocation.cpuPtr, sizeof(HistoryCB));
+        cmdList->Dispatch(groupsX, groupsY, 1);
+        uavBarrier(m_restirHistory[writeIdx]);
+    }
+
+    // Pass C: spatial reuse + resolve into the trace textures (the plain trace's outputs and barriers).
+    {
+        UZ_PROFILE_SCOPE("SSGI::RestirSpatial");
+        RHIBarrierDesc barriers[2] = {};
+        barriers[0].texture     = m_ssgiTrace;
+        barriers[0].stateBefore = RHIResourceState::ShaderResource;
+        barriers[0].stateAfter  = RHIResourceState::UnorderedAccess;
+        barriers[1].texture     = m_ssgiTraceAO;
+        barriers[1].stateBefore = RHIResourceState::ShaderResource;
+        barriers[1].stateAfter  = RHIResourceState::UnorderedAccess;
+        cmdList->ResourceBarrier(barriers, 2);
+
+        cmdList->SetPipeline(spatialPso);
+        rc.reservoirInUav  = m_restirHistoryUav[writeIdx];
+        rc.reservoirOutUav = UINT32_MAX;
+        rc.historyUav      = UINT32_MAX;
+        rc.outputUav       = m_ssgiTraceUav;
+        rc.aoOutputUav     = m_ssgiTraceAOUav;
+        bindFrame();
+        cmdList->Dispatch(groupsX, groupsY, 1);
+
+        barriers[0].stateBefore = RHIResourceState::UnorderedAccess;
+        barriers[0].stateAfter  = RHIResourceState::ShaderResource;
+        barriers[1].stateBefore = RHIResourceState::UnorderedAccess;
+        barriers[1].stateAfter  = RHIResourceState::ShaderResource;
+        cmdList->ResourceBarrier(barriers, 2);
+    }
+
+    if (!m_restirHistoryValid) {
+        UZ_LOG(Renderer, Info, "SSGI ReSTIR GI: dispatched (candidates={} maxHistory={} frames spatial={} radius={} px reuse={})",
+               candidates, static_cast<uint32_t>(cv_GIReSTIRMaxHistory->value), rc.spatialSamples,
+               spatialRadius, reuse);
+    }
+    m_restirIndex = readIdx;        // next frame writes the other buffer and reads this one
+    m_restirHistoryValid = true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Pass 3: Spatial Denoise
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -748,29 +985,9 @@ void SSGIRenderer::DispatchTemporalAccum(IRHICommandList* cmdList, const SSGIRen
     };
     static_assert(sizeof(TemporalAccumRC) == 60, "Must fit 16 root DWORDs");
 
-    // HistoryCB: the previous view-projection plus the world boxes where the distance field
-    // changed this frame or the last one (the gather reads the radiance cache one frame late):
-    // pixels inside reject their history (block B.2 phase 4). Mirrors ssgi_temporal_accum_cs.hlsl.
-    struct HistoryCB {
-        float    previousViewProj[16];
-        uint32_t regionCount;
-        uint32_t _pad[3];
-        float    regionLo[16][4];
-        float    regionHi[16][4];
-    };
-    static_assert(sizeof(HistoryCB) == 592, "HistoryCB mirrors ssgi_temporal_accum_cs.hlsl");
     HistoryCB history{};
-    std::memcpy(history.previousViewProj, m_previousViewProj, sizeof(m_previousViewProj));
-    {
-        std::vector<GlobalDistanceField::ChangedRegion> boxes = m_previousRegions;
-        if (params.changedRegions) boxes.insert(boxes.end(), params.changedRegions->begin(), params.changedRegions->end());
-        history.regionCount = static_cast<uint32_t>(std::min<size_t>(boxes.size(), 16));
-        for (uint32_t r = 0; r < history.regionCount; ++r) {
-            history.regionLo[r][0] = boxes[r].lo.x; history.regionLo[r][1] = boxes[r].lo.y; history.regionLo[r][2] = boxes[r].lo.z;
-            history.regionHi[r][0] = boxes[r].hi.x; history.regionHi[r][1] = boxes[r].hi.y; history.regionHi[r][2] = boxes[r].hi.z;
-        }
-        m_previousRegions = params.changedRegions ? *params.changedRegions : std::vector<GlobalDistanceField::ChangedRegion>{};
-    }
+    FillHistoryCB(history, m_previousViewProj, m_previousRegions, params.changedRegions);
+    m_previousRegions = params.changedRegions ? *params.changedRegions : std::vector<GlobalDistanceField::ChangedRegion>{};
     auto historyAllocation = params.cbRing->Allocate(sizeof(HistoryCB));
     UZ_VERIFY(historyAllocation.cpuPtr != nullptr);
     std::memcpy(historyAllocation.cpuPtr, &history, sizeof(HistoryCB));
