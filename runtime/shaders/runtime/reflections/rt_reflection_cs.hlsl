@@ -45,7 +45,14 @@
 /// did not run. The lighting reads the buffer through the same `PerFrameCB::ssrSrvIndex`, so with
 /// SSR off the ladder is ray -> probe / sky. With the flag clear nothing here changes.
 ///
-/// Bindings: root constants at b0 (`uz::RTReflectionRootConstants`, 16 DWORDs), PerFrameCB at b1,
+/// Phase D stage 1 (`kReflectionFlagSurfaceCache`, `r.GI.SurfaceCache`): the surface radiance cache
+/// (gi/surface_cache.hlsli) at the hit. A readable cell replaces the WHOLE hit radiance — its
+/// `sun` + `other` layers (`DirectMode 0`), or the inline sun with the shadow ray plus the cell's
+/// `other` layer (`DirectMode 1`) — so the texel carries the cell's cell-and-time average of the
+/// very estimator below; a miss shades inline exactly as before and feeds the two terms
+/// (`albedo * sunRad / pi`, `albedo * E / pi`) into the cell. With the flag clear nothing changes.
+///
+/// Bindings: root constants at b0 (`uz::RTReflectionRootConstants`, 17 DWORDs), PerFrameCB at b1,
 /// the shared trace constants at b2 (`uz::RadianceCacheTraceConstants`, rows 1-11 as the DDGI
 /// writer and the path tracer bind them; rows 1-2 carry the probe grid + frame index here).
 /// Dispatch ceil(w/8) x ceil(h/8).
@@ -83,6 +90,7 @@ cbuffer RTReflectionRootCB : register(b0) {
     uint  probeShSrv;          // 13 Radiance-cache probe SH buffer (sentinel = no indirect term)
     uint  hitDistUavIdx;       // 14 SSR hit-distance texture (written with kReflectionFlagHitDistance)
     uint  flags;               // 15 kReflectionFlag* bits
+    uint  surfaceCacheParamsSrv; // 16 Phase D: StructuredBuffer<SurfaceCacheParams> (1 element); sentinel = no cache
 };
 
 // ─── PerFrameCB at b1 (the prefix the SSR passes declare; invViewProj + cameraPos are read) ──
@@ -110,6 +118,7 @@ float3 ReconstructWorldPos(float2 uv, float deviceZ) {
 // The helpers below read its grid rows (gridOrigin*, probeSpacing, probesPerAxis, frameIndex). ──
 
 #include "../gi/gi_trace_common.hlsli"
+#include "../gi/surface_cache.hlsli"      // Phase D: SurfaceCacheQuery / SurfaceCacheUpdate at the hit
 
 // ─── Glossy sample seeds: the screen trace's interleaved gradient noise with its temporal
 // rotation (ssr_trace_cs.hlsl), so the ray texels carry the noise pattern the SSR temporal and
@@ -299,11 +308,33 @@ void main(uint3 DTid : SV_DispatchThreadID)
         return;
     }
 
+    // ── Phase D stage 1: the surface radiance cache at the hit ────────────────────────
+    // The cell of the biased hit point (the point the probe term is read at) and the hit normal,
+    // at the level of the CAMERA distance (D3). A readable cell replaces the whole hit radiance
+    // (section 2.5's energy rule); a miss shades inline below and feeds the cell.
+    const bool   cacheBound = (flags & kReflectionFlagSurfaceCache) != 0u
+                           && surfaceCacheParamsSrv != kGITraceSentinelSrv;
+    const float3 cachePos   = hitP + hitN * kReflectionSurfaceBias;
+    SurfaceCacheParams cache = (SurfaceCacheParams)0;
+    float3 cacheSun = 0.0, cacheOther = 0.0;
+    uint   cacheSamples = 0u;
+    bool   cacheHit = false;
+    if (cacheBound) {
+        StructuredBuffer<SurfaceCacheParams> cacheParams = ResourceDescriptorHeap[surfaceCacheParamsSrv];
+        cache    = cacheParams[0];
+        cacheHit = SurfaceCacheQuery(cache, cachePos, hitN, cameraPos.xyz, 0u, cacheSun, cacheOther, cacheSamples);
+    }
+    // One hit in Refresh rays shades inline as a miss does and feeds the cell (the output stays the
+    // cell's), so readable cells keep converging; DirectMode 1 keeps the inline sun (sharp shadows)
+    // and takes only `other` from the cell.
+    const bool cacheRefresh = cacheHit && SurfaceCacheRefresh(DTid.x | (DTid.y << 16), frameIndex, cache.refreshRate);
+    const bool inlineSun = !cacheHit || cacheRefresh || (cache.flags & kSurfaceCacheFlagDirectInline) != 0u;
+
     // ── Direct sun with a shadow ray (the DDGI writer's / path tracer's NEE) ─────────────
     const float3 L   = normalize(float3(lightDirX, lightDirY, lightDirZ));
     const float  NdL = max(dot(hitN, L), 0.0);
     float visibility = 0.0;
-    if (NdL > 0.0) {
+    if (inlineSun && NdL > 0.0) {
         RayDesc shadowRay;
         shadowRay.Origin    = hitP + hitN * kReflectionSurfaceBias;
         shadowRay.Direction = L;
@@ -317,12 +348,27 @@ void main(uint3 DTid : SV_DispatchThreadID)
     }
     const float3 sunRad = float3(lightColorR, lightColorG, lightColorB) * lightIntensity * NdL * visibility;
     float3 radiance = albedo * (sunRad / PI);          // Lambert: the radiance the mirror sees
-    if ((flags & kReflectionFlagIndirect) != 0u) {
+    const float3 sunTerm = radiance;                   // the cell's `sun` layer
+    float3 otherTerm = 0.0;                            // the cell's `other` layer (the probe bounce)
+    if ((!cacheHit || cacheRefresh) && (flags & kReflectionFlagIndirect) != 0u) {
         // The diffuse bounce the reflected surface receives (the radiance cache's E / pi at the
         // hit, read from the biased hit point as the SDF reflections do): the term the path
         // tracer's multi-bounce carries and stage 1 left out.
-        radiance = ReflectionHitRadiance(albedo, sunRad,
-            ReflectionProbeIrradianceOverPi(hitP + hitN * kReflectionSurfaceBias, hitN));
+        const float3 probeIrradianceOverPi = ReflectionProbeIrradianceOverPi(cachePos, hitN);
+        radiance  = ReflectionHitRadiance(albedo, sunRad, probeIrradianceOverPi);
+        otherTerm = albedo * probeIrradianceOverPi;
+    }
+    if (cacheBound && (!cacheHit || cacheRefresh)) {
+        SurfaceCacheUpdate(cache, cachePos, hitN, cameraPos.xyz, 0u, sunTerm, otherTerm,
+                           kSurfaceCacheWriterReflections);
+    }
+    if (cacheHit) {
+        // The cell replaces the hit radiance: both layers, or the inline sun with the cell's other.
+        const bool cellSun = (cache.flags & kSurfaceCacheFlagDirectInline) == 0u;
+        radiance = (cellSun ? cacheSun : sunTerm) + cacheOther;
+    }
+    if (cacheBound && SurfaceCacheDebugMode(cache) != 0u) {
+        radiance = SurfaceCacheDebugColor(cache, cachePos, hitN, cameraPos.xyz, 0u, cacheHit, cacheSamples);
     }
 
     output[DTid.xy] = float4(radiance, weight);

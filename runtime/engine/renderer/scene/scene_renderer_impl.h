@@ -418,6 +418,7 @@
     // ── SDF-based GI (Global Distance Field + Radiance Cache) ──────────────
     GlobalDistanceField m_globalDistanceField;   ///< 4-cascade clipmap GDF.
     RadianceCache       m_radianceCache;         ///< 16^3 world-space probe grid for diffuse GI.
+    SurfaceRadianceCache m_surfaceCache;         ///< Phase D: spatial-hash surface radiance cache (opt-in, r.GI.SurfaceCache).
     bool m_sdfGiEnabled = false;                 ///< Runtime toggle for SDF-based GI.
     float m_giIntensity = 1.0f;                  ///< GI intensity multiplier (default 1.0).
 
@@ -980,6 +981,12 @@
 
     /// Registers SDF-based GI passes (GDF composite + radiance cache trace).
     void RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
+
+    /// Registers the surface radiance cache resolve (Phase D stage 1, `r.GI.SurfaceCache`): right
+    /// after the GDF composite (its change boxes evict cells) and before every GI consumer. With
+    /// the switch off, or without the ray-traced reflections (the only consumer in stage 1),
+    /// nothing is registered and nothing allocated.
+    void RegisterSurfaceCacheResolvePass(rg::RgBuilder& rgBuilder, FrameContext& ctx);
 
     /// (Re)creates + refreshes the per-mesh GI material table (tint + albedo
     /// SRV, indexed by TLAS InstanceID = meshId) read by the reference path

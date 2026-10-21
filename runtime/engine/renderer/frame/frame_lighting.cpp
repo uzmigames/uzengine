@@ -247,6 +247,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
     RegisterGTAOPass(rgBuilder, ctx);
     RegisterDFSPasses(rgBuilder, ctx);
     RegisterSDFGIPasses(rgBuilder, ctx);
+    RegisterSurfaceCacheResolvePass(rgBuilder, ctx);   // Phase D: after the GDF composite, before every GI consumer (r.GI.SurfaceCache)
     RegisterSSGIPasses(rgBuilder, ctx);
     RegisterBrixelizerGIPasses(rgBuilder, ctx);
     RegisterSSRPasses(rgBuilder, ctx);

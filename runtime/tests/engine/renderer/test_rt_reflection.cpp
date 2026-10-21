@@ -138,9 +138,11 @@ TEST(RTReflectionStage2, FlagsAndRoughnessCutoffMatchTheContract) {
     EXPECT_FLOAT_EQ(ReflectionMaxRoughness(0.8f, 0.35f), 0.8f);
 }
 
+// Stage 2 grew the block to 16 DWORDs; Phase D stage 1 appends the surface-cache DWORD (17), the
+// stage 2 fields keep their offsets.
 TEST(RTReflectionStage2, RootConstantsGrowToSixteenDwordsWithinTheBudget) {
-    EXPECT_EQ(sizeof(RTReflectionRootConstants), 64u);
-    EXPECT_EQ(kRTReflectionRootDwords, 16u);
+    EXPECT_EQ(sizeof(RTReflectionRootConstants), 68u);
+    EXPECT_EQ(kRTReflectionRootDwords, 17u);
     EXPECT_LE(kRTReflectionRootDwords, 20u);
     EXPECT_EQ(offsetof(RTReflectionRootConstants, probeShSrv), 52u);
     EXPECT_EQ(offsetof(RTReflectionRootConstants, hitDistUavIdx), 56u);
@@ -385,8 +387,19 @@ TEST(RTReflectionStage3, NoScreenTraceFlagMatchesTheContractAndOverlapsNoOtherBi
     const RTReflectionRootConstants rc{};
     EXPECT_FALSE(ReflectionOwnsOutput(rc.flags));
     EXPECT_EQ(rc.ssrTraceSrvIdx, UINT32_MAX);
-    EXPECT_EQ(sizeof(RTReflectionRootConstants), 64u);
-    EXPECT_EQ(kRTReflectionRootDwords, 16u);
+    // Phase D stage 1: the surface-cache bit matches the contract, overlaps no other bit, and a
+    // default root block binds no cache (DWORD 16 at the sentinel, the flag clear).
+    EXPECT_EQ(kRTReflectionFlagSurfaceCache, kReflectionFlagSurfaceCache);
+    EXPECT_EQ(kReflectionFlagSurfaceCache
+                  & (kReflectionFlagGlossy | kReflectionFlagIndirect | kReflectionFlagHitDistance
+                     | kReflectionFlagNoScreenTrace), 0u);
+    EXPECT_EQ(rc.surfaceCacheParamsSrv, UINT32_MAX);
+    EXPECT_EQ(rc.flags & kReflectionFlagSurfaceCache, 0u);
+    EXPECT_FALSE(ReflectionOwnsOutput(kReflectionFlagSurfaceCache));
+    EXPECT_TRUE(ReflectionOwnsOutput(kReflectionFlagNoScreenTrace | kReflectionFlagSurfaceCache));
+    EXPECT_EQ(offsetof(RTReflectionRootConstants, surfaceCacheParamsSrv), 64u);
+    EXPECT_EQ(sizeof(RTReflectionRootConstants), 68u);
+    EXPECT_EQ(kRTReflectionRootDwords, 17u);
     EXPECT_LE(kRTReflectionRootDwords, 20u);
 }
 

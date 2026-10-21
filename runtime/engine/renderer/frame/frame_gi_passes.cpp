@@ -81,6 +81,7 @@ static const uz::CVar* RayTracingGICVar() {
     return cvar;
 }
 
+#include <algorithm>
 #include <cstring>
 
 static auto* cv_RCFreezeAfter = UZ_CVAR_INT("r.GI.RadianceCache.FreezeAfterFrame", -1,
@@ -872,6 +873,77 @@ bool SceneRenderer::RTReflectionsStandalone() const {
         == RTReflectionRoute::RaysOnly;
 }
 
+// ── Surface radiance cache resolve (Phase D stage 1, r.GI.SurfaceCache) ────────────────────
+// Registered right after the GDF composite (RegisterSDFGIPasses) and before every GI consumer;
+// in stage 1 the only consumer is the ray-traced reflection pass, so without it nothing is
+// registered and nothing allocated. The cache buffers are not graph resources: the cache
+// transitions them through m_rgStates like the SSR textures, and registration order is the
+// execution order (the pass has no graph accesses, as the GDF composite).
+
+// FNV-1a of the frame's GI-occluder instances (mesh + transform): the TLAS content the cells were
+// filled against. A change with no distance-field change box clears the cache (spec 2.6).
+static uint64_t SurfaceCacheGeometryHash(const FrameContext& ctx) {
+    uint64_t hash = 14695981039346656037ull;
+    for (const auto& draw : ctx.drawList.GetCommands()) {
+        if (!IsGIOccluder(draw)) continue;
+        hash = SurfaceCacheHashBytes(&draw.meshId, sizeof(draw.meshId), hash);
+        hash = SurfaceCacheHashBytes(&draw.worldMatrix, sizeof(draw.worldMatrix), hash);
+    }
+    return hash;
+}
+
+// FNV-1a of the frame's lights: the sun and skylight of the PerFrameCB and the point / spot / rect
+// lights of the frame. The cells hold lit radiance, so a lighting change clears them (stages 1-3).
+static uint64_t SurfaceCacheLightingHash(const FrameContext& ctx, const PerFrameCB& perFrame) {
+    uint64_t hash = 14695981039346656037ull;
+    hash = SurfaceCacheHashBytes(&perFrame.lightDir, sizeof(perFrame.lightDir), hash);
+    hash = SurfaceCacheHashBytes(&perFrame.lightColor, sizeof(perFrame.lightColor), hash);
+    const float sky[4] = {perFrame.skyLightColorR, perFrame.skyLightColorG, perFrame.skyLightColorB, perFrame.skyLightIntensity};
+    hash = SurfaceCacheHashBytes(sky, sizeof(sky), hash);
+    if (const auto* lighting = static_cast<const LightingCB*>(ctx.lightingAlloc.cpuPtr)) {
+        const uint32_t points = std::min(lighting->pointLightCount, kMaxPointLights);
+        const uint32_t spots  = std::min(lighting->spotLightCount, kMaxSpotLights);
+        hash = SurfaceCacheHashBytes(&points, sizeof(points), hash);
+        hash = SurfaceCacheHashBytes(lighting->pointLights, points * sizeof(PointLightData), hash);
+        hash = SurfaceCacheHashBytes(&spots, sizeof(spots), hash);
+        hash = SurfaceCacheHashBytes(lighting->spotLights, spots * sizeof(SpotLightData), hash);
+    }
+    const uint32_t rects = std::min(ctx.lightData.rectLightCount, kMaxRectLights);
+    hash = SurfaceCacheHashBytes(&rects, sizeof(rects), hash);
+    hash = SurfaceCacheHashBytes(ctx.lightData.rectLights, rects * sizeof(RectLightData), hash);
+    return hash;
+}
+
+void SceneRenderer::RegisterSurfaceCacheResolvePass(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
+    if (!SurfaceRadianceCache::Enabled() || !m_device || !m_device->IsBindless() || !RTReflectionRaysAvailable()) return;
+    // The SDF GI gate of RegisterSDFGIPasses: only then do this frame's change boxes and revision
+    // belong to a composite that ran; otherwise the geometry hash stands in.
+    const bool gdfActive = m_sdfGiEnabled
+                        && m_globalDistanceField.IsInitialized()
+                        && m_radianceCache.IsInitialized()
+                        && m_device->IsBindless()
+                        && m_passInspector.IsPassEnabled("sdf_gi");
+
+    rgBuilder.AddPass("SurfaceCache_Resolve", [&, gdfActive](rg::RgPassBuilder& pb) {
+        pb.SetExecutionCallback([this, &ctx, gdfActive](IRHICommandList* cmd, const rg::RgPassResources&) {
+            UZ_PROFILE_SCOPE("SurfaceCache::Resolve");
+            // The PerFrameCB is populated by execution time, not at registration (the path tracer's rule).
+            const auto* perFrame = static_cast<const PerFrameCB*>(ctx.perFrameAlloc.cpuPtr);
+            if (perFrame == nullptr) return;
+            SurfaceRadianceCache::FrameInputs in{};
+            in.device         = m_device;
+            in.cbRing         = m_cbRing.get();
+            in.pipelines      = ctx.pipelines;
+            in.frameIndex     = ctx.frameIndex;
+            in.changedRegions = gdfActive ? &m_globalDistanceField.GetChangedRegions() : nullptr;
+            in.sceneRevision  = gdfActive ? m_globalDistanceField.GetSceneRevision() : 0ull;
+            in.geometryHash   = SurfaceCacheGeometryHash(ctx);
+            in.lightingHash   = SurfaceCacheLightingHash(ctx, *perFrame);
+            m_surfaceCache.Resolve(cmd, in);
+        });
+    });
+}
+
 void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameContext& ctx, bool beforeDenoise) {
     // The fallback (no DXR, switch off, empty TLAS): nothing registered, the frame without the pass.
     if (!RTReflectionRaysAvailable()) return;
@@ -977,6 +1049,14 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
                                   | (indirect ? kRTReflectionFlagIndirect : 0u)
                                   | (denoiseRoute ? kRTReflectionFlagHitDistance : 0u)
                                   | (ownsOutput ? kRTReflectionFlagNoScreenTrace : 0u);
+            // Phase D stage 1: the surface radiance cache, bound only when its resolve ran this
+            // frame (r.GI.SurfaceCache on, table created); its buffers stay in the UAV / SRV states
+            // the resolve left them in, ordered by the barriers PrepareConsumer emits.
+            rc.surfaceCacheParamsSrv = m_surfaceCache.GetParamsSrv(ctx.frameIndex);
+            if (rc.surfaceCacheParamsSrv != UINT32_MAX) {
+                m_surfaceCache.PrepareConsumer(cmd);
+                rc.flags |= kRTReflectionFlagSurfaceCache;
+            }
 
             cmd->SetRootConstants(kSlotRootConstants, reinterpret_cast<const uint32_t*>(&rc),
                                   kRTReflectionRootDwords);

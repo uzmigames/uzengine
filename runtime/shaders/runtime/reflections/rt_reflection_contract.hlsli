@@ -33,6 +33,9 @@ static const uint kReflectionFlagIndirect    = 2u;   // r.RayTracing.Reflections
 static const uint kReflectionFlagHitDistance = 4u;   // r.RayTracing.Reflections.Denoise: write the ray t
 // Stage 3: no screen trace this frame (SSR off, or r.SSR.Trace 0) — the pass owns the buffer.
 static const uint kReflectionFlagNoScreenTrace = 8u;
+// Phase D stage 1: the surface radiance cache is bound (`surfaceCacheParamsSrv`, DWORD 16) — a
+// readable cell replaces the whole hit radiance, a miss shades inline and updates the cell.
+static const uint kReflectionFlagSurfaceCache = 16u;
 
 // Below this roughness the lobe is a mirror: the screen trace's MIRROR_THRESHOLD
 // (ssr_trace_cs.hlsl) and the cutoff below which the SSR spatial denoise passes texels through.

@@ -45,7 +45,8 @@ struct RTReflectionRootConstants {
     uint32_t skyCubemapSrv      = UINT32_MAX;  ///< [12] Sky cubemap for escaping rays (sentinel = flat skylight).
     uint32_t probeShSrv         = UINT32_MAX;  ///< [13] Radiance-cache probe SH buffer (sentinel = no indirect term).
     uint32_t hitDistUavIdx      = UINT32_MAX;  ///< [14] SSR hit-distance UAV (written on the denoise route).
-    uint32_t flags              = 0;           ///< [15] rtreflection::kReflectionFlag* bits (glossy, indirect, hit distance, no screen trace).
+    uint32_t flags              = 0;           ///< [15] rtreflection::kReflectionFlag* bits (glossy, indirect, hit distance, no screen trace, surface cache).
+    uint32_t surfaceCacheParamsSrv = UINT32_MAX; ///< [16] Phase D stage 1: StructuredBuffer<SurfaceCacheParams> (1 element) SRV; sentinel = no cache.
 };
 
 /// `RTReflectionRootConstants::flags` bits — the shader contract's `rtreflection::kReflectionFlag*`
@@ -57,6 +58,9 @@ enum : uint32_t {
     /// Stage 3: no screen trace this frame (SSR off, or r.SSR.Trace 0) — every eligible texel is
     /// traced and the pass writes every texel of the buffer (zero weight where it does not trace).
     kRTReflectionFlagNoScreenTrace = 8u,
+    /// Phase D stage 1: the surface radiance cache is bound (`surfaceCacheParamsSrv`): a readable
+    /// cell replaces the whole hit radiance, a miss shades inline and updates the cell.
+    kRTReflectionFlagSurfaceCache = 16u,
 };
 
 /// The ray-traced roughness cutoff: `r.RayTracing.Reflections.MaxRoughness` when set, else the
@@ -89,7 +93,7 @@ enum class RTReflectionRoute : uint8_t {
 
 /// DWORDs bound at `kSlotRootConstants`; the engine's bindless root-constant budget is 20.
 static constexpr uint32_t kRTReflectionRootDwords = sizeof(RTReflectionRootConstants) / sizeof(uint32_t);
-static_assert(sizeof(RTReflectionRootConstants) == 64, "RTReflectionRootConstants is 16 DWORDs");
+static_assert(sizeof(RTReflectionRootConstants) == 68, "RTReflectionRootConstants is 17 DWORDs");
 static_assert(kRTReflectionRootDwords <= 20, "bindless root constants are limited to 20 DWORDs");
 
 /// Writes clipmap `index` (0..3) of the shared trace constants; an index beyond the four rows is

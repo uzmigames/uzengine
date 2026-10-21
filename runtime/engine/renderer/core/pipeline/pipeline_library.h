@@ -730,6 +730,12 @@ public:
     /// DDGI writer does. Created on first use only when `r.RayTracing.Reflections` is on.
     [[nodiscard]] RHIPipelineHandle GetRtReflection();
 
+    /// Returns the surface radiance cache resolve compute pipeline (`surface_cache_resolve_cs.hlsl`,
+    /// Phase D stage 1): one thread per hash entry folding the frame's accumulators into the
+    /// per-frame EMA, ageing / evicting cells, or clearing the table. Created on first use only
+    /// when `r.GI.SurfaceCache` is on.
+    [[nodiscard]] RHIPipelineHandle GetSurfaceCacheResolve();
+
     /// Returns the radiance cache probe side classifier (`probe_side_cs.hlsl`, followup-01
     /// candidate `r.GI.RadianceCache.ProbeClassification` = 1): for every probe, the nearest mesh
     /// triangle over the scene's instances — the side the probe lies on and the direction from the

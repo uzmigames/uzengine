@@ -301,6 +301,9 @@ TIER_A += [
     layout_entry('ssgi/ssgi_restir_gi.hlsli', 'SSGIRestirHistory', 'runtime/engine/renderer/gi/ssgi_renderer.cpp', 'HistoryCB',
                  aliases={'g_previousViewProj': 'previousViewProj', 'g_regionCount': 'regionCount', '_regionPad': '_pad',
                           'g_regionLo': 'regionLo', 'g_regionHi': 'regionHi'}),
+    # Surface radiance cache resolve (Phase D stage 1): the change boxes at b2, the HistoryCB region rows.
+    layout_entry('gi/surface_cache_resolve_cs.hlsl', 'SurfaceCacheResolveRegionsCB',
+                 'runtime/engine/renderer/gi/surface_radiance_cache.h'),
     *[layout_entry(shader, 'TraceConstants', 'runtime/engine/renderer/gi/radiance_cache.h',
                    'RadianceCacheTraceConstants',
                    {'_shBufferUav': 'shBufferUav', '_firstWrite': 'firstWrite',
@@ -396,6 +399,9 @@ TIER_B = [
           ('spatial_denoise', 'SsrDenoiseRootCB', 'SsrDenoiseConstants'))],
     layout_entry('reflections/rt_reflection_cs.hlsl', 'RTReflectionRootCB',
                  PASSES + 'raytracing/rt_reflection_pass.h', 'RTReflectionRootConstants'),
+    # Surface radiance cache resolve root block (Phase D stage 1): 12 DWORDs of the compute root's 20.
+    layout_entry('gi/surface_cache_resolve_cs.hlsl', 'SurfaceCacheResolveRootCB',
+                 'runtime/engine/renderer/gi/surface_radiance_cache.h', 'SurfaceCacheResolveRootConstants'),
     # Screen-space ReSTIR GI root block (phase C, r.GI.ReSTIR): 16 DWORDs of the compute root's 24.
     layout_entry('ssgi/ssgi_restir_gi.hlsli', 'SSGIRestirRoot',
                  'runtime/engine/renderer/gi/ssgi_renderer.h', 'SSGIRestirRootConstants'),
@@ -447,6 +453,10 @@ TIER_C = [
     # ssgi_restir_* passes (initial candidates + temporal ping-pong), octahedral 2x16 normals.
     layout_entry('ssgi/ssgi_restir_gi.hlsli', 'SSGIReservoir',
                  'runtime/engine/renderer/gi/ssgi_renderer.h', 'SSGIRestirReservoir'),
+    # 64-byte surface radiance cache binding record (Phase D stage 1): the one-element
+    # StructuredBuffer every consumer reads through its root DWORD (RTReflectionRootConstants[16]).
+    layout_entry('gi/surface_cache_contract.hlsli', 'SurfaceCacheParams',
+                 'runtime/engine/renderer/gi/surface_radiance_cache.h', 'SurfaceCacheParamsGPU'),
 ]
 
 # These are not successful reflection contracts. Keep explicit exclusions visible

@@ -181,6 +181,7 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     }
     m_ddgiSystem.SetStateRegistry(m_rgStates.get());
     m_radianceCache.SetStateRegistry(m_rgStates.get());
+    m_surfaceCache.SetStateRegistry(m_rgStates.get());
 
     // ── Camera ──────────────────────────────────────────────────────────
     m_cameraManager = std::make_unique<CameraManager>();
@@ -1615,6 +1616,7 @@ void SceneRenderer::Shutdown() {
     m_ssgiRenderer.DestroyResources();
 
     // ── SDF GI cleanup ───────────────────────────────────────────────
+    m_surfaceCache.DestroyResources();
     m_radianceCache.DestroyResources();
     m_globalDistanceField.DestroyResources();
 

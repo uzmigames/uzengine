@@ -859,6 +859,68 @@ RHIPipelineHandle PipelineLibrary::GetRtReflection() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Surface Radiance Cache Resolve Compute Pipeline (Phase D stage 1, opt-in)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// `surface_cache_resolve_cs.hlsl`: one thread per hash entry, folds the frame's fixed-point
+// accumulators into the per-frame EMA of the resolved record, ages and evicts cells (stale, or
+// inside a distance-field change box), or clears the table. Created lazily by the resolve pass, so
+// with `r.GI.SurfaceCache` off the shader is never compiled.
+
+bool PipelineLibrary::EnsureSurfaceCacheResolveShader() {
+    if (m_surfaceCacheResolveCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::SurfaceCacheResolveCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile SurfaceCacheResolveCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "surface_cache_resolve_cs";
+
+    m_surfaceCacheResolveCS = m_device->CreateShader(shaderDesc);
+    if (!m_surfaceCacheResolveCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SurfaceCacheResolveCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetSurfaceCacheResolve() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetSurfaceCacheResolve called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_surfaceCacheResolve.IsValid()) {
+        return m_surfaceCacheResolve;
+    }
+
+    if (!EnsureSurfaceCacheResolveShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_surfaceCacheResolveCS;
+    desc.debugName     = "SurfaceCache_Resolve";
+
+    m_surfaceCacheResolve = m_device->CreateComputePipeline(desc);
+    if (!m_surfaceCacheResolve.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SurfaceCache_Resolve pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created SurfaceCache_Resolve pipeline");
+    }
+    return m_surfaceCacheResolve;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Radiance Cache Probe Side Compute Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 //

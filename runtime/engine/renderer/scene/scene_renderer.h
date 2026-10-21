@@ -56,6 +56,7 @@
 #include "gi/ssgi_renderer.h"
 #include "gi/global_distance_field.h"
 #include "gi/radiance_cache.h"
+#include "gi/surface_radiance_cache.h"
 #include "gi/irradiance_probe_grid.h"
 #include "gi/ddgi_system.h"
 #include "engine/vfx/lighting/vfx_ddgi_emissive_feed.h"
