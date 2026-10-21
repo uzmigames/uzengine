@@ -1,0 +1,37 @@
+{
+  "name": "Surface cache stage 2: local light + emissive at the reflected off-screen hit (raster rect light vs path-traced emissive fixture)",
+  "version": "1.0",
+  "content_root": "../..",
+  "default_scene": "scripts/rendering/surface-cache-locallight.uzscene",
+  "window": {
+    "width": 640,
+    "height": 360
+  },
+  "cvars": {
+    "r.AutoExposure": 0,
+    "r.Exposure": 1,
+    "r.TonemapOperator": 0,
+    "r.Bloom": 0,
+    "r.TAA": 0,
+    "r.Fog": 0,
+    "r.VolumetricFog": 0,
+    "r.TechPanel.Show": 0,
+    "r.Toolbar.Show": 0,
+    "r.GTAO": 0,
+    "r.SSGI": 0,
+    "r.RadianceCache": 1,
+    "r.GI.RadianceCache.GridExtent": 2000,
+    "r.GI.FinalGather": 0,
+    "r.GI.Reflections": 0,
+    "r.SSR": 0,
+    "r.RayTracing": 1,
+    "r.RayTracing.Reflections": 1,
+    "r.RayTracing.Reflections.MaxRoughness": 1.0,
+    "r.RayTracing.Reflections.Glossy": 1,
+    "r.RayTracing.Reflections.Indirect": 1,
+    "r.RayTracing.Reflections.Denoise": 0,
+    "r.LightBVH": 1,
+    "r.PathTracer.MaxBounces": 4,
+    "r.PathTracer.NEESamples": 4
+  }
+}

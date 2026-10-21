@@ -15,12 +15,14 @@
 
 #include "pipeline_library.h"
 #include "cb_ring_allocator.h"
+#include "constant_buffers.h"     // LightingCB / RectLightData (the stage 2 light records)
 #include "root_slots.h"
 #include "log.h"
 #include "rhi.h"
 #include "cvar.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 UZ_DECLARE_LOG_CATEGORY(Renderer);
@@ -59,6 +61,13 @@ static auto* cv_SCStats = UZ_CVAR_BOOL("r.GI.SurfaceCache.Stats", false,
 static auto* cv_SCDebug = UZ_CVAR_INT("r.GI.SurfaceCache.Debug", 0,
     "Surface cache debug view written into the reflection buffer by the RT pass: 1 = cell hash colour, "
     "2 = sample-count heat, 3 = hit mask (green readable, yellow below MinSamples, red no cell)", 0, 3);
+// Stage 2 (lighting completeness at the hit).
+static auto* cv_SCLocalLights = UZ_CVAR_INT("r.GI.SurfaceCache.LocalLights", 4,
+    "Surface cache (stage 2): the K strongest point / spot / rect lights of the frame at a shaded hit (by their "
+    "unshadowed Lambert radiance), each with a shadow ray, added to the cell's sun layer (0 = none)", 0, 16);
+static auto* cv_SCEmissive = UZ_CVAR_BOOL("r.GI.SurfaceCache.Emissive", true,
+    "Surface cache (stage 2): the hit mesh's emission (the GI material table's emissive colour x intensity and "
+    "texture) joins the cell's other layer");
 
 namespace uz {
 
@@ -96,6 +105,70 @@ SurfaceCacheInvalidation SurfaceCacheDecideInvalidation(bool sceneRevisionChange
 
 bool SurfaceRadianceCache::Enabled() { return cv_SurfaceCache->value != 0.0f; }
 bool SurfaceRadianceCache::StatsEnabled() { return cv_SCStats->value != 0.0f; }
+uint32_t SurfaceRadianceCache::LocalLights() {
+    return static_cast<uint32_t>(std::clamp(static_cast<int>(cv_SCLocalLights->value), 0,
+                                            static_cast<int>(surfacecache::kSurfaceCacheMaxLocalLights)));
+}
+bool SurfaceRadianceCache::EmissiveEnabled() { return cv_SCEmissive->value != 0.0f; }
+
+uint32_t SurfaceCacheBuildLights(SurfaceCacheLightGPU* out, uint32_t capacity, const LightingCB* lighting,
+                                 const RectLightData* rectLights, uint32_t rectLightCount) noexcept {
+    if (!out || capacity == 0) return 0;
+    uint32_t n = 0;
+    const auto positive = [](float r, float g, float b) { return r > 0.0f || g > 0.0f || b > 0.0f; };
+    // Rect lights first: few, and usually the strongest at any hit.
+    const uint32_t rects = rectLights ? std::min(rectLightCount, kMaxRectLights) : 0u;
+    for (uint32_t i = 0; i < rects && n < capacity; ++i) {
+        const RectLightData& r = rectLights[i];
+        if (r.diffuseScale <= 0.0f || r.range <= 0.0f || r.halfWidth <= 0.0f || r.halfHeight <= 0.0f
+            || !positive(r.color.x, r.color.y, r.color.z)) continue;
+        const Vec3 normal = r.right.Cross(r.up);
+        const float len = normal.Length();
+        if (!(len > 1e-8f)) continue;
+        const Vec3 direction = normal * (1.0f / len);
+        SurfaceCacheLightGPU& l = out[n++];
+        l = SurfaceCacheLightGPU{};
+        l.positionX = r.position.x; l.positionY = r.position.y; l.positionZ = r.position.z;
+        l.radius = r.range;
+        l.colorR = r.color.x * r.diffuseScale; l.colorG = r.color.y * r.diffuseScale; l.colorB = r.color.z * r.diffuseScale;
+        l.type = surfacecache::kSurfaceCacheLightTypeRect
+               | ((r.flags & kRectLightFlag_TwoSided) ? surfacecache::kSurfaceCacheLightTwoSided : 0u);
+        l.directionX = direction.x; l.directionY = direction.y; l.directionZ = direction.z;
+        l.rightX = r.right.x * r.halfWidth; l.rightY = r.right.y * r.halfWidth; l.rightZ = r.right.z * r.halfWidth;
+        l.upX = r.up.x * r.halfHeight; l.upY = r.up.y * r.halfHeight; l.upZ = r.up.z * r.halfHeight;
+    }
+    if (!lighting) return n;
+    const uint32_t points = std::min(lighting->pointLightCount, kMaxPointLights);
+    for (uint32_t i = 0; i < points && n < capacity; ++i) {
+        const PointLightData& p = lighting->pointLights[i];
+        if (p.diffuseScale <= 0.0f || p.radius <= 0.0f || !positive(p.color.x, p.color.y, p.color.z)) continue;
+        SurfaceCacheLightGPU& l = out[n++];
+        l = SurfaceCacheLightGPU{};
+        l.positionX = p.position.x; l.positionY = p.position.y; l.positionZ = p.position.z;
+        l.radius = p.radius;
+        l.colorR = p.color.x * p.diffuseScale; l.colorG = p.color.y * p.diffuseScale; l.colorB = p.color.z * p.diffuseScale;
+        l.type = surfacecache::kSurfaceCacheLightTypePoint
+               | ((p.flags & kLightFlag_InverseSquared) ? surfacecache::kSurfaceCacheLightInverseSquared : 0u);
+        l.falloffExponent = p.falloffExponent;
+    }
+    const uint32_t spots = std::min(lighting->spotLightCount, kMaxSpotLights);
+    for (uint32_t i = 0; i < spots && n < capacity; ++i) {
+        const SpotLightData& s = lighting->spotLights[i];
+        if (s.diffuseScale <= 0.0f || s.radius <= 0.0f || !positive(s.color.x, s.color.y, s.color.z)) continue;
+        SurfaceCacheLightGPU& l = out[n++];
+        l = SurfaceCacheLightGPU{};
+        l.positionX = s.position.x; l.positionY = s.position.y; l.positionZ = s.position.z;
+        l.radius = s.radius;
+        l.colorR = s.color.x * s.diffuseScale; l.colorG = s.color.y * s.diffuseScale; l.colorB = s.color.z * s.diffuseScale;
+        l.type = surfacecache::kSurfaceCacheLightTypeSpot
+               | ((s.flags & kLightFlag_InverseSquared) ? surfacecache::kSurfaceCacheLightInverseSquared : 0u);
+        l.directionX = s.direction.x; l.directionY = s.direction.y; l.directionZ = s.direction.z;
+        l.cosOuterAngle = s.cosOuterAngle;
+        l.invCosConeDifference = s.invCosConeDifference;
+        l.falloffExponent = s.falloffExponent;
+    }
+    return n;
+}
 
 SurfaceRadianceCache::~SurfaceRadianceCache() {
     DestroyResources();
@@ -110,13 +183,15 @@ void SurfaceRadianceCache::DestroyResources() {
         for (uint32_t i = 0; i < kParamsRingFrames; ++i) {
             if (m_params[i].IsValid()) m_device->DestroyBuffer(m_params[i]);
             m_params[i] = {};
+            if (m_lights[i].IsValid()) m_device->DestroyBuffer(m_lights[i]);
+            m_lights[i] = {};
         }
         for (uint32_t i = 0; i < kReadbackRingFrames; ++i) {
             if (m_readback[i].IsValid()) m_device->DestroyBuffer(m_readback[i]);
             m_readback[i] = {};
         }
     }
-    for (uint32_t i = 0; i < kParamsRingFrames; ++i) m_paramsSrv[i] = UINT32_MAX;
+    for (uint32_t i = 0; i < kParamsRingFrames; ++i) { m_paramsSrv[i] = UINT32_MAX; m_lightsSrv[i] = UINT32_MAX; }
     for (uint32_t i = 0; i < kReadbackRingFrames; ++i) m_readbackFrame[i] = UINT32_MAX;
     m_device = nullptr;
     m_keysUav = m_accumUav = m_resolvedUav = m_resolvedSrv = m_statsUav = UINT32_MAX;
@@ -164,12 +239,25 @@ bool SurfaceRadianceCache::EnsureResources(IRHIDevice* device) {
     readbackDesc.sizeBytes = kStatsBytes;
     readbackDesc.memory    = RHIMemoryType::Readback;
     readbackDesc.debugName = "SurfaceCache_StatsReadback";
+    // Stage 2: the frame's light records, ringed like the params (an upload-heap structured buffer).
+    RHIBufferDesc lightsDesc{};
+    lightsDesc.sizeBytes = uint64_t(surfacecache::kSurfaceCacheMaxLights) * sizeof(SurfaceCacheLightGPU);
+    lightsDesc.stride    = sizeof(SurfaceCacheLightGPU);
+    lightsDesc.usage     = RHIBufferUsage::StructuredBuffer;
+    lightsDesc.memory    = RHIMemoryType::Upload;
+    lightsDesc.debugName = "SurfaceCache_Lights";
     bool ok = m_keys.IsValid() && m_accum.IsValid() && m_resolved.IsValid() && m_stats.IsValid();
     for (uint32_t i = 0; i < kParamsRingFrames && ok; ++i) {
         m_params[i] = device->CreateBuffer(paramsDesc);
         ok = m_params[i].IsValid();
         if (ok) m_paramsSrv[i] = device->GetBufferSRVIndex(m_params[i]);
         ok = ok && m_paramsSrv[i] != UINT32_MAX;
+        if (ok) {
+            m_lights[i] = device->CreateBuffer(lightsDesc);
+            ok = m_lights[i].IsValid();
+            if (ok) m_lightsSrv[i] = device->GetBufferSRVIndex(m_lights[i]);
+            ok = ok && m_lightsSrv[i] != UINT32_MAX;
+        }
     }
     for (uint32_t i = 0; i < kReadbackRingFrames && ok; ++i) {
         m_readback[i] = device->CreateBuffer(readbackDesc);
@@ -248,11 +336,11 @@ void SurfaceRadianceCache::ReadStats(uint32_t frameIndex) {
                     ? 100.0 * double(m_lastStats.totalFailedInserts) / double(m_lastStats.totalInserts + m_lastStats.totalFailedInserts) : 0.0;
                 const double avgProbe = m_lastStats.updates + m_lastStats.failedInserts + m_lastStats.torn > 0
                     ? double(m_lastStats.probeSum) / double(m_lastStats.updates + m_lastStats.failedInserts + m_lastStats.torn) : 0.0;
-                UZ_LOG(Renderer, Info, "SurfaceCache stats: frame={} live={} tombstones={} inserts={} failedInserts={} ({:.3f} %) torn={} updates={} queries={} hits={} evictions={} maxProbe={} avgProbe={:.2f} totalInserts={} totalFailedInserts={} ({:.3f} %) entries=2^{} generation={}",
+                UZ_LOG(Renderer, Info, "SurfaceCache stats: frame={} live={} tombstones={} inserts={} failedInserts={} ({:.3f} %) torn={} updates={} queries={} hits={} evictions={} maxProbe={} avgProbe={:.2f} totalInserts={} totalFailedInserts={} ({:.3f} %) entries=2^{} generation={} lights={} K={}",
                        statsFrame, m_lastStats.live, m_lastStats.tombstones, m_lastStats.inserts, m_lastStats.failedInserts, failedPct,
                        m_lastStats.torn, m_lastStats.updates, m_lastStats.queries, m_lastStats.hits, m_lastStats.evictions,
                        m_lastStats.maxProbe, avgProbe, m_lastStats.totalInserts, m_lastStats.totalFailedInserts, totalPct,
-                       m_entriesLog2, m_generation);
+                       m_entriesLog2, m_generation, m_lastLightCount, m_lastLocalLights);
             }
         }
         m_readbackFrame[slot] = UINT32_MAX;
@@ -320,6 +408,23 @@ bool SurfaceRadianceCache::Resolve(IRHICommandList* cmd, const FrameInputs& in) 
     params.statsUav    = stats ? m_statsUav : UINT32_MAX;
     params.generation  = m_generation;
     params.refreshRate = static_cast<uint32_t>(std::clamp(static_cast<int>(cv_SCRefresh->value), 0, 1024));
+    // Stage 2: the frame's light records (rebuilt every frame while the cache is on: the records are
+    // small and the LightingCB is already hashed here) and the hit's emission.
+    const uint32_t localLights = LocalLights();
+    uint32_t lightCount = 0;
+    if (localLights > 0u) {
+        if (auto* records = static_cast<SurfaceCacheLightGPU*>(in.device->MapBuffer(m_lights[slot]))) {
+            lightCount = SurfaceCacheBuildLights(records, surfacecache::kSurfaceCacheMaxLights, in.lighting,
+                                                 in.rectLights, in.rectLightCount);
+            in.device->UnmapBuffer(m_lights[slot]);
+        }
+    }
+    params.lightsSrv   = lightCount > 0u ? m_lightsSrv[slot] : UINT32_MAX;
+    params.lightCount  = lightCount;
+    params.localLights = lightCount > 0u ? localLights : 0u;
+    m_lastLightCount   = lightCount;
+    m_lastLocalLights  = params.localLights;
+    if (EmissiveEnabled()) params.flags |= surfacecache::kSurfaceCacheFlagEmissive;
     if (void* mapped = in.device->MapBuffer(m_params[slot])) {
         std::memcpy(mapped, &params, sizeof(params));
         in.device->UnmapBuffer(m_params[slot]);

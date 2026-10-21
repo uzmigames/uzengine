@@ -453,10 +453,14 @@ TIER_C = [
     # ssgi_restir_* passes (initial candidates + temporal ping-pong), octahedral 2x16 normals.
     layout_entry('ssgi/ssgi_restir_gi.hlsli', 'SSGIReservoir',
                  'runtime/engine/renderer/gi/ssgi_renderer.h', 'SSGIRestirReservoir'),
-    # 64-byte surface radiance cache binding record (Phase D stage 1): the one-element
-    # StructuredBuffer every consumer reads through its root DWORD (RTReflectionRootConstants[16]).
+    # 80-byte surface radiance cache binding record (Phase D stage 1, the lights row of stage 2): the
+    # one-element StructuredBuffer every consumer reads through its root DWORD (RTReflectionRootConstants[16]).
     layout_entry('gi/surface_cache_contract.hlsli', 'SurfaceCacheParams',
                  'runtime/engine/renderer/gi/surface_radiance_cache.h', 'SurfaceCacheParamsGPU'),
+    # 80-byte local light record (Phase D stage 2): the per-frame StructuredBuffer the cell lighting
+    # scans (SurfaceCacheParams::lightsSrv), built by SurfaceCacheBuildLights.
+    layout_entry('gi/surface_cache_contract.hlsli', 'SurfaceCacheLight',
+                 'runtime/engine/renderer/gi/surface_radiance_cache.h', 'SurfaceCacheLightGPU'),
 ]
 
 # These are not successful reflection contracts. Keep explicit exclusions visible

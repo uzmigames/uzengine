@@ -3,20 +3,27 @@
 // on the CPU — the level / cell-size rule at its boundaries, the key round trip and the
 // never-(0,0) guarantee, the normal index for the six axes and ties, the sample packing and the
 // frame-cap arithmetic, the record metadata, the EMA, the jitter determinism — plus the binding
-// contracts (the 64-byte params record, the resolve root block, the reflection pass's DWORD 16 and
-// flag bit) and the CPU invalidation policy.
+// contracts (the params record, the resolve root block, the reflection pass's DWORD 16 and flag
+// bit) and the CPU invalidation policy. Stage 2 (acceptance B1-B4): the local-light scalars the
+// cell lighting shares with the deferred lighting (attenuation, spot cone, rect window, the
+// relevance luminance), the 80-byte light record and its CPU builder, the emissive extension of
+// the GI material table and the stage 2 CVar defaults.
 // (The reflection contract header defines non-inline functions and is owned by
 // test_rt_reflection.cpp, which pins the C++ flag enum against it, the new bit included.)
 #include "../../../shaders/runtime/gi/surface_cache_contract.hlsli"
 #include "gi/surface_radiance_cache.h"
 #include "passes/raytracing/rt_reflection_pass.h"
+#include "passes/pathtracing/path_tracer_pass.h"
+#include "constant_buffers.h"
 #include "core/cvar.h"
 
 #include <gtest/gtest.h>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <set>
+#include <vector>
 
 using namespace uz;
 using namespace uz::surfacecache;
@@ -224,8 +231,9 @@ TEST(SurfaceCacheContract, EmaIsTheRunningMeanThenAnExponentialAverage) {
 // ─── Binding contracts ──────────────────────────────────────────────────────────────────────
 
 TEST(SurfaceCacheContract, ParamsRecordMirrorsTheShaderStruct) {
-    EXPECT_EQ(sizeof(SurfaceCacheParams), 64u);
-    EXPECT_EQ(sizeof(SurfaceCacheParamsGPU), 64u);
+    // 80 bytes since stage 2 (the lights row); the first four rows are the stage 1 record.
+    EXPECT_EQ(sizeof(SurfaceCacheParams), 80u);
+    EXPECT_EQ(sizeof(SurfaceCacheParamsGPU), 80u);
     EXPECT_EQ(offsetof(SurfaceCacheParamsGPU, keysUav), offsetof(SurfaceCacheParams, keysUav));
     EXPECT_EQ(offsetof(SurfaceCacheParamsGPU, resolvedSrv), offsetof(SurfaceCacheParams, resolvedSrv));
     EXPECT_EQ(offsetof(SurfaceCacheParamsGPU, entriesLog2), 16u);
@@ -237,6 +245,15 @@ TEST(SurfaceCacheContract, ParamsRecordMirrorsTheShaderStruct) {
     EXPECT_EQ(offsetof(SurfaceCacheParamsGPU, generation), 56u);
     EXPECT_EQ(offsetof(SurfaceCacheParamsGPU, refreshRate), offsetof(SurfaceCacheParams, refreshRate));
     EXPECT_EQ(offsetof(SurfaceCacheParamsGPU, refreshRate), 60u);
+    EXPECT_EQ(offsetof(SurfaceCacheParamsGPU, lightsSrv), offsetof(SurfaceCacheParams, lightsSrv));
+    EXPECT_EQ(offsetof(SurfaceCacheParamsGPU, lightsSrv), 64u);
+    EXPECT_EQ(offsetof(SurfaceCacheParamsGPU, lightCount), offsetof(SurfaceCacheParams, lightCount));
+    EXPECT_EQ(offsetof(SurfaceCacheParamsGPU, localLights), offsetof(SurfaceCacheParams, localLights));
+    EXPECT_EQ(offsetof(SurfaceCacheParamsGPU, localLights), 72u);
+    const SurfaceCacheParamsGPU defaults{};
+    EXPECT_EQ(defaults.lightsSrv, UINT32_MAX);
+    EXPECT_EQ(defaults.lightCount, 0u);
+    EXPECT_EQ(defaults.localLights, 0u);
 }
 
 TEST(SurfaceCacheContract, RefreshSelectsOneHitInRateDeterministically) {
@@ -303,6 +320,199 @@ TEST(SurfaceCacheContract, RegisteredDefaultsAreOff) {
     EXPECT_EQ(registry.Find("r.GI.SurfaceCache.DirectMode")->defaultValue, 0.0f);
     EXPECT_EQ(registry.Find("r.GI.SurfaceCache.Stats")->defaultValue, 0.0f);
     EXPECT_EQ(registry.Find("r.GI.SurfaceCache.Debug")->defaultValue, 0.0f);
+    // Stage 2: the sub-switches default to the spec's K = 4 and emissive on, under the master (off).
+    ASSERT_NE(registry.Find("r.GI.SurfaceCache.LocalLights"), nullptr);
+    EXPECT_EQ(registry.Find("r.GI.SurfaceCache.LocalLights")->defaultValue, 4.0f);
+    EXPECT_EQ(registry.Find("r.GI.SurfaceCache.Emissive")->defaultValue, 1.0f);
+    EXPECT_EQ(SurfaceRadianceCache::LocalLights(), 4u);
+    EXPECT_TRUE(SurfaceRadianceCache::EmissiveEnabled());
+}
+
+// ─── Stage 2: local lights and emissive at the hit (spec 2.5, 3.1; acceptance B1-B4) ─────────
+
+TEST(SurfaceCacheStage2, LightRecordMirrorsTheShaderStructAndTheLimitsMatchTheLightingCB) {
+    EXPECT_EQ(sizeof(SurfaceCacheLight), 80u);
+    EXPECT_EQ(sizeof(SurfaceCacheLightGPU), 80u);
+    EXPECT_EQ(offsetof(SurfaceCacheLightGPU, positionX), offsetof(SurfaceCacheLight, position));
+    EXPECT_EQ(offsetof(SurfaceCacheLightGPU, radius), offsetof(SurfaceCacheLight, radius));
+    EXPECT_EQ(offsetof(SurfaceCacheLightGPU, radius), 12u);
+    EXPECT_EQ(offsetof(SurfaceCacheLightGPU, colorR), offsetof(SurfaceCacheLight, color));
+    EXPECT_EQ(offsetof(SurfaceCacheLightGPU, type), offsetof(SurfaceCacheLight, type));
+    EXPECT_EQ(offsetof(SurfaceCacheLightGPU, type), 28u);
+    EXPECT_EQ(offsetof(SurfaceCacheLightGPU, directionX), offsetof(SurfaceCacheLight, direction));
+    EXPECT_EQ(offsetof(SurfaceCacheLightGPU, cosOuterAngle), offsetof(SurfaceCacheLight, cosOuterAngle));
+    EXPECT_EQ(offsetof(SurfaceCacheLightGPU, cosOuterAngle), 44u);
+    EXPECT_EQ(offsetof(SurfaceCacheLightGPU, rightX), offsetof(SurfaceCacheLight, right));
+    EXPECT_EQ(offsetof(SurfaceCacheLightGPU, invCosConeDifference), offsetof(SurfaceCacheLight, invCosConeDifference));
+    EXPECT_EQ(offsetof(SurfaceCacheLightGPU, invCosConeDifference), 60u);
+    EXPECT_EQ(offsetof(SurfaceCacheLightGPU, upX), offsetof(SurfaceCacheLight, up));
+    EXPECT_EQ(offsetof(SurfaceCacheLightGPU, falloffExponent), offsetof(SurfaceCacheLight, falloffExponent));
+    EXPECT_EQ(offsetof(SurfaceCacheLightGPU, falloffExponent), 76u);
+    // Every light the LightingCB and the rect buffer can carry fits the per-frame record buffer.
+    EXPECT_EQ(kSurfaceCacheMaxLights, kMaxPointLights + kMaxSpotLights + kMaxRectLights);
+    EXPECT_EQ(kSurfaceCacheMaxLocalLights, 16u);
+    // The record's type codes and flag bits are disjoint, and the flags mirror the light data's.
+    EXPECT_EQ(kSurfaceCacheLightTypeMask & kSurfaceCacheLightInverseSquared, 0u);
+    EXPECT_EQ(kSurfaceCacheLightTypeMask & kSurfaceCacheLightTwoSided, 0u);
+    EXPECT_EQ(kSurfaceCacheLightInverseSquared & kSurfaceCacheLightTwoSided, 0u);
+    EXPECT_LE(kSurfaceCacheLightTypePoint, kSurfaceCacheLightTypeMask);
+    EXPECT_LE(kSurfaceCacheLightTypeSpot, kSurfaceCacheLightTypeMask);
+    EXPECT_LE(kSurfaceCacheLightTypeRect, kSurfaceCacheLightTypeMask);
+    EXPECT_NE(kSurfaceCacheLightTypePoint, kSurfaceCacheLightTypeSpot);
+    EXPECT_NE(kSurfaceCacheLightTypeSpot, kSurfaceCacheLightTypeRect);
+    // The emissive flag of the params record is its own bit, outside the debug field.
+    EXPECT_EQ(kSurfaceCacheFlagEmissive, 64u);
+    EXPECT_EQ(kSurfaceCacheFlagEmissive & (kSurfaceCacheFlagDebugMask | kSurfaceCacheFlagDirectInline
+                                           | kSurfaceCacheFlagJitter | kSurfaceCacheFlagSdfWrites
+                                           | kSurfaceCacheFlagStats), 0u);
+}
+
+TEST(SurfaceCacheStage2, LightAttenuationIsTheDeferredLightingsWithItsRangeTest) {
+    // Windowed inverse square (deferred_lighting_ps.hlsl LocalLightAttenuation): (1 - f^2)^2 / d^2
+    // with f = d^2 / r^2 and the 0.01 floor on d^2.
+    const float r = 10.0f;
+    EXPECT_NEAR(SurfaceCacheLightAttenuation(4.0f, r, 0.0f, true), std::pow(1.0f - 0.04f * 0.04f, 2.0f) / 4.0f, 1e-6f);
+    EXPECT_NEAR(SurfaceCacheLightAttenuation(0.0f, r, 0.0f, true), 1.0f / 0.01f, 1e-3f);        // the floor
+    EXPECT_NEAR(SurfaceCacheLightAttenuation(0.001f, r, 0.0f, true),
+                std::pow(1.0f - 1e-5f * 1e-5f, 2.0f) / 0.01f, 1e-3f);
+    EXPECT_EQ(SurfaceCacheLightAttenuation(100.0f, r, 0.0f, true), 0.0f);                       // at the radius
+    EXPECT_EQ(SurfaceCacheLightAttenuation(101.0f, r, 0.0f, true), 0.0f);                       // beyond it
+    // Custom falloff (UE's RadialAttenuation): (1 - f)^e, no 1 / d^2, exponent floored at 1e-3.
+    EXPECT_NEAR(SurfaceCacheLightAttenuation(25.0f, r, 2.0f, false), 0.75f * 0.75f, 1e-6f);
+    EXPECT_NEAR(SurfaceCacheLightAttenuation(25.0f, r, 0.0f, false), std::pow(0.75f, 1e-3f), 1e-6f);
+    EXPECT_EQ(SurfaceCacheLightAttenuation(101.0f, r, 2.0f, false), 0.0f);
+    // A degenerate radius contributes nothing (the raster never binds one).
+    EXPECT_EQ(SurfaceCacheLightAttenuation(1.0f, 0.0f, 1.0f, true), 0.0f);
+    EXPECT_EQ(SurfaceCacheLightAttenuation(1.0f, -1.0f, 1.0f, false), 0.0f);
+}
+
+TEST(SurfaceCacheStage2, SpotConeAndRectWindowAreTheRastersSquaredRamps) {
+    // ShadeSpotLight: saturate((cosA - cosOuter) * invCosConeDifference)^2.
+    const float cosOuter = 0.5f, cosInner = 0.9f, invDiff = 1.0f / (cosInner - cosOuter);
+    EXPECT_EQ(SurfaceCacheSpotCone(0.4f, cosOuter, invDiff), 0.0f);
+    EXPECT_EQ(SurfaceCacheSpotCone(cosOuter, cosOuter, invDiff), 0.0f);
+    EXPECT_NEAR(SurfaceCacheSpotCone(0.7f, cosOuter, invDiff), 0.25f, 1e-6f);
+    EXPECT_NEAR(SurfaceCacheSpotCone(cosInner, cosOuter, invDiff), 1.0f, 1e-6f);
+    EXPECT_EQ(SurfaceCacheSpotCone(1.0f, cosOuter, invDiff), 1.0f);
+    // ShadeRectLight: saturate(1 - f^2)^2 with f = d^2 / range^2 (the 1 / d^2 lives in the form factor).
+    EXPECT_EQ(SurfaceCacheRectWindow(0.0f, 100.0f), 1.0f);
+    EXPECT_NEAR(SurfaceCacheRectWindow(5000.0f, 100.0f), 0.75f * 0.75f, 1e-6f);
+    EXPECT_EQ(SurfaceCacheRectWindow(10000.0f, 100.0f), 0.0f);
+    EXPECT_EQ(SurfaceCacheRectWindow(20000.0f, 100.0f), 0.0f);
+    EXPECT_EQ(SurfaceCacheRectWindow(1.0f, 0.0f), 0.0f);                                        // range floor 1e-4
+    // Relevance: Rec. 709 luminance of the unshadowed Lambert radiance.
+    EXPECT_NEAR(SurfaceCacheLuminance(float3{1.0f, 1.0f, 1.0f}), 1.0f, 1e-6f);
+    EXPECT_NEAR(SurfaceCacheLuminance(float3{1.0f, 0.0f, 0.0f}), 0.2126f, 1e-6f);
+    EXPECT_NEAR(SurfaceCacheLuminance(float3{0.0f, 1.0f, 0.0f}), 0.7152f, 1e-6f);
+    EXPECT_NEAR(SurfaceCacheLuminance(float3{0.0f, 0.0f, 1.0f}), 0.0722f, 1e-6f);
+}
+
+TEST(SurfaceCacheStage2, BuildLightsFoldsTheScalesOrdersRectPointSpotAndSkipsDeadLights) {
+    auto lighting = std::make_unique<LightingCB>();
+    lighting->pointLightCount = 3;
+    lighting->pointLights[0].position = Vec3(1.0f, 2.0f, 3.0f);
+    lighting->pointLights[0].radius = 500.0f;
+    lighting->pointLights[0].color = Vec3(2.0f, 4.0f, 6.0f);
+    lighting->pointLights[0].diffuseScale = 0.5f;
+    lighting->pointLights[0].falloffExponent = 3.0f;
+    lighting->pointLights[0].flags = kLightFlag_InverseSquared;
+    lighting->pointLights[1] = lighting->pointLights[0];
+    lighting->pointLights[1].color = Vec3(0.0f, 0.0f, 0.0f);                                    // dead: no colour
+    lighting->pointLights[2] = lighting->pointLights[0];
+    lighting->pointLights[2].diffuseScale = 0.0f;                                               // dead: no diffuse
+    lighting->spotLightCount = 2;
+    lighting->spotLights[0].position = Vec3(-1.0f, 0.0f, 9.0f);
+    lighting->spotLights[0].radius = 300.0f;
+    lighting->spotLights[0].color = Vec3(1.0f, 1.0f, 1.0f);
+    lighting->spotLights[0].diffuseScale = 1.0f;
+    lighting->spotLights[0].direction = Vec3(0.0f, 0.0f, -1.0f);
+    lighting->spotLights[0].cosOuterAngle = 0.5f;
+    lighting->spotLights[0].invCosConeDifference = 2.5f;
+    lighting->spotLights[0].falloffExponent = 2.0f;
+    lighting->spotLights[0].flags = 0u;                                                         // custom falloff
+    lighting->spotLights[1] = lighting->spotLights[0];
+    lighting->spotLights[1].radius = 0.0f;                                                      // dead: no range
+    RectLightData rects[2]{};
+    rects[0].position = Vec3(380.0f, 430.0f, 160.0f);
+    rects[0].range = 5000.0f;
+    rects[0].right = Vec3(1.0f, 0.0f, 0.0f);
+    rects[0].halfWidth = 60.0f;
+    rects[0].up = Vec3(0.0f, 1.0f, 0.0f);
+    rects[0].halfHeight = 40.0f;
+    rects[0].color = Vec3(8.0f, 8.0f, 8.0f);
+    rects[0].diffuseScale = 1.0f;
+    rects[0].flags = kRectLightFlag_TwoSided;
+    rects[1] = rects[0];
+    rects[1].halfHeight = 0.0f;                                                                 // dead: no area
+
+    SurfaceCacheLightGPU out[8]{};
+    const uint32_t n = SurfaceCacheBuildLights(out, 8, lighting.get(), rects, 2);
+    ASSERT_EQ(n, 3u);
+    // Rect first, with the half extents folded into the axes and the emission normal cross(right, up).
+    EXPECT_EQ(out[0].type, kSurfaceCacheLightTypeRect | kSurfaceCacheLightTwoSided);
+    EXPECT_FLOAT_EQ(out[0].positionZ, 160.0f);
+    EXPECT_FLOAT_EQ(out[0].radius, 5000.0f);
+    EXPECT_FLOAT_EQ(out[0].colorR, 8.0f);
+    EXPECT_FLOAT_EQ(out[0].rightX, 60.0f);  EXPECT_FLOAT_EQ(out[0].rightY, 0.0f);
+    EXPECT_FLOAT_EQ(out[0].upY, 40.0f);     EXPECT_FLOAT_EQ(out[0].upX, 0.0f);
+    EXPECT_FLOAT_EQ(out[0].directionX, 0.0f);
+    EXPECT_FLOAT_EQ(out[0].directionY, 0.0f);
+    EXPECT_FLOAT_EQ(out[0].directionZ, 1.0f);
+    // Then the live point light: colour x diffuseScale, the falloff flag and exponent carried.
+    EXPECT_EQ(out[1].type, kSurfaceCacheLightTypePoint | kSurfaceCacheLightInverseSquared);
+    EXPECT_FLOAT_EQ(out[1].positionX, 1.0f);
+    EXPECT_FLOAT_EQ(out[1].radius, 500.0f);
+    EXPECT_FLOAT_EQ(out[1].colorR, 1.0f);
+    EXPECT_FLOAT_EQ(out[1].colorG, 2.0f);
+    EXPECT_FLOAT_EQ(out[1].colorB, 3.0f);
+    EXPECT_FLOAT_EQ(out[1].falloffExponent, 3.0f);
+    // Then the live spot light with its cone scalars and axis.
+    EXPECT_EQ(out[2].type, kSurfaceCacheLightTypeSpot);
+    EXPECT_FLOAT_EQ(out[2].positionZ, 9.0f);
+    EXPECT_FLOAT_EQ(out[2].directionZ, -1.0f);
+    EXPECT_FLOAT_EQ(out[2].cosOuterAngle, 0.5f);
+    EXPECT_FLOAT_EQ(out[2].invCosConeDifference, 2.5f);
+    EXPECT_FLOAT_EQ(out[2].falloffExponent, 2.0f);
+    EXPECT_FLOAT_EQ(out[2].colorG, 1.0f);
+    // The capacity bounds the records; a missing kind is simply absent; nothing without a target.
+    SurfaceCacheLightGPU one[1]{};
+    EXPECT_EQ(SurfaceCacheBuildLights(one, 1, lighting.get(), rects, 2), 1u);
+    EXPECT_EQ(one[0].type & kSurfaceCacheLightTypeMask, kSurfaceCacheLightTypeRect);
+    EXPECT_EQ(SurfaceCacheBuildLights(out, 8, nullptr, rects, 2), 1u);
+    EXPECT_EQ(SurfaceCacheBuildLights(out, 8, lighting.get(), nullptr, 0), 2u);
+    EXPECT_EQ(out[0].type & kSurfaceCacheLightTypeMask, kSurfaceCacheLightTypePoint);
+    EXPECT_EQ(SurfaceCacheBuildLights(out, 0, lighting.get(), rects, 2), 0u);
+    EXPECT_EQ(SurfaceCacheBuildLights(nullptr, 8, lighting.get(), rects, 2), 0u);
+    // Counts above the CB's limits are clamped to them (the arrays are never read past their size),
+    // and every live light of a full frame fits the record buffer.
+    for (uint32_t i = 0; i < kMaxPointLights; ++i) lighting->pointLights[i] = lighting->pointLights[0];
+    for (uint32_t i = 0; i < kMaxSpotLights; ++i) lighting->spotLights[i] = lighting->spotLights[0];
+    lighting->pointLightCount = kMaxPointLights + 7;
+    lighting->spotLightCount = kMaxSpotLights + 7;
+    std::vector<RectLightData> everyRect(kMaxRectLights, rects[0]);
+    std::vector<SurfaceCacheLightGPU> all(kSurfaceCacheMaxLights);
+    EXPECT_EQ(SurfaceCacheBuildLights(all.data(), kSurfaceCacheMaxLights, lighting.get(), everyRect.data(),
+                                      kMaxRectLights + 1),
+              kSurfaceCacheMaxLights);
+}
+
+TEST(SurfaceCacheStage2, MaterialTableCarriesTheEmissionBehindThePathTracersFields) {
+    // 48 -> 64 bytes: the stage 1 fields keep their offsets (the path tracer reads them unchanged),
+    // the emission follows, and a default entry emits nothing with no texture.
+    EXPECT_EQ(sizeof(GIMeshMaterialGPU), 64u);
+    EXPECT_EQ(offsetof(GIMeshMaterialGPU, tintR), 0u);
+    EXPECT_EQ(offsetof(GIMeshMaterialGPU, albedoSrv), 12u);
+    EXPECT_EQ(offsetof(GIMeshMaterialGPU, normalFormat), 40u);
+    EXPECT_EQ(offsetof(GIMeshMaterialGPU, emissiveSrv), 44u);
+    EXPECT_EQ(offsetof(GIMeshMaterialGPU, emissiveR), 48u);
+    EXPECT_EQ(offsetof(GIMeshMaterialGPU, emissiveG), 52u);
+    EXPECT_EQ(offsetof(GIMeshMaterialGPU, emissiveB), 56u);
+    EXPECT_EQ(offsetof(GIMeshMaterialGPU, padding), 60u);
+    const GIMeshMaterialGPU entry{};
+    EXPECT_EQ(entry.emissiveSrv, UINT32_MAX);
+    EXPECT_EQ(entry.emissiveR, 0.0f);
+    EXPECT_EQ(entry.emissiveG, 0.0f);
+    EXPECT_EQ(entry.emissiveB, 0.0f);
 }
 
 // ─── Invalidation policy (spec 2.6) ─────────────────────────────────────────────────────────

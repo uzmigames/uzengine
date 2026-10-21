@@ -387,6 +387,16 @@ uint32_t SceneRenderer::UpdateGIMaterialTable(const FrameContext& ctx) {
                     (dc.albedoSrvIndex != 0
                      && dc.albedoSrvIndex != UINT32_MAX)
                         ? dc.albedoSrvIndex : UINT32_MAX;
+                // Phase D stage 2: the mesh's emission for the surface cache's
+                // cell lighting (colour x intensity, the LightBVH's convention;
+                // slot 0 = no texture). Unread by the path tracer.
+                entry.emissiveSrv =
+                    (dc.emissiveSrvIndex != 0
+                     && dc.emissiveSrvIndex != UINT32_MAX)
+                        ? dc.emissiveSrvIndex : UINT32_MAX;
+                entry.emissiveR = dc.emissiveColorR * dc.emissiveIntensity;
+                entry.emissiveG = dc.emissiveColorG * dc.emissiveIntensity;
+                entry.emissiveB = dc.emissiveColorB * dc.emissiveIntensity;
                 const auto& mesh = m_meshes[dc.meshId];
                 const bool packed = mesh.vertexStride == sizeof(VertexPacked);
                 if (mesh.vbSrvIndex != UINT32_MAX && mesh.IsIndexed()

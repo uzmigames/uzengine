@@ -24,11 +24,15 @@ struct int3 { int x; int y; int z; };
 #define UZ_SC_FUNC inline
 UZ_SC_FUNC float SurfaceCacheFloor(float v) { return std::floor(v); }
 UZ_SC_FUNC float SurfaceCacheAbs(float v) { return std::fabs(v); }
+UZ_SC_FUNC float SurfaceCachePow(float v, float e) { return std::pow(v, e); }
 #else
 #define UZ_SC_FUNC
 UZ_SC_FUNC float SurfaceCacheFloor(float v) { return floor(v); }
 UZ_SC_FUNC float SurfaceCacheAbs(float v) { return abs(v); }
+UZ_SC_FUNC float SurfaceCachePow(float v, float e) { return pow(v, e); }
 #endif
+
+UZ_SC_FUNC float SurfaceCacheSaturate(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
 
 // ─── Sizes and limits (D1, D2, D5) ────────────────────────────────────────────────────────────
 
@@ -79,14 +83,74 @@ static const uint kSurfaceCacheFlagSdfWrites    = 4u;        // stage 3: SDF con
 static const uint kSurfaceCacheFlagStats        = 8u;        // count queries / hits / inserts
 static const uint kSurfaceCacheFlagDebugShift   = 4u;        // debug view in bits 4-5 (0 off, 1 cell, 2 heat, 3 mask)
 static const uint kSurfaceCacheFlagDebugMask    = 48u;
+static const uint kSurfaceCacheFlagEmissive     = 64u;       // stage 2: the hit's emission joins the `other` layer
+
+// ─── Stage 2: the frame's local lights at a shaded hit ───────────────────────────────────────────
+// One record per point / spot / rect light of the frame (`SurfaceCacheParams::lightsSrv`, at most
+// kSurfaceCacheMaxLights = the LightingCB's 512 + 128 point / spot plus the 16 rect lights); the
+// `localLights` (K) strongest at a hit, by their unshadowed Lambert radiance, each get a shadow ray.
+
+static const uint  kSurfaceCacheMaxLights       = 656u;
+static const uint  kSurfaceCacheMaxLocalLights  = 16u;       // K upper bound (r.GI.SurfaceCache.LocalLights)
+static const uint  kSurfaceCacheLightTypePoint  = 0u;
+static const uint  kSurfaceCacheLightTypeSpot   = 1u;
+static const uint  kSurfaceCacheLightTypeRect   = 2u;
+static const uint  kSurfaceCacheLightTypeMask   = 3u;
+static const uint  kSurfaceCacheLightInverseSquared = 4u;    // point / spot: PointLightData::flags bit 0
+static const uint  kSurfaceCacheLightTwoSided   = 8u;        // rect: RectLightData::flags bit 0
+static const float kSurfaceCachePi              = 3.14159265358979323846f;
+
+// 80 bytes; mirrored by `uz::SurfaceCacheLightGPU` (gi/surface_radiance_cache.h). The deferred
+// lighting's per-light scalars with the receiver-independent factors folded in: `color` carries
+// diffuseScale (point / spot: colour x intensity, rect: radiance), the rect's `right` / `up` carry
+// its half extents, its `direction` is the emission normal cross(right, up).
+struct SurfaceCacheLight {
+    float3 position;  float radius;                // point / spot: attenuation radius; rect: range (window)
+    float3 color;     uint  type;                  // kSurfaceCacheLightType* | kSurfaceCacheLight* flags
+    float3 direction; float cosOuterAngle;         // spot: cone axis, cos of the outer half-angle; rect: emission normal
+    float3 right;     float invCosConeDifference;  // rect: right axis x halfWidth; spot: 1 / (cosInner - cosOuter)
+    float3 up;        float falloffExponent;       // rect: up axis x halfHeight; point / spot: custom falloff exponent
+};
+
+// The deferred lighting's LocalLightAttenuation (deferred_lighting_ps.hlsl) with its range test:
+// windowed inverse square (Karis 2013), or UE's custom falloff (no 1 / d^2) when the flag is
+// clear. Zero beyond the radius and for a degenerate radius.
+UZ_SC_FUNC float SurfaceCacheLightAttenuation(float distSq, float radius, float falloffExponent, bool inverseSquared) {
+    if (!(radius > 0.0f) || !(distSq <= radius * radius)) return 0.0f;
+    float f = distSq / (radius * radius);
+    if (inverseSquared) {
+        float s = SurfaceCacheSaturate(1.0f - f * f);
+        return (s * s) / (distSq > 0.01f ? distSq : 0.01f);
+    }
+    return SurfaceCachePow(SurfaceCacheSaturate(1.0f - f), falloffExponent > 1e-3f ? falloffExponent : 1e-3f);
+}
+
+// The spot cone of ShadeSpotLight: squared smoothstep-free ramp between the outer and inner angles.
+UZ_SC_FUNC float SurfaceCacheSpotCone(float cosAngle, float cosOuterAngle, float invCosConeDifference) {
+    float t = SurfaceCacheSaturate((cosAngle - cosOuterAngle) * invCosConeDifference);
+    return t * t;
+}
+
+// The rect light's range window of ShadeRectLight (squared; the 1 / d^2 is inside the form factor).
+UZ_SC_FUNC float SurfaceCacheRectWindow(float distSq, float range) {
+    float r2 = range * range > 1e-4f ? range * range : 1e-4f;
+    float f = distSq / r2;
+    float w = SurfaceCacheSaturate(1.0f - f * f);
+    return w * w;
+}
+
+// Rec. 709 luminance: the relevance of a light at a hit (its unshadowed Lambert radiance).
+UZ_SC_FUNC float SurfaceCacheLuminance(float3 c) {
+    return 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z;
+}
 
 // Resolve pass modes (`SurfaceCacheResolveRootConstants::mode`).
 static const uint kSurfaceCacheResolveModeResolve = 0u;
 static const uint kSurfaceCacheResolveModeClear   = 1u;
 
-// ─── The binding record (D10): one element of a StructuredBuffer, 64 bytes ──────────────────
+// ─── The binding record (D10): one element of a StructuredBuffer, 80 bytes ──────────────────
 // Mirrored by `uz::SurfaceCacheParamsGPU` (gi/surface_radiance_cache.h); the layout test and the
-// gtest pin the two equal.
+// gtest pin the two equal. Stage 2 appended the fifth row (the frame's lights and K).
 
 struct SurfaceCacheParams {
     uint  keysUav;          // RWStructuredBuffer<uint2>  keys (0,0 = empty)
@@ -105,6 +169,10 @@ struct SurfaceCacheParams {
     uint  statsUav;         // RWStructuredBuffer<uint> stats (sentinel = no stats)
     uint  generation;
     uint  refreshRate;      // a hit shades inline and updates its cell once in refreshRate rays (0 = never)
+    uint  lightsSrv;        // stage 2: StructuredBuffer<SurfaceCacheLight> of the frame (sentinel = no local lights)
+    uint  lightCount;       // records in it (<= kSurfaceCacheMaxLights)
+    uint  localLights;      // K: lights with a shadow ray per shaded hit (0 = none)
+    uint  _pad1;
 };
 
 // ─── Level and cell (D2, D3) ─────────────────────────────────────────────────────────────────

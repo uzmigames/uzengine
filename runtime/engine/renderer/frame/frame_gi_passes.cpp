@@ -939,6 +939,10 @@ void SceneRenderer::RegisterSurfaceCacheResolvePass(rg::RgBuilder& rgBuilder, Fr
             in.sceneRevision  = gdfActive ? m_globalDistanceField.GetSceneRevision() : 0ull;
             in.geometryHash   = SurfaceCacheGeometryHash(ctx);
             in.lightingHash   = SurfaceCacheLightingHash(ctx, *perFrame);
+            // Stage 2: the frame's local lights (the same sources the lighting hash covers).
+            in.lighting       = static_cast<const LightingCB*>(ctx.lightingAlloc.cpuPtr);
+            in.rectLights     = ctx.lightData.rectLights;
+            in.rectLightCount = ctx.lightData.rectLightCount;
             m_surfaceCache.Resolve(cmd, in);
         });
     });

@@ -52,6 +52,12 @@
 /// very estimator below; a miss shades inline exactly as before and feeds the two terms
 /// (`albedo * sunRad / pi`, `albedo * E / pi`) into the cell. With the flag clear nothing changes.
 ///
+/// Phase D stage 2 (lighting completeness at the hit, same flag): a shaded hit also adds the K
+/// strongest point / spot / rect lights of the frame, each with a shadow ray, to the `sun` layer
+/// (gi/surface_cache_lights.hlsli; `r.GI.SurfaceCache.LocalLights`) and the mesh's emission from the
+/// material table to the `other` layer (`GITrace_HitEmissive`; `r.GI.SurfaceCache.Emissive`), so a
+/// cell holds the lamp and the emitter the reference path tracer sees and stage 1 left black.
+///
 /// Bindings: root constants at b0 (`uz::RTReflectionRootConstants`, 17 DWORDs), PerFrameCB at b1,
 /// the shared trace constants at b2 (`uz::RadianceCacheTraceConstants`, rows 1-11 as the DDGI
 /// writer and the path tracer bind them; rows 1-2 carry the probe grid + frame index here).
@@ -119,6 +125,7 @@ float3 ReconstructWorldPos(float2 uv, float deviceZ) {
 
 #include "../gi/gi_trace_common.hlsli"
 #include "../gi/surface_cache.hlsli"      // Phase D: SurfaceCacheQuery / SurfaceCacheUpdate at the hit
+#include "../gi/surface_cache_lights.hlsli" // Phase D stage 2: the frame's local lights at the hit
 
 // ─── Glossy sample seeds: the screen trace's interleaved gradient noise with its temporal
 // rotation (ssr_trace_cs.hlsl), so the ray texels carry the noise pattern the SSR temporal and
@@ -348,8 +355,18 @@ void main(uint3 DTid : SV_DispatchThreadID)
     }
     const float3 sunRad = float3(lightColorR, lightColorG, lightColorB) * lightIntensity * NdL * visibility;
     float3 radiance = albedo * (sunRad / PI);          // Lambert: the radiance the mirror sees
-    const float3 sunTerm = radiance;                   // the cell's `sun` layer
+    float3 sunTerm = radiance;                         // the cell's `sun` layer (direct lighting)
     float3 otherTerm = 0.0;                            // the cell's `other` layer (the probe bounce)
+    // Phase D stage 2: the frame's local lights join the direct layer wherever the sun is shaded
+    // inline (a miss, a refresh, DirectMode 1), each of the K strongest with a shadow ray; the
+    // rect light's area sample rotates with the glossy sequence (one draw per hit and frame).
+    float3 localTerm = 0.0;
+    if (cacheBound && inlineSun) {
+        localTerm = SurfaceCacheLocalLightRadiance(cache, cachePos, hitN, albedo, tlas, kReflectionRayTMin,
+                                                   kReflectionSurfaceBias,
+                                                   ReflectionSample2D(DTid.xy, frameIndex, kReflectionGlossyAttempts));
+        sunTerm += localTerm;
+    }
     if ((!cacheHit || cacheRefresh) && (flags & kReflectionFlagIndirect) != 0u) {
         // The diffuse bounce the reflected surface receives (the radiance cache's E / pi at the
         // hit, read from the biased hit point as the SDF reflections do): the term the path
@@ -359,6 +376,17 @@ void main(uint3 DTid : SV_DispatchThreadID)
         otherTerm = albedo * probeIrradianceOverPi;
     }
     if (cacheBound && (!cacheHit || cacheRefresh)) {
+        // Stage 2: the mesh's emission (the table's emissive colour x intensity and texture) is
+        // part of what leaves the hit; it lives in the `other` layer beside the bounce.
+        float3 emissiveTerm = 0.0;
+        if ((cache.flags & kSurfaceCacheFlagEmissive) != 0u) {
+            emissiveTerm = GITrace_HitEmissive(meshId, q.CommittedPrimitiveIndex(), q.CommittedTriangleBarycentrics(),
+                                               materialTableSrv);
+            otherTerm += emissiveTerm;
+        }
+        // The inline radiance gains the stage 2 terms and nothing else (added to the stage 1 value,
+        // so `.LocalLights 0` + `.Emissive 0` reproduces the stage 1 texel bit for bit).
+        radiance += localTerm + emissiveTerm;
         SurfaceCacheUpdate(cache, cachePos, hitN, cameraPos.xyz, 0u, sunTerm, otherTerm,
                            kSurfaceCacheWriterReflections);
     }

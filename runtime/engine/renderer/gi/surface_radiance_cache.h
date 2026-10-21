@@ -10,8 +10,15 @@
 /// Opt-in (`r.GI.SurfaceCache`, default 0): with the switch off nothing here is allocated, no pass
 /// is registered and no consumer binds the record — the frame is byte-identical to the frame
 /// before this class existed. Every number is a `r.GI.SurfaceCache.*` CVar read at execution
-/// time. Only the hardware ray-traced reflection pass reads and writes the cache in stage 1
+/// time. Only the hardware ray-traced reflection pass reads and writes the cache in stages 1-2
 /// (`RTReflectionRootConstants::surfaceCacheParamsSrv`, `kRTReflectionFlagSurfaceCache`).
+///
+/// Stage 2 (lighting completeness at the hit): the frame's point / spot / rect lights are uploaded
+/// as one `StructuredBuffer<SurfaceCacheLight>` per frame in flight (`SurfaceCacheBuildLights`, the
+/// `rectLightsSrv` precedent) and named by the binding record together with K
+/// (`r.GI.SurfaceCache.LocalLights`); a shaded hit adds its K strongest lights with a shadow ray
+/// each to the cell's `sun` layer and the mesh's emission (`GIMeshMaterialGPU::emissive*`,
+/// `r.GI.SurfaceCache.Emissive`) to its `other` layer.
 ///
 /// # Thread Safety
 /// NOT thread-safe. All methods must be called from the render thread.
@@ -36,10 +43,13 @@ class IRHIDevice;
 class IRHICommandList;
 class CBRingAllocator;
 class PipelineLibrary;
+struct LightingCB;
+struct RectLightData;
 
 /// The binding record every consumer reads (one element of a StructuredBuffer): the C++ mirror of
-/// `SurfaceCacheParams` in `gi/surface_cache_contract.hlsli`. 64 bytes; the layout test
-/// (scripts/rendering/test_cbuffer_layouts.py, Tier C) and the gtest pin the two equal.
+/// `SurfaceCacheParams` in `gi/surface_cache_contract.hlsli`. 80 bytes (stage 2 appended the
+/// lights row); the layout test (scripts/rendering/test_cbuffer_layouts.py, Tier C) and the gtest
+/// pin the two equal.
 struct SurfaceCacheParamsGPU {
     uint32_t keysUav     = UINT32_MAX;   ///< [0]  RWStructuredBuffer<uint2> keys.
     uint32_t accumUav    = UINT32_MAX;   ///< [1]  RWStructuredBuffer<uint> accumulators (8 per entry).
@@ -57,8 +67,38 @@ struct SurfaceCacheParamsGPU {
     uint32_t statsUav    = UINT32_MAX;   ///< [13] RWStructuredBuffer<uint> stats (sentinel = none).
     uint32_t generation  = 0;            ///< [14] Incremented by every clear.
     uint32_t refreshRate = 16;           ///< [15] One hit in refreshRate shades inline and updates its cell (0 = never).
+    uint32_t lightsSrv   = UINT32_MAX;   ///< [16] Stage 2: StructuredBuffer<SurfaceCacheLight> of the frame (sentinel = none).
+    uint32_t lightCount  = 0;            ///< [17] Records in it (<= surfacecache::kSurfaceCacheMaxLights).
+    uint32_t localLights = 0;            ///< [18] K: lights with a shadow ray per shaded hit (0 = none).
+    uint32_t _pad1       = 0;            ///< [19]
 };
-static_assert(sizeof(SurfaceCacheParamsGPU) == 64, "SurfaceCacheParamsGPU mirrors SurfaceCacheParams (64 bytes)");
+static_assert(sizeof(SurfaceCacheParamsGPU) == 80, "SurfaceCacheParamsGPU mirrors SurfaceCacheParams (80 bytes)");
+
+/// One local light of the frame as the cell lighting shades it: the C++ mirror of
+/// `SurfaceCacheLight` (gi/surface_cache_contract.hlsli), 80 bytes. Built by
+/// `SurfaceCacheBuildLights` from the frame's `LightingCB` (point / spot) and rect lights with the
+/// receiver-independent factors folded in (see the shader struct's comment).
+struct SurfaceCacheLightGPU {
+    float    positionX = 0.0f, positionY = 0.0f, positionZ = 0.0f;   ///< [0..2]
+    float    radius = 0.0f;                                           ///< [3]  point / spot: attenuation radius; rect: range.
+    float    colorR = 0.0f, colorG = 0.0f, colorB = 0.0f;             ///< [4..6] colour x intensity x diffuseScale (rect: radiance x diffuseScale).
+    uint32_t type = 0;                                                ///< [7]  surfacecache::kSurfaceCacheLightType* | flags.
+    float    directionX = 0.0f, directionY = 0.0f, directionZ = 0.0f; ///< [8..10] spot cone axis / rect emission normal (unit).
+    float    cosOuterAngle = -1.0f;                                   ///< [11] spot.
+    float    rightX = 0.0f, rightY = 0.0f, rightZ = 0.0f;             ///< [12..14] rect: right x halfWidth.
+    float    invCosConeDifference = 0.0f;                             ///< [15] spot.
+    float    upX = 0.0f, upY = 0.0f, upZ = 0.0f;                      ///< [16..18] rect: up x halfHeight.
+    float    falloffExponent = 0.0f;                                  ///< [19] point / spot custom falloff.
+};
+static_assert(sizeof(SurfaceCacheLightGPU) == 80, "SurfaceCacheLightGPU mirrors SurfaceCacheLight (80 bytes)");
+
+/// Fills `out` (capacity records) with the frame's lights in the order the shader scans them: the
+/// rect lights first (few, usually the strongest), then the LightingCB's point lights, then its
+/// spot lights, each with its diffuse scale folded into the colour and the rect's half extents
+/// into its axes. Lights that cannot contribute (zero colour or scale, no range) are skipped.
+/// `lighting` / `rectLights` may be null (none of that kind). Returns the record count.
+[[nodiscard]] uint32_t SurfaceCacheBuildLights(SurfaceCacheLightGPU* out, uint32_t capacity, const LightingCB* lighting,
+                                               const RectLightData* rectLights, uint32_t rectLightCount) noexcept;
 
 /// Root constants at b0 of `surface_cache_resolve_cs.hlsl` (12 DWORDs of the 20-DWORD budget).
 struct SurfaceCacheResolveRootConstants {
@@ -115,6 +155,10 @@ public:
     [[nodiscard]] static bool Enabled();
     /// `r.GI.SurfaceCache.Stats`: readback + a log line every 60 frames.
     [[nodiscard]] static bool StatsEnabled();
+    /// `r.GI.SurfaceCache.LocalLights` (K, clamped to [0, kSurfaceCacheMaxLocalLights]) and
+    /// `r.GI.SurfaceCache.Emissive` (stage 2), read every frame.
+    [[nodiscard]] static uint32_t LocalLights();
+    [[nodiscard]] static bool EmissiveEnabled();
 
     void SetStateRegistry(rg::RgStateRegistry* states) noexcept { m_rgStates = states; }
 
@@ -142,6 +186,11 @@ public:
         /// FNV-1a of the frame's GI-occluder instances (mesh + transform) and of its lights.
         uint64_t         geometryHash = 0;
         uint64_t         lightingHash = 0;
+        /// Stage 2: the frame's local lights (the LightingCB of the frame for point / spot, the
+        /// rect lights of `LightFrameData`); null / 0 = none of that kind.
+        const LightingCB*    lighting = nullptr;
+        const RectLightData* rectLights = nullptr;
+        uint32_t             rectLightCount = 0;
     };
 
     /// The resolve pass's body: creates the table on first use, applies the invalidation policy,
@@ -194,6 +243,10 @@ private:
 
     RHIBufferHandle m_params[kParamsRingFrames];
     uint32_t        m_paramsSrv[kParamsRingFrames] = {UINT32_MAX, UINT32_MAX, UINT32_MAX};
+    RHIBufferHandle m_lights[kParamsRingFrames];     ///< Stage 2: the frame's light records (upload heap, ringed like the params).
+    uint32_t        m_lightsSrv[kParamsRingFrames] = {UINT32_MAX, UINT32_MAX, UINT32_MAX};
+    uint32_t        m_lastLightCount  = 0;           ///< Records uploaded by the last resolve (the stats line).
+    uint32_t        m_lastLocalLights = 0;           ///< K bound by the last resolve (0 with no records).
     RHIBufferHandle m_readback[kReadbackRingFrames];
     uint32_t        m_readbackFrame[kReadbackRingFrames] = {UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX};
 
