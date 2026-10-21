@@ -1,0 +1,37 @@
+{
+  "name": "Surface cache stage 3: the lamp's bounce on the diffuse receivers (the stage-2 scene seen from the floor): the SDF final gather + SDF reflections read the cells the rect light fills",
+  "version": "1.0",
+  "content_root": "../..",
+  "default_scene": "scripts/rendering/surface-cache-locallight-gi.uzscene",
+  "window": {
+    "width": 640,
+    "height": 360
+  },
+  "cvars": {
+    "r.AutoExposure": 0,
+    "r.Exposure": 1,
+    "r.TonemapOperator": 0,
+    "r.Bloom": 0,
+    "r.TAA": 0,
+    "r.Fog": 0,
+    "r.VolumetricFog": 0,
+    "r.TechPanel.Show": 0,
+    "r.Toolbar.Show": 0,
+    "r.GTAO": 0,
+    "r.SSGI": 0,
+    "r.RadianceCache": 1,
+    "r.GI.RadianceCache.GridExtent": 2000,
+    "r.GI.FinalGather": 1,
+    "r.GI.Reflections": 1,
+    "r.SSR": 0,
+    "r.RayTracing": 1,
+    "r.RayTracing.Reflections": 1,
+    "r.RayTracing.Reflections.MaxRoughness": 0,
+    "r.RayTracing.Reflections.Glossy": 1,
+    "r.RayTracing.Reflections.Indirect": 1,
+    "r.RayTracing.Reflections.Denoise": 0,
+    "r.LightBVH": 1,
+    "r.PathTracer.MaxBounces": 4,
+    "r.PathTracer.NEESamples": 4
+  }
+}

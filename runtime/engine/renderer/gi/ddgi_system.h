@@ -199,7 +199,9 @@ public:
                         const GlobalDistanceField* gdf            = nullptr,
                         const void*       perFrameCpuPtr          = nullptr,
                         uint32_t          vfxEmissiveSrvIndex     = UINT32_MAX,
-                        uint32_t          vfxEmissiveSampleCount  = 0);
+                        uint32_t          vfxEmissiveSampleCount  = 0,
+                        uint32_t          surfaceCacheParamsSrv   = UINT32_MAX,   ///< Phase D stage 3: the surface cache's binding record (sentinel = no cache).
+                        uint32_t          materialTableSrv        = UINT32_MAX);  ///< Phase D stage 3: the GI material table (sentinel = GDF attributes).
 
 private:
     IRHIDevice*      m_device       = nullptr;

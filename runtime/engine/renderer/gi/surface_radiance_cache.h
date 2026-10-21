@@ -20,6 +20,15 @@
 /// each to the cell's `sun` layer and the mesh's emission (`GIMeshMaterialGPU::emissive*`,
 /// `r.GI.SurfaceCache.Emissive`) to its `other` layer.
 ///
+/// Stage 3 (the SDF consumers and the probes read exact-material radiance): the binding record
+/// carries the camera position (the level rule D3 for the consumers that bind no PerFrameCB) and
+/// the stage-3 switches (`.SdfReads`, `.SdfWrites`, `.SdfLodBias`); the resolve runs before the
+/// probe writers; the feed trace (`surface_cache_feed_cs.hlsl`, `.FeedRays` rays per radiance-cache
+/// probe on the TLAS, exact material) fills the SDF consumers' coarser cells; `ShadeSdfReflectionHit`
+/// (final gather, ReSTIR GI, deferred SDF reflections), the radiance-cache trace (the SH writer)
+/// and the DDGI trace (`.DDGI`) read the cache through the SSGI root DWORDs, the LightingCB pad and
+/// their own root DWORDs.
+///
 /// # Thread Safety
 /// NOT thread-safe. All methods must be called from the render thread.
 ///
@@ -47,9 +56,9 @@ struct LightingCB;
 struct RectLightData;
 
 /// The binding record every consumer reads (one element of a StructuredBuffer): the C++ mirror of
-/// `SurfaceCacheParams` in `gi/surface_cache_contract.hlsli`. 80 bytes (stage 2 appended the
-/// lights row); the layout test (scripts/rendering/test_cbuffer_layouts.py, Tier C) and the gtest
-/// pin the two equal.
+/// `SurfaceCacheParams` in `gi/surface_cache_contract.hlsli`. 96 bytes (stage 2 appended the
+/// lights row, stage 3 the camera row); the layout test (scripts/rendering/test_cbuffer_layouts.py,
+/// Tier C) and the gtest pin the two equal.
 struct SurfaceCacheParamsGPU {
     uint32_t keysUav     = UINT32_MAX;   ///< [0]  RWStructuredBuffer<uint2> keys.
     uint32_t accumUav    = UINT32_MAX;   ///< [1]  RWStructuredBuffer<uint> accumulators (8 per entry).
@@ -71,8 +80,12 @@ struct SurfaceCacheParamsGPU {
     uint32_t lightCount  = 0;            ///< [17] Records in it (<= surfacecache::kSurfaceCacheMaxLights).
     uint32_t localLights = 0;            ///< [18] K: lights with a shadow ray per shaded hit (0 = none).
     uint32_t _pad1       = 0;            ///< [19]
+    float    cameraPosX  = 0.0f;         ///< [20] Stage 3: the frame's camera position (the level rule D3 for every consumer).
+    float    cameraPosY  = 0.0f;         ///< [21]
+    float    cameraPosZ  = 0.0f;         ///< [22]
+    float    _pad2       = 0.0f;         ///< [23]
 };
-static_assert(sizeof(SurfaceCacheParamsGPU) == 80, "SurfaceCacheParamsGPU mirrors SurfaceCacheParams (80 bytes)");
+static_assert(sizeof(SurfaceCacheParamsGPU) == 96, "SurfaceCacheParamsGPU mirrors SurfaceCacheParams (96 bytes)");
 
 /// One local light of the frame as the cell lighting shades it: the C++ mirror of
 /// `SurfaceCacheLight` (gi/surface_cache_contract.hlsli), 80 bytes. Built by
@@ -99,6 +112,18 @@ static_assert(sizeof(SurfaceCacheLightGPU) == 80, "SurfaceCacheLightGPU mirrors 
 /// `lighting` / `rectLights` may be null (none of that kind). Returns the record count.
 [[nodiscard]] uint32_t SurfaceCacheBuildLights(SurfaceCacheLightGPU* out, uint32_t capacity, const LightingCB* lighting,
                                                const RectLightData* rectLights, uint32_t rectLightCount) noexcept;
+
+/// Root constants at b0 of `surface_cache_feed_cs.hlsl` (stage 3; 5 DWORDs of the 20-DWORD budget).
+struct SurfaceCacheFeedRootConstants {
+    uint32_t tlasSrv               = UINT32_MAX;   ///< [0] Scene TLAS.
+    uint32_t materialTableSrv      = UINT32_MAX;   ///< [1] GIMeshMaterial table by TLAS InstanceID (sentinel = GDF attributes).
+    uint32_t probeShSrv            = UINT32_MAX;   ///< [2] The completed radiance-cache SH buffer (sentinel = no probe term).
+    uint32_t surfaceCacheParamsSrv = UINT32_MAX;   ///< [3] StructuredBuffer<SurfaceCacheParams> (1 element).
+    uint32_t feedRays              = 0;            ///< [4] Rays per probe this frame.
+};
+static constexpr uint32_t kSurfaceCacheFeedRootDwords = sizeof(SurfaceCacheFeedRootConstants) / sizeof(uint32_t);
+static_assert(sizeof(SurfaceCacheFeedRootConstants) == 20, "SurfaceCacheFeedRootConstants is 5 DWORDs");
+static_assert(kSurfaceCacheFeedRootDwords <= 20, "bindless root constants are limited to 20 DWORDs");
 
 /// Root constants at b0 of `surface_cache_resolve_cs.hlsl` (12 DWORDs of the 20-DWORD budget).
 struct SurfaceCacheResolveRootConstants {
@@ -159,6 +184,16 @@ public:
     /// `r.GI.SurfaceCache.Emissive` (stage 2), read every frame.
     [[nodiscard]] static uint32_t LocalLights();
     [[nodiscard]] static bool EmissiveEnabled();
+    /// Stage 3 switches, read every frame: `r.GI.SurfaceCache.SdfReads` (the SDF consumers read),
+    /// `.SdfWrites` (they write, diagnostic), `.SdfLodBias` (their coarser levels), `.DDGI` (the
+    /// DDGI trace reads / writes) and `.FeedRays` (rays per probe of the feed trace, 0 = no feed).
+    [[nodiscard]] static bool SdfReadsEnabled();
+    [[nodiscard]] static bool SdfWritesEnabled();
+    [[nodiscard]] static uint32_t SdfLodBias();
+    [[nodiscard]] static bool DdgiEnabled();
+    [[nodiscard]] static uint32_t FeedRays();
+    /// True when any SDF consumer binds the record this frame (reads or writes on).
+    [[nodiscard]] static bool SdfConsumersBound() { return SdfReadsEnabled() || SdfWritesEnabled(); }
 
     void SetStateRegistry(rg::RgStateRegistry* states) noexcept { m_rgStates = states; }
 
@@ -191,6 +226,9 @@ public:
         const LightingCB*    lighting = nullptr;
         const RectLightData* rectLights = nullptr;
         uint32_t             rectLightCount = 0;
+        /// Stage 3: the frame's camera position (PerFrameCB::cameraPos), the level rule's reference
+        /// for every consumer through the record.
+        Vec3                 cameraPos{};
     };
 
     /// The resolve pass's body: creates the table on first use, applies the invalidation policy,
@@ -213,6 +251,7 @@ public:
     struct Stats {
         uint32_t inserts = 0, failedInserts = 0, updates = 0, queries = 0, hits = 0, evictions = 0, live = 0, maxProbe = 0;
         uint32_t tombstones = 0, torn = 0, probeSum = 0;
+        uint32_t sdfQueries = 0, sdfHits = 0, feedUpdates = 0;   ///< Stage 3: the SDF consumers' lookups and their readable cells (C3), the feed's samples.
         uint64_t totalInserts = 0, totalFailedInserts = 0;   ///< Since the table was created (every frame read).
         bool valid = false;
     };

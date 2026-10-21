@@ -247,7 +247,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
     RegisterGTAOPass(rgBuilder, ctx);
     RegisterDFSPasses(rgBuilder, ctx);
     RegisterSDFGIPasses(rgBuilder, ctx);
-    RegisterSurfaceCacheResolvePass(rgBuilder, ctx);   // Phase D: after the GDF composite, before every GI consumer (r.GI.SurfaceCache)
+    RegisterSurfaceCacheResolvePass(rgBuilder, ctx);   // Phase D: once per frame — inside the SDF GI chain (stage 3) or here without it (r.GI.SurfaceCache)
     RegisterSSGIPasses(rgBuilder, ctx);
     RegisterBrixelizerGIPasses(rgBuilder, ctx);
     RegisterSSRPasses(rgBuilder, ctx);
@@ -390,13 +390,21 @@ uint32_t SceneRenderer::UpdateGIMaterialTable(const FrameContext& ctx) {
                 // Phase D stage 2: the mesh's emission for the surface cache's
                 // cell lighting (colour x intensity, the LightBVH's convention;
                 // slot 0 = no texture). Unread by the path tracer.
+                // A compiled material-graph draw carries (1,1,1) x 1 as the
+                // pass-through marker of the emission its own shader computes
+                // (scene_sync.cpp), not an emission: the table cannot evaluate
+                // the graph, so such a mesh emits nothing here (stage 3: every
+                // Sponza mesh is a graph draw, and the marker lit the whole
+                // atrium as a white emitter through the feed).
+                const bool graphDraw = dc.materialGraphPipeline.IsValid();
                 entry.emissiveSrv =
-                    (dc.emissiveSrvIndex != 0
+                    (!graphDraw && dc.emissiveSrvIndex != 0
                      && dc.emissiveSrvIndex != UINT32_MAX)
                         ? dc.emissiveSrvIndex : UINT32_MAX;
-                entry.emissiveR = dc.emissiveColorR * dc.emissiveIntensity;
-                entry.emissiveG = dc.emissiveColorG * dc.emissiveIntensity;
-                entry.emissiveB = dc.emissiveColorB * dc.emissiveIntensity;
+                const float emissiveScale = graphDraw ? 0.0f : dc.emissiveIntensity;
+                entry.emissiveR = dc.emissiveColorR * emissiveScale;
+                entry.emissiveG = dc.emissiveColorG * emissiveScale;
+                entry.emissiveB = dc.emissiveColorB * emissiveScale;
                 const auto& mesh = m_meshes[dc.meshId];
                 const bool packed = mesh.vertexStride == sizeof(VertexPacked);
                 if (mesh.vbSrvIndex != UINT32_MAX && mesh.IsIndexed()

@@ -160,6 +160,12 @@ void SceneRenderer::RegisterSSGIPasses(rg::RgBuilder& rgBuilder, FrameContext& c
             ssgiParams.changedRegions = &m_globalDistanceField.GetChangedRegions();   // read at execution (block B.2)
             ssgiParams.renderWidth     = static_cast<uint32_t>(ctx.renderWidth);
             ssgiParams.renderHeight    = static_cast<uint32_t>(ctx.renderHeight);
+            // Phase D stage 3: the surface radiance cache at the world gather's hits (the plain
+            // gather and the ReSTIR GI passes alike), bound only when its resolve ran this frame and
+            // an SDF consumer switch is on; the barriers order the resolve's and the feed's writes.
+            ssgiParams.surfaceCacheParamsSrv = SurfaceRadianceCache::SdfConsumersBound()
+                ? m_surfaceCache.GetParamsSrv(ctx.frameIndex) : UINT32_MAX;
+            if (ssgiParams.surfaceCacheParamsSrv != UINT32_MAX) m_surfaceCache.PrepareConsumer(cmd);
 
             m_ssgiRenderer.Render(cmd, ssgiParams);
         });
@@ -276,6 +282,8 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
                 ctx.perFrameAlloc.offsetBytes,
                 ctx.perFrameAlloc.cpuPtr,
                 sizeof(PerFrameCB));
+            // (Phase D stage 3: the surface cache resolve is registered right after this pass, so
+            // the change boxes above reach it before the probe writers read the cells.)
             if (m_globalDistanceField.GetSceneRevision() != previousRevision) {
                 m_radianceCache.InvalidateHistory();      // whole windows rewritten: the history is gone
             } else if (!m_globalDistanceField.GetChangedRegions().empty()) {
@@ -307,12 +315,25 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
     const bool visibleSeeds = RadianceCache::ClassificationMode() == 3
         && CVarRegistry::Get().GetBool("r.GI.RadianceCache.ReachVisibleSeeds", false)
         && !m_meshes.empty();
-    rgBuilder.AddPass("RadianceCache_Trace", [&](rg::RgPassBuilder& pb) {
+    // Phase D stage 3: the surface cache resolve between the composite (its change boxes) and the
+    // probe writers (the SH writer reads the cells, the DDGI trace reads and writes them); the
+    // exact-material table for the DDGI trace and the feed, refreshed while the cache is on.
+    RegisterSurfaceCacheResolvePass(rgBuilder, ctx);
+    const bool surfaceCacheFrame = m_surfaceCacheResolveFrame == ctx.frameIndex;
+    const uint32_t surfaceCacheMaterialTableSrv = surfaceCacheFrame ? UpdateGIMaterialTable(ctx) : UINT32_MAX;
+    rgBuilder.AddPass("RadianceCache_Trace", [&, surfaceCacheFrame, surfaceCacheMaterialTableSrv](rg::RgPassBuilder& pb) {
         // Mode 3's visible-surface seeds read the G-buffer world position (r.GI.RadianceCache.ReachVisibleSeeds).
         // Do not bind stale/unwritten positions when the G-buffer pass has no geometry.
         if (visibleSeeds) pb.Read(ctx.positionRes, RHIResourceState::ShaderResource);
-        pb.SetExecutionCallback([this, &ctx, visibleSeeds](IRHICommandList* cmd, const rg::RgPassResources& res) {
+        pb.SetExecutionCallback([this, &ctx, visibleSeeds, surfaceCacheFrame, surfaceCacheMaterialTableSrv](IRHICommandList* cmd, const rg::RgPassResources& res) {
             UZ_PROFILE_SCOPE("RadianceCache::Trace");
+            // Phase D stage 3: the record the resolve published this frame (sentinel: no cache, or
+            // the stage-3 switches off), with the barriers that order its writes before these reads.
+            const uint32_t probeCacheSrv = (surfaceCacheFrame && SurfaceRadianceCache::SdfConsumersBound())
+                ? m_surfaceCache.GetParamsSrv(ctx.frameIndex) : UINT32_MAX;
+            const uint32_t ddgiCacheSrv = (surfaceCacheFrame && SurfaceRadianceCache::DdgiEnabled())
+                ? m_surfaceCache.GetParamsSrv(ctx.frameIndex) : UINT32_MAX;
+            if (probeCacheSrv != UINT32_MAX || ddgiCacheSrv != UINT32_MAX) m_surfaceCache.PrepareConsumer(cmd);
 
             // Always run the SDF SH path so the existing deferred lighting
             // SH sample stays populated regardless of DXR availability.
@@ -354,7 +375,8 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
                     ctx.perFrameAlloc.cpuPtr,
                     sizeof(PerFrameCB),
                     ctx.frameIndex,
-                    sidePipeline);
+                    sidePipeline,
+                    probeCacheSrv);
             }
 
             // DDGI atlas writer — only when DXR is ON (master switch `r.RayTracing`
@@ -398,15 +420,20 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
                             ? m_vfxDDGIEmissiveFeed.GetSampleCount()
                             : 0u;
 
+                    if (ddgiCacheSrv != UINT32_MAX) m_surfaceCache.PrepareConsumer(cmd);   // after the SH writer's reads
                     m_ddgiSystem.DispatchUpdate(
                         cmd, ddgiPipeline, tracePipeline, borderPipeline, tlasSrv,
                         m_cbRing.get(), ctx.frameIndex,
                         &m_globalDistanceField, ctx.perFrameAlloc.cpuPtr,
-                        vfxSrv, vfxCount);
+                        vfxSrv, vfxCount,
+                        ddgiCacheSrv, surfaceCacheMaterialTableSrv);
                 }
             }
         });
     });
+    // Phase D stage 3: the feed trace fills the SDF consumers' cells from the probe grid the SH
+    // writer just traced (its completed buffer is the hit's indirect term).
+    RegisterSurfaceCacheFeedPass(rgBuilder, ctx, surfaceCacheMaterialTableSrv);
 }
 
 // ── Brixelizer GI (AMD FidelityFX sparse SDF voxel GI) ─────────────────────
@@ -916,6 +943,11 @@ static uint64_t SurfaceCacheLightingHash(const FrameContext& ctx, const PerFrame
 
 void SceneRenderer::RegisterSurfaceCacheResolvePass(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
     if (!SurfaceRadianceCache::Enabled() || !m_device || !m_device->IsBindless() || !RTReflectionRaysAvailable()) return;
+    // Once per frame: RegisterSDFGIPasses registers it between the GDF composite and the probe
+    // writers (stage 3: the SH writer and the DDGI trace read the record the resolve publishes);
+    // RegisterLightingPasses' call after the SDF GI chain covers the frames without that chain.
+    if (m_surfaceCacheResolveFrame == ctx.frameIndex) return;
+    m_surfaceCacheResolveFrame = ctx.frameIndex;
     // The SDF GI gate of RegisterSDFGIPasses: only then do this frame's change boxes and revision
     // belong to a composite that ran; otherwise the geometry hash stands in.
     const bool gdfActive = m_sdfGiEnabled
@@ -943,7 +975,68 @@ void SceneRenderer::RegisterSurfaceCacheResolvePass(rg::RgBuilder& rgBuilder, Fr
             in.lighting       = static_cast<const LightingCB*>(ctx.lightingAlloc.cpuPtr);
             in.rectLights     = ctx.lightData.rectLights;
             in.rectLightCount = ctx.lightData.rectLightCount;
-            m_surfaceCache.Resolve(cmd, in);
+            // Stage 3: the camera of the level rule (D3) for the consumers that bind no PerFrameCB.
+            in.cameraPos      = perFrame->cameraPos.xyz();
+            const bool resolved = m_surfaceCache.Resolve(cmd, in);
+            // Stage 3: the deferred lighting's SDF reflections read the cache through the LightingCB
+            // (its former pad). The allocation is persistently mapped and read by the GPU at the
+            // lighting draw, after this list is submitted; the sentinel leaves the hit shading as it
+            // was.
+            if (auto* lightingCB = static_cast<LightingCB*>(ctx.lightingAlloc.cpuPtr)) {
+                lightingCB->surfaceCacheParamsSrv = (resolved && SurfaceRadianceCache::SdfConsumersBound())
+                    ? m_surfaceCache.GetParamsSrv(ctx.frameIndex) : UINT32_MAX;
+            }
+        });
+    });
+}
+
+void SceneRenderer::RegisterSurfaceCacheFeedPass(rg::RgBuilder& rgBuilder, FrameContext& ctx, uint32_t materialTableSrv) {
+    if (!SurfaceRadianceCache::Enabled() || SurfaceRadianceCache::FeedRays() == 0u) return;
+    if (m_surfaceCacheResolveFrame != ctx.frameIndex || !RTReflectionRaysAvailable()) return;
+    if (!m_sdfGiEnabled || !m_radianceCache.IsInitialized()) return;   // the probe grid the feed shoots from
+
+    rgBuilder.AddPass("SurfaceCache_Feed", [&, materialTableSrv](rg::RgPassBuilder& pb) {
+        // No graph resources: registration order (after RadianceCache_Trace, before the SSGI
+        // gather) is the execution order, as for the resolve.
+        pb.SetExecutionCallback([this, &ctx, materialTableSrv](IRHICommandList* cmd, const rg::RgPassResources&) {
+            UZ_PROFILE_SCOPE("SurfaceCache::Feed");
+            const uint32_t paramsSrv = m_surfaceCache.GetParamsSrv(ctx.frameIndex);
+            if (paramsSrv == UINT32_MAX) return;
+            const uint32_t rays = SurfaceRadianceCache::FeedRays();
+            if (rays == 0u || !m_rtManager || !m_rtManager->IsReady() || m_rtManager->GetTLASInstanceCount() == 0u) return;
+            const RHIPipelineHandle pso = ctx.pipelines->GetSurfaceCacheFeed();
+            if (!pso.IsValid()) return;
+            const auto* perFrame = static_cast<const PerFrameCB*>(ctx.perFrameAlloc.cpuPtr);
+            if (perFrame == nullptr) return;
+
+            // The shared b2 trace constants: the GDF clipmaps, the sun and the skylight as the
+            // reflection pass binds them, plus the probe grid of the completed SH buffer (the
+            // hit's indirect term) and the radiance cache's trace range.
+            RadianceCacheTraceConstants traceConstants{};
+            FillRTReflectionTraceConstants(traceConstants, m_globalDistanceField, *perFrame, ctx.frameIndex);
+            const bool probes = m_radianceCache.HasProducedResult();
+            SetRTReflectionProbeGrid(traceConstants, m_radianceCache.GetCompletedGridOrigin(),
+                                     m_radianceCache.GetProbeSpacing(), RadianceCache::kProbesPerAxis);
+            traceConstants.maxTraceDistance = m_radianceCache.GetGridExtent() * 2.0f;
+            auto traceAlloc = m_cbRing->Allocate(sizeof(traceConstants));
+            if (!traceAlloc.cpuPtr) return;
+            std::memcpy(traceAlloc.cpuPtr, &traceConstants, sizeof(traceConstants));
+
+            m_surfaceCache.PrepareConsumer(cmd);
+            cmd->SetPipeline(pso);
+            SurfaceCacheFeedRootConstants rc{};
+            rc.tlasSrv               = m_rtManager->GetTLASSRVIndex();
+            rc.materialTableSrv      = materialTableSrv;
+            rc.probeShSrv            = probes ? m_radianceCache.GetProbeSHBufferSrv() : UINT32_MAX;
+            rc.surfaceCacheParamsSrv = paramsSrv;
+            rc.feedRays              = rays;
+            cmd->SetRootConstants(kSlotRootConstants, reinterpret_cast<const uint32_t*>(&rc), kSurfaceCacheFeedRootDwords);
+            cmd->SetRootCBV(kSlotPerFrame, ctx.perFrameAlloc.bufferHandle, ctx.perFrameAlloc.offsetBytes,
+                            ctx.perFrameAlloc.cpuPtr, sizeof(PerFrameCB));
+            cmd->SetRootCBV(kSlotPerObject, traceAlloc.bufferHandle, traceAlloc.offsetBytes,
+                            traceAlloc.cpuPtr, sizeof(traceConstants));
+            const uint32_t threads = RadianceCache::kTotalProbes * rays;
+            cmd->Dispatch((threads + 63u) / 64u, 1, 1);
         });
     });
 }
@@ -1078,6 +1171,11 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
             {
                 m_rgStates->Transition(cmd, m_ssrResolvedOutput, RHIResourceState::ShaderResource);
                 if (denoiseRoute) m_rgStates->Transition(cmd, m_ssrHitDistance, RHIResourceState::ShaderResource);
+            }
+            // Phase D stage 3: the deferred lighting's SDF reflections read the cells this pass
+            // wrote (through the LightingCB); the barriers order those writes before its draw.
+            if (rc.surfaceCacheParamsSrv != UINT32_MAX && SurfaceRadianceCache::SdfConsumersBound()) {
+                m_surfaceCache.PrepareConsumer(cmd);
             }
         });
     });

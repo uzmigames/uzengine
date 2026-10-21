@@ -584,7 +584,8 @@ static_assert(sizeof(RectLightData) == 80, "RectLightData must be 80 bytes (five
 /// - spotLights[128]:  128 * 80 = 10240 bytes (32784)
 /// - cluster parameters (block B.7): 64 bytes (43024)
 /// - rect area lights (phase3a 3.33.0): count + buffer SRV + LTC LUT SRVs, 16 bytes (43088)
-/// - _pad2:            160 bytes
+/// - surface radiance cache (Phase D stage 3): the binding record SRV, 4 bytes (43104)
+/// - _pad2:            156 bytes
 /// Total: 43264 bytes
 struct LightingCB {
     PointLightData pointLights[kMaxPointLights]; ///< Point light array (512 * 64 = 32768 bytes).
@@ -616,7 +617,13 @@ struct LightingCB {
     uint32_t rectLightsSrv   = UINT32_MAX;       ///< Bindless SRV of this frame's StructuredBuffer<RectLightData>.
     uint32_t ltcMatrixSrv    = UINT32_MAX;       ///< Bindless SRV of the 64x64 RGBA32F LTC inverse-matrix table.
     uint32_t ltcMagnitudeSrv = UINT32_MAX;       ///< Bindless SRV of the 64x64 RG32F LTC (magnitude, fresnel) table.
-    float    _pad2[40] = {};                     ///< Pad to 43264 bytes (256-byte multiple).
+
+    // ── Surface radiance cache (Phase D stage 3) in the former pad; mirrors light_types.hlsli ──
+    /// Bindless SRV of the frame's StructuredBuffer<SurfaceCacheParams> (one element): the deferred
+    /// SDF reflections read the cache through it. UINT32_MAX = no cache (the hit shading unchanged).
+    /// Written at execution by the surface-cache resolve pass (the record exists only then).
+    uint32_t surfaceCacheParamsSrv = UINT32_MAX;
+    float    _pad2[39] = {};                     ///< Pad to 43264 bytes (256-byte multiple).
 };
 
 static_assert(sizeof(LightingCB) % 256 == 0, "LightingCB must be a multiple of 256 bytes (D3D12 CB alignment)");
@@ -626,6 +633,7 @@ static_assert(offsetof(LightingCB, clusterForwardX) == 43024, "LightingCB cluste
 static_assert(offsetof(LightingCB, clusterViewHeight) == 43084, "LightingCB::clusterViewHeight offset");
 static_assert(offsetof(LightingCB, rectLightCount) == 43088, "LightingCB::rectLightCount offset");
 static_assert(offsetof(LightingCB, ltcMagnitudeSrv) == 43100, "LightingCB::ltcMagnitudeSrv offset");
+static_assert(offsetof(LightingCB, surfaceCacheParamsSrv) == 43104, "LightingCB::surfaceCacheParamsSrv offset (Phase D stage 3, the former pad)");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LocalLightShadowData — per-light shadow projection data for local lights

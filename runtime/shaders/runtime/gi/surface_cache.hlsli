@@ -122,6 +122,20 @@ bool SurfaceCacheQuery(SurfaceCacheParams p, float3 pos, float3 n, float3 camera
     return readable;
 }
 
+// Stage 3: the SDF consumers' read (D8). `pos` is the hit already snapped to the raw surface
+// (SurfaceCacheSnapDistance along the hit normal); the cell is `p.sdfLodBias` levels coarser than a
+// TLAS hit's at the same camera distance, and the camera position is the record's (the SDF
+// consumers that bind no PerFrameCB use the same one every writer used). Counted apart from the
+// TLAS consumers' queries: with the SDF consumers read-only (SdfWrites off) every readable cell
+// they find was filled by a TLAS writer, so hits / queries is the spec's C3 fraction.
+bool SurfaceCacheQuerySdf(SurfaceCacheParams p, float3 pos, float3 n, out float3 sun, out float3 other) {
+    uint samples;
+    const bool readable = SurfaceCacheQuery(p, pos, n, SurfaceCacheCameraPos(p), p.sdfLodBias, sun, other, samples);
+    SurfaceCacheStat(p, kSurfaceCacheStatSdfQueries, true);
+    SurfaceCacheStat(p, kSurfaceCacheStatSdfHits, readable);
+    return readable;
+}
+
 // Accumulates one sample of the two layers into the cell of (pos, n), inserting the key when the
 // cell is new. Portable insertion (32-bit atomics): a CAS on the first key word claims an empty or
 // tombstone slot, an atomic exchange then publishes the second word. The window between the two
@@ -200,6 +214,7 @@ void SurfaceCacheUpdate(SurfaceCacheParams p, float3 pos, float3 n, float3 camer
     InterlockedAdd(accum[base + kSurfaceCacheAccumCount], 1u, previousCount);
     const bool accepted = previousCount < kSurfaceCacheFrameCap;
     SurfaceCacheStat(p, kSurfaceCacheStatUpdates, accepted);
+    SurfaceCacheStat(p, kSurfaceCacheStatFeedUpdates, accepted && writerTag == kSurfaceCacheWriterFeed);
     if (!accepted) return;
     InterlockedAdd(accum[base + kSurfaceCacheAccumSunR + 0u],   SurfaceCachePackSample(sun.x,   p.maxRadiance));
     InterlockedAdd(accum[base + kSurfaceCacheAccumSunR + 1u],   SurfaceCachePackSample(sun.y,   p.maxRadiance));

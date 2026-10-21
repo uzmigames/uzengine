@@ -80,6 +80,9 @@ struct SSGIRenderParams {
     uint64_t sceneRevision = 0;
     /// World boxes where the distance field changed this frame (block B.2); read at execution.
     const std::vector<GlobalDistanceField::ChangedRegion>* changedRegions = nullptr;
+    /// Phase D stage 3: the surface radiance cache's binding record (StructuredBuffer<SurfaceCacheParams>
+    /// SRV) the world gather's hit shading reads; UINT32_MAX = no cache (the gather unchanged).
+    uint32_t surfaceCacheParamsSrv = UINT32_MAX;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -103,7 +106,7 @@ struct SSGIRestirRootConstants {
     uint32_t maxHistory;
     uint32_t spatialSamples;
     uint32_t spatialRadiusBits;
-    uint32_t reserved0;
+    uint32_t surfaceCacheParamsSrv;   ///< Phase D stage 3 (the former reserved0): StructuredBuffer<SurfaceCacheParams> SRV, UINT32_MAX = no cache.
     uint32_t reserved1;
 };
 static_assert(sizeof(SSGIRestirRootConstants) == 64, "SSGIRestirRoot is 16 root DWORDs");

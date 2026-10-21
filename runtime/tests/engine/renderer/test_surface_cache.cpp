@@ -7,11 +7,17 @@
 // bit) and the CPU invalidation policy. Stage 2 (acceptance B1-B4): the local-light scalars the
 // cell lighting shares with the deferred lighting (attenuation, spot cone, rect window, the
 // relevance luminance), the 80-byte light record and its CPU builder, the emissive extension of
-// the GI material table and the stage 2 CVar defaults.
+// the GI material table and the stage 2 CVar defaults. Stage 3 (acceptance C1-C5): the SDF
+// consumers' cell read — the biased level, the snap of an expanded-surface hit back to the raw
+// surface, the reader policy that replaces the whole hit radiance (the SH writer's and
+// ShadeSdfReflectionHit's math) — the stage 3 flags / writer tags / stats, the feed root block,
+// the three consumer bindings (the LightingCB pad, the SSGI root DWORDs, the 96-byte record's
+// camera row) and the stage 3 CVar defaults.
 // (The reflection contract header defines non-inline functions and is owned by
 // test_rt_reflection.cpp, which pins the C++ flag enum against it, the new bit included.)
 #include "../../../shaders/runtime/gi/surface_cache_contract.hlsli"
 #include "gi/surface_radiance_cache.h"
+#include "gi/ssgi_renderer.h"
 #include "passes/raytracing/rt_reflection_pass.h"
 #include "passes/pathtracing/path_tracer_pass.h"
 #include "constant_buffers.h"
@@ -231,9 +237,13 @@ TEST(SurfaceCacheContract, EmaIsTheRunningMeanThenAnExponentialAverage) {
 // ─── Binding contracts ──────────────────────────────────────────────────────────────────────
 
 TEST(SurfaceCacheContract, ParamsRecordMirrorsTheShaderStruct) {
-    // 80 bytes since stage 2 (the lights row); the first four rows are the stage 1 record.
-    EXPECT_EQ(sizeof(SurfaceCacheParams), 80u);
-    EXPECT_EQ(sizeof(SurfaceCacheParamsGPU), 80u);
+    // 96 bytes since stage 3 (the camera row); 80 with stage 2's lights row; the first four rows
+    // are the stage 1 record.
+    EXPECT_EQ(sizeof(SurfaceCacheParams), 96u);
+    EXPECT_EQ(sizeof(SurfaceCacheParamsGPU), 96u);
+    EXPECT_EQ(offsetof(SurfaceCacheParamsGPU, cameraPosX), offsetof(SurfaceCacheParams, cameraPosX));
+    EXPECT_EQ(offsetof(SurfaceCacheParamsGPU, cameraPosX), 80u);
+    EXPECT_EQ(offsetof(SurfaceCacheParamsGPU, cameraPosZ), 88u);
     EXPECT_EQ(offsetof(SurfaceCacheParamsGPU, keysUav), offsetof(SurfaceCacheParams, keysUav));
     EXPECT_EQ(offsetof(SurfaceCacheParamsGPU, resolvedSrv), offsetof(SurfaceCacheParams, resolvedSrv));
     EXPECT_EQ(offsetof(SurfaceCacheParamsGPU, entriesLog2), 16u);
@@ -326,6 +336,148 @@ TEST(SurfaceCacheContract, RegisteredDefaultsAreOff) {
     EXPECT_EQ(registry.Find("r.GI.SurfaceCache.Emissive")->defaultValue, 1.0f);
     EXPECT_EQ(SurfaceRadianceCache::LocalLights(), 4u);
     EXPECT_TRUE(SurfaceRadianceCache::EmissiveEnabled());
+}
+
+// ─── Stage 3: the SDF consumers and the probes read exact-material radiance (spec 2.5, 3.1, D7, D8) ──
+
+TEST(SurfaceCacheStage3, SdfLevelIsTheCameraLevelPlusTheBiasClampedToTheLastLevel) {
+    const float lod = 400.0f;
+    EXPECT_EQ(SurfaceCacheSdfLevel(100.0f, lod, 0), 0u);
+    EXPECT_EQ(SurfaceCacheSdfLevel(100.0f, lod, 2), 2u);
+    EXPECT_EQ(SurfaceCacheSdfLevel(800.0f, lod, 2), SurfaceCacheLevel(800.0f, lod) + 2u);
+    EXPECT_EQ(SurfaceCacheSdfLevel(3200.0f, lod, 4), 3u + 4u);
+    // Never past the last level the key can hold.
+    EXPECT_EQ(SurfaceCacheSdfLevel(1e9f, lod, 4), kSurfaceCacheLevels - 1u);
+    EXPECT_EQ(SurfaceCacheSdfLevel(lod * 16384.0f, lod, 1), kSurfaceCacheLevels - 1u);
+    // The biased level is what the cell size doubles by: SdfLodBias 2 = 4 x the TLAS hit's cell.
+    EXPECT_FLOAT_EQ(SurfaceCacheCellSize(10.0f, SurfaceCacheSdfLevel(100.0f, lod, 2)),
+                    4.0f * SurfaceCacheCellSize(10.0f, SurfaceCacheLevel(100.0f, lod)));
+}
+
+TEST(SurfaceCacheStage3, SnapDistanceKeepsSurfaceDistancesAndDropsMarkersFarHitsAndNaN) {
+    EXPECT_FLOAT_EQ(SurfaceCacheSnapDistance(12.5f, kSurfaceCacheMaxSnap), 12.5f);
+    EXPECT_FLOAT_EQ(SurfaceCacheSnapDistance(-3.0f, kSurfaceCacheMaxSnap), -3.0f);     // inside: moved outward
+    EXPECT_FLOAT_EQ(SurfaceCacheSnapDistance(0.0f, kSurfaceCacheMaxSnap), 0.0f);
+    EXPECT_FLOAT_EQ(SurfaceCacheSnapDistance(kSurfaceCacheMaxSnap, kSurfaceCacheMaxSnap), kSurfaceCacheMaxSnap);
+    EXPECT_FLOAT_EQ(SurfaceCacheSnapDistance(-65504.0f, kSurfaceCacheMaxSnap), 0.0f);  // missing raw cascade
+    EXPECT_FLOAT_EQ(SurfaceCacheSnapDistance(65504.0f, kSurfaceCacheMaxSnap), 0.0f);   // outside every cascade
+    EXPECT_FLOAT_EQ(SurfaceCacheSnapDistance(1e9f, kSurfaceCacheMaxSnap), 0.0f);       // the GDF sentinel
+    EXPECT_FLOAT_EQ(SurfaceCacheSnapDistance(std::nanf(""), kSurfaceCacheMaxSnap), 0.0f);
+    EXPECT_GT(kSurfaceCacheMaxSnap, 0.0f);
+    // = kReflectionSurfaceBias (rt_reflection_contract.hlsli, pinned by test_rt_reflection.cpp) and the
+    // DDGI writer's kSurfaceBias: the point every TLAS writer keys its cell from.
+    EXPECT_FLOAT_EQ(kSurfaceCacheSurfaceBias, 2.0f);
+}
+
+TEST(SurfaceCacheStage3, SdfReadPositionMovesTheHitToTheRawSurfacePlusTheWritersBias) {
+    const Vec3 hit(100.0f, 50.0f, -20.0f);
+    const Vec3 n(0.0f, 0.0f, 1.0f);
+    // An expanded-surface hit 7 cm above the raw surface reads at raw surface + 2 cm.
+    const Vec3 p = SurfaceCacheSdfReadPosition(hit, n, 7.0f);
+    EXPECT_FLOAT_EQ(p.x, 100.0f);
+    EXPECT_FLOAT_EQ(p.y, 50.0f);
+    EXPECT_FLOAT_EQ(p.z, -20.0f - 7.0f + kSurfaceCacheSurfaceBias);
+    // No raw distance (a marker): only the bias is applied, the hit is treated as the surface.
+    const Vec3 q = SurfaceCacheSdfReadPosition(hit, n, -65504.0f);
+    EXPECT_FLOAT_EQ(q.z, -20.0f + kSurfaceCacheSurfaceBias);
+    // A general normal: the shift is along it.
+    const Vec3 m(0.6f, 0.8f, 0.0f);
+    const Vec3 r = SurfaceCacheSdfReadPosition(hit, m, 12.0f);
+    EXPECT_NEAR(r.x, 100.0f - 0.6f * 10.0f, 1e-4f);
+    EXPECT_NEAR(r.y, 50.0f - 0.8f * 10.0f, 1e-4f);
+    EXPECT_FLOAT_EQ(r.z, -20.0f);
+}
+
+// The reader policy (D7) every stage 3 consumer applies — ShadeSdfReflectionHit, the SH writer's
+// hit branch and the DDGI trace: a readable cell replaces the WHOLE hit radiance (never adds the
+// SH term on top), DirectMode 1 keeps the inline sun, a miss is the inline shading unchanged.
+TEST(SurfaceCacheStage3, HitRadianceReplacesTheWholeShadingOnlyWhenACellIsReadable) {
+    const Vec3 cellSun(1.0f, 2.0f, 3.0f), cellOther(0.5f, 0.25f, 0.125f);
+    const Vec3 inlineSun(10.0f, 20.0f, 30.0f), inlineRest(7.0f, 7.0f, 7.0f);
+    const Vec3 miss = SurfaceCacheHitRadiance(false, false, cellSun, cellOther, inlineSun, inlineRest);
+    EXPECT_FLOAT_EQ(miss.x, 17.0f); EXPECT_FLOAT_EQ(miss.y, 27.0f); EXPECT_FLOAT_EQ(miss.z, 37.0f);
+    const Vec3 cell = SurfaceCacheHitRadiance(true, false, cellSun, cellOther, inlineSun, inlineRest);
+    EXPECT_FLOAT_EQ(cell.x, 1.5f); EXPECT_FLOAT_EQ(cell.y, 2.25f); EXPECT_FLOAT_EQ(cell.z, 3.125f);
+    const Vec3 direct = SurfaceCacheHitRadiance(true, true, cellSun, cellOther, inlineSun, inlineRest);
+    EXPECT_FLOAT_EQ(direct.x, 10.5f); EXPECT_FLOAT_EQ(direct.y, 20.25f); EXPECT_FLOAT_EQ(direct.z, 30.125f);
+    // The SH writer's hit: albedo x (sun / pi + E / pi) inline, the cell's two layers when readable —
+    // the probe then projects the exact-material radiance with the same 4 pi / N weight.
+    const Vec3 albedo(0.5f, 0.25f, 1.0f);
+    const Vec3 sunRad(3.14159265f, 3.14159265f, 3.14159265f), indirect(0.2f, 0.2f, 0.2f);
+    const Vec3 writerSun(albedo.x * sunRad.x / kSurfaceCachePi, albedo.y * sunRad.y / kSurfaceCachePi, albedo.z * sunRad.z / kSurfaceCachePi);
+    const Vec3 writerRest(albedo.x * indirect.x, albedo.y * indirect.y, albedo.z * indirect.z);
+    const Vec3 inlineWriter = SurfaceCacheHitRadiance(false, false, cellSun, cellOther, writerSun, writerRest);
+    EXPECT_NEAR(inlineWriter.x, 0.5f * (1.0f + 0.2f), 1e-6f);
+    EXPECT_NEAR(inlineWriter.y, 0.25f * (1.0f + 0.2f), 1e-6f);
+    EXPECT_NEAR(inlineWriter.z, 1.0f * (1.0f + 0.2f), 1e-6f);
+    const Vec3 cachedWriter = SurfaceCacheHitRadiance(true, false, cellSun, cellOther, writerSun, writerRest);
+    EXPECT_FLOAT_EQ(cachedWriter.x, cellSun.x + cellOther.x);
+    EXPECT_FLOAT_EQ(cachedWriter.z, cellSun.z + cellOther.z);
+}
+
+TEST(SurfaceCacheStage3, FlagsWriterTagsAndStatsAreDisjointAndInRange) {
+    // The new flag bit is its own and outside the debug field.
+    EXPECT_EQ(kSurfaceCacheFlagSdfReads & (kSurfaceCacheFlagDirectInline | kSurfaceCacheFlagJitter
+                                           | kSurfaceCacheFlagSdfWrites | kSurfaceCacheFlagStats
+                                           | kSurfaceCacheFlagEmissive | kSurfaceCacheFlagDebugMask), 0u);
+    // Writer tags: one bit each, disjoint, below the touch bit.
+    const uint32_t tags[] = {kSurfaceCacheWriterReflections, kSurfaceCacheWriterFeed, kSurfaceCacheWriterDdgi, kSurfaceCacheWriterSdf};
+    uint32_t all = 0;
+    for (uint32_t t : tags) {
+        EXPECT_EQ(t & (t - 1u), 0u);
+        EXPECT_EQ(all & t, 0u);
+        EXPECT_EQ(t & kSurfaceCacheTagTouched, 0u);
+        all |= t;
+    }
+    // Stats: the stage 3 words are distinct and inside the block.
+    const uint32_t stats[] = {kSurfaceCacheStatSdfQueries, kSurfaceCacheStatSdfHits, kSurfaceCacheStatFeedUpdates};
+    std::set<uint32_t> distinct;
+    for (uint32_t s : stats) {
+        EXPECT_LT(s, kSurfaceCacheStatCount);
+        EXPECT_GT(s, kSurfaceCacheStatProbeSum);
+        distinct.insert(s);
+    }
+    EXPECT_EQ(distinct.size(), 3u);
+}
+
+TEST(SurfaceCacheStage3, FeedRootBlockAndTheConsumerBindingsFitTheirBudgets) {
+    EXPECT_EQ(sizeof(SurfaceCacheFeedRootConstants), 20u);
+    EXPECT_EQ(kSurfaceCacheFeedRootDwords, 5u);
+    EXPECT_EQ(offsetof(SurfaceCacheFeedRootConstants, surfaceCacheParamsSrv), 12u);
+    EXPECT_EQ(offsetof(SurfaceCacheFeedRootConstants, feedRays), 16u);
+    const SurfaceCacheFeedRootConstants feed{};
+    EXPECT_EQ(feed.tlasSrv, UINT32_MAX);
+    EXPECT_EQ(feed.materialTableSrv, UINT32_MAX);
+    EXPECT_EQ(feed.feedRays, 0u);
+    // The deferred lighting's binding in the LightingCB's former pad: the CB size and every
+    // offset before it unchanged.
+    EXPECT_EQ(sizeof(LightingCB), 43264u);
+    EXPECT_EQ(offsetof(LightingCB, surfaceCacheParamsSrv), 43104u);
+    EXPECT_EQ(offsetof(LightingCB, ltcMagnitudeSrv) + 4u, offsetof(LightingCB, surfaceCacheParamsSrv));
+    const LightingCB lighting{};
+    EXPECT_EQ(lighting.surfaceCacheParamsSrv, UINT32_MAX);
+    // The ReSTIR GI root block: the former reserved0, the block still 16 DWORDs.
+    EXPECT_EQ(sizeof(SSGIRestirRootConstants), 64u);
+    EXPECT_EQ(offsetof(SSGIRestirRootConstants, surfaceCacheParamsSrv), 56u);
+    // The reflection pass's block is untouched by stage 3.
+    EXPECT_EQ(kRTReflectionRootDwords, 17u);
+}
+
+TEST(SurfaceCacheStage3, RegisteredDefaultsFollowTheSpecUnderTheMasterSwitch) {
+    auto& registry = CVarRegistry::Get();
+    EXPECT_FALSE(SurfaceRadianceCache::Enabled());
+    ASSERT_NE(registry.Find("r.GI.SurfaceCache.FeedRays"), nullptr);
+    EXPECT_EQ(registry.Find("r.GI.SurfaceCache.FeedRays")->defaultValue, 16.0f);
+    EXPECT_EQ(registry.Find("r.GI.SurfaceCache.SdfReads")->defaultValue, 1.0f);
+    EXPECT_EQ(registry.Find("r.GI.SurfaceCache.SdfLodBias")->defaultValue, 2.0f);
+    EXPECT_EQ(registry.Find("r.GI.SurfaceCache.SdfWrites")->defaultValue, 0.0f);
+    EXPECT_EQ(registry.Find("r.GI.SurfaceCache.DDGI")->defaultValue, 1.0f);
+    EXPECT_EQ(SurfaceRadianceCache::FeedRays(), 16u);
+    EXPECT_TRUE(SurfaceRadianceCache::SdfReadsEnabled());
+    EXPECT_FALSE(SurfaceRadianceCache::SdfWritesEnabled());
+    EXPECT_EQ(SurfaceRadianceCache::SdfLodBias(), 2u);
+    EXPECT_TRUE(SurfaceRadianceCache::DdgiEnabled());
+    EXPECT_TRUE(SurfaceRadianceCache::SdfConsumersBound());
 }
 
 // ─── Stage 2: local lights and emissive at the hit (spec 2.5, 3.1; acceptance B1-B4) ─────────

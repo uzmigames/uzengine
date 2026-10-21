@@ -1,0 +1,46 @@
+{
+  "name": "Surface cache stage 3: indoor Sponza, Camera A, sun only (no atmosphere, black sky) so the raster GI and the path tracer share one calibrated light",
+  "version": "1.0",
+  "cvars": {
+    "r.PathTracer.Enable": 0,
+    "r.AutoExposure": 0,
+    "r.Exposure": 1,
+    "r.ColorContrast": 1,
+    "r.ColorSaturation": 1,
+    "r.GTAO": 0
+  },
+  "entities": [
+    {
+      "name": "Sun",
+      "components": {
+        "transform": {"position": [0, 0, 0], "rotation": [-56, 79, 0], "scale": [1, 1, 1]},
+        "light": {
+          "type": "directional",
+          "color": [1.0, 0.98, 0.95],
+          "intensity": 6,
+          "cast_shadows": true,
+          "light_source_angle": 0.53
+        }
+      }
+    },
+    {
+      "name": "Camera_A",
+      "components": {
+        "transform": {"position": [86.0, 881.0, 159.0], "rotation": [0, 0, 0], "scale": [1, 1, 1]},
+        "camera": {"fov": 58.51, "near": 5, "far": 10000, "active": true, "look_at": [67.8, 784.6, 178.4]}
+      }
+    },
+    {
+      "name": "Black environment",
+      "components": {
+        "transform": {"position": [0, 0, 0]},
+        "sky_light": {"intensity": 0, "light_color": [0, 0, 0]}
+      }
+    },
+    {
+      "name": "Sponza",
+      "components": {"transform": {}},
+      "prefab": {"asset": "meshes/sponza/sponza.uzprefab"}
+    }
+  ]
+}

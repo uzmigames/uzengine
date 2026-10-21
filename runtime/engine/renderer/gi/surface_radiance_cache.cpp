@@ -68,6 +68,22 @@ static auto* cv_SCLocalLights = UZ_CVAR_INT("r.GI.SurfaceCache.LocalLights", 4,
 static auto* cv_SCEmissive = UZ_CVAR_BOOL("r.GI.SurfaceCache.Emissive", true,
     "Surface cache (stage 2): the hit mesh's emission (the GI material table's emissive colour x intensity and "
     "texture) joins the cell's other layer");
+// Stage 3 (the SDF consumers and the probes read exact-material radiance).
+static auto* cv_SCFeedRays = UZ_CVAR_INT("r.GI.SurfaceCache.FeedRays", 16,
+    "Surface cache (stage 3): rays per radiance-cache probe per frame of the feed trace (TLAS rays with the exact "
+    "material, written into the SDF consumers' cells; 0 = no feed)", 0, 64);
+static auto* cv_SCSdfReads = UZ_CVAR_BOOL("r.GI.SurfaceCache.SdfReads", true,
+    "Surface cache (stage 3): the SDF consumers (the final gather, ReSTIR GI, the deferred SDF reflections and the "
+    "radiance-cache probe trace) read a readable cell at their hits instead of the field's average reflectance");
+static auto* cv_SCSdfLodBias = UZ_CVAR_INT("r.GI.SurfaceCache.SdfLodBias", 2,
+    "Surface cache (stage 3): levels coarser than a TLAS hit's at which an SDF-traced hit reads (and the feed "
+    "writes) its cell, absorbing the expanded-surface hit bias", 0, 4);
+static auto* cv_SCSdfWrites = UZ_CVAR_BOOL("r.GI.SurfaceCache.SdfWrites", false,
+    "Surface cache (stage 3, diagnostic): the SDF consumers also write their per-mesh-average shading into the "
+    "cells they miss (off: read-only, so the exact-material cells stay exact)");
+static auto* cv_SCDdgi = UZ_CVAR_BOOL("r.GI.SurfaceCache.DDGI", true,
+    "Surface cache (stage 3): the DDGI probe trace reads and writes the cache at its hits, with the exact material "
+    "table bound (r.RayTracing.GI)");
 
 namespace uz {
 
@@ -110,6 +126,15 @@ uint32_t SurfaceRadianceCache::LocalLights() {
                                             static_cast<int>(surfacecache::kSurfaceCacheMaxLocalLights)));
 }
 bool SurfaceRadianceCache::EmissiveEnabled() { return cv_SCEmissive->value != 0.0f; }
+bool SurfaceRadianceCache::SdfReadsEnabled() { return cv_SCSdfReads->value != 0.0f; }
+bool SurfaceRadianceCache::SdfWritesEnabled() { return cv_SCSdfWrites->value != 0.0f; }
+uint32_t SurfaceRadianceCache::SdfLodBias() {
+    return static_cast<uint32_t>(std::clamp(static_cast<int>(cv_SCSdfLodBias->value), 0, 4));
+}
+bool SurfaceRadianceCache::DdgiEnabled() { return cv_SCDdgi->value != 0.0f; }
+uint32_t SurfaceRadianceCache::FeedRays() {
+    return static_cast<uint32_t>(std::clamp(static_cast<int>(cv_SCFeedRays->value), 0, 64));
+}
 
 uint32_t SurfaceCacheBuildLights(SurfaceCacheLightGPU* out, uint32_t capacity, const LightingCB* lighting,
                                  const RectLightData* rectLights, uint32_t rectLightCount) noexcept {
@@ -325,6 +350,9 @@ void SurfaceRadianceCache::ReadStats(uint32_t frameIndex) {
             m_lastStats.tombstones    = block[surfacecache::kSurfaceCacheStatTombstones];
             m_lastStats.torn          = block[surfacecache::kSurfaceCacheStatTorn];
             m_lastStats.probeSum      = block[surfacecache::kSurfaceCacheStatProbeSum];
+            m_lastStats.sdfQueries    = block[surfacecache::kSurfaceCacheStatSdfQueries];
+            m_lastStats.sdfHits       = block[surfacecache::kSurfaceCacheStatSdfHits];
+            m_lastStats.feedUpdates   = block[surfacecache::kSurfaceCacheStatFeedUpdates];
             m_lastStats.totalInserts       += m_lastStats.inserts;
             m_lastStats.totalFailedInserts += m_lastStats.failedInserts;
             m_lastStats.valid = true;
@@ -336,11 +364,14 @@ void SurfaceRadianceCache::ReadStats(uint32_t frameIndex) {
                     ? 100.0 * double(m_lastStats.totalFailedInserts) / double(m_lastStats.totalInserts + m_lastStats.totalFailedInserts) : 0.0;
                 const double avgProbe = m_lastStats.updates + m_lastStats.failedInserts + m_lastStats.torn > 0
                     ? double(m_lastStats.probeSum) / double(m_lastStats.updates + m_lastStats.failedInserts + m_lastStats.torn) : 0.0;
-                UZ_LOG(Renderer, Info, "SurfaceCache stats: frame={} live={} tombstones={} inserts={} failedInserts={} ({:.3f} %) torn={} updates={} queries={} hits={} evictions={} maxProbe={} avgProbe={:.2f} totalInserts={} totalFailedInserts={} ({:.3f} %) entries=2^{} generation={} lights={} K={}",
+                const double sdfHitPct = m_lastStats.sdfQueries > 0
+                    ? 100.0 * double(m_lastStats.sdfHits) / double(m_lastStats.sdfQueries) : 0.0;
+                UZ_LOG(Renderer, Info, "SurfaceCache stats: frame={} live={} tombstones={} inserts={} failedInserts={} ({:.3f} %) torn={} updates={} queries={} hits={} evictions={} maxProbe={} avgProbe={:.2f} totalInserts={} totalFailedInserts={} ({:.3f} %) entries=2^{} generation={} lights={} K={} sdfQueries={} sdfHits={} ({:.1f} %) feedUpdates={}",
                        statsFrame, m_lastStats.live, m_lastStats.tombstones, m_lastStats.inserts, m_lastStats.failedInserts, failedPct,
                        m_lastStats.torn, m_lastStats.updates, m_lastStats.queries, m_lastStats.hits, m_lastStats.evictions,
                        m_lastStats.maxProbe, avgProbe, m_lastStats.totalInserts, m_lastStats.totalFailedInserts, totalPct,
-                       m_entriesLog2, m_generation, m_lastLightCount, m_lastLocalLights);
+                       m_entriesLog2, m_generation, m_lastLightCount, m_lastLocalLights,
+                       m_lastStats.sdfQueries, m_lastStats.sdfHits, sdfHitPct, m_lastStats.feedUpdates);
             }
         }
         m_readbackFrame[slot] = UINT32_MAX;
@@ -404,7 +435,7 @@ bool SurfaceRadianceCache::Resolve(IRHICommandList* cmd, const FrameInputs& in) 
     params.cellSize    = cv_SCCellSize->value;
     params.lodDistance = cv_SCLodDistance->value;
     params.maxRadiance = cv_SCMaxRadiance->value;
-    params.sdfLodBias  = 2u;
+    params.sdfLodBias  = SdfLodBias();
     params.statsUav    = stats ? m_statsUav : UINT32_MAX;
     params.generation  = m_generation;
     params.refreshRate = static_cast<uint32_t>(std::clamp(static_cast<int>(cv_SCRefresh->value), 0, 1024));
@@ -425,6 +456,13 @@ bool SurfaceRadianceCache::Resolve(IRHICommandList* cmd, const FrameInputs& in) 
     m_lastLightCount   = lightCount;
     m_lastLocalLights  = params.localLights;
     if (EmissiveEnabled()) params.flags |= surfacecache::kSurfaceCacheFlagEmissive;
+    // Stage 3: the SDF consumers' switches and the camera of the level rule (D3) for the consumers
+    // that bind no PerFrameCB (the radiance-cache trace, the DDGI trace, the feed).
+    if (SdfReadsEnabled())  params.flags |= surfacecache::kSurfaceCacheFlagSdfReads;
+    if (SdfWritesEnabled()) params.flags |= surfacecache::kSurfaceCacheFlagSdfWrites;
+    params.cameraPosX = in.cameraPos.x;
+    params.cameraPosY = in.cameraPos.y;
+    params.cameraPosZ = in.cameraPos.z;
     if (void* mapped = in.device->MapBuffer(m_params[slot])) {
         std::memcpy(mapped, &params, sizeof(params));
         in.device->UnmapBuffer(m_params[slot]);

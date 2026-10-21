@@ -84,7 +84,10 @@ cbuffer LightingCB : register(b2)
     uint   rectLightsSrv;      // bindless SRV of this frame's StructuredBuffer<RectLightData>
     uint   ltcMatrixSrv;       // bindless SRV of the 64x64 RGBA32F LTC inverse-matrix table (ltc.hlsli)
     uint   ltcMagnitudeSrv;    // bindless SRV of the 64x64 RG32F LTC (magnitude, fresnel) table
-    float  _lightPad2[43];     // pad; the C++ struct is 43264 bytes
+
+    // ── Surface radiance cache (Phase D stage 3) in the former pad, offset 43104; mirrors constant_buffers.h ──
+    uint   surfaceCacheParamsSrv; // bindless SRV of the frame's StructuredBuffer<SurfaceCacheParams> (0xffffffff = no cache)
+    float  _lightPad2[42];     // pad; the C++ struct is 43264 bytes
 };
 
 /// The cluster a pixel of the lighting pass belongs to: its 32-pixel tile and its logarithmic depth

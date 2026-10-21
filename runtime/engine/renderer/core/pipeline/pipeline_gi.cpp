@@ -921,6 +921,68 @@ RHIPipelineHandle PipelineLibrary::GetSurfaceCacheResolve() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Surface Radiance Cache Feed Compute Pipeline (Phase D stage 3, opt-in)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// `surface_cache_feed_cs.hlsl`: one thread per radiance-cache probe ray, an inline RayQuery on the
+// scene TLAS whose hit is shaded with the exact material (the reflection pass's sources) and
+// accumulated into the SDF consumers' cells. Created lazily by the feed pass, so with
+// `r.GI.SurfaceCache` off (or `.FeedRays` 0) the shader is never compiled.
+
+bool PipelineLibrary::EnsureSurfaceCacheFeedShader() {
+    if (m_surfaceCacheFeedCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::SurfaceCacheFeedCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile SurfaceCacheFeedCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "surface_cache_feed_cs";
+
+    m_surfaceCacheFeedCS = m_device->CreateShader(shaderDesc);
+    if (!m_surfaceCacheFeedCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SurfaceCacheFeedCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetSurfaceCacheFeed() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetSurfaceCacheFeed called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_surfaceCacheFeed.IsValid()) {
+        return m_surfaceCacheFeed;
+    }
+
+    if (!EnsureSurfaceCacheFeedShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_surfaceCacheFeedCS;
+    desc.debugName     = "SurfaceCache_Feed";
+
+    m_surfaceCacheFeed = m_device->CreateComputePipeline(desc);
+    if (!m_surfaceCacheFeed.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SurfaceCache_Feed pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created SurfaceCache_Feed pipeline");
+    }
+    return m_surfaceCacheFeed;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Radiance Cache Probe Side Compute Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 //

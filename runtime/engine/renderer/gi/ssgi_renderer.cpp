@@ -598,7 +598,7 @@ void SSGIRenderer::DispatchTrace(IRHICommandList* cmdList, const SSGIRenderParam
 
     cmdList->SetPipeline(pso);
 
-    // Root constants: 13 DWORDs matching ssgi_trace_cs.hlsl RootConstants
+    // Root constants: 14 DWORDs matching ssgi_trace_cs.hlsl RootConstants (the 14th: Phase D stage 3)
     struct SSGITraceRC {
         uint32_t depthSrvIndex;
         uint32_t normalSrvIndex;
@@ -613,8 +613,9 @@ void SSGIRenderer::DispatchTrace(IRHICommandList* cmdList, const SSGIRenderParam
         uint32_t stepSizeBits;     // float as uint bits
         uint32_t thicknessBits;    // float as uint bits
         uint32_t maxRayDistBits;   // float as uint bits (0.5 default)
+        uint32_t surfaceCacheParamsSrv; // Phase D stage 3: StructuredBuffer<SurfaceCacheParams> SRV (UINT32_MAX = no cache)
     };
-    static_assert(sizeof(SSGITraceRC) == 52, "Must be 13 DWORDs");
+    static_assert(sizeof(SSGITraceRC) == 56, "Must be 14 DWORDs");
 
     SSGITraceRC rc{};
     rc.depthSrvIndex     = params.depthSrvIndex;
@@ -633,8 +634,9 @@ void SSGIRenderer::DispatchTrace(IRHICommandList* cmdList, const SSGIRenderParam
     std::memcpy(&rc.stepSizeBits, &stepSize, 4);
     std::memcpy(&rc.thicknessBits, &thickness, 4);
     std::memcpy(&rc.maxRayDistBits, &maxRayDist, 4);
+    rc.surfaceCacheParamsSrv = params.surfaceCacheParamsSrv;
 
-    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 13);
+    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 14);
 
     // PerFrameCB at b1
     cmdList->SetRootCBV(kSlotPerFrame, params.perFrameBuffer,
@@ -760,6 +762,8 @@ void SSGIRenderer::DispatchRestir(IRHICommandList* cmdList, const SSGIRenderPara
     rc.spatialSamples   = static_cast<uint32_t>(cv_GIReSTIRSpatial->value);
     const float spatialRadius = cv_GIReSTIRSpatialRadius->value;
     std::memcpy(&rc.spatialRadiusBits, &spatialRadius, 4);
+    rc.surfaceCacheParamsSrv = params.surfaceCacheParamsSrv;   // Phase D stage 3 (UINT32_MAX = no cache)
+    rc.reserved1 = 0u;
 
     const uint32_t groupsX = (m_halfWidth  + kThreadGroupSize - 1) / kThreadGroupSize;
     const uint32_t groupsY = (m_halfHeight + kThreadGroupSize - 1) / kThreadGroupSize;

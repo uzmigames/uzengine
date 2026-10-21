@@ -162,7 +162,8 @@ public:
         const void* perFrameCpuPtr,
         uint32_t perFrameSize,
         uint32_t frameIndex,
-        RHIPipelineHandle sidePipeline = RHIPipelineHandle::Invalid());
+        RHIPipelineHandle sidePipeline = RHIPipelineHandle::Invalid(),
+        uint32_t surfaceCacheParamsSrv = UINT32_MAX);   ///< Phase D stage 3: the surface cache's binding record (sentinel = no cache).
 
     /// `r.GI.RadianceCache.ProbeClassification`: 0 = the current rule (a probe whose biased field
     /// distance is below the trace's 5 cm surface epsilon is inside geometry); 1 = the followup-01

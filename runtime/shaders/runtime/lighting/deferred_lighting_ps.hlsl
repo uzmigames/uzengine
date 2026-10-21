@@ -1241,6 +1241,9 @@ LightingOutput main(FSInput input) {
             scene.sunColor = lightColor.xyz;
             scene.skyMultiplier = skyTintSpecular;
             scene.plainMean = _sdfReflectionPlainMean;
+            // Phase D stage 3: the surface radiance cache at the SDF reflections' hits (LightingCB's
+            // former pad; the sentinel = no cache, the hit shading unchanged).
+            scene.surfaceCacheParamsSrv = surfaceCacheParamsSrv;
             if (_sdfDiffuseSamples != 0) {
                 Texture2D<float4> gatheredDiffuse = ResourceDescriptorHeap[ssgiSrvIndex];
                 cosineIrradiance = gatheredDiffuse.Load(int3(px, 0)).rgb;

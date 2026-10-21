@@ -38,9 +38,16 @@ cbuffer RootConstants : register(b0) {
     uint g_rayInfoUav;         ///< Bindless UAV of the hit-info ray buffer.
     uint g_indirectTerm;       ///< 1 = add albedo x previous irradiance at the hit (r.GI.DDGI.IndirectTerm).
     uint g_historyValid;       ///< 1 = the irradiance atlas holds a completed update (first frame: 0).
+    // Phase D stage 3 (`r.GI.SurfaceCache` + `.DDGI`): the surface radiance cache's binding record
+    // and the per-mesh material table (exact hit attributes); both at the sentinel = the writer as
+    // before block Phase D.
+    uint g_surfaceCacheParamsSrv;   ///< [12] StructuredBuffer<SurfaceCacheParams> SRV (sentinel = no cache).
+    uint g_materialTableSrv;        ///< [13] StructuredBuffer<GIMeshMaterial> by InstanceID (sentinel = GDF attributes).
 };
 
 #include "ddgi_probe_common.hlsli"
+#include "surface_cache.hlsli"          // Phase D stage 3: SurfaceCacheQuery / SurfaceCacheUpdate at the hit
+#include "surface_cache_lights.hlsli"   // Phase D stage 2 terms at a DDGI hit: the frame's local lights
 
 // ─── Previous-frame irradiance at a hit point ────────────────────────────
 //
@@ -103,12 +110,64 @@ void main(uint3 DTid : SV_DispatchThreadID) {
 
     float4 hitInfo;
     float3 hitP, hitN, hitAlbedo;
-    float4 rt = TraceProbeRay(probePos, rayDir, hitInfo, hitP, hitN, hitAlbedo);
+    uint   hitMeshId, hitPrimIndex;
+    float2 hitBary;
+    float4 rt = TraceProbeRay(probePos, rayDir, g_materialTableSrv, hitInfo, hitP, hitN, hitAlbedo,
+                              hitMeshId, hitPrimIndex, hitBary);
 
-    // Second bounce from the previous frame's probes, as the SDF writer's
-    // `radiance = albedo * (sunRad / kPI + indirect)`; the same 2 * kSurfaceEpsilon offset.
-    if (g_indirectTerm != 0u && g_historyValid != 0u && rt.a < maxTraceDistance) {
-        rt.rgb += hitAlbedo * SamplePreviousIrradiance(hitP + hitN * (2.0 * kSurfaceEpsilon), hitN);
+    // Phase D stage 3: the surface radiance cache at the hit, keyed from the hit lifted by the
+    // writers' bias (the reflection pass's cell), at the level of the camera distance (D3, the
+    // record's camera). A readable cell replaces the whole hit radiance (D7); a miss, a refresh or
+    // DirectMode 1 shades inline below — the sun bounce, the previous atlas irradiance, and the stage
+    // 2 terms (the frame's local lights with shadow rays, the mesh's emission) — and feeds the cell.
+    const bool hit = rt.a < maxTraceDistance;
+    SurfaceCacheParams cache = (SurfaceCacheParams)0;
+    float3 cellSun = 0.0, cellOther = 0.0;
+    uint   cellSamples = 0u;
+    bool   cacheBound = false, cacheHit = false, cacheRefresh = false, inlineShade = true;
+    const float3 cachePos = hitP + hitN * kSurfaceBias;
+    if (g_surfaceCacheParamsSrv != kSentinelSrvIndex && hit) {
+        StructuredBuffer<SurfaceCacheParams> cacheParams = ResourceDescriptorHeap[g_surfaceCacheParamsSrv];
+        cache      = cacheParams[0];
+        cacheBound = true;
+        cacheHit   = SurfaceCacheQuery(cache, cachePos, hitN, SurfaceCacheCameraPos(cache), 0u,
+                                       cellSun, cellOther, cellSamples);
+        cacheRefresh = cacheHit && SurfaceCacheRefresh(tid, g_frameIndex, cache.refreshRate);
+        inlineShade  = !cacheHit || cacheRefresh || (cache.flags & kSurfaceCacheFlagDirectInline) != 0u;
+    }
+
+    float3 sunTerm   = rt.rgb;   // albedo * sunRad / pi at a hit (the sky for a miss, never cached)
+    float3 otherTerm = 0.0;
+    if (inlineShade) {
+        // Second bounce from the previous frame's probes, as the SDF writer's
+        // `radiance = albedo * (sunRad / kPI + indirect)`; the same 2 * kSurfaceEpsilon offset.
+        if (g_indirectTerm != 0u && g_historyValid != 0u && hit) {
+            otherTerm = hitAlbedo * SamplePreviousIrradiance(hitP + hitN * (2.0 * kSurfaceEpsilon), hitN);
+            rt.rgb += otherTerm;
+        }
+        if (cacheBound) {
+            RaytracingAccelerationStructure tlas = ResourceDescriptorHeap[g_tlasSrvIndex];
+            const float2 areaSample = float2(RadicalInverseVdC(tid + g_frameIndex * 7919u),
+                                             RadicalInverseVdC((tid ^ 0x9e3779b9u) + g_frameIndex));
+            const float3 localTerm = SurfaceCacheLocalLightRadiance(cache, cachePos, hitN, hitAlbedo, tlas,
+                                                                    kRayTMin, kSurfaceBias, areaSample);
+            // The mesh's emission at the committed triangle (the table's colour x intensity and
+            // texture), as the reflection pass adds it; zero without the table.
+            float3 emissiveTerm = 0.0;
+            if ((cache.flags & kSurfaceCacheFlagEmissive) != 0u) {
+                emissiveTerm = GITrace_HitEmissive(hitMeshId, hitPrimIndex, hitBary, g_materialTableSrv);
+            }
+            sunTerm   += localTerm;
+            otherTerm += emissiveTerm;
+            rt.rgb    += localTerm + emissiveTerm;
+            if (!cacheHit || cacheRefresh) {
+                SurfaceCacheUpdate(cache, cachePos, hitN, SurfaceCacheCameraPos(cache), 0u, sunTerm, otherTerm,
+                                   kSurfaceCacheWriterDdgi);
+            }
+        }
+    }
+    if (cacheHit) {
+        rt.rgb = ((cache.flags & kSurfaceCacheFlagDirectInline) == 0u ? cellSun : sunTerm) + cellOther;
     }
 
     RWStructuredBuffer<float4> rayRadiance = ResourceDescriptorHeap[g_rayRadianceUav];

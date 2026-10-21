@@ -736,6 +736,12 @@ public:
     /// when `r.GI.SurfaceCache` is on.
     [[nodiscard]] RHIPipelineHandle GetSurfaceCacheResolve();
 
+    /// Returns the surface radiance cache feed compute pipeline (`surface_cache_feed_cs.hlsl`,
+    /// Phase D stage 3): one thread per radiance-cache probe ray, an inline `RayQuery` on the TLAS
+    /// whose exact-material hit shading is accumulated into the SDF consumers' cells. Created on
+    /// first use only when `r.GI.SurfaceCache` is on with `.FeedRays` > 0.
+    [[nodiscard]] RHIPipelineHandle GetSurfaceCacheFeed();
+
     /// Returns the radiance cache probe side classifier (`probe_side_cs.hlsl`, followup-01
     /// candidate `r.GI.RadianceCache.ProbeClassification` = 1): for every probe, the nearest mesh
     /// triangle over the scene's instances — the side the probe lies on and the direction from the

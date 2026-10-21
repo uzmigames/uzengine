@@ -153,7 +153,10 @@ void main(uint3 DTid : SV_DispatchThreadID) {
             hitInfo = rayInfoBuf[rayBase + i];
         } else {
             float3 hitP, hitN, hitAlbedo;
-            rt = TraceProbeRay(probePos, rayDir, hitInfo, hitP, hitN, hitAlbedo);
+            uint   unusedMeshId, unusedPrimIndex;
+            float2 unusedBary;
+            rt = TraceProbeRay(probePos, rayDir, kGITraceSentinelSrv, hitInfo, hitP, hitN, hitAlbedo,
+                               unusedMeshId, unusedPrimIndex, unusedBary);
         }
         float3 radiance = rt.rgb;
         float  hitT     = rt.a;

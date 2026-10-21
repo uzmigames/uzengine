@@ -164,7 +164,9 @@ void DDGISystem::DispatchUpdate(IRHICommandList* cmdList,
                                 const GlobalDistanceField* gdf,
                                 const void*       perFrameCpuPtr,
                                 uint32_t          vfxEmissiveSrvIndex,
-                                uint32_t          vfxEmissiveSampleCount) {
+                                uint32_t          vfxEmissiveSampleCount,
+                                uint32_t          surfaceCacheParamsSrv,
+                                uint32_t          materialTableSrv) {
     if (!m_initialized || !cmdList || !ddgiPipeline.IsValid() || !cbRing) {
         return;
     }
@@ -350,8 +352,9 @@ void DDGISystem::DispatchUpdate(IRHICommandList* cmdList,
 
         cmdList->SetPipeline(tracePipeline);
         // Root constants at b0 (ddgi_probe_trace_cs.hlsl): the atlas writer's first eight,
-        // then [8] ray radiance UAV, [9] ray info UAV, [10] indirect term, [11] history valid.
-        uint32_t traceConstants[12] = {};
+        // then [8] ray radiance UAV, [9] ray info UAV, [10] indirect term, [11] history valid,
+        // Phase D stage 3: [12] the surface cache's binding record, [13] the GI material table.
+        uint32_t traceConstants[14] = {};
         traceConstants[0]  = m_irradUav;
         traceConstants[1]  = m_depthUav;
         traceConstants[2]  = tlasSrvIndex;
@@ -364,7 +367,9 @@ void DDGISystem::DispatchUpdate(IRHICommandList* cmdList,
         traceConstants[9]  = m_rayInfoUav;
         traceConstants[10] = indirectTerm ? 1u : 0u;
         traceConstants[11] = m_firstUpdateComplete ? 1u : 0u;
-        cmdList->SetRootConstants(0, traceConstants, 12);
+        traceConstants[12] = surfaceCacheParamsSrv;
+        traceConstants[13] = surfaceCacheParamsSrv != UINT32_MAX ? materialTableSrv : UINT32_MAX;
+        cmdList->SetRootConstants(0, traceConstants, 14);
         const uint32_t threads = kTotalProbes * nRays;
         cmdList->Dispatch((threads + 63u) / 64u, 1, 1);
 

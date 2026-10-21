@@ -3,7 +3,9 @@
 /// @ref McGuire & Mara 2014 "Efficient GPU Screen-Space Ray Tracing".
 /// World mode reads current GBuffer geometry and produces E/pi; it never samples previous HDR.
 /// Legacy mode retains linear screen-space tracing against depth and previous HDR.
-/// Root constants contain 13 DWORDs; shared PerFrameCB supplies current SDF/cache bindings.
+/// Root constants contain 14 DWORDs; shared PerFrameCB supplies current SDF/cache bindings.
+/// Phase D stage 3: the 14th DWORD names the surface radiance cache's binding record, read by the
+/// gather's hit shading (`ShadeSdfReflectionHit`); the sentinel leaves the gather unchanged.
 #include "../common/constants.hlsli"
 #include "../common/math.hlsli"
 #include "../common/sampling.hlsli"
@@ -25,10 +27,12 @@ cbuffer RootConstants : register(b0) {
     uint g_stepSizeBits;      // CVar r.SSGI.StepSize as float bits (default 0.02)
     uint g_thicknessBits;     // CVar r.SSGI.Thickness as float bits (default 0.5)
     uint g_maxRayDistBits;    // Max ray distance in UV space as float bits (default 0.5)
+    uint g_surfaceCacheParamsSrv; // Phase D stage 3: StructuredBuffer<SurfaceCacheParams> SRV (0xffffffff = no cache)
 };
 
 #include "ssgi_surface.hlsli"
 #ifdef UZ_BINDLESS
+#define UZ_SSGI_SURFACE_CACHE_PARAMS_SRV g_surfaceCacheParamsSrv
 #include "ssgi_world_gather.hlsli"
 #endif
 

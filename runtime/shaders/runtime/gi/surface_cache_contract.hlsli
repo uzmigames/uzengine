@@ -48,6 +48,15 @@ static const uint  kSurfaceCachePackMax     = 4194303u;       // floor((2^32 - 1
 static const uint  kSurfaceCacheAccumStride = 8u;             // uints per accumulator entry
 static const uint  kSurfaceCacheSentinel    = 0xFFFFFFFFu;    // "not bound" descriptor index
 static const uint  kSurfaceCacheMaxRegions  = 16u;            // change boxes per resolve
+// Stage 3: the farthest an SDF hit is moved back to the raw surface (cm). A registered hit sits in
+// front of the raw surface by the field's expansion (half a voxel plus the mesh bias, metres only
+// in the coarsest cascade); a raw distance beyond this is not a surface hit (or the -65504 marker
+// of a missing raw cascade) and snaps nothing.
+static const float kSurfaceCacheMaxSnap     = 1000.0f;
+// Stage 3: the SDF consumers' lift off the surface and the TLAS writers' (kReflectionSurfaceBias,
+// the DDGI writer's kSurfaceBias): every writer keys its cell from the hit lifted 2 cm along the
+// normal, so the readers must key from the same point.
+static const float kSurfaceCacheSurfaceBias = 2.0f;
 
 // Accumulator words (per entry, `kSurfaceCacheAccumStride` uints).
 static const uint kSurfaceCacheAccumSunR   = 0u;
@@ -58,6 +67,9 @@ static const uint kSurfaceCacheAccumTags   = 7u;
 // Writer tags (`accum[7]`, a bit mask of the writers that updated the cell this frame) and the
 // touch bit a reader sets on a hit: a cell that is read does not age out, only one nobody visits.
 static const uint kSurfaceCacheWriterReflections = 1u;
+static const uint kSurfaceCacheWriterFeed        = 2u;        // stage 3: the probe-grid feed trace (TLAS, exact material)
+static const uint kSurfaceCacheWriterDdgi        = 4u;        // stage 3: the DDGI probe trace (TLAS)
+static const uint kSurfaceCacheWriterSdf         = 8u;        // stage 3: an SDF consumer (SdfWrites, diagnostic)
 static const uint kSurfaceCacheTagTouched        = 0x80000000u;
 
 // Stats words. Two blocks of kSurfaceCacheStatCount words, block `frame & 1` for frame `frame`;
@@ -73,6 +85,9 @@ static const uint kSurfaceCacheStatMaxProbe      = 7u;
 static const uint kSurfaceCacheStatTombstones    = 8u;        // evicted slots not yet reused (resolve)
 static const uint kSurfaceCacheStatTorn          = 9u;        // updates that gave the frame up on a torn insert
 static const uint kSurfaceCacheStatProbeSum      = 10u;       // probe steps summed over the updates
+static const uint kSurfaceCacheStatSdfQueries    = 11u;       // stage 3: queries by the SDF consumers (snapped hits)
+static const uint kSurfaceCacheStatSdfHits       = 12u;       // stage 3: of those, readable cells (C3: TLAS-written cells found)
+static const uint kSurfaceCacheStatFeedUpdates   = 13u;       // stage 3: samples the feed trace accumulated
 static const uint kSurfaceCacheStatCount         = 16u;
 static const uint kSurfaceCacheStatWords         = 32u;       // two blocks
 
@@ -84,6 +99,7 @@ static const uint kSurfaceCacheFlagStats        = 8u;        // count queries / 
 static const uint kSurfaceCacheFlagDebugShift   = 4u;        // debug view in bits 4-5 (0 off, 1 cell, 2 heat, 3 mask)
 static const uint kSurfaceCacheFlagDebugMask    = 48u;
 static const uint kSurfaceCacheFlagEmissive     = 64u;       // stage 2: the hit's emission joins the `other` layer
+static const uint kSurfaceCacheFlagSdfReads     = 128u;      // stage 3: the SDF consumers read (r.GI.SurfaceCache.SdfReads)
 
 // ─── Stage 2: the frame's local lights at a shaded hit ───────────────────────────────────────────
 // One record per point / spot / rect light of the frame (`SurfaceCacheParams::lightsSrv`, at most
@@ -148,9 +164,11 @@ UZ_SC_FUNC float SurfaceCacheLuminance(float3 c) {
 static const uint kSurfaceCacheResolveModeResolve = 0u;
 static const uint kSurfaceCacheResolveModeClear   = 1u;
 
-// ─── The binding record (D10): one element of a StructuredBuffer, 80 bytes ──────────────────
+// ─── The binding record (D10): one element of a StructuredBuffer, 96 bytes ──────────────────
 // Mirrored by `uz::SurfaceCacheParamsGPU` (gi/surface_radiance_cache.h); the layout test and the
-// gtest pin the two equal. Stage 2 appended the fifth row (the frame's lights and K).
+// gtest pin the two equal. Stage 2 appended the fifth row (the frame's lights and K); stage 3 the
+// sixth (the camera position of the level rule D3 for the consumers that bind no PerFrameCB: the
+// radiance-cache trace, the DDGI trace and the feed).
 
 struct SurfaceCacheParams {
     uint  keysUav;          // RWStructuredBuffer<uint2>  keys (0,0 = empty)
@@ -173,7 +191,17 @@ struct SurfaceCacheParams {
     uint  lightCount;       // records in it (<= kSurfaceCacheMaxLights)
     uint  localLights;      // K: lights with a shadow ray per shaded hit (0 = none)
     uint  _pad1;
+    float cameraPosX;       // stage 3: the frame's camera position (the level rule D3 for every consumer)
+    float cameraPosY;
+    float cameraPosZ;
+    float _pad2;
 };
+
+#ifndef __cplusplus
+float3 SurfaceCacheCameraPos(SurfaceCacheParams p) {
+    return float3(p.cameraPosX, p.cameraPosY, p.cameraPosZ);
+}
+#endif
 
 // ─── Level and cell (D2, D3) ─────────────────────────────────────────────────────────────────
 
@@ -308,6 +336,46 @@ UZ_SC_FUNC bool SurfaceCacheRefresh(uint rayId, uint frame, uint refreshRate) {
     seed.x = rayId;
     seed.y = frame * 2654435761u;
     return (SurfaceCacheHash(seed) % refreshRate) == 0u;
+}
+
+// ─── Stage 3: the SDF consumers' snap and the reader policy (D7, D8) ─────────────────────────
+
+// The level an SDF-traced hit reads at: `sdfLodBias` levels coarser than a TLAS hit at the same
+// camera distance (D8), clamped to the last level. The feed writes every hit at this level too
+// (beside the base level), so the coarser cells the SDF consumers key exist.
+UZ_SC_FUNC uint SurfaceCacheSdfLevel(float cameraDistance, float lodDistance, uint sdfLodBias) {
+    uint level = SurfaceCacheLevel(cameraDistance, lodDistance) + sdfLodBias;
+    return level < kSurfaceCacheLevels - 1u ? level : kSurfaceCacheLevels - 1u;
+}
+
+// The distance an SDF hit is moved back along its normal before the lookup: the field's raw
+// (unexpanded) distance at the hit, which is how far in front of the raw surface the expanded-
+// surface tracer registered it. A distance beyond `maxSnap` (a missing raw cascade reports
+// -65504, a hit far from any surface is not a surface) or a non-finite one snaps nothing.
+UZ_SC_FUNC float SurfaceCacheSnapDistance(float rawDistance, float maxSnap) {
+    if (!(SurfaceCacheAbs(rawDistance) <= maxSnap)) return 0.0f;
+    return rawDistance;
+}
+
+// The point an SDF consumer keys its cell from: the hit moved back along its normal to the raw
+// surface (by the raw distance, when it is a surface distance), then lifted by the writers' bias
+// (kSurfaceCacheSurfaceBias) - the point a TLAS writer keyed the same surface from.
+UZ_SC_FUNC float3 SurfaceCacheSdfReadPosition(float3 hit, float3 n, float rawDistance) {
+    float shift = SurfaceCacheSnapDistance(rawDistance, kSurfaceCacheMaxSnap) - kSurfaceCacheSurfaceBias;
+    float3 p;
+    p.x = hit.x - n.x * shift;
+    p.y = hit.y - n.y * shift;
+    p.z = hit.z - n.z * shift;
+    return p;
+}
+
+// Reader policy (D7) as one expression: a readable cell replaces the WHOLE hit radiance - both
+// layers, or the inline sun with the cell's `other` under DirectMode 1 - and a miss is the
+// inline shading (sun + the rest) unchanged.
+UZ_SC_FUNC float3 SurfaceCacheHitRadiance(bool readable, bool directInline, float3 cellSun, float3 cellOther,
+                                          float3 inlineSun, float3 inlineRest) {
+    if (!readable) return inlineSun + inlineRest;
+    return (directInline ? inlineSun : cellSun) + cellOther;
 }
 
 // ─── Fixed-point samples (D5) ─────────────────────────────────────────────────────────────────

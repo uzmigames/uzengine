@@ -106,6 +106,10 @@ static const float kSurfaceEpsilon = 5.0;         // cm — GDF normal central-d
 // Shared GDF surface sampling — supplies the hit normal and albedo that an
 // inline RayQuery cannot report. Needs linearClamp + the trace cbuffer above.
 #include "gdf_surface.hlsli"
+// Phase D stage 3: the per-mesh material table by TLAS InstanceID (the reflection pass's and the
+// path tracer's exact hit attributes), read by `TraceProbeRay` when the caller binds the table.
+static const uint kGITraceSentinelSrv = 0xFFFFFFFFu;
+#include "gi_hit_material.hlsli"
 
 // ─── Hammersley + spherical sample (shared with the SDF shader) ──────────────
 
@@ -217,12 +221,22 @@ float3 KnownRadiance(float L, float3 dir, uint mode) {
 // Returns (radiance, hitT): the direct sun bounce `albedo * sunRad / pi` at the hit, or the sky
 // radiance with hitT = maxTraceDistance for an escaping ray. `hitInfo` = (lit, albedo luminance,
 // front-facing, visibility); `hitP`, `hitN` and `hitAlbedo` let the caller add the indirect term.
-float4 TraceProbeRay(float3 origin, float3 dir, out float4 hitInfo,
-                     out float3 hitP, out float3 hitN, out float3 hitAlbedo) {
+// Phase D stage 3: with `materialTableSrv` bound (the surface cache's DDGI hook), the hit's normal
+// and albedo are the exact ones the reflection pass and the path tracer shade with (the
+// interpolated vertex normal through the instance transform, the triangle-UV albedo); the
+// sentinel keeps the field's gradient and per-mesh-average reflectance, as before.
+// `hitMeshId` / `hitPrimIndex` / `hitBary` are the committed triangle (the material table's key and
+// the attributes `GITrace_HitEmissive` re-reads); zero for a miss.
+float4 TraceProbeRay(float3 origin, float3 dir, uint materialTableSrv, out float4 hitInfo,
+                     out float3 hitP, out float3 hitN, out float3 hitAlbedo,
+                     out uint hitMeshId, out uint hitPrimIndex, out float2 hitBary) {
     hitInfo   = float4(0.0, 0.0, 0.0, 0.0);
     hitP      = float3(0.0, 0.0, 0.0);
     hitN      = float3(0.0, 0.0, 0.0);
     hitAlbedo = float3(0.0, 0.0, 0.0);
+    hitMeshId = 0u;
+    hitPrimIndex = 0u;
+    hitBary   = float2(0.0, 0.0);
     if (g_tlasSrvIndex == kSentinelSrvIndex) {
         return float4(SkyRadiance(dir), maxTraceDistance);
     }
@@ -241,12 +255,39 @@ float4 TraceProbeRay(float3 origin, float3 dir, out float4 hitInfo,
     if (q.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
         const float  hitT = q.CommittedRayT();
         hitP = origin + dir * hitT;
+        hitMeshId    = q.CommittedInstanceID();
+        hitPrimIndex = q.CommittedPrimitiveIndex();
+        hitBary      = q.CommittedTriangleBarycentrics();
 
         // Surface attributes come from the global distance field, the same source the SDF writer
         // shades with: inline RayQuery reports the hit distance but no attributes. Fall back to
         // `-dir` only where the field has no gradient (outside every cascade).
-        float3 N = GdfNormal(hitP);
-        if (dot(N, N) < 0.5) N = -dir;
+        float3 N;
+        float3 albedo;
+        bool exact = false;
+        if (materialTableSrv != kGITraceSentinelSrv) {
+            float3 tableAlbedo, objectNormal;
+            if (GITrace_HitSurface(hitMeshId, hitPrimIndex, hitBary, materialTableSrv, tableAlbedo, objectNormal)) {
+                // Row-vector multiplication by WorldToObject applies the inverse transpose to the
+                // object-space normal (nonuniform instance scale included), as the reflection pass.
+                float3 n = mul(objectNormal, (float3x3)q.CommittedWorldToObject3x4());
+                if (dot(n, n) > 1e-12) {
+                    N = normalize(n);
+                    if (dot(N, dir) > 0.0) N = -N;
+                    albedo = tableAlbedo;
+                    exact = true;
+                }
+            }
+        }
+        if (!exact) {
+            N = GdfNormal(hitP);
+            if (dot(N, N) < 0.5) N = -dir;
+            // Albedo comes from the field (GBA = diffuse reflectance); only a hit outside every
+            // cascade (distance sentinel 1e9) falls back to the average albedo.
+            const float4 surface = SampleGdfSurface(hitP);
+            albedo = surface.x < 1e8 ? saturate(surface.gba)
+                                     : float3(groundAlbedo, groundAlbedo, groundAlbedo);
+        }
         hitN = N;
         float3 L    = normalize(float3(lightDirX, lightDirY, lightDirZ));
         float  NdL  = max(dot(N, L), 0.0);
@@ -273,11 +314,6 @@ float4 TraceProbeRay(float3 origin, float3 dir, out float4 hitInfo,
         // Lambertian BRDF: the radiance leaving a diffuse surface is `albedo/pi * E`. The SDF
         // writer carries the same term: `radiance = albedo * (sunRad / kPI + indirect)`.
         // @ref Majercik 2019 — probe atlases store E/pi (radiance-like).
-        // Albedo comes from the field (GBA = diffuse reflectance); only a hit outside every
-        // cascade (distance sentinel 1e9) falls back to the average albedo.
-        const float4 surface = SampleGdfSurface(hitP);
-        const float3 albedo = surface.x < 1e8 ? saturate(surface.gba)
-                                              : float3(groundAlbedo, groundAlbedo, groundAlbedo);
         hitAlbedo = albedo;
         // z: 1 when the committed triangle faced the ray (diagnostic, H-63 follow-on).
         hitInfo = float4((NdL * visibility) > 0.0 ? 1.0 : 0.0,

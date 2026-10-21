@@ -143,7 +143,8 @@ ENTRIES = [
                 'clusterTileSize': 'clusterTileSize', 'clusterTilesX': 'clusterTilesX', 'clusterTilesY': 'clusterTilesY', 'clusterSlices': 'clusterSlices',
                 'clusterListSrv': 'clusterListSrv', 'clusterListUav': 'clusterListUav', 'clusterSlots': 'clusterSlots', 'clusterFlags': 'clusterFlags',
                 'clusterViewWidth': 'clusterViewWidth', 'clusterViewHeight': 'clusterViewHeight',
-                'rectLightCount': 'rectLightCount', 'rectLightsSrv': 'rectLightsSrv', 'ltcMatrixSrv': 'ltcMatrixSrv', 'ltcMagnitudeSrv': 'ltcMagnitudeSrv'},
+                'rectLightCount': 'rectLightCount', 'rectLightsSrv': 'rectLightsSrv', 'ltcMatrixSrv': 'ltcMatrixSrv', 'ltcMagnitudeSrv': 'ltcMagnitudeSrv',
+                'surfaceCacheParamsSrv': 'surfaceCacheParamsSrv'},
         'extra_structs': ['PointLightData', 'SpotLightData'],
         'extra_constants': ['kMaxPointLights', 'kMaxSpotLights', 'kClusterTileSize', 'kClusterSlices', 'kClusterSlotsMax', 'kClusterRecordUints',
                             'kClusterFlag_Enabled', 'kClusterFlag_Debug'],
@@ -309,7 +310,7 @@ TIER_A += [
                    {'_shBufferUav': 'shBufferUav', '_firstWrite': 'firstWrite',
                     'ddgiRayRadianceSrv': 'shBufferUav', 'ddgiRayInfoSrv': 'firstWrite',
                     '_historyShiftPad': 'regionCount'}, extra_constants=['kMaxFieldRegions'])
-      for shader in ('gi/gi_trace_common.hlsli', 'gi/ddgi_probe_common.hlsli',
+      for shader in ('gi/gi_trace_common.hlsli', 'gi/ddgi_probe_common.hlsli', 'gi/surface_cache_feed_cs.hlsl',
                      'gi/probe_reach_cs.hlsl', 'gi/radiance_cache_trace_cs.hlsl',
                      'gi/ddgi_probe_trace_cs.hlsl', 'gi/ddgi_probe_update_cs.hlsl',
                      'pathtracing/path_tracer_ps.hlsl')],
@@ -402,6 +403,10 @@ TIER_B = [
     # Surface radiance cache resolve root block (Phase D stage 1): 12 DWORDs of the compute root's 20.
     layout_entry('gi/surface_cache_resolve_cs.hlsl', 'SurfaceCacheResolveRootCB',
                  'runtime/engine/renderer/gi/surface_radiance_cache.h', 'SurfaceCacheResolveRootConstants'),
+    # Surface radiance cache feed root block (Phase D stage 3): 5 DWORDs; the probe-grid TLAS trace
+    # whose exact-material hits fill the SDF consumers' cells.
+    layout_entry('gi/surface_cache_feed_cs.hlsl', 'SurfaceCacheFeedRootCB',
+                 'runtime/engine/renderer/gi/surface_radiance_cache.h', 'SurfaceCacheFeedRootConstants'),
     # Screen-space ReSTIR GI root block (phase C, r.GI.ReSTIR): 16 DWORDs of the compute root's 24.
     layout_entry('ssgi/ssgi_restir_gi.hlsli', 'SSGIRestirRoot',
                  'runtime/engine/renderer/gi/ssgi_renderer.h', 'SSGIRestirRootConstants'),

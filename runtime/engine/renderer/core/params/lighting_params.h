@@ -55,7 +55,8 @@ struct LightingParams {
     uint32_t clusterListSrv = UINT32_MAX, clusterListUav = UINT32_MAX, clusterSlots = kClusterSlotsMax, clusterFlags = 0;
     float    clusterViewWidth = 0.0f, clusterViewHeight = 0.0f;
     uint32_t rectLightCount = 0, rectLightsSrv = UINT32_MAX, ltcMatrixSrv = UINT32_MAX, ltcMagnitudeSrv = UINT32_MAX;   ///< Rect area lights (LightingCB).
-    float          _pad2[40]       = {};             ///< Pad to 43264 bytes (256-byte multiple).
+    uint32_t surfaceCacheParamsSrv = UINT32_MAX;     ///< Surface radiance cache record SRV (Phase D stage 3, LightingCB); sentinel = no cache.
+    float          _pad2[39]       = {};             ///< Pad to 43264 bytes (256-byte multiple).
 
     // ── Metadata ─────────────────────────────────────────────────────────
 

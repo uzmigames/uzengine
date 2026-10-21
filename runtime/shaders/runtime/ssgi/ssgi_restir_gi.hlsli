@@ -23,10 +23,9 @@
 /// Opt-in: `r.GI.ReSTIR` (default 0); OFF dispatches the unchanged ssgi_trace_cs.
 #ifndef UZ_SSGI_RESTIR_GI_HLSLI
 #define UZ_SSGI_RESTIR_GI_HLSLI
-#include "ssgi_world_gather.hlsli"
-#include "../include/restir_math.hlsli"
 
-/// 16 of the 24 root DWORDs; mirrored by `SSGIRestirRootConstants` (ssgi_renderer.h).
+/// 16 of the 24 root DWORDs; mirrored by `SSGIRestirRootConstants` (ssgi_renderer.h). Declared
+/// before the gather include: `BuildSurfaceScene` names the surface-cache binding (Phase D stage 3).
 cbuffer SSGIRestirRoot : register(b0) {
     uint g_depthSrv;
     uint g_normalSrv;
@@ -42,9 +41,12 @@ cbuffer SSGIRestirRoot : register(b0) {
     uint g_maxHistory;            ///< M cap of the previous-frame reservoir (candidates x r.GI.ReSTIR.MaxHistory)
     uint g_spatialSamples;        ///< neighbours per pixel (r.GI.ReSTIR.Spatial)
     uint g_spatialRadiusBits;     ///< float: neighbour disk radius in half-resolution pixels
-    uint g_reserved0;
+    uint g_surfaceCacheParamsSrv; ///< Phase D stage 3: StructuredBuffer<SurfaceCacheParams> SRV (0xffffffff = no cache)
     uint g_reserved1;
 };
+#define UZ_SSGI_SURFACE_CACHE_PARAMS_SRV g_surfaceCacheParamsSrv
+#include "ssgi_world_gather.hlsli"
+#include "../include/restir_math.hlsli"
 /// The previous jittered view-projection plus the distance-field change boxes, the same block
 /// ssgi_temporal_accum_cs binds at b2 (`HistoryCB`, ssgi_renderer.cpp).
 cbuffer SSGIRestirHistory : register(b2) {

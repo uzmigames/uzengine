@@ -77,6 +77,7 @@
     [[nodiscard]] bool EnsureDdgiBorderFillShader();
     [[nodiscard]] bool EnsureRtReflectionShader();
     [[nodiscard]] bool EnsureSurfaceCacheResolveShader();
+    [[nodiscard]] bool EnsureSurfaceCacheFeedShader();
     [[nodiscard]] bool EnsureProbeSideShader();
     [[nodiscard]] bool EnsureProbeReachShader();
     [[nodiscard]] bool EnsureLinearShadowShaders();
@@ -176,6 +177,7 @@
     RHIShaderHandle m_ddgiBorderFillCS          = RHIShaderHandle::Invalid();
     RHIShaderHandle m_rtReflectionCS            = RHIShaderHandle::Invalid();
     RHIShaderHandle m_surfaceCacheResolveCS     = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_surfaceCacheFeedCS        = RHIShaderHandle::Invalid();
     RHIShaderHandle m_probeSideCS               = RHIShaderHandle::Invalid();
     RHIShaderHandle m_probeReachCS              = RHIShaderHandle::Invalid();
     RHIShaderHandle m_volFogInjectCS            = RHIShaderHandle::Invalid();
@@ -261,6 +263,7 @@
     RHIPipelineHandle m_ddgiBorderFill        = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_rtReflection          = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_surfaceCacheResolve   = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_surfaceCacheFeed      = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_probeSide             = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_probeReach            = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_decalRender           = RHIPipelineHandle::Invalid();

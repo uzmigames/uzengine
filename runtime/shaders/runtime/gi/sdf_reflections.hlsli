@@ -6,6 +6,7 @@
 #include "../common/sampling.hlsli"
 #include "../lighting/ibl.hlsli"
 #include "rc_probe_guard.hlsli"   // cache probes kept near a surface do not reach behind it (followup-01)
+#include "surface_cache.hlsli"    // Phase D stage 3: the surface radiance cache at an SDF hit (SurfaceCacheQuerySdf)
 
 #ifndef UZ_SDF_REFLECTION_SAMPLER
 SamplerState sdfReflectionSampler : register(s2);
@@ -48,6 +49,10 @@ struct SdfReflectionScene {
     /// firefly suppression. `scripts/rendering/test_sdf_reflection_energy.ps1` measures the
     /// ratio between the two on the GPU (`r.GI.Reflections.HdrWeight` in production).
     uint plainMean;
+    /// Phase D stage 3: the surface radiance cache's binding record (StructuredBuffer<SurfaceCacheParams>,
+    /// one element); 0xffffffff = no cache, every hit shades inline as before. Set by the caller
+    /// from its own binding (LightingCB::surfaceCacheParamsSrv, the SSGI root DWORD).
+    uint surfaceCacheParamsSrv;
 };
 
 /// @constants Four clipmaps; 0xffffffff invalid SRV; 65504 is the largest finite half.
@@ -193,17 +198,56 @@ float3 SdfReflectionIrradiance(SdfReflectionScene scene, float3 position, float3
     return totalWeight > 0.0 ? irradiance / totalWeight : 0.0;
 }
 
+/// The single hit-shading point of every SDF consumer (the final gather, ReSTIR GI, the deferred
+/// SDF reflections): the field's gradient normal, the sun with a field shadow trace, the clipmap's
+/// per-mesh-average reflectance and the radiance-cache probe irradiance.
+///
+/// Phase D stage 3 (`scene.surfaceCacheParamsSrv` bound, `r.GI.SurfaceCache.SdfReads`): the surface
+/// radiance cache is read first. The expanded-surface tracer registers a hit in front of the raw
+/// surface by the field's expansion, so the hit is snapped back along the normal by the raw
+/// (unexpanded) distance, lifted by the writers' 2 cm bias, and looked up `sdfLodBias` levels
+/// coarser than a TLAS hit would be (D8). A readable cell replaces the whole hit radiance (D7:
+/// its `sun` + `other` layers, or the inline sun with the cell's `other`); a miss shades inline
+/// exactly as before and, only with `SdfWrites` (diagnostic, default off), feeds the two terms into
+/// the cell — the per-mesh-average albedo must not average into the exact-material cells.
 float3 ShadeSdfReflectionHit(SdfReflectionScene scene, float3 position, float3 rayDirection) {
     float3 normal = SdfReflectionNormal(scene, position);
     if (dot(normal, -rayDirection) <= 0.0) return 0.0;
     float3 origin;
     if (!ResolveSdfRayOrigin(scene, position, normal, origin)) return 0.0;
+    SurfaceCacheParams cache = (SurfaceCacheParams)0;
+    float3 cachePos = position;
+    float3 cellSun = 0.0, cellOther = 0.0;
+    bool cellRead = false, cellWrite = false;
+    if (scene.surfaceCacheParamsSrv != 0xffffffffu) {
+        StructuredBuffer<SurfaceCacheParams> cacheParams = ResourceDescriptorHeap[scene.surfaceCacheParamsSrv];
+        cache = cacheParams[0];
+        const bool reads  = (cache.flags & kSurfaceCacheFlagSdfReads) != 0u;
+        const bool writes = (cache.flags & kSurfaceCacheFlagSdfWrites) != 0u;
+        if (reads || writes) {
+            cachePos  = SurfaceCacheSdfReadPosition(position, normal, SampleSdfRayDistances(scene, position).x);
+            cellRead  = reads && SurfaceCacheQuerySdf(cache, cachePos, normal, cellSun, cellOther);
+            cellWrite = writes && !cellRead;
+        }
+    }
+    if (cellRead && (cache.flags & kSurfaceCacheFlagDirectInline) == 0u) return cellSun + cellOther;
     float ndl = saturate(dot(normal, scene.sunDirection));
     float visibility = 0.0;
     if (ndl > 0.0 && any(scene.sunColor > 0.0)) {
         visibility = TraceSdfRay(scene, origin, scene.sunDirection, scene.traceDistance, 2u, normal) == -1.0 ? 1.0 : 0.0;
     }
     float3 albedo = saturate(SampleSdfReflectionSurface(scene, position).gba);
+    if (cellRead) {
+        // DirectMode 1: the inline sun (the field's shadow trace) with the cell's `other` layer.
+        return albedo * (scene.sunColor * (ndl * visibility * M_1_PI)) + cellOther;
+    }
+    if (cellWrite) {
+        const float3 sunTerm   = albedo * (scene.sunColor * (ndl * visibility * M_1_PI));
+        const float3 otherTerm = albedo * SdfReflectionIrradiance(scene, origin, normal);
+        SurfaceCacheUpdate(cache, cachePos, normal, SurfaceCacheCameraPos(cache), cache.sdfLodBias,
+                           sunTerm, otherTerm, kSurfaceCacheWriterSdf);
+        return sunTerm + otherTerm;
+    }
     return albedo * (scene.sunColor * (ndl * visibility * M_1_PI)
                    + SdfReflectionIrradiance(scene, origin, normal));
 }

@@ -419,6 +419,7 @@
     GlobalDistanceField m_globalDistanceField;   ///< 4-cascade clipmap GDF.
     RadianceCache       m_radianceCache;         ///< 16^3 world-space probe grid for diffuse GI.
     SurfaceRadianceCache m_surfaceCache;         ///< Phase D: spatial-hash surface radiance cache (opt-in, r.GI.SurfaceCache).
+    uint32_t m_surfaceCacheResolveFrame = UINT32_MAX; ///< Frame whose resolve pass is registered (once per frame: inside the SDF GI chain, or on its own without it).
     bool m_sdfGiEnabled = false;                 ///< Runtime toggle for SDF-based GI.
     float m_giIntensity = 1.0f;                  ///< GI intensity multiplier (default 1.0).
 
@@ -987,6 +988,12 @@
     /// the switch off, or without the ray-traced reflections (the only consumer in stage 1),
     /// nothing is registered and nothing allocated.
     void RegisterSurfaceCacheResolvePass(rg::RgBuilder& rgBuilder, FrameContext& ctx);
+
+    /// Registers the surface radiance cache feed trace (Phase D stage 3, `r.GI.SurfaceCache.FeedRays`):
+    /// after the radiance-cache probe trace (its completed SH buffer is the hit's indirect term)
+    /// and before the SDF consumers that read the cells it fills. `materialTableSrv` is the frame's
+    /// GI material table. Registers nothing without the resolve, the TLAS or the rays.
+    void RegisterSurfaceCacheFeedPass(rg::RgBuilder& rgBuilder, FrameContext& ctx, uint32_t materialTableSrv);
 
     /// (Re)creates + refreshes the per-mesh GI material table (tint + albedo
     /// SRV, indexed by TLAS InstanceID = meshId) read by the reference path
