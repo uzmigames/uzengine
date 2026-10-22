@@ -1,9 +1,37 @@
 #include "pathtracing/pipeline_path_tracer_pass.h"
+#include "pathtracing/light_bvh.h"
+#include "draw_list.h"
 #include <gtest/gtest.h>
 #include <cstddef>
 #include "../../../shaders/runtime/pathtracing/pathtracer_math.hlsli"
 #include <limits>
 #include <cmath>
+
+TEST(PipelinePathTracerStage1, GraphMarkerIsNotEmissionButFixedEmittersArePreserved) {
+    uz::DrawCommand draw{};
+    draw.emissiveColorR = draw.emissiveColorG = draw.emissiveColorB = 1.f;
+    draw.emissiveIntensity = 1.f;
+    draw.materialGraphPipeline = {1, 1};
+    const auto graph = uz::PathMaterialEmission(draw);
+    EXPECT_FLOAT_EQ(graph.x, 0.f);
+    EXPECT_FLOAT_EQ(graph.y, 0.f);
+    EXPECT_FLOAT_EQ(graph.z, 0.f);
+
+    draw.materialGraphPipeline = {};
+    const auto white = uz::PathMaterialEmission(draw);
+    EXPECT_FLOAT_EQ(white.x, 1.f);
+    EXPECT_FLOAT_EQ(white.y, 1.f);
+    EXPECT_FLOAT_EQ(white.z, 1.f);
+
+    draw.emissiveColorR = 0.25f;
+    draw.emissiveColorG = 0.5f;
+    draw.emissiveColorB = 0.75f;
+    draw.emissiveIntensity = 4.f;
+    const auto fixed = uz::PathMaterialEmission(draw);
+    EXPECT_FLOAT_EQ(fixed.x, 1.f);
+    EXPECT_FLOAT_EQ(fixed.y, 2.f);
+    EXPECT_FLOAT_EQ(fixed.z, 3.f);
+}
 
 TEST(PipelinePathTracerStage1, MaterialStructuredBufferLayout) {
     using M = uz::PipelinePathMaterial;

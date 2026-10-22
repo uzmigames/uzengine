@@ -24,6 +24,15 @@ static auto* cv_LightBVHMorton = UZ_CVAR_BOOL("r.LightBVH.Morton", false,
     "Stage-one Morton/full-sphere reference for light-BVH quality comparisons");
 
 namespace uz {
+Vec3 PathMaterialEmission(const DrawCommand& draw) {
+    // Compiled graphs carry (1,1,1) x 1 as a shader pass-through marker,
+    // not table emission. Match UpdateGIMaterialTable's graph detection.
+    const float intensity = draw.materialGraphPipeline.IsValid() ? 0.f : draw.emissiveIntensity;
+    return {draw.emissiveColorR * intensity,
+            draw.emissiveColorG * intensity,
+            draw.emissiveColorB * intensity};
+}
+
 static float Luminance(Vec3 c) { return c.x * .2126f + c.y * .7152f + c.z * .0722f; }
 static Vec3 Min(Vec3 a, Vec3 b) { return {std::min(a.x,b.x),std::min(a.y,b.y),std::min(a.z,b.z)}; }
 static Vec3 Max(Vec3 a, Vec3 b) { return {std::max(a.x,b.x),std::max(a.y,b.y),std::max(a.z,b.z)}; }
@@ -202,6 +211,8 @@ bool LightBVH::Gather(std::span<const DrawCommand> draws, std::span<const GPUMes
     for (const auto& d : draws) {
         hash(&d.meshId, sizeof(d.meshId));
         hash(&d.worldMatrix, sizeof(d.worldMatrix));
+        const bool graphDraw = d.materialGraphPipeline.IsValid();
+        hash(&graphDraw, sizeof(graphDraw));
         hash(&d.emissiveColorR, 4 * sizeof(float));
         hash(&d.emissiveSrvIndex, sizeof(d.emissiveSrvIndex));
         hash(&d.uvScaleX, 4 * sizeof(float));
@@ -229,9 +240,7 @@ bool LightBVH::Gather(std::span<const DrawCommand> draws, std::span<const GPUMes
     if (signature == m_signature) return false;
     m_signature = signature;
     for (const auto& d : draws) {
-        Vec3 emission{d.emissiveColorR * d.emissiveIntensity,
-                      d.emissiveColorG * d.emissiveIntensity,
-                      d.emissiveColorB * d.emissiveIntensity};
+        const Vec3 emission = PathMaterialEmission(d);
         if (Luminance(emission) <= 0 || !IsGIOccluder(d) || d.meshId >= meshes.size()) continue;
         const auto& source = meshes[d.meshId].lightBVHGeometry;
         if (!source) continue;

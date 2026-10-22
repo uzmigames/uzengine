@@ -457,10 +457,11 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
         mat.metallicMultiplier = draw.metallicMultiplier;
         mat.uvScale[0] = draw.uvScaleX; mat.uvScale[1] = draw.uvScaleY;
         mat.uvOffsetValue[0] = draw.uvOffsetX; mat.uvOffsetValue[1] = draw.uvOffsetY;
-        mat.emission[0] = draw.emissiveColorR * draw.emissiveIntensity;
-        mat.emission[1] = draw.emissiveColorG * draw.emissiveIntensity;
-        mat.emission[2] = draw.emissiveColorB * draw.emissiveIntensity;
-        mat.emissiveSrv = srv(draw.emissiveSrvIndex);
+        const Vec3 emission = PathMaterialEmission(draw);
+        mat.emission[0] = emission.x;
+        mat.emission[1] = emission.y;
+        mat.emission[2] = emission.z;
+        mat.emissiveSrv = draw.materialGraphPipeline.IsValid() ? UINT32_MAX : srv(draw.emissiveSrvIndex);
         entries.push_back(mat);
     }
     if (entries.size() != instanceCount) {
