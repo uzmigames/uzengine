@@ -1,8 +1,9 @@
 // Shared CPU/shader contract of the surface radiance cache (Phase D stage 1): the world-space
 // spatial hash of outgoing diffuse radiance at ray hits — camera-distance level, cell and key
 // packing, the 64 -> 32 bit slot hash, the fixed-point sample packing and the resolved-record
-// metadata. Scalar math only, so the gtests (tests/engine/renderer/test_surface_cache.cpp)
-// evaluate the same expressions the shaders run.
+// metadata. Stage 4 appends the surface record's packing, the relight slice schedule, the
+// relight decision and the cell-indirect gather / blend. Scalar math only, so the gtests
+// (tests/engine/renderer/test_surface_cache.cpp) evaluate the same expressions the shaders run.
 //
 // @ref docs/specs/rendering/surface-radiance-cache.md — decisions D1-D7 (storage, key, level rule,
 //      stored quantity, accumulation, validity, reader policy)
@@ -25,11 +26,17 @@ struct int3 { int x; int y; int z; };
 UZ_SC_FUNC float SurfaceCacheFloor(float v) { return std::floor(v); }
 UZ_SC_FUNC float SurfaceCacheAbs(float v) { return std::fabs(v); }
 UZ_SC_FUNC float SurfaceCachePow(float v, float e) { return std::pow(v, e); }
+UZ_SC_FUNC float SurfaceCacheSqrt(float v) { return std::sqrt(v); }
+UZ_SC_FUNC float SurfaceCacheCos(float v) { return std::cos(v); }
+UZ_SC_FUNC float SurfaceCacheSin(float v) { return std::sin(v); }
 #else
 #define UZ_SC_FUNC
 UZ_SC_FUNC float SurfaceCacheFloor(float v) { return floor(v); }
 UZ_SC_FUNC float SurfaceCacheAbs(float v) { return abs(v); }
 UZ_SC_FUNC float SurfaceCachePow(float v, float e) { return pow(v, e); }
+UZ_SC_FUNC float SurfaceCacheSqrt(float v) { return sqrt(v); }
+UZ_SC_FUNC float SurfaceCacheCos(float v) { return cos(v); }
+UZ_SC_FUNC float SurfaceCacheSin(float v) { return sin(v); }
 #endif
 
 UZ_SC_FUNC float SurfaceCacheSaturate(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
@@ -70,6 +77,7 @@ static const uint kSurfaceCacheWriterReflections = 1u;
 static const uint kSurfaceCacheWriterFeed        = 2u;        // stage 3: the probe-grid feed trace (TLAS, exact material)
 static const uint kSurfaceCacheWriterDdgi        = 4u;        // stage 3: the DDGI probe trace (TLAS)
 static const uint kSurfaceCacheWriterSdf         = 8u;        // stage 3: an SDF consumer (SdfWrites, diagnostic)
+static const uint kSurfaceCacheWriterIndirect    = 16u;       // stage 4: the cell-indirect gather's exact-material shading of a cold hit
 static const uint kSurfaceCacheTagTouched        = 0x80000000u;
 
 // Stats words. Two blocks of kSurfaceCacheStatCount words, block `frame & 1` for frame `frame`;
@@ -88,8 +96,13 @@ static const uint kSurfaceCacheStatProbeSum      = 10u;       // probe steps sum
 static const uint kSurfaceCacheStatSdfQueries    = 11u;       // stage 3: queries by the SDF consumers (snapped hits)
 static const uint kSurfaceCacheStatSdfHits       = 12u;       // stage 3: of those, readable cells (C3: TLAS-written cells found)
 static const uint kSurfaceCacheStatFeedUpdates   = 13u;       // stage 3: samples the feed trace accumulated
-static const uint kSurfaceCacheStatCount         = 16u;
-static const uint kSurfaceCacheStatWords         = 32u;       // two blocks
+static const uint kSurfaceCacheStatRelit         = 14u;       // stage 4: cells whose sun layer the relight pass REPLACED (a lighting change caught up)
+static const uint kSurfaceCacheStatIndirectRays  = 15u;       // stage 4: cosine rays the cell-indirect pass traced
+static const uint kSurfaceCacheStatRadianceSum   = 16u;       // stage 4: sum over the record cells of luminance(sun + other) x kSurfaceCacheStatRadianceScale (cell-indirect Finish)
+static const uint kSurfaceCacheStatRadianceCells = 17u;       // stage 4: the cells of that sum (the cached-radiance convergence probe = sum / cells)
+static const uint kSurfaceCacheStatCount         = 18u;
+static const uint kSurfaceCacheStatWords         = 36u;       // two blocks
+static const float kSurfaceCacheStatRadianceScale = 256.0f;
 
 // `SurfaceCacheParams::flags`.
 static const uint kSurfaceCacheFlagDirectInline = 1u;        // D7 DirectMode 1: inline sun, cached `other`
@@ -100,6 +113,8 @@ static const uint kSurfaceCacheFlagDebugShift   = 4u;        // debug view in bi
 static const uint kSurfaceCacheFlagDebugMask    = 48u;
 static const uint kSurfaceCacheFlagEmissive     = 64u;       // stage 2: the hit's emission joins the `other` layer
 static const uint kSurfaceCacheFlagSdfReads     = 128u;      // stage 3: the SDF consumers read (r.GI.SurfaceCache.SdfReads)
+static const uint kSurfaceCacheFlagRelight      = 256u;      // stage 4: the relight schedule runs (a lighting change bumps the generation, no clear)
+static const uint kSurfaceCacheFlagMultiBounce  = 512u;      // stage 4: the cell-indirect gather owns the indirect part of `other`
 
 // ─── Stage 2: the frame's local lights at a shaded hit ───────────────────────────────────────────
 // One record per point / spot / rect light of the frame (`SurfaceCacheParams::lightsSrv`, at most
@@ -160,21 +175,27 @@ UZ_SC_FUNC float SurfaceCacheLuminance(float3 c) {
     return 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z;
 }
 
-// Resolve pass modes (`SurfaceCacheResolveRootConstants::mode`).
-static const uint kSurfaceCacheResolveModeResolve = 0u;
-static const uint kSurfaceCacheResolveModeClear   = 1u;
+// Resolve pass modes (`SurfaceCacheResolveRootConstants::mode`): bit 0 clears the table; bit 1
+// (stage 4) leaves the `other` layer of a cell the cell-indirect pass has visited to that pass
+// (the inline writers' `other` samples seed a cell and then stop folding into it).
+static const uint kSurfaceCacheResolveModeResolve        = 0u;
+static const uint kSurfaceCacheResolveModeClear          = 1u;
+static const uint kSurfaceCacheResolveFlagGatherOwnsOther = 2u;
+static const uint kSurfaceCacheResolveFlagRelightOwnsSun = 4u;
 
 // ─── The binding record (D10): one element of a StructuredBuffer, 96 bytes ──────────────────
 // Mirrored by `uz::SurfaceCacheParamsGPU` (gi/surface_radiance_cache.h); the layout test and the
 // gtest pin the two equal. Stage 2 appended the fifth row (the frame's lights and K); stage 3 the
 // sixth (the camera position of the level rule D3 for the consumers that bind no PerFrameCB: the
-// radiance-cache trace, the DDGI trace and the feed).
+// radiance-cache trace, the DDGI trace and the feed); stage 4 fills two pads (the cell-indirect
+// EMA horizon, the lighting generation the relight pass compares a record against) and binds
+// `surfaceUav`.
 
 struct SurfaceCacheParams {
     uint  keysUav;          // RWStructuredBuffer<uint2>  keys (0,0 = empty)
     uint  accumUav;         // RWStructuredBuffer<uint>   accum, kSurfaceCacheAccumStride per entry
     uint  resolvedSrv;      // StructuredBuffer<uint4>    resolved records
-    uint  surfaceUav;       // stage 4 surface record (sentinel before stage 4)
+    uint  surfaceUav;       // stage 4: RWStructuredBuffer<uint> surface records, kSurfaceCacheSurfaceStride per entry (sentinel = no record)
     uint  entriesLog2;
     uint  minSamples;       // D6 validity threshold
     uint  flags;            // kSurfaceCacheFlag*
@@ -182,7 +203,7 @@ struct SurfaceCacheParams {
     float cellSize;         // level-0 cell, cm
     float lodDistance;      // camera distance at which the cell first doubles, cm
     float maxRadiance;      // per-sample clamp
-    float _pad0;
+    uint  indirectHorizon;  // stage 4: visits of the cell-indirect EMA (r.GI.SurfaceCache.IndirectFrames)
     uint  sdfLodBias;
     uint  statsUav;         // RWStructuredBuffer<uint> stats (sentinel = no stats)
     uint  generation;
@@ -190,7 +211,7 @@ struct SurfaceCacheParams {
     uint  lightsSrv;        // stage 2: StructuredBuffer<SurfaceCacheLight> of the frame (sentinel = no local lights)
     uint  lightCount;       // records in it (<= kSurfaceCacheMaxLights)
     uint  localLights;      // K: lights with a shadow ray per shaded hit (0 = none)
-    uint  _pad1;
+    uint  lightingGeneration; // stage 4: bumped by every lighting change while the relight runs (u16; records behind it are relit)
     float cameraPosX;       // stage 3: the frame's camera position (the level rule D3 for every consumer)
     float cameraPosY;
     float cameraPosZ;
@@ -423,6 +444,189 @@ UZ_SC_FUNC float SurfaceCacheEma(float mean, float frameMean, uint frames) {
 UZ_SC_FUNC uint SurfaceCacheNextSamples(uint samples, uint count) {
     uint next = samples + count;
     return next > 65535u ? 65535u : next;
+}
+
+// ─── Stage 4: the surface record ─────────────────────────────────────────────────────────────
+// kSurfaceCacheSurfaceStride uints (32 bytes) per entry (`SurfaceCacheParams::surfaceUav`): the
+// last TLAS writer's hit — a representative point of the cell the relight pass re-shades and the
+// cell-indirect pass gathers from — plus the stage-4 bookkeeping. Plain stores, last writer wins;
+// a record whose writer tag is 0 does not exist (the cell stays a lazy stage 1-3 cell).
+
+static const uint kSurfaceCacheSurfaceStride   = 8u;
+static const uint kSurfaceCacheSurfacePosition = 0u;   // [0..2] world position (float bits): the writer's lifted hit
+static const uint kSurfaceCacheSurfaceNormal   = 3u;   // [3]    octahedral shading normal, 2 x unorm16
+static const uint kSurfaceCacheSurfaceAlbedo   = 4u;   // [4]    albedo RGB8 (unorm) | writer tag in bits 24-31 (0 = no record)
+static const uint kSurfaceCacheSurfaceEmissive = 5u;   // [5]    emissive r | g (halves); [6] emissive b | 0
+static const uint kSurfaceCacheSurfaceMeta     = 7u;   // [7]    lit generation u16 | cell-indirect visits u8 | spare u8
+
+// Octahedral normal, two unorm16 (Cigolle 2014): round trip within 1e-4 on a unit vector.
+UZ_SC_FUNC uint SurfaceCachePackUnorm16(float v) {
+    float s = SurfaceCacheSaturate(v) * 65535.0f + 0.5f;
+    return (uint)s;
+}
+UZ_SC_FUNC float SurfaceCacheUnpackUnorm16(uint v) { return (float)(v & 0xFFFFu) * (1.0f / 65535.0f); }
+
+UZ_SC_FUNC uint SurfaceCacheEncodeNormal(float3 n) {
+    float l1 = SurfaceCacheAbs(n.x) + SurfaceCacheAbs(n.y) + SurfaceCacheAbs(n.z);
+    if (!(l1 > 0.0f)) l1 = 1.0f;
+    float px = n.x / l1;
+    float py = n.y / l1;
+    if (n.z < 0.0f) {
+        float qx = (1.0f - SurfaceCacheAbs(py)) * (px >= 0.0f ? 1.0f : -1.0f);
+        float qy = (1.0f - SurfaceCacheAbs(px)) * (py >= 0.0f ? 1.0f : -1.0f);
+        px = qx; py = qy;
+    }
+    return SurfaceCachePackUnorm16(px * 0.5f + 0.5f) | (SurfaceCachePackUnorm16(py * 0.5f + 0.5f) << 16);
+}
+
+UZ_SC_FUNC float3 SurfaceCacheDecodeNormal(uint packed) {
+    float px = SurfaceCacheUnpackUnorm16(packed) * 2.0f - 1.0f;
+    float py = SurfaceCacheUnpackUnorm16(packed >> 16) * 2.0f - 1.0f;
+    float3 n;
+    n.x = px; n.y = py; n.z = 1.0f - SurfaceCacheAbs(px) - SurfaceCacheAbs(py);
+    if (n.z < 0.0f) {
+        float qx = (1.0f - SurfaceCacheAbs(py)) * (px >= 0.0f ? 1.0f : -1.0f);
+        float qy = (1.0f - SurfaceCacheAbs(px)) * (py >= 0.0f ? 1.0f : -1.0f);
+        n.x = qx; n.y = qy;
+    }
+    float len = SurfaceCacheSqrt(n.x * n.x + n.y * n.y + n.z * n.z);
+    if (!(len > 0.0f)) { n.x = 0.0f; n.y = 0.0f; n.z = 1.0f; return n; }
+    n.x /= len; n.y /= len; n.z /= len;
+    return n;
+}
+
+// Albedo as three unorm8 (a tint above 1 clamps: the record is a reflectance) beside the writer tag.
+UZ_SC_FUNC uint SurfaceCachePackUnorm8(float v) { return (uint)(SurfaceCacheSaturate(v) * 255.0f + 0.5f); }
+UZ_SC_FUNC uint SurfaceCachePackAlbedoTag(float3 albedo, uint writerTag) {
+    return SurfaceCachePackUnorm8(albedo.x) | (SurfaceCachePackUnorm8(albedo.y) << 8) | (SurfaceCachePackUnorm8(albedo.z) << 16)
+         | ((writerTag & 0xFFu) << 24);
+}
+UZ_SC_FUNC float3 SurfaceCacheUnpackAlbedo(uint packed) {
+    float3 a;
+    a.x = (float)(packed & 0xFFu) * (1.0f / 255.0f);
+    a.y = (float)((packed >> 8) & 0xFFu) * (1.0f / 255.0f);
+    a.z = (float)((packed >> 16) & 0xFFu) * (1.0f / 255.0f);
+    return a;
+}
+UZ_SC_FUNC uint SurfaceCacheRecordTag(uint packed) { return packed >> 24; }
+UZ_SC_FUNC bool SurfaceCacheRecordExists(uint packed) { return SurfaceCacheRecordTag(packed) != 0u; }
+
+// The record's bookkeeping: the lighting generation its sun layer was last computed against and the
+// visits of the cell-indirect EMA.
+UZ_SC_FUNC uint SurfaceCachePackSurfaceMeta(uint litGeneration, uint visits) {
+    return (litGeneration & 0xFFFFu) | ((visits & 0xFFu) << 16);
+}
+UZ_SC_FUNC uint SurfaceCacheSurfaceGeneration(uint meta) { return meta & 0xFFFFu; }
+UZ_SC_FUNC uint SurfaceCacheSurfaceVisits(uint meta)     { return (meta >> 16) & 0xFFu; }
+
+// ─── Stage 4: the relight schedule ───────────────────────────────────────────────────────────
+// Frame f walks slice f mod sliceCount of the table: ceil(entries / sliceCount) consecutive entries
+// from slice x size, so every entry is visited exactly once in sliceCount consecutive frames (the
+// last slice is short when the division is not exact). sliceCount 0 is read as 1.
+
+UZ_SC_FUNC uint SurfaceCacheSliceSize(uint entriesLog2, uint sliceCount) {
+    uint entries = 1u << entriesLog2;
+    uint slices  = sliceCount > 0u ? sliceCount : 1u;
+    return (entries + slices - 1u) / slices;
+}
+UZ_SC_FUNC uint SurfaceCacheSliceIndex(uint frame, uint sliceCount) {
+    return sliceCount > 1u ? frame % sliceCount : 0u;
+}
+UZ_SC_FUNC uint SurfaceCacheSliceFirst(uint entriesLog2, uint sliceIndex, uint sliceCount) {
+    return sliceIndex * SurfaceCacheSliceSize(entriesLog2, sliceCount);
+}
+// Entries of the slice (the last slice is short; a slice past the table is empty).
+UZ_SC_FUNC uint SurfaceCacheSliceCount(uint entriesLog2, uint sliceIndex, uint sliceCount) {
+    uint entries = 1u << entriesLog2;
+    uint first   = SurfaceCacheSliceFirst(entriesLog2, sliceIndex, sliceCount);
+    uint size    = SurfaceCacheSliceSize(entriesLog2, sliceCount);
+    if (first >= entries) return 0u;
+    return (entries - first) < size ? (entries - first) : size;
+}
+
+// The relight decision: a record computed against another lighting generation takes the relit sun
+// outright (the change propagates in one visit, no eviction); a record of the current generation
+// folds the relit point sample at the cell's EMA rate (one more sample of the cell average, so a
+// static scene does not flicker between the cell mean and a point sample every schedule).
+UZ_SC_FUNC bool SurfaceCacheRelightReplaces(uint recordGeneration, uint lightingGeneration) {
+    return (recordGeneration & 0xFFFFu) != (lightingGeneration & 0xFFFFu);
+}
+UZ_SC_FUNC float SurfaceCacheRelightSun(bool replaces, float sun, float relit, uint frames) {
+    if (replaces) return relit;
+    return SurfaceCacheEma(sun, relit, frames > 0u ? frames : 1u);
+}
+// Visits kept by a replaced record: the next cell-indirect visit blends at 1/2, so the indirect
+// part follows the new lighting in a few visits instead of a full horizon.
+static const uint kSurfaceCacheRelightVisitsKept = 1u;
+UZ_SC_FUNC uint SurfaceCacheRelightVisits(bool replaces, uint visits) {
+    return replaces && visits > kSurfaceCacheRelightVisitsKept ? kSurfaceCacheRelightVisitsKept : visits;
+}
+
+// ─── Stage 4: the cell-indirect gather ───────────────────────────────────────────────────────
+// Cosine-weighted rays from the record: the estimator of E / pi is the plain mean of the ray
+// radiances (pdf = cos / pi cancels the cosine), and the indirect radiance leaving the cell is the
+// albedo times that mean. A constant environment L gives albedo x L exactly (the furnace), and the
+// gather never exceeds albedo x the largest ray radiance (no energy is created).
+
+UZ_SC_FUNC float SurfaceCacheRadicalInverse(uint bits) {
+    bits = (bits << 16u) | (bits >> 16u);
+    bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
+    bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
+    bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
+    bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
+    return (float)bits * 2.3283064365386963e-10f;
+}
+
+// Cosine-weighted direction in the local frame (z = the normal) from a 2D sample in [0, 1)^2.
+UZ_SC_FUNC float3 SurfaceCacheCosineDirection(float xi0, float xi1) {
+    float r   = SurfaceCacheSqrt(SurfaceCacheSaturate(xi0));
+    float phi = 2.0f * kSurfaceCachePi * xi1;
+    float3 d;
+    d.x = r * SurfaceCacheCos(phi);
+    d.y = r * SurfaceCacheSin(phi);
+    float z2 = 1.0f - SurfaceCacheSaturate(xi0);
+    d.z = SurfaceCacheSqrt(z2 > 0.0f ? z2 : 0.0f);
+    return d;
+}
+
+// albedo x (sum of the ray radiances / rays): the indirect radiance leaving the cell. No rays: 0.
+UZ_SC_FUNC float SurfaceCacheGatherIndirect(float albedo, float raySum, uint rayCount) {
+    if (rayCount == 0u) return 0.0f;
+    return albedo * (raySum / (float)rayCount);
+}
+
+// A strictly subunit diffuse reflectance bounds every row sum of the discrete cosine
+// transport operator. The 0.98 ceiling affects only opt-in cell transport, not the base BRDF.
+// SH cold-hit gain is exactly zero: unconstrained signed SH reconstruction is not a
+// substochastic operator, so multiplying it by an arbitrary "small" weight proves nothing.
+static const float kSurfaceCacheTransportGain = 0.98f;
+UZ_SC_FUNC float SurfaceCacheTransportReflectance(float albedo) {
+    float a = SurfaceCacheSaturate(albedo);
+    return a < kSurfaceCacheTransportGain ? a : kSurfaceCacheTransportGain;
+}
+UZ_SC_FUNC float SurfaceCacheTransportStep(float source, float albedo, float raySum, uint rays) {
+    return source + SurfaceCacheGatherIndirect(SurfaceCacheTransportReflectance(albedo), raySum, rays);
+}
+static const uint kSurfaceCacheTransportBase = 0u;
+static const uint kSurfaceCacheTransportGather = 1u;
+static const uint kSurfaceCacheTransportSnapshot = 2u;
+static const uint kSurfaceCacheTransportFinish = 3u;
+
+// The indirect part of a cell's `other` layer (the emission the record keeps apart is subtracted).
+UZ_SC_FUNC float SurfaceCacheIndirectOf(float other, float emissive) {
+    float v = other - emissive;
+    return v > 0.0f ? v : 0.0f;
+}
+
+// The per-visit EMA of the gather: the running mean over the first `horizon` visits, an exponential
+// average with that horizon afterwards. Returns the visits after this one.
+UZ_SC_FUNC uint SurfaceCacheNextVisits(uint visits, uint horizon) {
+    uint h = horizon > 0u ? horizon : 1u;
+    uint next = visits + 1u;
+    return next < h ? next : h;
+}
+UZ_SC_FUNC float SurfaceCacheIndirectBlend(float indirect, float gather, uint nextVisits) {
+    return SurfaceCacheEma(indirect, gather, nextVisits > 0u ? nextVisits : 1u);
 }
 
 #ifdef __cplusplus

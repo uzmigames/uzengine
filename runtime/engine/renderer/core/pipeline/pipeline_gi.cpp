@@ -982,6 +982,66 @@ RHIPipelineHandle PipelineLibrary::GetSurfaceCacheFeed() {
     return m_surfaceCacheFeed;
 }
 
+bool PipelineLibrary::EnsureSurfaceCacheRelightShader() {
+    if (m_surfaceCacheRelightCS.IsValid()) return true;
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::SurfaceCacheRelightCS);
+    if (bytecode.empty()) return false;
+    RHIShaderDesc desc{};
+    desc.bytecode = bytecode.data();
+    desc.bytecodeSize = bytecode.size();
+    desc.stage = RHIShaderStage::Compute;
+    desc.entryPoint = "main";
+    desc.debugName = "surface_cache_relight_cs";
+    m_surfaceCacheRelightCS = m_device->CreateShader(desc);
+    return m_surfaceCacheRelightCS.IsValid();
+}
+
+RHIPipelineHandle PipelineLibrary::GetSurfaceCacheRelight() {
+    if (!m_initialized) return RHIPipelineHandle::Invalid();
+    if (m_surfaceCacheRelight.IsValid()) return m_surfaceCacheRelight;
+    if (!EnsureSurfaceCacheRelightShader()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SurfaceCacheRelightCS");
+        return RHIPipelineHandle::Invalid();
+    }
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_surfaceCacheRelightCS;
+    desc.debugName = "SurfaceCache_Relight";
+    m_surfaceCacheRelight = m_device->CreateComputePipeline(desc);
+    if (!m_surfaceCacheRelight.IsValid())
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SurfaceCache_Relight pipeline");
+    return m_surfaceCacheRelight;
+}
+
+bool PipelineLibrary::EnsureSurfaceCacheIndirectShader() {
+    if (m_surfaceCacheIndirectCS.IsValid()) return true;
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::SurfaceCacheIndirectCS);
+    if (bytecode.empty()) return false;
+    RHIShaderDesc desc{};
+    desc.bytecode = bytecode.data();
+    desc.bytecodeSize = bytecode.size();
+    desc.stage = RHIShaderStage::Compute;
+    desc.entryPoint = "main";
+    desc.debugName = "surface_cache_indirect_cs";
+    m_surfaceCacheIndirectCS = m_device->CreateShader(desc);
+    return m_surfaceCacheIndirectCS.IsValid();
+}
+
+RHIPipelineHandle PipelineLibrary::GetSurfaceCacheIndirect() {
+    if (!m_initialized) return RHIPipelineHandle::Invalid();
+    if (m_surfaceCacheIndirect.IsValid()) return m_surfaceCacheIndirect;
+    if (!EnsureSurfaceCacheIndirectShader()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SurfaceCacheIndirectCS");
+        return RHIPipelineHandle::Invalid();
+    }
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_surfaceCacheIndirectCS;
+    desc.debugName = "SurfaceCache_Indirect";
+    m_surfaceCacheIndirect = m_device->CreateComputePipeline(desc);
+    if (!m_surfaceCacheIndirect.IsValid())
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SurfaceCache_Indirect pipeline");
+    return m_surfaceCacheIndirect;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Radiance Cache Probe Side Compute Pipeline
 // ─────────────────────────────────────────────────────────────────────────────

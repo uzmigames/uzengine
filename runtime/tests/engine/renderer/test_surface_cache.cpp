@@ -24,6 +24,7 @@
 #include "core/cvar.h"
 
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -692,4 +693,162 @@ TEST(SurfaceCacheContract, ByteHashIsOrderSensitiveAndChainable) {
     EXPECT_EQ(SurfaceCacheHashBytes(a, sizeof(a)),
               SurfaceCacheHashBytes(&a[1], sizeof(a[1]), SurfaceCacheHashBytes(&a[0], sizeof(a[0]))));
     EXPECT_EQ(SurfaceCacheHashBytes(a, 0), 14695981039346656037ull);
+}
+
+TEST(SurfaceCacheStage4, ScheduleVisitsEveryEntryOnceInAnyCompleteCycle) {
+    constexpr uint32_t log2 = 16u;
+    constexpr uint32_t entries = 1u << log2;
+    for (const uint32_t slices : {1u, 3u, 16u, 63u, 64u}) {
+        std::vector<uint32_t> visits(entries, 0u);
+        // Start mid-cycle: a light change need not occur at slice zero.
+        for (uint32_t frame = 7u; frame < 7u + slices; ++frame) {
+            const uint32_t slice = SurfaceCacheSliceIndex(frame, slices);
+            const uint32_t first = SurfaceCacheSliceFirst(log2, slice, slices);
+            const uint32_t count = SurfaceCacheSliceCount(log2, slice, slices);
+            ASSERT_LE(first + count, entries);
+            for (uint32_t i = first; i < first + count; ++i) ++visits[i];
+        }
+        for (const auto count : visits) ASSERT_EQ(count, 1u);
+    }
+}
+
+TEST(SurfaceCacheStage4, LightingChangeReplacesDirectLayerWithoutEviction) {
+    const auto decision = SurfaceCacheDecideInvalidation(false, 0u, false, true, true);
+    EXPECT_FALSE(decision.clear);
+    EXPECT_TRUE(decision.relight);
+    EXPECT_EQ(decision.regionCount, 0u);
+    const bool replaces = SurfaceCacheRelightReplaces(3u, 4u);
+    ASSERT_TRUE(replaces);
+    EXPECT_FLOAT_EQ(SurfaceCacheRelightSun(replaces, 10.0f, 2.0f, 32u), 2.0f);
+    EXPECT_FALSE(SurfaceCacheRelightReplaces(4u, 4u));
+    EXPECT_EQ(SurfaceCacheRelightVisits(replaces, 8u), 1u);
+}
+
+TEST(SurfaceCacheStage4, CosineGatherPreservesConstantEnvironmentEnergy) {
+    constexpr float albedo = 0.6f;
+    constexpr float radiance = 3.0f;
+    for (uint32_t rays = 1u; rays <= 16u; ++rays) {
+        const float gathered = SurfaceCacheGatherIndirect(albedo, radiance * rays, rays);
+        EXPECT_NEAR(gathered, albedo * radiance, 1e-6f);
+        EXPECT_LE(gathered, radiance);
+        // A second cosine or 1/pi after cosine-PDF cancellation is a biased negative control.
+        EXPECT_GT(std::fabs(gathered - gathered / kSurfaceCachePi), 1.0f);
+    }
+    EXPECT_FLOAT_EQ(SurfaceCacheGatherIndirect(albedo, radiance, 0u), 0.0f);
+    EXPECT_FLOAT_EQ(SurfaceCacheGatherIndirect(0.0f, radiance, 1u), 0.0f);
+    EXPECT_FLOAT_EQ(SurfaceCacheIndirectBlend(100.0f, 2.0f, SurfaceCacheNextVisits(0u, 8u)), 2.0f);
+}
+
+TEST(SurfaceCacheStage4, FeaturesAreOptInAndRootBlockFitsBudget) {
+    EXPECT_FALSE(SurfaceRadianceCache::RelightEnabled());
+    EXPECT_FALSE(SurfaceRadianceCache::MultiBounceEnabled());
+    EXPECT_EQ(SurfaceRadianceCache::RelightSlices(), 16u);
+    EXPECT_EQ(sizeof(SurfaceCacheRelightRootConstants), 48u);
+    EXPECT_EQ(offsetof(SurfaceCacheRelightRootConstants, skyCubemapSrv), 32u);
+    EXPECT_LE(kSurfaceCacheRelightRootDwords, 20u);
+    EXPECT_EQ(SurfaceRadianceCache::Bounces(), 4u);
+}
+
+TEST(SurfaceCacheStage4, JacobiTransportIsBoundedConvergentAndOrderIndependent) {
+    // Two mutually visible diffuse patches. The shader's cosine average has nonnegative
+    // weights summing to one, so this is its worst case (no ray escapes).
+    const float source[2] = {1.0f, 0.2f};
+    const float rho[2] = {0.8f, 0.6f};
+    const float exact[2] = {(source[0] + rho[0] * source[1]) / (1.0f - rho[0] * rho[1]),
+                           (source[1] + rho[1] * source[0]) / (1.0f - rho[0] * rho[1])};
+    float previous[2] = {source[0], source[1]};
+    float lastError = 10.0f;
+    for (uint32_t bounce = 1u; bounce < 64u; ++bounce) {
+        float next[2], reverse[2];
+        for (uint32_t i = 0u; i < 2u; ++i)
+            next[i] = SurfaceCacheTransportStep(source[i], rho[i], previous[1u - i] * 4.0f, 4u);
+        for (int i = 1; i >= 0; --i)
+            reverse[i] = SurfaceCacheTransportStep(source[i], rho[i], previous[1 - i] * 4.0f, 4u);
+        const float error = std::fabs(next[0] - exact[0]) + std::fabs(next[1] - exact[1]);
+        EXPECT_LE(error, lastError + 1e-6f);
+        lastError = error;
+        for (uint32_t i = 0u; i < 2u; ++i) {
+            EXPECT_FLOAT_EQ(next[i], reverse[i]);
+            EXPECT_LE(next[i], 1.0f / (1.0f - kSurfaceCacheTransportGain));
+            previous[i] = next[i];
+        }
+    }
+    EXPECT_LT(lastError, 1e-5f);
+    EXPECT_LT(SurfaceCacheTransportReflectance(1.0f), 1.0f);
+    // Negative control: an unbounded SH return gain can defeat rho < 1. This is why
+    // cold hits use direct/emission only rather than an unproven scaled SH fallback.
+    float divergent = 1.0f;
+    for (uint32_t bounce = 0u; bounce < 64u; ++bounce)
+        divergent = SurfaceCacheTransportStep(1.0f, 0.8f, divergent * 1.5f, 1u);
+    EXPECT_GT(divergent, 100000.0f);
+}
+
+TEST(SurfaceCacheStage4, FiniteDepthTransportMatchesTruncatedNeumannSeriesAndStaysBounded) {
+    // The GPU schedule on a closed 5-patch box (a Cornell-like room, every ray of a patch lands
+    // on another patch or escapes to a black sky): Base L[0] = source, Bounces - 1 Jacobi gathers
+    // L[n+1] = source + rho x (F L[n]) through SurfaceCacheTransportStep, then the per-visit
+    // temporal blend of Finish. F is row-substochastic (row sum = 1 - escape), rho <= 0.98.
+    constexpr uint32_t kN = 5u;
+    const float F[kN][kN] = {{0.00f, 0.30f, 0.20f, 0.20f, 0.25f},
+                             {0.30f, 0.00f, 0.20f, 0.20f, 0.25f},
+                             {0.25f, 0.25f, 0.00f, 0.15f, 0.30f},
+                             {0.25f, 0.25f, 0.15f, 0.00f, 0.30f},
+                             {0.20f, 0.20f, 0.25f, 0.25f, 0.00f}};
+    const float rho[kN] = {0.65f, 0.65f, 0.65f, 0.06f, 1.0f};   // the last one clamps to 0.98
+    const float source[kN] = {1.2f, 0.0f, 0.3f, 0.0f, 0.0f};
+    float sMax = 0.0f;
+    for (const float s : source) sMax = std::max(sMax, s);
+    const auto solve = [&](uint32_t bounces, float gain, float* out) {
+        float prev[kN], next[kN];
+        for (uint32_t i = 0u; i < kN; ++i) prev[i] = out[i] = source[i];
+        for (uint32_t b = 1u; b < bounces; ++b) {
+            for (uint32_t i = 0u; i < kN; ++i) {
+                float raySum = 0.0f;   // one "ray" carrying the exact expected value of the cosine mean
+                for (uint32_t j = 0u; j < kN; ++j) raySum += F[i][j] * prev[j] * gain;
+                next[i] = SurfaceCacheTransportStep(source[i], rho[i], raySum, 1u);
+            }
+            for (uint32_t i = 0u; i < kN; ++i) prev[i] = out[i] = next[i];
+        }
+    };
+    // Monotone in the depth, bounded by ||source|| / (1 - 0.98), converging (geometric rate
+    // <= max rho x max row sum) to the infinite-bounce solution.
+    float previous[kN];
+    solve(1u, 1.0f, previous);
+    for (uint32_t i = 0u; i < kN; ++i) EXPECT_FLOAT_EQ(previous[i], source[i]);   // depth 1 = direct only
+    float deltaPrev = 1e9f;
+    for (uint32_t bounces = 2u; bounces <= 64u; ++bounces) {
+        float cur[kN];
+        solve(bounces, 1.0f, cur);
+        float delta = 0.0f;
+        for (uint32_t i = 0u; i < kN; ++i) {
+            EXPECT_GE(cur[i] + 1e-6f, previous[i]);                       // more vertices never remove energy
+            EXPECT_LE(cur[i], sMax / (1.0f - kSurfaceCacheTransportGain)); // the substochastic bound
+            delta = std::max(delta, cur[i] - previous[i]);
+            previous[i] = cur[i];
+        }
+        if (bounces > 2u) EXPECT_LE(delta, deltaPrev * 0.98f + 1e-6f);   // the series terms shrink by the gain
+        deltaPrev = delta;
+    }
+    EXPECT_LT(deltaPrev, 1e-3f);
+    // The temporal blend of Finish averages finite-depth estimates: from a cold or a stale
+    // `other`, the per-visit running mean / EMA converges to the same depth-4 value (no feedback
+    // across frames: every frame restarts the iteration at L[0]).
+    float depth4[kN];
+    solve(4u, 1.0f, depth4);
+    for (const float stale : {0.0f, 50.0f}) {
+        float other = stale;
+        uint32_t visits = 0u;
+        for (uint32_t frame = 0u; frame < 200u; ++frame) {
+            visits = SurfaceCacheNextVisits(visits, 8u);
+            other = SurfaceCacheIndirectBlend(other, depth4[0], visits);
+            EXPECT_LE(other, std::max(stale, depth4[0]) + 1e-5f);
+        }
+        EXPECT_NEAR(other, depth4[0], 1e-4f);
+    }
+    // Negative control: the same schedule with an SH-style return gain of 2 on the gathered
+    // radiance (rho x row sum x gain up to 1.76: spectral radius > 1) is not substochastic and
+    // diverges with the depth - the reason cold hits never fall back to the probe SH.
+    float divergent[kN];
+    solve(64u, 2.0f, divergent);
+    EXPECT_GT(divergent[4], 1e3f);
 }

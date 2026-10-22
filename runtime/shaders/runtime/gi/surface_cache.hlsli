@@ -161,14 +161,20 @@ uint SurfaceCacheWaitSecondWord(RWStructuredBuffer<uint2> keys, uint s, uint y) 
     return y;
 }
 
-void SurfaceCacheUpdate(SurfaceCacheParams p, float3 pos, float3 n, float3 cameraPos, uint lodBias,
-                        float3 sun, float3 other, uint writerTag) {
+// The insertion + accumulation behind `SurfaceCacheUpdate` / `SurfaceCacheUpdateSurface`: returns
+// the slot of the cell (kSurfaceCacheNoSlot when the probe sequence or a torn insert gave the frame
+// up), whether this lane inserted the key, and whether its sample was accepted under the per-frame
+// cap (the surface record is written for accepted samples only, so a hot cell's record stores stay
+// bounded like its atomics).
+uint SurfaceCacheUpdateSlot(SurfaceCacheParams p, float3 pos, float3 n, float3 cameraPos, uint lodBias,
+                            float3 sun, float3 other, uint writerTag, out bool inserted, out bool accepted) {
+    inserted = false;
+    accepted = false;
     const SurfaceCacheCellId id = SurfaceCacheLocate(p, pos, n, cameraPos, lodBias);
     RWStructuredBuffer<uint2> keys  = ResourceDescriptorHeap[p.keysUav];
     RWStructuredBuffer<uint>  accum = ResourceDescriptorHeap[p.accumUav];
     const uint mask = (1u << p.entriesLog2) - 1u;
     uint slot = kSurfaceCacheNoSlot;
-    bool inserted = false;
     bool torn = false;      // gave the frame up on a torn insert of this key (not a failed insert)
     uint probes = 0u;
     [loop]
@@ -207,15 +213,15 @@ void SurfaceCacheUpdate(SurfaceCacheParams p, float3 pos, float3 n, float3 camer
 
     SurfaceCacheStat(p, kSurfaceCacheStatInserts, inserted);
     SurfaceCacheStatMax(p, kSurfaceCacheStatMaxProbe, probes);
-    if (slot == kSurfaceCacheNoSlot) return;
+    if (slot == kSurfaceCacheNoSlot) return kSurfaceCacheNoSlot;
 
     const uint base = slot * kSurfaceCacheAccumStride;
     uint previousCount;
     InterlockedAdd(accum[base + kSurfaceCacheAccumCount], 1u, previousCount);
-    const bool accepted = previousCount < kSurfaceCacheFrameCap;
+    accepted = previousCount < kSurfaceCacheFrameCap;
     SurfaceCacheStat(p, kSurfaceCacheStatUpdates, accepted);
     SurfaceCacheStat(p, kSurfaceCacheStatFeedUpdates, accepted && writerTag == kSurfaceCacheWriterFeed);
-    if (!accepted) return;
+    if (!accepted) return slot;
     InterlockedAdd(accum[base + kSurfaceCacheAccumSunR + 0u],   SurfaceCachePackSample(sun.x,   p.maxRadiance));
     InterlockedAdd(accum[base + kSurfaceCacheAccumSunR + 1u],   SurfaceCachePackSample(sun.y,   p.maxRadiance));
     InterlockedAdd(accum[base + kSurfaceCacheAccumSunR + 2u],   SurfaceCachePackSample(sun.z,   p.maxRadiance));
@@ -223,6 +229,76 @@ void SurfaceCacheUpdate(SurfaceCacheParams p, float3 pos, float3 n, float3 camer
     InterlockedAdd(accum[base + kSurfaceCacheAccumOtherR + 1u], SurfaceCachePackSample(other.y, p.maxRadiance));
     InterlockedAdd(accum[base + kSurfaceCacheAccumOtherR + 2u], SurfaceCachePackSample(other.z, p.maxRadiance));
     InterlockedOr(accum[base + kSurfaceCacheAccumTags], writerTag);
+    return slot;
+}
+
+void SurfaceCacheUpdate(SurfaceCacheParams p, float3 pos, float3 n, float3 cameraPos, uint lodBias,
+                        float3 sun, float3 other, uint writerTag) {
+    bool inserted, accepted;
+    SurfaceCacheUpdateSlot(p, pos, n, cameraPos, lodBias, sun, other, writerTag, inserted, accepted);
+}
+
+// Stage 4: the TLAS writers' update, which also records the hit in the cell's surface record
+// (`SurfaceCacheParams::surfaceUav`; nothing more than the stage 1-3 update while the record is
+// unbound): the lifted hit position the cell was keyed from, the shading normal, the exact-material
+// albedo and the emission — what the relight pass re-shades and the cell-indirect pass gathers from.
+// One writer claims the persistent representative. Mixing the coordinates/material/normal
+// of competing points is not a valid surface record. Relight runs before writers, and its
+// next dispatch sees the complete record after the pass UAV barrier.
+void SurfaceCacheUpdateSurface(SurfaceCacheParams p, float3 pos, float3 n, float3 cameraPos, uint lodBias,
+                               float3 sun, float3 other, uint writerTag, float3 albedo, float3 emissive) {
+    bool inserted, accepted;
+    const uint slot = SurfaceCacheUpdateSlot(p, pos, n, cameraPos, lodBias, sun, other, writerTag, inserted, accepted);
+    if (slot == kSurfaceCacheNoSlot || !accepted || p.surfaceUav == kSurfaceCacheSentinel) return;
+    RWStructuredBuffer<uint> surface = ResourceDescriptorHeap[p.surfaceUav];
+    const uint base = slot * kSurfaceCacheSurfaceStride;
+    uint previous;
+    InterlockedCompareExchange(surface[base + kSurfaceCacheSurfaceAlbedo], 0u, 0xFFFFFFFFu, previous);
+    if (previous != 0u) return;
+    surface[base + kSurfaceCacheSurfacePosition + 0u] = asuint(pos.x);
+    surface[base + kSurfaceCacheSurfacePosition + 1u] = asuint(pos.y);
+    surface[base + kSurfaceCacheSurfacePosition + 2u] = asuint(pos.z);
+    surface[base + kSurfaceCacheSurfaceNormal]        = SurfaceCacheEncodeNormal(n);
+    surface[base + kSurfaceCacheSurfaceAlbedo]        = SurfaceCachePackAlbedoTag(albedo, writerTag);
+    surface[base + kSurfaceCacheSurfaceEmissive + 0u] = f32tof16(max(emissive.x, 0.0)) | (f32tof16(max(emissive.y, 0.0)) << 16);
+    surface[base + kSurfaceCacheSurfaceEmissive + 1u] = f32tof16(max(emissive.z, 0.0));
+    surface[base + kSurfaceCacheSurfaceMeta] = SurfaceCachePackSurfaceMeta(p.lightingGeneration, 0u);
+}
+
+// Stage 4: the record of slot `slot` for the relight / cell-indirect passes. False without a record.
+bool SurfaceCacheReadSurface(SurfaceCacheParams p, uint slot, out float3 pos, out float3 n, out float3 albedo,
+                             out float3 emissive, out uint meta) {
+    pos = 0.0; n = float3(0.0, 0.0, 1.0); albedo = 0.0; emissive = 0.0; meta = 0u;
+    if (p.surfaceUav == kSurfaceCacheSentinel) return false;
+    RWStructuredBuffer<uint> surface = ResourceDescriptorHeap[p.surfaceUav];
+    const uint base = slot * kSurfaceCacheSurfaceStride;
+    const uint albedoTag = surface[base + kSurfaceCacheSurfaceAlbedo];
+    if (!SurfaceCacheRecordExists(albedoTag)) return false;
+    pos = float3(asfloat(surface[base + kSurfaceCacheSurfacePosition + 0u]),
+                 asfloat(surface[base + kSurfaceCacheSurfacePosition + 1u]),
+                 asfloat(surface[base + kSurfaceCacheSurfacePosition + 2u]));
+    n        = SurfaceCacheDecodeNormal(surface[base + kSurfaceCacheSurfaceNormal]);
+    albedo   = SurfaceCacheUnpackAlbedo(albedoTag);
+    const uint e0 = surface[base + kSurfaceCacheSurfaceEmissive + 0u];
+    const uint e1 = surface[base + kSurfaceCacheSurfaceEmissive + 1u];
+    emissive = float3(f16tof32(e0), f16tof32(e0 >> 16), f16tof32(e1));
+    meta     = surface[base + kSurfaceCacheSurfaceMeta];
+    return all(isfinite(pos)) && all(isfinite(emissive));
+}
+
+// Stage 4: the resolved record of slot `slot` unpacked (the relight / indirect passes rewrite one
+// layer and keep the other and the metadata), and its packing.
+void SurfaceCacheUnpackResolved(uint4 rec, out float3 sun, out float3 other) {
+    sun   = float3(f16tof32(rec.x), f16tof32(rec.x >> 16), f16tof32(rec.y));
+    other = float3(f16tof32(rec.y >> 16), f16tof32(rec.z), f16tof32(rec.z >> 16));
+}
+uint4 SurfaceCachePackResolved(float3 sun, float3 other, uint meta) {
+    uint4 rec;
+    rec.x = f32tof16(sun.x)   | (f32tof16(sun.y)   << 16);
+    rec.y = f32tof16(sun.z)   | (f32tof16(other.x) << 16);
+    rec.z = f32tof16(other.y) | (f32tof16(other.z) << 16);
+    rec.w = meta;
+    return rec;
 }
 
 // ─── Debug views (`r.GI.SurfaceCache.Debug`, bits 4-5 of the flags) ──────────────────────────

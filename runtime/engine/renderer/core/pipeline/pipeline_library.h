@@ -742,6 +742,19 @@ public:
     /// first use only when `r.GI.SurfaceCache` is on with `.FeedRays` > 0.
     [[nodiscard]] RHIPipelineHandle GetSurfaceCacheFeed();
 
+    /// Returns the surface radiance cache relight compute pipeline (`surface_cache_relight_cs.hlsl`,
+    /// Phase D stage 4): one thread per entry of the frame's slice, re-shading the direct layer of
+    /// the live cells from their surface records (sun + local lights, shadow rays on the TLAS).
+    /// Created on first use only when `r.GI.SurfaceCache` is on with `.Relight`.
+    [[nodiscard]] RHIPipelineHandle GetSurfaceCacheRelight();
+
+    /// Returns the surface radiance cache cell-indirect compute pipeline
+    /// (`surface_cache_indirect_cs.hlsl`, Phase D stage 4): finite-depth whole-table Jacobi
+    /// iterations, with distinct previous/next storage and cosine rays on the TLAS.
+    /// Created on first use only when `r.GI.SurfaceCache` is on with `.MultiBounce` and
+    /// `.IndirectRays` > 0.
+    [[nodiscard]] RHIPipelineHandle GetSurfaceCacheIndirect();
+
     /// Returns the radiance cache probe side classifier (`probe_side_cs.hlsl`, followup-01
     /// candidate `r.GI.RadianceCache.ProbeClassification` = 1): for every probe, the nearest mesh
     /// triangle over the scene's instances — the side the probe lies on and the direction from the

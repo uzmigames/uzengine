@@ -407,6 +407,11 @@ TIER_B = [
     # whose exact-material hits fill the SDF consumers' cells.
     layout_entry('gi/surface_cache_feed_cs.hlsl', 'SurfaceCacheFeedRootCB',
                  'runtime/engine/renderer/gi/surface_radiance_cache.h', 'SurfaceCacheFeedRootConstants'),
+    # Stage 4 shares this 12-DWORD block between relight and cell-indirect. Reflect both
+    # declarations so a positional drift in either shader fails the layout gate.
+    *[layout_entry(shader, 'SurfaceCacheRelightRootCB',
+                   'runtime/engine/renderer/gi/surface_radiance_cache.h', 'SurfaceCacheRelightRootConstants')
+      for shader in ('gi/surface_cache_relight_cs.hlsl', 'gi/surface_cache_indirect_cs.hlsl')],
     # Screen-space ReSTIR GI root block (phase C, r.GI.ReSTIR): 16 DWORDs of the compute root's 24.
     layout_entry('ssgi/ssgi_restir_gi.hlsli', 'SSGIRestirRoot',
                  'runtime/engine/renderer/gi/ssgi_renderer.h', 'SSGIRestirRootConstants'),

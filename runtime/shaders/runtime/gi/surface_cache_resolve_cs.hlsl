@@ -5,6 +5,9 @@
 /// Runs before every consumer of the frame, so they read the freshest mean (one frame of latency,
 /// the `GetCompletedGridOrigin()` rule of the SH buffer). An eviction leaves a tombstone (the keys
 /// inserted past the slot in their probe chains stay reachable); only the clear writes empties.
+/// Stage 4: the surface record of a cleared or evicted slot is erased with it, and a cell the
+/// cell-indirect pass owns (visited at least once, `kSurfaceCacheResolveFlagGatherOwnsOther`) folds
+/// only its `sun` layer here — its `other` is the gather's EMA.
 ///
 /// Bindings: root constants at b0 (`uz::SurfaceCacheResolveRootConstants`, 12 DWORDs), the change
 /// boxes at b2 (`uz::SurfaceCacheResolveRegionsCB`, the `HistoryCB` region rows of the SSGI
@@ -26,7 +29,7 @@ cbuffer SurfaceCacheResolveRootCB : register(b0) {
     float cellSize;       // 8  level-0 cell, cm (cell centres for the change-box test)
     uint  regionCount;    // 9  change boxes in the b2 block (<= kSurfaceCacheMaxRegions)
     uint  frame;          // 10 stats block = frame & 1
-    uint  _pad0;          // 11
+    uint  surfaceUav;     // 11 stage 4: RWStructuredBuffer<uint> surface records (sentinel = none)
 };
 
 cbuffer SurfaceCacheResolveRegionsCB : register(b2) {
@@ -71,11 +74,18 @@ void main(uint3 DTid : SV_DispatchThreadID)
         stats[((frame + 1u) & 1u) * kSurfaceCacheStatCount + entry] = 0u;
     }
 
-    if (mode == kSurfaceCacheResolveModeClear) {
+    const bool haveSurface = surfaceUav != kSurfaceCacheSentinel;
+    const uint surfaceBase = entry * kSurfaceCacheSurfaceStride;
+    if ((mode & kSurfaceCacheResolveModeClear) != 0u) {
         keys[entry]     = uint2(0u, 0u);
         resolved[entry] = uint4(0u, 0u, 0u, 0u);
         [unroll]
         for (uint w = 0u; w < kSurfaceCacheAccumStride; ++w) accum[base + w] = 0u;
+        if (haveSurface) {
+            RWStructuredBuffer<uint> surface = ResourceDescriptorHeap[surfaceUav];
+            [unroll]
+            for (uint s = 0u; s < kSurfaceCacheSurfaceStride; ++s) surface[surfaceBase + s] = 0u;
+        }
         return;
     }
 
@@ -102,10 +112,24 @@ void main(uint3 DTid : SV_DispatchThreadID)
                 frames = SurfaceCacheNextFrames(frames, max(accumFrames, 1u));
                 float3 sun   = float3(f16tof32(rec.x), f16tof32(rec.x >> 16), f16tof32(rec.y));
                 float3 other = float3(f16tof32(rec.y >> 16), f16tof32(rec.z), f16tof32(rec.z >> 16));
+                // Stage 4: a cell the cell-indirect pass has visited keeps the gather's `other`
+                // (the inline samples seeded it and now feed only `sun`).
+                bool foldOther = true;
+                bool foldSun = true;
+                if ((mode & kSurfaceCacheResolveFlagRelightOwnsSun) != 0u && haveSurface && samples > 0u) {
+                    RWStructuredBuffer<uint> surface = ResourceDescriptorHeap[surfaceUav];
+                    foldSun = !SurfaceCacheRecordExists(surface[surfaceBase + kSurfaceCacheSurfaceAlbedo]);
+                }
+                if ((mode & kSurfaceCacheResolveFlagGatherOwnsOther) != 0u && haveSurface) {
+                    RWStructuredBuffer<uint> surface = ResourceDescriptorHeap[surfaceUav];
+                    foldOther = SurfaceCacheSurfaceVisits(surface[surfaceBase + kSurfaceCacheSurfaceMeta]) == 0u;
+                }
                 [unroll]
                 for (uint c = 0u; c < 3u; ++c) {
-                    sun[c]   = SurfaceCacheEma(sun[c],   SurfaceCacheUnpackMean(accum[base + kSurfaceCacheAccumSunR + c],   count), frames);
-                    other[c] = SurfaceCacheEma(other[c], SurfaceCacheUnpackMean(accum[base + kSurfaceCacheAccumOtherR + c], count), frames);
+                    if (foldSun) sun[c] = SurfaceCacheEma(sun[c], SurfaceCacheUnpackMean(accum[base + kSurfaceCacheAccumSunR + c], count), frames);
+                    if (foldOther) {
+                        other[c] = SurfaceCacheEma(other[c], SurfaceCacheUnpackMean(accum[base + kSurfaceCacheAccumOtherR + c], count), frames);
+                    }
                 }
                 samples = SurfaceCacheNextSamples(samples, count);
                 age     = 0u;
@@ -127,6 +151,12 @@ void main(uint3 DTid : SV_DispatchThreadID)
         keys[entry] = uint2(0u, kSurfaceCacheTombstoneY);
         rec = uint4(0u, 0u, 0u, 0u);
         live = false;
+        if (haveSurface) {
+            // Stage 4: no record (tag 0) and no stale bookkeeping for the slot's next tenant.
+            RWStructuredBuffer<uint> surface = ResourceDescriptorHeap[surfaceUav];
+            surface[surfaceBase + kSurfaceCacheSurfaceAlbedo] = 0u;
+            surface[surfaceBase + kSurfaceCacheSurfaceMeta]   = 0u;
+        }
     }
     if (live || evict) {
         resolved[entry] = rec;

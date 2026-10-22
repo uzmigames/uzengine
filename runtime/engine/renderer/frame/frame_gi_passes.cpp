@@ -19,6 +19,7 @@
 #include "gi/mesh_sdf_baker.h"
 #include "raytracing/rt_manager.h"
 #include "passes/raytracing/rt_reflection_pass.h"
+#include "../../../shaders/runtime/gi/surface_cache_contract.hlsli"
 #include "gpu_mesh.h"
 #include "world.h"
 #include "render_graph_builder.h"
@@ -988,6 +989,67 @@ void SceneRenderer::RegisterSurfaceCacheResolvePass(rg::RgBuilder& rgBuilder, Fr
             }
         });
     });
+    // Stage 4 must run here, before ANY probe/feed/reflection consumer. Between resolve and
+    // finish the drained accumulator is scratch storage, not a writable sample accumulator.
+    if (!SurfaceRadianceCache::SurfaceRecordActive()) return;
+    const uint32_t materialTableSrv = UpdateGIMaterialTable(ctx);
+    for (const bool indirect : {false, true}) {
+        if (indirect ? !SurfaceRadianceCache::IndirectActive() : !SurfaceRadianceCache::RelightEnabled()) continue;
+        rgBuilder.AddPass(indirect ? "SurfaceCache_Indirect" : "SurfaceCache_Relight",
+            [&, indirect, materialTableSrv](rg::RgPassBuilder& pb) {
+            pb.SetExecutionCallback([this, &ctx, indirect, materialTableSrv](IRHICommandList* cmd, const rg::RgPassResources&) {
+                const uint32_t paramsSrv = m_surfaceCache.GetParamsSrv(ctx.frameIndex);
+                if (paramsSrv == UINT32_MAX || !m_rtManager || !m_rtManager->IsReady()) return;
+                const auto* perFrame = static_cast<const PerFrameCB*>(ctx.perFrameAlloc.cpuPtr);
+                if (!perFrame) return;
+                const auto pso = indirect ? ctx.pipelines->GetSurfaceCacheIndirect() : ctx.pipelines->GetSurfaceCacheRelight();
+                if (!pso.IsValid()) return;
+                RadianceCacheTraceConstants trace{};
+                FillRTReflectionTraceConstants(trace, m_globalDistanceField, *perFrame, ctx.frameIndex);
+                trace.maxTraceDistance = cv_RTReflectionsMaxDistance->value;
+                auto alloc = m_cbRing->Allocate(sizeof(trace));
+                if (!alloc.cpuPtr) return;
+                std::memcpy(alloc.cpuPtr, &trace, sizeof(trace));
+                const auto slice = m_surfaceCache.GetRelightSlice(ctx.frameIndex);
+                SurfaceCacheRelightRootConstants rc{};
+                rc.tlasSrv = m_rtManager->GetTLASSRVIndex();
+                rc.materialTableSrv = materialTableSrv;
+                rc.surfaceCacheParamsSrv = paramsSrv;
+                rc.resolvedUav = m_surfaceCache.GetResolvedUav(ctx.frameIndex);
+                rc.sliceIndex = slice.index;
+                rc.sliceCount = slice.count;
+                rc.indirectRays = indirect ? SurfaceRadianceCache::IndirectRays() : 0u;
+                rc.skyCubemapSrv = m_hdriActive ? m_hdriCubemapSrv
+                    : (m_skyCubemapFilled ? m_skyCubemapSrv : UINT32_MAX);
+                rc.bounces = SurfaceRadianceCache::Bounces();
+                cmd->SetPipeline(pso);
+                cmd->SetRootCBV(kSlotPerFrame, ctx.perFrameAlloc.bufferHandle, ctx.perFrameAlloc.offsetBytes,
+                    ctx.perFrameAlloc.cpuPtr, sizeof(PerFrameCB));
+                cmd->SetRootCBV(kSlotPerObject, alloc.bufferHandle, alloc.offsetBytes, alloc.cpuPtr, sizeof(trace));
+                const auto dispatch = [&](uint32_t mode, uint32_t groups) {
+                    m_surfaceCache.PrepareRelight(cmd);
+                    rc.transportMode = mode;
+                    cmd->SetRootConstants(kSlotRootConstants, reinterpret_cast<const uint32_t*>(&rc), kSurfaceCacheRelightRootDwords);
+                    cmd->Dispatch(groups, 1, 1);
+                };
+                if (!indirect) {
+                    dispatch(surfacecache::kSurfaceCacheTransportBase, slice.groups);
+                } else {
+                    // A finite-depth Jacobi solve needs the whole previous iterate. Updating only
+                    // a slice per bounce would give neighbours different, undefined path depths.
+                    const uint32_t groups = (1u << m_surfaceCache.GetEntriesLog2()) / 64u;
+                    dispatch(surfacecache::kSurfaceCacheTransportBase, groups);
+                    for (uint32_t bounce = 1u; bounce < rc.bounces; ++bounce) {
+                        rc.bounceIndex = bounce;
+                        dispatch(surfacecache::kSurfaceCacheTransportGather, groups);
+                        if (bounce + 1u < rc.bounces) dispatch(surfacecache::kSurfaceCacheTransportSnapshot, groups);
+                    }
+                    dispatch(surfacecache::kSurfaceCacheTransportFinish, groups);
+                }
+                m_surfaceCache.PrepareConsumer(cmd);
+            });
+        });
+    }
 }
 
 void SceneRenderer::RegisterSurfaceCacheFeedPass(rg::RgBuilder& rgBuilder, FrameContext& ctx, uint32_t materialTableSrv) {

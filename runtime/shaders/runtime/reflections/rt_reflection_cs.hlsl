@@ -385,10 +385,12 @@ void main(uint3 DTid : SV_DispatchThreadID)
             otherTerm += emissiveTerm;
         }
         // The inline radiance gains the stage 2 terms and nothing else (added to the stage 1 value,
-        // so `.LocalLights 0` + `.Emissive 0` reproduces the stage 1 texel bit for bit).
+        // so `.LocalLights 0` + `.Emissive 0` reproduces the stage 1 texel bit for bit). Stage 4:
+        // the hit is also recorded in the cell's surface record (the relight / cell-indirect
+        // passes' point; nothing more than the update while the record is unbound).
         radiance += localTerm + emissiveTerm;
-        SurfaceCacheUpdate(cache, cachePos, hitN, cameraPos.xyz, 0u, sunTerm, otherTerm,
-                           kSurfaceCacheWriterReflections);
+        SurfaceCacheUpdateSurface(cache, cachePos, hitN, cameraPos.xyz, 0u, sunTerm, otherTerm,
+                                  kSurfaceCacheWriterReflections, albedo, emissiveTerm);
     }
     if (cacheHit) {
         // The cell replaces the hit radiance: both layers, or the inline sun with the cell's other.

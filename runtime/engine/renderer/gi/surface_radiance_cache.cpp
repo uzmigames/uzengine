@@ -1,11 +1,14 @@
-/// UzEngine Surface Radiance Cache — implementation (Phase D stage 1).
+/// UzEngine Surface Radiance Cache — implementation (Phase D stages 1-4).
 ///
 /// Per frame (`Resolve`, the body of the `SurfaceCache_Resolve` pass registered right after the
 /// distance-field composite): create the table on first use, decide the invalidation (clear or
-/// change boxes), write the binding record of the frame, fold last frame's accumulators and age
-/// the cells with one dispatch of `surface_cache_resolve_cs.hlsl`, then leave the buffers in the
-/// states the consumers bind them in. The stats readback follows the `RadianceCache`
-/// diagnostic pattern (a copy recorded now, mapped `kReadbackFrameLag` frames later).
+/// change boxes — or, stage 4, a lighting-generation bump the relight pass catches up with),
+/// write the binding record of the frame, fold last frame's accumulators and age the cells with
+/// one dispatch of `surface_cache_resolve_cs.hlsl`, then leave the buffers in the states the
+/// consumers bind them in. The stats readback follows the `RadianceCache` diagnostic pattern (a
+/// copy recorded now, mapped `kReadbackFrameLag` frames later). Stage 4 adds the surface record
+/// buffer (32 bytes per entry, cleared and evicted with the cell) and the slice schedule of the
+/// relight / cell-indirect passes (`GetRelightSlice`).
 ///
 /// @ref docs/specs/rendering/surface-radiance-cache.md
 
@@ -84,6 +87,26 @@ static auto* cv_SCSdfWrites = UZ_CVAR_BOOL("r.GI.SurfaceCache.SdfWrites", false,
 static auto* cv_SCDdgi = UZ_CVAR_BOOL("r.GI.SurfaceCache.DDGI", true,
     "Surface cache (stage 3): the DDGI probe trace reads and writes the cache at its hits, with the exact material "
     "table bound (r.RayTracing.GI)");
+// Stage 4 (the surface record, the scheduled relight and the cell-indirect gather; the spec's
+// `.RelightSlices` 16 and `.IndirectRays` 4 defaults under the master switch).
+static auto* cv_SCRelight = UZ_CVAR_BOOL("r.GI.SurfaceCache.Relight", false,
+    "Surface cache (stage 4): re-shade the direct layer of one slice of the live cells per frame from their surface "
+    "records, so a sun / local-light change propagates to every cell within RelightSlices frames without clearing "
+    "the table (off: a lighting change clears the table, as in stages 1-3)");
+static auto* cv_SCRelightSlices = UZ_CVAR_INT("r.GI.SurfaceCache.RelightSlices", 16,
+    "Surface cache (stage 4): frames in which the relight and the cell-indirect gather visit every live cell once "
+    "(the table is walked in this many consecutive slices)", 1, 64);
+static auto* cv_SCMultiBounce = UZ_CVAR_BOOL("r.GI.SurfaceCache.MultiBounce", false,
+    "Surface cache (stage 4): finite-depth coherent cell-indirect transport. Every bounce reads a stable "
+    "previous-iteration snapshot; no SH feedback. The gather owns the other layer");
+static auto* cv_SCIndirectRays = UZ_CVAR_INT("r.GI.SurfaceCache.IndirectRays", 4,
+    "Surface cache (stage 4): cosine rays per live cell per visit of the cell-indirect gather (0 = no gather)", 0, 16);
+static auto* cv_SCIndirectFrames = UZ_CVAR_INT("r.GI.SurfaceCache.IndirectFrames", 8,
+    "Surface cache (stage 4): visits of the cell-indirect gather's exponential moving average (a running mean over "
+    "the first visits, an exponential average with this horizon afterwards)", 1, 64);
+static auto* cv_SCBounces = UZ_CVAR_INT("r.GI.SurfaceCache.Bounces", 4,
+    "Surface cache: finite diffuse surface vertices, including the cached surface. 1 = direct/emission only; "
+    "each additional vertex is one coherent Jacobi gather. No SH feedback", 1, 8);
 
 namespace uz {
 
@@ -103,9 +126,13 @@ uint64_t SurfaceCacheHashBytes(const void* data, size_t bytes, uint64_t hash) no
 }
 
 SurfaceCacheInvalidation SurfaceCacheDecideInvalidation(bool sceneRevisionChanged, uint32_t changedRegionCount,
-                                                        bool geometryHashChanged, bool lightingHashChanged) noexcept {
+                                                        bool geometryHashChanged, bool lightingHashChanged,
+                                                        bool relightEnabled) noexcept {
     SurfaceCacheInvalidation out{};
-    if (sceneRevisionChanged || lightingHashChanged) {
+    // Stage 4: under the relight a lighting change is not a clear - the generation bump below lets
+    // the relight pass re-shade the cells in place. Without it (stages 1-3) the cells hold lit
+    // radiance of the old lighting and the table is cleared.
+    if (sceneRevisionChanged || (lightingHashChanged && !relightEnabled)) {
         out.clear = true;
     } else if (changedRegionCount > 0) {
         if (changedRegionCount > surfacecache::kSurfaceCacheMaxRegions) {
@@ -116,6 +143,9 @@ SurfaceCacheInvalidation SurfaceCacheDecideInvalidation(bool sceneRevisionChange
     } else if (geometryHashChanged) {
         out.clear = true;                            // geometry moved with no box to evict by
     }
+    // A clear of another cause covers the lighting change (the refilled cells are lit against the
+    // new lighting); otherwise the relight catches the live cells up, nothing is evicted.
+    out.relight = lightingHashChanged && relightEnabled && !out.clear;
     return out;
 }
 
@@ -134,6 +164,29 @@ uint32_t SurfaceRadianceCache::SdfLodBias() {
 bool SurfaceRadianceCache::DdgiEnabled() { return cv_SCDdgi->value != 0.0f; }
 uint32_t SurfaceRadianceCache::FeedRays() {
     return static_cast<uint32_t>(std::clamp(static_cast<int>(cv_SCFeedRays->value), 0, 64));
+}
+bool SurfaceRadianceCache::RelightEnabled() { return cv_SCRelight->value != 0.0f; }
+uint32_t SurfaceRadianceCache::RelightSlices() {
+    return static_cast<uint32_t>(std::clamp(static_cast<int>(cv_SCRelightSlices->value), 1, 64));
+}
+bool SurfaceRadianceCache::MultiBounceEnabled() { return cv_SCMultiBounce->value != 0.0f; }
+uint32_t SurfaceRadianceCache::IndirectRays() {
+    return static_cast<uint32_t>(std::clamp(static_cast<int>(cv_SCIndirectRays->value), 0, 16));
+}
+uint32_t SurfaceRadianceCache::IndirectFrames() {
+    return static_cast<uint32_t>(std::clamp(static_cast<int>(cv_SCIndirectFrames->value), 1, 64));
+}
+uint32_t SurfaceRadianceCache::Bounces() {
+    return static_cast<uint32_t>(std::clamp(static_cast<int>(cv_SCBounces->value), 1, 8));
+}
+
+SurfaceRadianceCache::RelightSlice SurfaceRadianceCache::GetRelightSlice(uint32_t frameIndex) const noexcept {
+    RelightSlice slice{};
+    slice.count  = RelightSlices();
+    slice.index  = surfacecache::SurfaceCacheSliceIndex(frameIndex, slice.count);
+    slice.groups = m_initialized
+        ? (surfacecache::SurfaceCacheSliceCount(m_entriesLog2, slice.index, slice.count) + 63u) / 64u : 0u;
+    return slice;
 }
 
 uint32_t SurfaceCacheBuildLights(SurfaceCacheLightGPU* out, uint32_t capacity, const LightingCB* lighting,
@@ -201,7 +254,7 @@ SurfaceRadianceCache::~SurfaceRadianceCache() {
 
 void SurfaceRadianceCache::DestroyResources() {
     if (m_device) {
-        for (auto* handle : {&m_keys, &m_accum, &m_resolved, &m_stats}) {
+        for (auto* handle : {&m_keys, &m_accum, &m_resolved, &m_stats, &m_surface}) {
             if (handle->IsValid()) m_device->DestroyBuffer(*handle);
             *handle = {};
         }
@@ -219,7 +272,8 @@ void SurfaceRadianceCache::DestroyResources() {
     for (uint32_t i = 0; i < kParamsRingFrames; ++i) { m_paramsSrv[i] = UINT32_MAX; m_lightsSrv[i] = UINT32_MAX; }
     for (uint32_t i = 0; i < kReadbackRingFrames; ++i) m_readbackFrame[i] = UINT32_MAX;
     m_device = nullptr;
-    m_keysUav = m_accumUav = m_resolvedUav = m_resolvedSrv = m_statsUav = UINT32_MAX;
+    m_keysUav = m_accumUav = m_resolvedUav = m_resolvedSrv = m_statsUav = m_surfaceUav = UINT32_MAX;
+    m_lightingGeneration = 0;
     m_resolvedFrame = UINT32_MAX;
     m_initialized = false;
     m_clearPending = true;
@@ -248,6 +302,13 @@ bool SurfaceRadianceCache::EnsureResources(IRHIDevice* device) {
     desc.stride    = 4 * sizeof(uint32_t);
     desc.debugName = "SurfaceCache_Resolved";
     m_resolved = device->CreateBuffer(desc);
+    // Stage 4: the surface records (position, normal, albedo + writer tag, emission, bookkeeping),
+    // always created with the table (the spec's 88 MB at 2^20) and cleared / evicted with the cells
+    // by the resolve, so a record is never read before it was written.
+    desc.sizeBytes = entries * surfacecache::kSurfaceCacheSurfaceStride * sizeof(uint32_t);
+    desc.stride    = sizeof(uint32_t);
+    desc.debugName = "SurfaceCache_Surface";
+    m_surface = device->CreateBuffer(desc);
     desc.usage     = RHIBufferUsage::StructuredBuffer | RHIBufferUsage::UnorderedAccess | RHIBufferUsage::CopySrc;
     desc.sizeBytes = kStatsBytes;
     desc.stride    = sizeof(uint32_t);
@@ -271,7 +332,7 @@ bool SurfaceRadianceCache::EnsureResources(IRHIDevice* device) {
     lightsDesc.usage     = RHIBufferUsage::StructuredBuffer;
     lightsDesc.memory    = RHIMemoryType::Upload;
     lightsDesc.debugName = "SurfaceCache_Lights";
-    bool ok = m_keys.IsValid() && m_accum.IsValid() && m_resolved.IsValid() && m_stats.IsValid();
+    bool ok = m_keys.IsValid() && m_accum.IsValid() && m_resolved.IsValid() && m_stats.IsValid() && m_surface.IsValid();
     for (uint32_t i = 0; i < kParamsRingFrames && ok; ++i) {
         m_params[i] = device->CreateBuffer(paramsDesc);
         ok = m_params[i].IsValid();
@@ -294,8 +355,9 @@ bool SurfaceRadianceCache::EnsureResources(IRHIDevice* device) {
         m_resolvedUav = device->GetBufferUAVIndex(m_resolved);
         m_resolvedSrv = device->GetBufferSRVIndex(m_resolved);
         m_statsUav    = device->GetBufferUAVIndex(m_stats);
+        m_surfaceUav  = device->GetBufferUAVIndex(m_surface);
         ok = m_keysUav != UINT32_MAX && m_accumUav != UINT32_MAX && m_resolvedUav != UINT32_MAX
-          && m_resolvedSrv != UINT32_MAX && m_statsUav != UINT32_MAX;
+          && m_resolvedSrv != UINT32_MAX && m_statsUav != UINT32_MAX && m_surfaceUav != UINT32_MAX;
     }
     if (!ok) {
         UZ_LOG(Renderer, Error, "SurfaceCache: buffer creation failed (entriesLog2={}); the cache stays off", m_entriesLog2);
@@ -305,10 +367,10 @@ bool SurfaceRadianceCache::EnsureResources(IRHIDevice* device) {
         m_createFailed = true;
         return false;
     }
-    const uint64_t bytes = entries * (2 + surfacecache::kSurfaceCacheAccumStride + 4) * sizeof(uint32_t);
-    UZ_LOG(Renderer, Info, "SurfaceCache: created {} entries ({} MB: keys {} MB, accum {} MB, resolved {} MB) keysUav={} accumUav={} resolvedSrv={} statsUav={}",
-           entries, bytes >> 20, (entries * 8) >> 20, (entries * 32) >> 20, (entries * 16) >> 20,
-           m_keysUav, m_accumUav, m_resolvedSrv, m_statsUav);
+    const uint64_t bytes = entries * (2 + surfacecache::kSurfaceCacheAccumStride + 4 + surfacecache::kSurfaceCacheSurfaceStride) * sizeof(uint32_t);
+    UZ_LOG(Renderer, Info, "SurfaceCache: created {} entries ({} MB: keys {} MB, accum {} MB, resolved {} MB, surface {} MB) keysUav={} accumUav={} resolvedSrv={} statsUav={} surfaceUav={}",
+           entries, bytes >> 20, (entries * 8) >> 20, (entries * 32) >> 20, (entries * 16) >> 20, (entries * 32) >> 20,
+           m_keysUav, m_accumUav, m_resolvedSrv, m_statsUav, m_surfaceUav);
     m_initialized = true;
     m_clearPending = true;
     m_statsValidFrom = UINT32_MAX;     // set by the first Resolve
@@ -353,10 +415,25 @@ void SurfaceRadianceCache::ReadStats(uint32_t frameIndex) {
             m_lastStats.sdfQueries    = block[surfacecache::kSurfaceCacheStatSdfQueries];
             m_lastStats.sdfHits       = block[surfacecache::kSurfaceCacheStatSdfHits];
             m_lastStats.feedUpdates   = block[surfacecache::kSurfaceCacheStatFeedUpdates];
+            m_lastStats.relit         = block[surfacecache::kSurfaceCacheStatRelit];
+            m_lastStats.indirectRays  = block[surfacecache::kSurfaceCacheStatIndirectRays];
+            m_lastStats.radianceSum   = block[surfacecache::kSurfaceCacheStatRadianceSum];
+            m_lastStats.radianceCells = block[surfacecache::kSurfaceCacheStatRadianceCells];
             m_lastStats.totalInserts       += m_lastStats.inserts;
             m_lastStats.totalFailedInserts += m_lastStats.failedInserts;
+            m_lastStats.totalEvictions     += m_lastStats.evictions;
+            m_lastStats.totalRelit         += m_lastStats.relit;
             m_lastStats.valid = true;
             m_device->UnmapBuffer(m_readback[slot]);
+            // Stage 4: the cached-radiance probe every frame the cell-indirect pass ran (the
+            // relight responsiveness curve: mean luminance of the record cells, the cells the
+            // relight replaced, the evictions so far).
+            if (m_lastStats.radianceCells > 0u) {
+                UZ_LOG(Renderer, Info, "SurfaceCache radiance: frame={} cells={} meanLum={:.6f} relit={} evictions={} totalEvictions={} live={}",
+                       statsFrame, m_lastStats.radianceCells,
+                       double(m_lastStats.radianceSum) / (double(surfacecache::kSurfaceCacheStatRadianceScale) * double(m_lastStats.radianceCells)),
+                       m_lastStats.relit, m_lastStats.evictions, m_lastStats.totalEvictions, m_lastStats.live);
+            }
             if (statsFrame % 60u == 0u) {
                 const double failedPct = m_lastStats.inserts + m_lastStats.failedInserts > 0
                     ? 100.0 * m_lastStats.failedInserts / double(m_lastStats.inserts + m_lastStats.failedInserts) : 0.0;
@@ -366,12 +443,14 @@ void SurfaceRadianceCache::ReadStats(uint32_t frameIndex) {
                     ? double(m_lastStats.probeSum) / double(m_lastStats.updates + m_lastStats.failedInserts + m_lastStats.torn) : 0.0;
                 const double sdfHitPct = m_lastStats.sdfQueries > 0
                     ? 100.0 * double(m_lastStats.sdfHits) / double(m_lastStats.sdfQueries) : 0.0;
-                UZ_LOG(Renderer, Info, "SurfaceCache stats: frame={} live={} tombstones={} inserts={} failedInserts={} ({:.3f} %) torn={} updates={} queries={} hits={} evictions={} maxProbe={} avgProbe={:.2f} totalInserts={} totalFailedInserts={} ({:.3f} %) entries=2^{} generation={} lights={} K={} sdfQueries={} sdfHits={} ({:.1f} %) feedUpdates={}",
+                UZ_LOG(Renderer, Info, "SurfaceCache stats: frame={} live={} tombstones={} inserts={} failedInserts={} ({:.3f} %) torn={} updates={} queries={} hits={} evictions={} maxProbe={} avgProbe={:.2f} totalInserts={} totalFailedInserts={} ({:.3f} %) entries=2^{} generation={} lights={} K={} sdfQueries={} sdfHits={} ({:.1f} %) feedUpdates={} lightingGeneration={} relit={} indirectRays={} totalEvictions={} totalRelit={}",
                        statsFrame, m_lastStats.live, m_lastStats.tombstones, m_lastStats.inserts, m_lastStats.failedInserts, failedPct,
                        m_lastStats.torn, m_lastStats.updates, m_lastStats.queries, m_lastStats.hits, m_lastStats.evictions,
                        m_lastStats.maxProbe, avgProbe, m_lastStats.totalInserts, m_lastStats.totalFailedInserts, totalPct,
                        m_entriesLog2, m_generation, m_lastLightCount, m_lastLocalLights,
-                       m_lastStats.sdfQueries, m_lastStats.sdfHits, sdfHitPct, m_lastStats.feedUpdates);
+                       m_lastStats.sdfQueries, m_lastStats.sdfHits, sdfHitPct, m_lastStats.feedUpdates,
+                       m_lightingGeneration, m_lastStats.relit, m_lastStats.indirectRays,
+                       m_lastStats.totalEvictions, m_lastStats.totalRelit);
             }
         }
         m_readbackFrame[slot] = UINT32_MAX;
@@ -400,8 +479,16 @@ bool SurfaceRadianceCache::Resolve(IRHICommandList* cmd, const FrameInputs& in) 
     const bool geometryChanged = in.geometryHash != m_lastGeometryHash;
     const bool lightingChanged = in.lightingHash != m_lastLightingHash;
     const bool cellChanged     = cv_SCCellSize->value != m_lastCellSize || cv_SCLodDistance->value != m_lastLodDistance;
-    SurfaceCacheInvalidation decision = SurfaceCacheDecideInvalidation(revisionChanged, regionCount, geometryChanged, lightingChanged);
-    if (m_clearPending || cellChanged) decision = SurfaceCacheInvalidation{true, 0};
+    const bool relightOn       = RelightEnabled();
+    const bool indirectOn      = IndirectActive();
+    const bool modeChanged     = relightOn != m_lastRelight || indirectOn != m_lastIndirect
+                              || (indirectOn && Bounces() != m_lastBounces);
+    SurfaceCacheInvalidation decision = SurfaceCacheDecideInvalidation(revisionChanged, regionCount, geometryChanged,
+                                                                       lightingChanged, relightOn);
+    if (m_clearPending || cellChanged || modeChanged) decision = SurfaceCacheInvalidation{true, 0, false};
+    m_lastRelight = relightOn;
+    m_lastIndirect = indirectOn;
+    m_lastBounces = Bounces();
     m_lastSceneRevision = in.sceneRevision;
     m_lastGeometryHash  = in.geometryHash;
     m_lastLightingHash  = in.lightingHash;
@@ -414,6 +501,14 @@ bool SurfaceRadianceCache::Resolve(IRHICommandList* cmd, const FrameInputs& in) 
             UZ_LOG(Renderer, Info, "SurfaceCache: clear frame={} generation={} (revision={} regions={} geometry={} lighting={} cell={})",
                    in.frameIndex, m_generation, revisionChanged, regionCount, geometryChanged, lightingChanged, cellChanged);
         }
+    } else if (decision.relight) {
+        // Stage 4: the lighting changed and the table stays - the records lit against the previous
+        // generation take the relit sun outright on their next visit (<= RelightSlices frames).
+        m_lightingGeneration = (m_lightingGeneration + 1u) & 0xFFFFu;
+        if (StatsEnabled()) {
+            UZ_LOG(Renderer, Info, "SurfaceCache: relight frame={} lightingGeneration={} (lighting changed, no clear; regions={})",
+                   in.frameIndex, m_lightingGeneration, regionCount);
+        }
     }
 
     // ── This frame's binding record ─────────────────────────────────────────────────────────
@@ -423,7 +518,9 @@ bool SurfaceRadianceCache::Resolve(IRHICommandList* cmd, const FrameInputs& in) 
     params.keysUav     = m_keysUav;
     params.accumUav    = m_accumUav;
     params.resolvedSrv = m_resolvedSrv;
-    params.surfaceUav  = UINT32_MAX;
+    // Stage 4: the record is bound to the writers only while a pass reads it (the relight or the
+    // gather); unbound, the TLAS writers' update is the stage 1-3 update and nothing else.
+    params.surfaceUav  = SurfaceRecordActive() ? m_surfaceUav : UINT32_MAX;
     params.entriesLog2 = m_entriesLog2;
     params.minSamples  = static_cast<uint32_t>(std::clamp(static_cast<int>(cv_SCMinSamples->value), 1, 256));
     params.flags       = (cv_SCDirectMode->value != 0.0f ? surfacecache::kSurfaceCacheFlagDirectInline : 0u)
@@ -463,6 +560,11 @@ bool SurfaceRadianceCache::Resolve(IRHICommandList* cmd, const FrameInputs& in) 
     params.cameraPosX = in.cameraPos.x;
     params.cameraPosY = in.cameraPos.y;
     params.cameraPosZ = in.cameraPos.z;
+    // Stage 4: the relight's generation, the gather's EMA horizon and the two switches as flags.
+    params.indirectHorizon    = IndirectFrames();
+    params.lightingGeneration = m_lightingGeneration;
+    if (relightOn)  params.flags |= surfacecache::kSurfaceCacheFlagRelight;
+    if (indirectOn) params.flags |= surfacecache::kSurfaceCacheFlagMultiBounce;
     if (void* mapped = in.device->MapBuffer(m_params[slot])) {
         std::memcpy(mapped, &params, sizeof(params));
         in.device->UnmapBuffer(m_params[slot]);
@@ -478,7 +580,7 @@ bool SurfaceRadianceCache::Resolve(IRHICommandList* cmd, const FrameInputs& in) 
     }
 
     // ── The resolve dispatch ───────────────────────────────────────────────────────────────
-    for (auto buffer : {m_keys, m_accum, m_resolved, m_stats}) {
+    for (auto buffer : {m_keys, m_accum, m_resolved, m_stats, m_surface}) {
         if (m_rgStates->Get(buffer) == RHIResourceState::UnorderedAccess)
             m_rgStates->UavBarrier(cmd, buffer);
         else
@@ -504,9 +606,14 @@ bool SurfaceRadianceCache::Resolve(IRHICommandList* cmd, const FrameInputs& in) 
     rc.accumFrames = static_cast<uint32_t>(std::clamp(static_cast<int>(cv_SCAccumFrames->value), 1, 255));
     rc.staleFrames = static_cast<uint32_t>(std::clamp(static_cast<int>(cv_SCStaleFrames->value), 1, 255));
     rc.mode        = decision.clear ? surfacecache::kSurfaceCacheResolveModeClear : surfacecache::kSurfaceCacheResolveModeResolve;
+    // Stage 4: a cell the gather has visited keeps the gather's `other` (the inline samples feed
+    // only its `sun`); the record buffer is always bound here so a clear / eviction erases it.
+    if (indirectOn) rc.mode |= surfacecache::kSurfaceCacheResolveFlagGatherOwnsOther;
+    if (relightOn) rc.mode |= surfacecache::kSurfaceCacheResolveFlagRelightOwnsSun;
     rc.cellSize    = cv_SCCellSize->value;
     rc.regionCount = decision.regionCount;
     rc.frame       = in.frameIndex;
+    rc.surfaceUav  = m_surfaceUav;
 
     cmd->SetPipeline(pso);
     cmd->SetRootConstants(kSlotRootConstants, reinterpret_cast<const uint32_t*>(&rc), kSurfaceCacheResolveRootDwords);
@@ -518,6 +625,7 @@ bool SurfaceRadianceCache::Resolve(IRHICommandList* cmd, const FrameInputs& in) 
     m_rgStates->UavBarrier(cmd, m_keys);
     m_rgStates->UavBarrier(cmd, m_accum);
     m_rgStates->UavBarrier(cmd, m_stats);
+    m_rgStates->UavBarrier(cmd, m_surface);
     m_rgStates->Transition(cmd, m_resolved, RHIResourceState::ShaderResource);
     m_resolvedFrame = in.frameIndex;
     return true;
@@ -525,7 +633,7 @@ bool SurfaceRadianceCache::Resolve(IRHICommandList* cmd, const FrameInputs& in) 
 
 void SurfaceRadianceCache::PrepareConsumer(IRHICommandList* cmd) {
     if (!m_initialized || !cmd || !m_rgStates) return;
-    for (auto buffer : {m_keys, m_accum, m_stats}) {
+    for (auto buffer : {m_keys, m_accum, m_stats, m_surface}) {
         if (m_rgStates->Get(buffer) == RHIResourceState::UnorderedAccess)
             m_rgStates->UavBarrier(cmd, buffer);
         else
@@ -533,6 +641,19 @@ void SurfaceRadianceCache::PrepareConsumer(IRHICommandList* cmd) {
     }
     if (m_rgStates->Get(m_resolved) != RHIResourceState::ShaderResource)
         m_rgStates->Transition(cmd, m_resolved, RHIResourceState::ShaderResource);
+}
+
+void SurfaceRadianceCache::PrepareRelight(IRHICommandList* cmd) {
+    if (!m_initialized || !cmd || !m_rgStates) return;
+    // Gather reads a stable snapshot in the drained accumulator, never the resolved SRV.
+    // Snapshot/gather/finish dispatches are separated by these UAV barriers. No consumer may
+    // run between them; finish restores every accumulator word before PrepareConsumer.
+    for (auto buffer : {m_keys, m_accum, m_stats, m_surface, m_resolved}) {
+        if (m_rgStates->Get(buffer) == RHIResourceState::UnorderedAccess)
+            m_rgStates->UavBarrier(cmd, buffer);
+        else
+            m_rgStates->Transition(cmd, buffer, RHIResourceState::UnorderedAccess);
+    }
 }
 
 } // namespace uz

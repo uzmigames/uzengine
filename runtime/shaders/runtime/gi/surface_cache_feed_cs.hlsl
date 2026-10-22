@@ -12,6 +12,8 @@
 /// emission) are accumulated into the hit's cell at the SDF consumers' level (`sdfLodBias` levels
 /// coarser than the camera-distance level, D8), where `ShadeSdfReflectionHit` and the radiance-cache
 /// trace look them up. Update only: nothing is read, nothing is output. A miss does nothing.
+/// Stage 4: the hit is also recorded in the cell's surface record (`SurfaceCacheUpdateSurface`), so
+/// the relight pass re-shades it and the cell-indirect pass gathers from it.
 ///
 /// Bindings: root constants at b0 (`uz::SurfaceCacheFeedRootConstants`, 5 DWORDs), the shared
 /// trace constants at b2 (`uz::RadianceCacheTraceConstants`: the probe grid rows of the completed
@@ -40,8 +42,9 @@ cbuffer SurfaceCacheFeedRootCB : register(b0) {
 #include "gi_trace_common.hlsli"
 #include "surface_cache.hlsli"
 #include "surface_cache_lights.hlsli"
+#include "surface_cache_hit.hlsli"     // the hit attributes, the sun, the probe E / pi, the two layers
 
-static const float kFeedRayTMin = 1.0;   // cm — the reflection pass's kReflectionRayTMin
+static const float kFeedRayTMin = kSurfaceCacheRayTMin;   // cm — the reflection pass's kReflectionRayTMin
 
 // ─── The probe's rays: the radiance-cache writer's stratified set with its own temporal rotation ──
 // (the same Hammersley + Cranley-Patterson construction as radiance_cache_trace_cs.hlsl, rotated
@@ -64,48 +67,6 @@ float3 FeedRayDirection(uint i, uint nRays, uint probeIdx, uint frameIdx) {
     const float r   = sqrt(max(0.0, 1.0 - z * z));
     const float phi = 2.0 * PI * xi.y;
     return float3(r * cos(phi), r * sin(phi), z);
-}
-
-// ─── Radiance-cache probe irradiance (E / pi) at a world point: the reflection pass's read ─────
-// (trilinear over the eight surrounding probes, each weighted by its facing, skipped when invalid
-// or guarded behind a face; zero outside the grid or without a buffer).
-
-float3 FeedProbeIrradianceOverPi(float3 position, float3 normal) {
-    if (probeShSrv == kGITraceSentinelSrv || probesPerAxis < 2u || probeSpacing <= 0.0) return 0.0;
-    const float3 origin = float3(gridOriginX, gridOriginY, gridOriginZ);
-    const float3 cell = (position - origin) / probeSpacing;
-    if (any(cell < 0.0) || any(cell > float(probesPerAxis - 1u))) return 0.0;
-    const uint3  lower    = uint3(floor(cell));
-    const uint3  upper    = min(lower + 1u, probesPerAxis - 1u);
-    const float3 fraction = frac(cell);
-    StructuredBuffer<float4> probes = ResourceDescriptorHeap[probeShSrv];
-    float3 irradiance = 0.0;
-    float  totalWeight = 0.0;
-    [unroll]
-    for (uint corner = 0; corner < 8; ++corner) {
-        const uint3 index = uint3((corner & 1) ? upper.x : lower.x,
-                                  (corner & 2) ? upper.y : lower.y,
-                                  (corner & 4) ? upper.z : lower.z);
-        float weight = ((corner & 1) ? fraction.x : 1.0 - fraction.x)
-                     * ((corner & 2) ? fraction.y : 1.0 - fraction.y)
-                     * ((corner & 4) ? fraction.z : 1.0 - fraction.z);
-        const uint   probeLinear  = index.x + index.y * probesPerAxis + index.z * probesPerAxis * probesPerAxis;
-        const float3 gridPosition = origin + float3(index) * probeSpacing;
-        const float4 guard        = probes[ProbeGuardIndex(probesPerAxis, probeLinear)];
-        const float3 toProbe      = ProbeEffectivePosition(guard, gridPosition) - position;
-        const float  d2           = dot(toProbe, toProbe);
-        const float  facing       = d2 > 0.0 ? saturate(dot(normal, toProbe) * rsqrt(d2)) : 1.0;
-        weight *= facing * facing;
-        const uint base = probeLinear * 7u;
-        if (probes[base + 6].w <= 0.0) continue;
-        if (ProbeGuardRejects(guard, gridPosition, position)) continue;
-        float4 sh[7];
-        [unroll]
-        for (uint k = 0; k < 7; ++k) sh[k] = probes[base + k];
-        irradiance  += weight * EvalSH_L2(normal, sh);
-        totalWeight += weight;
-    }
-    return totalWeight > 0.0 ? irradiance / totalWeight : 0.0;
 }
 
 // ─── Entry point — one thread per probe ray ──────────────────────────────────────────────────
@@ -150,59 +111,20 @@ void main(uint3 DTid : SV_DispatchThreadID)
     const uint   meshId    = q.CommittedInstanceID();
     const uint   primIndex = q.CommittedPrimitiveIndex();
     const float2 bary      = q.CommittedTriangleBarycentrics();
-    float3 hitN   = 0.0;
-    float3 albedo = 0.0;
-    bool   haveGeometry = false;
-    float3 tableAlbedo, objectNormal;
-    if (GITrace_HitSurface(meshId, primIndex, bary, materialTableSrv, tableAlbedo, objectNormal)) {
-        // Row-vector multiplication by WorldToObject applies the inverse transpose to the
-        // object-space normal (nonuniform instance scale included), as the reflection pass.
-        const float3 n = mul(objectNormal, (float3x3)q.CommittedWorldToObject3x4());
-        if (dot(n, n) > 1e-12) {
-            hitN = normalize(n);
-            if (dot(hitN, dir) > 0.0) hitN = -hitN;
-            albedo = tableAlbedo;
-            haveGeometry = true;
-        }
-    }
-    if (!haveGeometry) {
-        // No table geometry for this mesh: the global distance field's gradient and reflectance.
-        const float4 surface = SampleGdfSurface(hitP);
-        if (surface.x >= 1e8) return;                 // outside every cascade: no attributes, nothing to feed
-        const float3 g = GdfNormal(hitP);
-        if (dot(g, g) < 0.5) return;
-        hitN   = (dot(g, dir) > 0.0) ? -g : g;
-        albedo = GITrace_HitAlbedo(meshId, hitP, materialTableSrv);
+    float3 hitN, albedo;
+    if (!SurfaceCacheHitAttributes(meshId, primIndex, bary, q.CommittedWorldToObject3x4(), hitP, dir,
+                                   materialTableSrv, hitN, albedo)) {
+        return;                                       // outside every cascade: no attributes, nothing to feed
     }
     const float3 cachePos = hitP + hitN * kSurfaceCacheSurfaceBias;
 
-    // ── Direct sun with a shadow ray ───────────────────────────────────────────────────────
-    const float3 L   = normalize(float3(lightDirX, lightDirY, lightDirZ));
-    const float  NdL = max(dot(hitN, L), 0.0);
-    float visibility = 0.0;
-    if (NdL > 0.0) {
-        RayDesc shadowRay;
-        shadowRay.Origin    = cachePos;
-        shadowRay.Direction = L;
-        shadowRay.TMin      = kFeedRayTMin;
-        shadowRay.TMax      = maxTraceDistance;
-        RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> sq;
-        sq.TraceRayInline(tlas, RAY_FLAG_NONE, 0xFF, shadowRay);
-        sq.Proceed();
-        visibility = (sq.CommittedStatus() == COMMITTED_TRIANGLE_HIT) ? 0.0 : 1.0;
-    }
-    const float3 sunRad = float3(lightColorR, lightColorG, lightColorB) * lightIntensity * NdL * visibility;
-
     // ── The two layers (the reflection pass's), accumulated at the SDF consumers' level ────
+    // (the direct sun with a shadow ray, the K local lights, the probe E / pi, the emission).
     const float2 areaSample = float2(FeedRadicalInverseVdC(DTid.x + frameIndex * 7919u),
                                      FeedRadicalInverseVdC((DTid.x ^ 0x9e3779b9u) + frameIndex));
-    float3 sunTerm = albedo * (sunRad / PI);
-    sunTerm += SurfaceCacheLocalLightRadiance(cache, cachePos, hitN, albedo, tlas, kFeedRayTMin,
-                                              kSurfaceCacheSurfaceBias, areaSample);
-    float3 otherTerm = albedo * FeedProbeIrradianceOverPi(cachePos, hitN);
-    if ((cache.flags & kSurfaceCacheFlagEmissive) != 0u) {
-        otherTerm += GITrace_HitEmissive(meshId, primIndex, bary, materialTableSrv);
-    }
-    SurfaceCacheUpdate(cache, cachePos, hitN, SurfaceCacheCameraPos(cache), cache.sdfLodBias, sunTerm, otherTerm,
-                       kSurfaceCacheWriterFeed);
+    float3 sunTerm, otherTerm, emissive;
+    SurfaceCacheShadeHit(cache, tlas, cachePos, hitN, albedo, meshId, primIndex, bary, materialTableSrv, probeShSrv,
+                         areaSample, sunTerm, otherTerm, emissive);
+    SurfaceCacheUpdateSurface(cache, cachePos, hitN, SurfaceCacheCameraPos(cache), cache.sdfLodBias, sunTerm, otherTerm,
+                              kSurfaceCacheWriterFeed, albedo, emissive);
 }

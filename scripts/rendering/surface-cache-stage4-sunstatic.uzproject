@@ -1,0 +1,30 @@
+{
+  "name": "Phase D stage 4 relight responsiveness: static post-step reference",
+  "version": "1.0",
+  "content_root": "../..",
+  "default_scene": "scripts/rendering/surface-cache-stage4-sunstatic.uzscene",
+  "window": {
+    "width": 640,
+    "height": 360
+  },
+  "cvars": {
+    "r.AutoExposure": 0,
+    "r.Exposure": 1,
+    "r.TonemapOperator": 0,
+    "r.GTAO": 0,
+    "r.RadianceCache": 1,
+    "r.GI.FinalGather": 0,
+    "r.GI.Reflections": 0,
+    "r.SSGI": 0,
+    "r.TAA": 0,
+    "r.Fog": 0,
+    "r.VolumetricFog": 0,
+    "r.TechPanel.Show": 0,
+    "r.Bloom": 0,
+    "r.RayTracing": 1,
+    "r.RayTracing.GI": 1,
+    "r.RayTracing.Reflections": 1,
+    "r.PathTracer.MaxBounces": 4,
+    "r.PathTracer.NEESamples": 1
+  }
+}

@@ -161,8 +161,10 @@ void main(uint3 DTid : SV_DispatchThreadID) {
             otherTerm += emissiveTerm;
             rt.rgb    += localTerm + emissiveTerm;
             if (!cacheHit || cacheRefresh) {
-                SurfaceCacheUpdate(cache, cachePos, hitN, SurfaceCacheCameraPos(cache), 0u, sunTerm, otherTerm,
-                                   kSurfaceCacheWriterDdgi);
+                // Stage 4: the hit also goes into the cell's surface record (the relight / cell-
+                // indirect point); nothing more than the update while the record is unbound.
+                SurfaceCacheUpdateSurface(cache, cachePos, hitN, SurfaceCacheCameraPos(cache), 0u, sunTerm, otherTerm,
+                                          kSurfaceCacheWriterDdgi, hitAlbedo, emissiveTerm);
             }
         }
     }
