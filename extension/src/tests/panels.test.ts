@@ -233,9 +233,16 @@ describe('viewport webview protocol', () => {
     stats({ fps: 60, frameMs: 16, drawCalls: 2, vertices: 6, triangles: 2, frameIndex: 1 });
     frame('encoded', true);
     expect(panel.webview.postMessage).toHaveBeenCalledWith({
-      type: 'init', extradata: [1, 2, 3], width: 1280, height: 720,
+      type: 'init',
+      extradata: [1, 2, 3],
+      width: 1280,
+      height: 720,
     });
-    expect(panel.webview.postMessage).toHaveBeenCalledWith({ type: 'frame', data: 'encoded', key: true });
+    expect(panel.webview.postMessage).toHaveBeenCalledWith({
+      type: 'frame',
+      data: 'encoded',
+      key: true,
+    });
     panel.receive({ type: 'ready' });
     await settle();
     expect(client.startRenderLoop).toHaveBeenCalledTimes(1);
@@ -289,8 +296,9 @@ describe('viewport webview protocol', () => {
     await settle();
     const frame = client.startRenderLoop.mock.calls[0][2] as FrameCallback;
     const releases: Array<(value: boolean) => void> = [];
-    panel.webview.postMessage.mockImplementation(() =>
-      new Promise<boolean>((resolve) => releases.push(resolve)));
+    panel.webview.postMessage.mockImplementation(
+      () => new Promise<boolean>((resolve) => releases.push(resolve)),
+    );
     frame('key', true);
     frame('delta', false);
     frame('dropped', false);
@@ -312,7 +320,10 @@ describe('viewport webview protocol', () => {
     await settle();
     expect(client.resizeViewport).toHaveBeenCalledWith(640, 480);
     expect(panel.webview.postMessage).toHaveBeenCalledWith({
-      type: 'init', extradata: [7, 8], width: 640, height: 480,
+      type: 'init',
+      extradata: [7, 8],
+      width: 640,
+      height: 480,
     });
     panel.receive({ type: 'requestKeyframe' });
     expect(client.requestKeyframe).toHaveBeenCalledOnce();
@@ -325,23 +336,39 @@ describe('viewport webview protocol', () => {
       state = 'configured';
       decodeQueueSize = 0;
       decode = vi.fn();
-      close = vi.fn(() => { this.state = 'closed'; });
+      close = vi.fn(() => {
+        this.state = 'closed';
+      });
       configure = vi.fn();
       constructor(public callbacks: { output: (frame: Frame) => void; error: (e: Error) => void }) {
         decoders.push(this);
       }
     }
-    const elements = new Map<string, {
-      width: number; height: number; textContent: string;
-      classList: { add: ReturnType<typeof vi.fn>; remove: ReturnType<typeof vi.fn>; toggle: ReturnType<typeof vi.fn> };
-      addEventListener: ReturnType<typeof vi.fn>; getContext: () => { drawImage: ReturnType<typeof vi.fn> };
-    }>();
+    const elements = new Map<
+      string,
+      {
+        width: number;
+        height: number;
+        textContent: string;
+        classList: {
+          add: ReturnType<typeof vi.fn>;
+          remove: ReturnType<typeof vi.fn>;
+          toggle: ReturnType<typeof vi.fn>;
+        };
+        addEventListener: ReturnType<typeof vi.fn>;
+        getContext: () => { drawImage: ReturnType<typeof vi.fn> };
+      }
+    >();
     const getElementById = (id: string) => {
-      if (!elements.has(id)) elements.set(id, {
-        width: 0, height: 0, textContent: '',
-        classList: { add: vi.fn(), remove: vi.fn(), toggle: vi.fn() },
-        addEventListener: vi.fn(), getContext: () => ({ drawImage: vi.fn() }),
-      });
+      if (!elements.has(id))
+        elements.set(id, {
+          width: 0,
+          height: 0,
+          textContent: '',
+          classList: { add: vi.fn(), remove: vi.fn(), toggle: vi.fn() },
+          addEventListener: vi.fn(),
+          getContext: () => ({ drawImage: vi.fn() }),
+        });
       return elements.get(id)!;
     };
     let receive: (event: { data: unknown }) => void = () => {};
@@ -351,13 +378,22 @@ describe('viewport webview protocol', () => {
     runInNewContext(script, {
       acquireVsCodeApi: () => ({ postMessage }),
       document: { getElementById, addEventListener: vi.fn() },
-      window: { addEventListener: (_type: string, callback: typeof receive) => { receive = callback; } },
+      window: {
+        addEventListener: (_type: string, callback: typeof receive) => {
+          receive = callback;
+        },
+      },
       VideoDecoder: FakeDecoder,
       EncodedVideoChunk: class {
-        constructor(chunk: { type: string; data: Uint8Array }) { chunks.push(chunk); }
+        constructor(chunk: { type: string; data: Uint8Array }) {
+          chunks.push(chunk);
+        }
       },
       Image: class {},
-      atob, Uint8Array, performance, console: { error: vi.fn() },
+      atob,
+      Uint8Array,
+      performance,
+      console: { error: vi.fn() },
     });
     const send = (data: unknown) => receive({ data });
     send({ type: 'init', extradata: [1, 2, 3] });
@@ -399,7 +435,9 @@ describe('viewport webview protocol', () => {
     expect(h.decoders).toHaveLength(2);
     h.send({ type: 'frame', data: 'AAAAAUE=', key: false });
     expect(h.decoders[1].decode).not.toHaveBeenCalled();
-    h.decoders[1].decode.mockImplementation(() => { throw failed; });
+    h.decoders[1].decode.mockImplementation(() => {
+      throw failed;
+    });
     h.send({ type: 'frame', data: 'AAAAAWU=', key: true });
     expect(h.decoders).toHaveLength(3);
     h.decoders[2].callbacks.error(failed);

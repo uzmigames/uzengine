@@ -335,21 +335,24 @@ describe('RuntimeClient IPC and process lifecycle', () => {
     ['createViewport', (c: RuntimeClient) => c.createViewport(0, 1, 1), 60_000],
     ['loadScene', (c: RuntimeClient) => c.loadScene('scene'), 60_000],
     ['saveScene', (c: RuntimeClient) => c.saveScene('scene'), 30_000],
-  ] as const)('times out %s at its deadline and ignores late replies', async (_name, invoke, budget) => {
-    vi.useFakeTimers();
-    const call = invoke(client);
-    const settled = vi.fn();
-    void call.then(settled, settled);
-    const rejected = expect(call).rejects.toMatchObject({ code: 'timeout' });
-    await vi.advanceTimersByTimeAsync(budget - 1);
-    expect(settled).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(1);
-    await rejected;
-    expect(settled.mock.calls[0][0]).toBeInstanceOf(RuntimeClientError);
-    workers[0].reply('late');
-    expect(settled).toHaveBeenCalledOnce();
-    expect(vi.getTimerCount()).toBe(0);
-  });
+  ] as const)(
+    'times out %s at its deadline and ignores late replies',
+    async (_name, invoke, budget) => {
+      vi.useFakeTimers();
+      const call = invoke(client);
+      const settled = vi.fn();
+      void call.then(settled, settled);
+      const rejected = expect(call).rejects.toMatchObject({ code: 'timeout' });
+      await vi.advanceTimersByTimeAsync(budget - 1);
+      expect(settled).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      await rejected;
+      expect(settled.mock.calls[0][0]).toBeInstanceOf(RuntimeClientError);
+      workers[0].reply('late');
+      expect(settled).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
 
   it('clears deadlines for successful and native-error replies', async () => {
     vi.useFakeTimers();
@@ -368,7 +371,9 @@ describe('RuntimeClient IPC and process lifecycle', () => {
     vi.useFakeTimers();
     const calls = [client.getVersion(), client.getBackend()];
     const rejected = calls.map((call) =>
-      expect(call).rejects.toMatchObject({ code: event === 'dispose' ? 'disposed' : 'worker-exit' }),
+      expect(call).rejects.toMatchObject({
+        code: event === 'dispose' ? 'disposed' : 'worker-exit',
+      }),
     );
     expect(vi.getTimerCount()).toBe(2);
     if (event === 'exit') workers[0].emit('exit', 0, null);

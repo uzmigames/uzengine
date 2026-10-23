@@ -223,14 +223,19 @@ export class ViewportPanel {
         if (this.disposed) return;
         if (this.statsInFlight >= 2) return;
         this.statsInFlight++;
-        void Promise.resolve(this.panel.webview.postMessage({
-          type: 'stats',
-          fps: stats.fps,
-          frameMs: stats.frameMs,
-          drawCalls: stats.drawCalls,
-          vertices: stats.vertices,
-          triangles: stats.triangles,
-        })).then(() => this.statsInFlight--, () => this.statsInFlight--);
+        void Promise.resolve(
+          this.panel.webview.postMessage({
+            type: 'stats',
+            fps: stats.fps,
+            frameMs: stats.frameMs,
+            drawCalls: stats.drawCalls,
+            vertices: stats.vertices,
+            triangles: stats.triangles,
+          }),
+        ).then(
+          () => this.statsInFlight--,
+          () => this.statsInFlight--,
+        );
       },
       // onEncodedFrame callback — H.264 NAL as base64 string
       (nalBase64: string, key: boolean) => {
@@ -241,10 +246,15 @@ export class ViewportPanel {
         }
         if (!this.frameGate.shouldDeliver(key)) return;
         this.framesInFlight++;
-        void Promise.resolve(this.panel.webview.postMessage({ type: 'frame', data: nalBase64, key }))
-          .then((delivered) => {
-            if (!delivered) this.dropFrame();
-          }, () => this.dropFrame())
+        void Promise.resolve(
+          this.panel.webview.postMessage({ type: 'frame', data: nalBase64, key }),
+        )
+          .then(
+            (delivered) => {
+              if (!delivered) this.dropFrame();
+            },
+            () => this.dropFrame(),
+          )
           .finally(() => this.framesInFlight--);
       },
     );
