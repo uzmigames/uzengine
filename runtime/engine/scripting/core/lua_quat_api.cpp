@@ -1,6 +1,7 @@
 #include "lua_quat_api.h"
 
 #include "log.h"
+#include "lua_sandbox.h"
 
 /// Lua bindings for quaternion operations (rotation, slerp, from_euler, to_euler).
 
@@ -447,6 +448,10 @@ static int MathQuatFromAxisAngle(lua_State* L) {
 /// table populated with all instance methods.
 static void RegisterQuatMetatable(lua_State* L) {
     luaL_newmetatable(L, kQuatMeta); // push metatable
+
+    // Shared by every script: hide it so no script can rewrite the operators
+    // other scripts use.
+    LuaSandboxProtectMetatable(L);
 
     lua_pushcfunction(L, QuatMetaMul);
     lua_setfield(L, -2, "__mul");

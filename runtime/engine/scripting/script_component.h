@@ -44,7 +44,8 @@ namespace uz {
 /// - `scriptPath`: VFS path to the .lua file (e.g., `"scripts/rotate.lua"`).
 /// - `luaRef`:     Registry ref for the compiled Lua chunk. `LUA_REFNIL` until loaded.
 /// - `envRef`:     Registry ref for this entity's private environment table.
-///                 Inherits `_G` via metatable `__index`.
+///                 Reads fall through to the sandbox's read-only global
+///                 whitelist (see `lua_sandbox.h`); `_G` refers to the env itself.
 /// - `started`:    Set to `true` after `on_start` has been called successfully.
 ///
 /// # Load-error sentinel

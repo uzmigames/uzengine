@@ -31,7 +31,12 @@ class LuaVM {
 public:
     /// Initialize the Lua VM and register engine APIs.
     /// Must be called once during engine startup.
-    /// Returns false if LuaJIT initialization fails.
+    ///
+    /// Opens only the safe standard libraries (see `lua_sandbox.h`), registers
+    /// `uz.*`, then builds the read-only whitelist that script environments
+    /// read through.
+    ///
+    /// Returns false if LuaJIT initialization or sandbox setup fails.
     static bool Init();
 
     /// Shutdown the Lua VM and free all Lua resources.
@@ -57,8 +62,14 @@ public:
 
     /// Load a Lua script file and return a registry reference.
     ///
-    /// Reads the file as bytes, compiles with `luaL_loadbuffer`, and stores
-    /// the compiled chunk in the Lua registry via `luaL_ref`.
+    /// Compiles the bytes as Lua source text (`LuaSandboxLoadTextChunk`, mode
+    /// `"t"`) and stores the compiled chunk in the Lua registry via `luaL_ref`.
+    /// Precompiled bytecode is rejected: LuaJIT does not verify bytecode, so a
+    /// crafted binary chunk could corrupt memory.
+    ///
+    /// The chunk's environment is the VM's global table. Untrusted scripts
+    /// must run through `ScriptSystem`, which gives each script an isolated
+    /// environment (`LuaSandboxCreateScriptEnv`) before executing it.
     ///
     /// # Parameters
     /// - `scriptBytes`: Raw file content (UTF-8 Lua source).
@@ -66,7 +77,7 @@ public:
     ///
     /// # Returns
     /// - Positive registry ref on success.
-    /// - `LUA_REFNIL` (-1) on compile error.
+    /// - `LUA_REFNIL` (-1) on compile error or binary chunk.
     ///
     /// # Errors
     /// Logs `Scripting::Error` with file name and Lua error message on failure.

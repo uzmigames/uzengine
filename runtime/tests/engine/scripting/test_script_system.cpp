@@ -115,6 +115,77 @@ class ScriptSystemTest : public ::testing::Test {
         world_.AddComponent<uz::CScript>(e, uz::CScript{scriptPath});
         return e;
     }
+
+    // Scripts run in private sandbox environments (their `_G` is their own
+    // env), so tests observe script globals by reading that env table.
+
+    /// Returns the registry ref of the private environment of `e`'s script.
+    int ScriptEnvRef(uz::Entity e) {
+        return world_.GetComponent<uz::CScript>(e).envRef;
+    }
+
+    /// Takes an extra registry ref to `e`'s script environment so it stays
+    /// readable after ScriptSystem::Shutdown releases the script's own ref.
+    /// Release with `UnpinEnv`.
+    int PinScriptEnv(uz::Entity e) {
+        lua_State* L = uz::LuaVM::GetState();
+        const int envRef = ScriptEnvRef(e);
+        if (envRef == LUA_REFNIL) {
+            ADD_FAILURE() << "script has no environment to pin";
+            return LUA_REFNIL;
+        }
+        lua_rawgeti(L, LUA_REGISTRYINDEX, envRef);
+        return luaL_ref(L, LUA_REGISTRYINDEX);
+    }
+
+    void UnpinEnv(int pinRef) {
+        luaL_unref(uz::LuaVM::GetState(), LUA_REGISTRYINDEX, pinRef);
+    }
+
+    /// Reads global `name` from the environment `envRef` as a number.
+    /// Returns -999.0 and adds a test failure if it is not a number.
+    double EnvNumber(int envRef, const char* name) {
+        lua_State* L = uz::LuaVM::GetState();
+        if (envRef == LUA_REFNIL) {
+            ADD_FAILURE() << "no script environment when reading '" << name << "'";
+            return -999.0;
+        }
+        lua_rawgeti(L, LUA_REGISTRYINDEX, envRef);
+        lua_getfield(L, -1, name);
+        double r = -999.0;
+        if (lua_isnumber(L, -1)) {
+            r = lua_tonumber(L, -1);
+        } else {
+            ADD_FAILURE() << "script global '" << name << "' is not a number";
+        }
+        lua_pop(L, 2);
+        return r;
+    }
+
+    /// Returns true if global `name` in the environment `envRef` is `true`.
+    bool EnvIsTrue(int envRef, const char* name) {
+        lua_State* L = uz::LuaVM::GetState();
+        if (envRef == LUA_REFNIL) return false;
+        lua_rawgeti(L, LUA_REGISTRYINDEX, envRef);
+        lua_getfield(L, -1, name);
+        const bool r = lua_isboolean(L, -1) && lua_toboolean(L, -1) != 0;
+        lua_pop(L, 2);
+        return r;
+    }
+
+    /// Returns true if global `name` in the environment `envRef` is nil.
+    bool EnvIsNil(int envRef, const char* name) {
+        lua_State* L = uz::LuaVM::GetState();
+        if (envRef == LUA_REFNIL) {
+            ADD_FAILURE() << "no script environment when reading '" << name << "'";
+            return false;
+        }
+        lua_rawgeti(L, LUA_REGISTRYINDEX, envRef);
+        lua_getfield(L, -1, name);
+        const bool r = lua_isnil(L, -1);
+        lua_pop(L, 2);
+        return r;
+    }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -190,8 +261,8 @@ TEST_F(ScriptSystemTest, EnteringPlayMode_StartsScriptsThatWereDormant) {
     uz::ScriptSystem::Update(0.016f);            // second play frame: on_update
 
     EXPECT_TRUE(world_.GetComponent<uz::CScript>(e).started);
-    EXPECT_TRUE(EvalBool("wake_started == true"));
-    EXPECT_NEAR(EvalNumber("wake_updates"), 1.0, 1e-9);
+    EXPECT_TRUE(EnvIsTrue(ScriptEnvRef(e), "wake_started"));
+    EXPECT_NEAR(EnvNumber(ScriptEnvRef(e), "wake_updates"), 1.0, 1e-9);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -209,9 +280,9 @@ TEST_F(ScriptSystemTest, OnStart_IsCalled_OnFirstUpdate) {
     uz::ScriptSystem::Update(0.016f);
 
     // The script executed its top-level code, which set on_start_called.
-    // However, top-level code runs in the per-entity env, not _G.
-    // The script's env.__index = _G, so reading from _G globals still works,
-    // but writes go to env. We verify via the component's started flag.
+    // However, top-level code runs in the per-entity env, not _G: reads fall
+    // through to the sandbox whitelist, writes go to env. We verify via the
+    // component's started flag.
     auto view = world_.View<uz::CScript>();
     bool anyStarted = false;
     for (auto [enttEntity, script] : view.each()) {
@@ -243,9 +314,8 @@ TEST_F(ScriptSystemTest, OnStart_SetsStartedFlag_OnlyOnce) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 TEST_F(ScriptSystemTest, OnUpdate_IsCalledEveryFrame_AfterOnStart) {
-    // Script increments a shared counter in the Lua registry on each on_update.
-    // We use the Lua registry (a table stored in LUA_REGISTRYINDEX) so the
-    // per-entity env isolation does not interfere with our readback.
+    // Script increments a counter in its own environment (`_G` is the env)
+    // on each on_update; the test reads it back from that env.
     vfs_.AddScript("scripts/update_counter.lua",
         "function on_start(e)\n"
         "    _G.update_count = 0\n"
@@ -254,14 +324,14 @@ TEST_F(ScriptSystemTest, OnUpdate_IsCalledEveryFrame_AfterOnStart) {
         "    _G.update_count = (_G.update_count or 0) + 1\n"
         "end\n"
     );
-    CreateScriptEntity("scripts/update_counter.lua");
+    auto e = CreateScriptEntity("scripts/update_counter.lua");
 
     uz::ScriptSystem::Update(0.016f); // frame 1: on_start only (no on_update)
     uz::ScriptSystem::Update(0.016f); // frame 2: on_update
     uz::ScriptSystem::Update(0.016f); // frame 3: on_update
 
     // on_update is NOT called on the same frame as on_start (else-if branch).
-    EXPECT_DOUBLE_EQ(EvalNumber("update_count"), 2.0);
+    EXPECT_DOUBLE_EQ(EnvNumber(ScriptEnvRef(e), "update_count"), 2.0);
 }
 
 TEST_F(ScriptSystemTest, OnUpdate_ReceivesDeltaTime_GreaterThanZero) {
@@ -272,12 +342,12 @@ TEST_F(ScriptSystemTest, OnUpdate_ReceivesDeltaTime_GreaterThanZero) {
         "    _G.last_dt = dt\n"
         "end\n"
     );
-    CreateScriptEntity("scripts/dt_test.lua");
+    auto e = CreateScriptEntity("scripts/dt_test.lua");
 
     uz::ScriptSystem::Update(0.016f);
     uz::ScriptSystem::Update(0.033f); // second frame with distinct dt
 
-    EXPECT_NEAR(EvalNumber("last_dt"), 0.033, 1e-4);
+    EXPECT_NEAR(EnvNumber(ScriptEnvRef(e), "last_dt"), 0.033, 1e-4);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -292,17 +362,21 @@ TEST_F(ScriptSystemTest, OnStop_IsCalled_DuringShutdown) {
         "    _G.on_stop_called = true\n"
         "end\n"
     );
-    CreateScriptEntity("scripts/stop_test.lua");
+    auto e = CreateScriptEntity("scripts/stop_test.lua");
 
     uz::ScriptSystem::Update(0.016f); // load + on_start
 
     // on_stop_called is not yet set.
-    EXPECT_FALSE(EvalBool("on_stop_called == true"));
+    const int env = PinScriptEnv(e);
+    EXPECT_FALSE(EnvIsTrue(env, "on_stop_called"));
 
     uz::ScriptSystem::Shutdown();
 
-    // on_stop must have set the global now.
-    EXPECT_TRUE(EvalBool("on_stop_called == true"));
+    // on_stop must have set the global now (in the script's own env, which
+    // stays readable through the pinned ref after Shutdown released it).
+    EXPECT_TRUE(EnvIsTrue(env, "on_stop_called"));
+    EXPECT_FALSE(EvalBool("on_stop_called == true")) << "must not leak into the VM globals";
+    UnpinEnv(env);
 
     // Re-initialize so TearDown's second Shutdown is safe.
     uz::ScriptSystem::Initialize(&world_, &vfs_);
@@ -406,13 +480,13 @@ TEST_F(ScriptSystemTest, RuntimeErrorInOnStart_UpdateStillCalled_DoesNotCrash) {
         "    _G.update_after_start_error = (_G.update_after_start_error or 0) + 1\n"
         "end\n"
     );
-    CreateScriptEntity("scripts/start_error.lua");
+    auto e = CreateScriptEntity("scripts/start_error.lua");
 
     EXPECT_NO_FATAL_FAILURE(uz::ScriptSystem::Update(0.016f)); // on_start errors
     EXPECT_NO_FATAL_FAILURE(uz::ScriptSystem::Update(0.016f)); // on_update fires
 
     // on_update must have been called despite the on_start failure.
-    EXPECT_GE(EvalNumber("update_after_start_error"), 1.0);
+    EXPECT_GE(EnvNumber(ScriptEnvRef(e), "update_after_start_error"), 1.0);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -428,7 +502,7 @@ TEST_F(ScriptSystemTest, RuntimeErrorInOnUpdate_DoesNotCrash_NextCallStillFires)
         "    error('intentional update error')\n"
         "end\n"
     );
-    CreateScriptEntity("scripts/update_error.lua");
+    auto e = CreateScriptEntity("scripts/update_error.lua");
 
     EXPECT_NO_FATAL_FAILURE({
         uz::ScriptSystem::Update(0.016f);
@@ -437,7 +511,7 @@ TEST_F(ScriptSystemTest, RuntimeErrorInOnUpdate_DoesNotCrash_NextCallStillFires)
     });
 
     // on_update was called on frames 2 and 3 (not frame 1, which is on_start).
-    EXPECT_DOUBLE_EQ(EvalNumber("update_error_count"), 2.0);
+    EXPECT_DOUBLE_EQ(EnvNumber(ScriptEnvRef(e), "update_error_count"), 2.0);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -490,15 +564,17 @@ TEST_F(ScriptSystemTest, MultipleScripts_AllReceiveOnUpdate) {
         "end\n"
     );
 
-    CreateScriptEntity("scripts/a.lua");
-    CreateScriptEntity("scripts/b.lua");
+    auto a = CreateScriptEntity("scripts/a.lua");
+    auto b = CreateScriptEntity("scripts/b.lua");
 
     uz::ScriptSystem::Update(0.016f);
     uz::ScriptSystem::Update(0.016f);
 
     // Frame 1 = on_start only, frame 2 = on_update. So each script got 1 on_update.
-    EXPECT_DOUBLE_EQ(EvalNumber("count_a"), 1.0);
-    EXPECT_DOUBLE_EQ(EvalNumber("count_b"), 1.0);
+    EXPECT_DOUBLE_EQ(EnvNumber(ScriptEnvRef(a), "count_a"), 1.0);
+    EXPECT_DOUBLE_EQ(EnvNumber(ScriptEnvRef(b), "count_b"), 1.0);
+    EXPECT_TRUE(EnvIsNil(ScriptEnvRef(a), "count_b")) << "script b's counter must not leak into a";
+    EXPECT_TRUE(EnvIsNil(ScriptEnvRef(b), "count_a")) << "script a's counter must not leak into b";
 }
 
 TEST_F(ScriptSystemTest, MultipleScripts_AllReceiveOnStop_DuringShutdown) {
@@ -517,14 +593,18 @@ TEST_F(ScriptSystemTest, MultipleScripts_AllReceiveOnStop_DuringShutdown) {
         "end\n"
     );
 
-    CreateScriptEntity("scripts/stop_a.lua");
-    CreateScriptEntity("scripts/stop_b.lua");
+    auto a = CreateScriptEntity("scripts/stop_a.lua");
+    auto b = CreateScriptEntity("scripts/stop_b.lua");
 
     uz::ScriptSystem::Update(0.016f);
+    const int envA = PinScriptEnv(a);
+    const int envB = PinScriptEnv(b);
     uz::ScriptSystem::Shutdown();
 
-    EXPECT_TRUE(EvalBool("stopped_a == true"));
-    EXPECT_TRUE(EvalBool("stopped_b == true"));
+    EXPECT_TRUE(EnvIsTrue(envA, "stopped_a"));
+    EXPECT_TRUE(EnvIsTrue(envB, "stopped_b"));
+    UnpinEnv(envA);
+    UnpinEnv(envB);
 
     uz::ScriptSystem::Initialize(&world_, &vfs_);
 }
@@ -561,7 +641,8 @@ TEST_F(ScriptSystemTest, EnvironmentIsolation_TwoScripts_DoNotShareLocals) {
 
 TEST_F(ScriptSystemTest, EnvironmentIsolation_ScriptACannotReadScriptBLocal) {
     // Script A sets a_secret in its env. Script B must not be able to read it.
-    // Both execute in isolated envs — reads fall back to _G, not to each other.
+    // Both execute in isolated envs — reads fall back to the shared read-only
+    // whitelist, not to each other.
     vfs_.AddScript("scripts/secret_a.lua",
         "a_secret = 42\n"
         "function on_start(e) end\n"
@@ -570,19 +651,21 @@ TEST_F(ScriptSystemTest, EnvironmentIsolation_ScriptACannotReadScriptBLocal) {
     vfs_.AddScript("scripts/secret_b.lua",
         "function on_start(e) end\n"
         "function on_update(e, dt)\n"
-        "    _G.b_saw_a_secret = a_secret  -- reads from env.__index = _G\n"
+        "    _G.b_ran = true\n"
+        "    _G.b_saw_a_secret = a_secret  -- reads through the whitelist\n"
         "end\n"
     );
 
-    CreateScriptEntity("scripts/secret_a.lua");
-    CreateScriptEntity("scripts/secret_b.lua");
+    auto a = CreateScriptEntity("scripts/secret_a.lua");
+    auto b = CreateScriptEntity("scripts/secret_b.lua");
 
     uz::ScriptSystem::Update(0.016f);
     uz::ScriptSystem::Update(0.016f);
 
-    // script_b's env.__index = _G, not script_a's env.
-    // So b_saw_a_secret must be nil (a_secret is not in _G).
-    EXPECT_TRUE(EvalBool("b_saw_a_secret == nil"))
+    // script_b's env reads fall through to the whitelist, not script_a's env.
+    ASSERT_TRUE(EnvIsTrue(ScriptEnvRef(b), "b_ran")) << "script B's on_update must have run";
+    EXPECT_DOUBLE_EQ(EnvNumber(ScriptEnvRef(a), "a_secret"), 42.0);
+    EXPECT_TRUE(EnvIsNil(ScriptEnvRef(b), "b_saw_a_secret"))
         << "Script B must not be able to read Script A's env-local variable";
 }
 
@@ -635,7 +718,7 @@ TEST_F(ScriptSystemTest, Update_BeforeInitialize_DoesNotCrash) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 TEST_F(ScriptSystemTest, ScriptCanCallUzLog_WithoutCrash) {
-    // Verify that the per-script env correctly inherits _G (which has uz.*).
+    // Verify that the per-script env exposes uz.* through the sandbox whitelist.
     vfs_.AddScript("scripts/use_uz_api.lua",
         "function on_start(e)\n"
         "    uz.log('ScriptSystem test: on_start')\n"
@@ -658,14 +741,14 @@ TEST_F(ScriptSystemTest, ScriptCanCallUzLog_WithoutCrash) {
 
 TEST_F(ScriptSystemTest, ScriptCanReadUzDeltaTime_FromFrameGlobals) {
     // LuaVM::UpdateFrameGlobals sets uz.delta_time. Scripts must be able
-    // to read it via the inherited _G.__index chain.
+    // to read it through the read-only uz proxy, which reads the live table.
     vfs_.AddScript("scripts/read_dt.lua",
         "function on_start(e) end\n"
         "function on_update(e, dt)\n"
         "    _G.script_read_dt = uz.delta_time\n"
         "end\n"
     );
-    CreateScriptEntity("scripts/read_dt.lua");
+    auto e = CreateScriptEntity("scripts/read_dt.lua");
 
     uz::LuaVM::UpdateFrameGlobals(0.025f, 1.0f, 10);
     uz::ScriptSystem::Update(0.025f); // frame 1: on_start only
@@ -673,7 +756,7 @@ TEST_F(ScriptSystemTest, ScriptCanReadUzDeltaTime_FromFrameGlobals) {
     uz::LuaVM::UpdateFrameGlobals(0.025f, 1.0f, 11);
     uz::ScriptSystem::Update(0.025f); // frame 2: on_update fires
 
-    EXPECT_NEAR(EvalNumber("script_read_dt"), 0.025, 1e-4);
+    EXPECT_NEAR(EnvNumber(ScriptEnvRef(e), "script_read_dt"), 0.025, 1e-4);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
