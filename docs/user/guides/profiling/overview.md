@@ -7,7 +7,11 @@ and DRED for crash analysis. Every system exposes stat counters for runtime moni
 
 ## CPU Profiling — Tracy
 
-Tracy integration is compile-time toggleable via `TRACY_ENABLE`:
+Tracy integration is compile-time toggleable via `TRACY_ENABLE`, set by the
+`-Dtracy=true|false` build option (default: on for Debug/ReleaseSafe, off for
+ReleaseFast/ReleaseSmall). The client accepts viewer connections on loopback
+only (`TRACY_ONLY_LOCALHOST`, `TRACY_NO_BROADCAST`); see
+[Build Options](../../../engine/06-build-toolchain/05-build-configs.md#build-options).
 
 ```cpp
 void RenderFrame() {

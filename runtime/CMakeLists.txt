@@ -579,11 +579,31 @@ add_library(uzengine_runtime STATIC
 
 add_dependencies(uzengine_runtime embed_shaders)
 
+# Tracy profiler client — mirrors zig `-Dtracy`. AUTO enables it for Debug and
+# RelWithDebInfo (Zig Debug/ReleaseSafe) and disables it for Release and
+# MinSizeRel (Zig ReleaseFast/ReleaseSmall, shipping). When enabled the client
+# binds to loopback only and never broadcasts: a connected Tracy peer can read
+# arbitrary process memory and open files by path.
+set(UZ_TRACY "AUTO" CACHE STRING "Tracy profiler client: AUTO (on for Debug/RelWithDebInfo), ON, OFF")
+set_property(CACHE UZ_TRACY PROPERTY STRINGS AUTO ON OFF)
+if(UZ_TRACY STREQUAL "AUTO")
+    set(UZ_TRACY_CONFIG "$<CONFIG:Debug,RelWithDebInfo>")
+elseif(UZ_TRACY STREQUAL "ON")
+    set(UZ_TRACY_CONFIG "1")
+elseif(UZ_TRACY STREQUAL "OFF")
+    set(UZ_TRACY_CONFIG "0")
+else()
+    message(FATAL_ERROR "UZ_TRACY must be AUTO, ON or OFF (got '${UZ_TRACY}')")
+endif()
+set(UZ_TRACY_ACTIVE "$<AND:${UZ_TRACY_CONFIG},$<NOT:$<CXX_COMPILER_ID:MSVC>>>")
+
 target_compile_definitions(uzengine_runtime PUBLIC
     SPDLOG_COMPILED_LIB
     UZ_PROFILING_ENABLED
-    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:TRACY_ENABLE>
-    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:TRACY_ON_DEMAND>
+    $<${UZ_TRACY_ACTIVE}:TRACY_ENABLE>
+    $<${UZ_TRACY_ACTIVE}:TRACY_ON_DEMAND>
+    $<${UZ_TRACY_ACTIVE}:TRACY_ONLY_LOCALHOST>
+    $<${UZ_TRACY_ACTIVE}:TRACY_NO_BROADCAST>
 )
 
 # Per-file compiler flags for D3D12MA (suppresses upstream warnings)
