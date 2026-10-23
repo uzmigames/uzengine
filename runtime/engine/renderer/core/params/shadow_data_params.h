@@ -75,7 +75,9 @@ namespace uz {
 /// 712      4      pcssMinPenumbraTexels
 /// 716      4      pcssMaxPenumbraTexels
 /// 720      32     cascadePcssDepthToTexels[8]
-/// 752      16     _pad2[4]
+/// 752      4      localSoftPCSS
+/// 756      4      localPcssSourceRadius
+/// 760      8      _pad2[2]
 /// ─── 768 bytes (CB boundary) ───
 /// 768      8      shadowAtlas (RHITextureHandle, NOT in CB)
 /// 776      8      staticShadowAtlas (RHITextureHandle, NOT in CB)
@@ -111,7 +113,9 @@ struct ShadowDataParams {
     float    pcssMinPenumbraTexels = 0.5f;                ///< r.Shadow.PCSSMinPenumbra (texels).
     float    pcssMaxPenumbraTexels = 16.0f;               ///< r.Shadow.PCSSMaxPenumbra (texels).
     float    cascadePcssDepthToTexels[8] = {};            ///< Per-cascade penumbra texels per unit depth gap.
-    float    _pad2[4]              = {};                  ///< Pad CSM section to 768 bytes.
+    uint32_t localSoftPCSS         = 0;                   ///< r.Shadows.SoftPCSS.Local.
+    float    localPcssSourceRadius = 5.0f;                 ///< Local emitter radius in cm.
+    float    _pad2[2]              = {};                  ///< Pad CSM section to 768 bytes.
 
     // ── Local Light Shadow Data ──────────────────────────────────────────
     LocalLightShadowData localShadows[kMaxLocalLightShadows] = {}; ///< Per-light shadow data (16 * 96 = 1536B).

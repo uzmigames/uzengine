@@ -30,6 +30,15 @@
 
 namespace uz {
 
+/// Perspective local light, Fernando's similar triangles: physical penumbra radius in cm.
+/// Distances are radial (the local atlas stores distance / range), not perspective Z.
+/// The caller projects this radius to texels at the receiver, then applies the shared clamp.
+[[nodiscard]] inline float PcssLocalPenumbraRadius(float receiverDistance, float blockerDistance,
+                                                 float sourceRadius) {
+    return std::max(receiverDistance - blockerDistance, 0.0f) *
+           std::max(sourceRadius, 0.0f) / std::max(blockerDistance, 1e-3f);
+}
+
 /// Penumbra radius in shadow texels per unit of normalised shadow-map depth gap, for one
 /// orthographic cascade. 0 when the texel size is not positive (no cascade).
 [[nodiscard]] inline float PcssDepthToPenumbraTexels(float tanHalfSourceAngle, float lightSizeScale,

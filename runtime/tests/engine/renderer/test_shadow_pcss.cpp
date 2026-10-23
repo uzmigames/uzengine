@@ -52,6 +52,17 @@ TEST(ShadowPcss, PenumbraIsZeroWhenReceiverTouchesBlocker) {
     EXPECT_FLOAT_EQ(PcssPenumbraTexels(1.0f, 1.0f, 1000.0f), 0.0f);
 }
 
+TEST(ShadowPcss, LocalPenumbraUsesPerspectiveSimilarTriangles) {
+    EXPECT_FLOAT_EQ(PcssLocalPenumbraRadius(100.0f, 100.0f, 5.0f), 0.0f);
+    EXPECT_FLOAT_EQ(PcssLocalPenumbraRadius(200.0f, 100.0f, 5.0f), 5.0f);
+    EXPECT_FLOAT_EQ(PcssLocalPenumbraRadius(300.0f, 100.0f, 5.0f), 10.0f);
+    EXPECT_FLOAT_EQ(PcssLocalPenumbraRadius(200.0f, 100.0f, 10.0f), 10.0f);
+    EXPECT_FLOAT_EQ(PcssLocalPenumbraRadius(300.0f, 200.0f, 5.0f), 2.5f);
+    EXPECT_FLOAT_EQ(PcssLocalPenumbraRadius(100.0f, 200.0f, 5.0f), 0.0f);
+    EXPECT_FLOAT_EQ(PcssLocalPenumbraRadius(200.0f, 100.0f, 0.0f), 0.0f);
+    EXPECT_TRUE(std::isfinite(PcssLocalPenumbraRadius(200.0f, 0.0f, 5.0f)));
+}
+
 TEST(ShadowPcss, PenumbraGrowsWithBlockerDistance) {
     const float depthToTexels = 1000.0f;
     float previous = PcssPenumbraTexels(0.5f, 0.5f, depthToTexels);
@@ -158,6 +169,8 @@ TEST(ShadowDataCB, PcssFieldOffsetsMatchShadowHlsli) {
     EXPECT_EQ(offsetof(ShadowDataCB, pcssMinPenumbraTexels), 712u);
     EXPECT_EQ(offsetof(ShadowDataCB, pcssMaxPenumbraTexels), 716u);
     EXPECT_EQ(offsetof(ShadowDataCB, cascadePcssDepthToTexels), 720u);
+    EXPECT_EQ(offsetof(ShadowDataCB, localSoftPCSS), 752u);
+    EXPECT_EQ(offsetof(ShadowDataCB, localPcssSourceRadius), 756u);
     EXPECT_EQ(offsetof(ShadowDataCB, localShadows), 768u);
     EXPECT_EQ(sizeof(ShadowDataCB), 2304u);
 
@@ -165,6 +178,8 @@ TEST(ShadowDataCB, PcssFieldOffsetsMatchShadowHlsli) {
     EXPECT_EQ(offsetof(ShadowDataParams, pcssMinPenumbraTexels), 712u);
     EXPECT_EQ(offsetof(ShadowDataParams, pcssMaxPenumbraTexels), 716u);
     EXPECT_EQ(offsetof(ShadowDataParams, cascadePcssDepthToTexels), 720u);
+    EXPECT_EQ(offsetof(ShadowDataParams, localSoftPCSS), 752u);
+    EXPECT_EQ(offsetof(ShadowDataParams, localPcssSourceRadius), 756u);
     EXPECT_EQ(offsetof(ShadowDataParams, localShadows), 768u);
 }
 
@@ -173,6 +188,7 @@ TEST(ShadowDataCB, PcssDefaultsSelectTheFixedPcfPath) {
     // default of 1 is applied by SetupShadowFrame / frame_constants.cpp, not by the struct.
     const ShadowDataCB cb{};
     EXPECT_EQ(cb.softPCSS, 0u);
+    EXPECT_EQ(cb.localSoftPCSS, 0u);
     EXPECT_FLOAT_EQ(cb.pcssMinPenumbraTexels, 0.5f);
     EXPECT_FLOAT_EQ(cb.pcssMaxPenumbraTexels, 16.0f);
     for (float k : cb.cascadePcssDepthToTexels) EXPECT_FLOAT_EQ(k, 0.0f);

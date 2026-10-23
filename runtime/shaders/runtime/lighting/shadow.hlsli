@@ -48,7 +48,9 @@ cbuffer ShadowDataCB : register(b4) {
     float  pcssMinPenumbraTexels;              // r.Shadow.PCSSMinPenumbra (atlas texels)
     float  pcssMaxPenumbraTexels;              // r.Shadow.PCSSMaxPenumbra (atlas texels)
     float4 cascadePcssDepthToTexelsPacked[2];  // 8 floats: penumbra texels per unit depth gap (shadow_pcss.h)
-    float4 _shadowPad1;                        // pad to 768
+    uint   localSoftPCSS;                      // r.Shadows.SoftPCSS.Local
+    float  localPcssSourceRadius;              // emitter radius in cm
+    float2 _shadowPad1;                        // pad to 768
     // 16 entries x 6 float4: [0..3] viewProj rows, [4] (atlasOffsetX, atlasOffsetY, atlasScale,
     // bias cm), [5] (light position xyz, radius). Tiles store distance / radius.
     float4 localShadowRaw[96];                 // 1536B

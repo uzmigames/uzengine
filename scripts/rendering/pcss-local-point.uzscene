@@ -1,0 +1,31 @@
+{
+  "name": "Local PCSS point: contact to separated wall shadow",
+  "version": "1.0",
+  "entities": [
+    { "name": "SunOff", "components": {
+      "transform": { "position": [0,0,0], "rotation": [-35,0,0] },
+      "light": { "type": "directional", "intensity": 0, "cast_shadows": false }
+    }},
+    { "name": "Camera", "components": {
+      "transform": { "position": [-200,-600,700] },
+      "camera": { "fov": 60, "near": 5, "far": 5000, "active": true, "look_at": [-200,0,0] }
+    }},
+    { "name": "Point", "components": {
+      "transform": { "position": [300,0,400] },
+      "light": { "type": "point", "color": [1,1,1], "intensity": 4000000,
+        "range": 2000, "castShadows": true, "shadowBias": 0.5 }
+    }},
+    { "name": "Ground", "components": {
+      "transform": { "position": [0,0,0], "scale": [0.1,0.1,0.1] },
+      "mesh": { "asset": "sample/content/meshes/reference/pcss_ground.uzmesh" },
+      "material": { "baseColorR": 0.5, "baseColorG": 0.5, "baseColorB": 0.5,
+        "roughnessMultiplier": 1, "metallicMultiplier": 0 }
+    }},
+    { "name": "Wall", "components": {
+      "transform": { "position": [0,0,0], "scale": [0.1,0.1,0.1] },
+      "mesh": { "asset": "sample/content/meshes/reference/pcss_wall.uzmesh" },
+      "material": { "baseColorR": 0.6, "baseColorG": 0.6, "baseColorB": 0.6,
+        "roughnessMultiplier": 1, "metallicMultiplier": 0 }
+    }}
+  ]
+}

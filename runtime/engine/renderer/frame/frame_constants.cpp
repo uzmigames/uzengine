@@ -1138,6 +1138,10 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     // hold still, and SetupShadowFrame only runs on a dirty frame.
     reinterpret_cast<ShadowDataCB*>(ctx.shadowAlloc.cpuPtr)->softPCSS =
         CVarRegistry::Get().GetBool("r.Shadows.SoftPCSS", true) ? 1u : 0u;
+    reinterpret_cast<ShadowDataCB*>(ctx.shadowAlloc.cpuPtr)->localSoftPCSS =
+        CVarRegistry::Get().GetBool("r.Shadows.SoftPCSS.Local", true) ? 1u : 0u;
+    reinterpret_cast<ShadowDataCB*>(ctx.shadowAlloc.cpuPtr)->localPcssSourceRadius =
+        CVarRegistry::Get().GetFloat("r.Shadows.SoftPCSS.Local.SourceRadius", 5.0f);
 
     // ── Build ShadowDataParams for binder path ──────────────────────────
     // Copy the 768-byte scalar section from the CB allocation, then attach

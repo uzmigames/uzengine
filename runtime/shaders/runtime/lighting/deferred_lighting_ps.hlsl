@@ -334,6 +334,122 @@ float SampleLocalShadow(uint entry, float3 worldPos, float3 geometricNormal) {
 #endif
 }
 
+/// Fernando 2005 "Percentage-Closer Soft Shadows": local perspective-light penumbra in cm.
+/// @ref Fernando 2005 "Percentage-Closer Soft Shadows"
+/// @constants 1e-3 cm is the same finite-distance floor used by the hard local sampler.
+float PcssLocalPenumbraRadius(float receiverDistance, float blockerDistance, float sourceRadius) {
+    return max(receiverDistance - blockerDistance, 0.0) * max(sourceRadius, 0.0) / max(blockerDistance, 1e-3);
+}
+
+/// Project a kernel ray to its atlas tile, crossing point-light cube faces instead of reading
+/// another light's tile or repeating the current face's edge. No texture access in face selection.
+/// @ref Fernando 2005 "Percentage-Closer Soft Shadows" -- perspective shadow-map filtering
+/// @constants Point face order matches frame_constants.cpp: +X, -X, +Y, -Y, +Z, -Z.
+float2 LocalShadowTapUV(float3 ray, uint entry, uint cubeBase, float2 atlasDims) {
+    if (cubeBase != 0xFFFFFFFFu) {
+        float3 a = abs(ray);
+        uint face = (a.x >= a.y && a.x >= a.z) ? (ray.x > 0.0 ? 0u : 1u)
+                  : (a.y >= a.z) ? (ray.y > 0.0 ? 2u : 3u) : (ray.z > 0.0 ? 4u : 5u);
+        entry = cubeBase + face;
+    }
+    uint base = entry * 6u;
+    float4x4 vp = float4x4(localShadowRaw[base], localShadowRaw[base + 1],
+                           localShadowRaw[base + 2], localShadowRaw[base + 3]);
+    float4 tile = localShadowRaw[base + 4];
+    float4 p = mul(float4(ray, 0.0), vp);
+    float2 uv = (p.xy / p.w) * float2(0.5, -0.5) + 0.5;
+    float2 halfTexel = 0.5 / atlasDims;
+    return clamp(tile.xy + uv * tile.z, tile.xy + halfTexel, tile.xy + tile.z - halfTexel);
+}
+
+/// Blocker search + variable-radius PCF on the local linear-distance atlas. The normal offset and
+/// centre comparison match SampleLocalShadow. Intersect each tap ray with the receiver plane:
+/// radial depth is not affine in perspective UV, so a centre-depth comparison creates acne on
+/// wide kernels. Rays that do not meet the receiver's front hemisphere contribute visibility.
+/// @ref Fernando 2005 "Percentage-Closer Soft Shadows"; Isidoro 2006 "Shadow Mapping: GPU-based Tips and Techniques"
+/// @constants 16 taps and the Poisson disk, radius clamp and spatial IGN are shared with CSM PCSS.
+/// 1e-6 protects degenerate ray/plane intersections, 1e-3 is the local range/distance floor.
+float SampleLocalShadowSoft(uint entry, uint cubeBase, float3 worldPos, float3 N, float sourceRadius) {
+#ifdef UZ_BINDLESS
+    if (localShadowAtlasIndex == kSentinelSrvIndex) return 1.0;
+    Texture2D<float> atlas = ResourceDescriptorHeap[localShadowAtlasIndex];
+    uint base = entry * 6u;
+    float4x4 vp = float4x4(localShadowRaw[base], localShadowRaw[base + 1],
+                           localShadowRaw[base + 2], localShadowRaw[base + 3]);
+    float4 tile = localShadowRaw[base + 4];
+    float4 light = localShadowRaw[base + 5];
+    float3 receiver = worldPos + N * (length(light.xyz - worldPos) * localShadowNormalOffset);
+    float3 delta = receiver - light.xyz;
+    float4 p = mul(float4(receiver, 1.0), vp);
+    if (p.w <= 0.0 || any(abs(p.xy / p.w) > 1.0)) return 1.0;
+    float2 ndc = p.xy / p.w;
+    float distance = length(delta);
+    float range = max(light.w, 1e-3);
+    float2 dims;
+    atlas.GetDimensions(dims.x, dims.y);
+
+    // Invert the perspective direction analytically (translation cancels): the VP X/Y columns
+    // are scaled right/up axes and its W column is the unit forward axis.
+    float3 cx = float3(vp._11, vp._21, vp._31);
+    float3 cy = float3(vp._12, vp._22, vp._32);
+    float3 forward = float3(vp._14, vp._24, vp._34);
+    float3 right = cx / max(dot(cx, cx), 1e-6);
+    float3 up = cy / max(dot(cy, cy), 1e-6);
+    float2 texelsPerCm = 0.5 * float2(length(cx), length(cy)) * tile.z * dims / max(p.w, 1e-3);
+    float2 ndcPerTexel = float2(2.0, -2.0) / (tile.z * dims);
+    float2 centreUV = (ndc * float2(0.5, -0.5) + 0.5) * tile.z + tile.xy;
+    float angle = ShadowKernelRotationNoise(centreUV * dims) * 6.28318530718;
+    float2 rot = float2(cos(angle), sin(angle));
+    // A near-light blocker can produce arbitrarily large perspective penumbrae. Search the
+    // entire clamped filter support, including its centre, rather than using the sun's dz bound.
+    float searchRadius = PcssClampRadiusTexels(pcssMaxPenumbraTexels);
+    float plane = dot(delta, N);
+    float blockerSum = 0.0;
+    uint blockerCount = 0u;
+    [unroll] for (uint i = 0; i < 16; ++i) {
+        float2 tap = (i == 0u) ? float2(0.0, 0.0) : RotateShadowTap(kPoissonDisk[i], rot);
+        float2 q = ndc + tap * searchRadius * ndcPerTexel;
+        float3 ray = normalize(forward + q.x * right + q.y * up);
+        float denominator = dot(ray, N);
+        float t = (abs(denominator) > 1e-6) ? plane / denominator : -1.0;
+        float2 uv = LocalShadowTapUV(ray, entry, cubeBase, dims);
+        float stored = atlas.Load(int3(int2(uv * dims), 0)) * range;
+        if (t > 0.0 && stored < t - tile.w) {
+            // Express this blocker on the centre ray before the similar-triangles estimate.
+            blockerSum += stored * dot(ray, normalize(delta));
+            blockerCount += 1u;
+        }
+    }
+    float average = blockerSum / float(max(blockerCount, 1u));
+    float penumbra = PcssLocalPenumbraRadius(distance - tile.w, average, sourceRadius);
+    float2 filterRadius = float2(PcssClampRadiusTexels(penumbra * texelsPerCm.x),
+                                PcssClampRadiusTexels(penumbra * texelsPerCm.y));
+    float visibility = 1.0;
+    [branch] if (blockerCount != 0u) {
+        float lit = 0.0;
+        [unroll] for (uint j = 0; j < 16; ++j) {
+            float2 q = ndc + RotateShadowTap(kPoissonDisk[j], rot) * filterRadius * ndcPerTexel;
+            float3 ray = normalize(forward + q.x * right + q.y * up);
+            float denominator = dot(ray, N);
+            float t = (abs(denominator) > 1e-6) ? plane / denominator : -1.0;
+            float2 uv = LocalShadowTapUV(ray, entry, cubeBase, dims);
+            float cmp = saturate((t - tile.w) / range);
+            lit += t > 0.0 ? atlas.SampleCmpLevelZero(shadowSampler, uv, cmp) : 1.0;
+        }
+        visibility = lit / 16.0;
+    }
+    return visibility;
+#else
+    return 1.0;
+#endif
+}
+
+float LocalShadow(uint entry, uint cubeBase, float3 worldPos, float3 N, float sourceRadius) {
+    [branch] if (softPCSS != 0u && localSoftPCSS != 0u && sourceRadius > 0.0)
+        return SampleLocalShadowSoft(entry, cubeBase, worldPos, N, sourceRadius);
+    return SampleLocalShadow(entry, worldPos, N);
+}
+
 // ─── Local lights (block B.7) ─────────────────────────────────────────────
 //
 // The point and spot loop bodies of the deferred pass, as functions shared by the per-pixel loop and
@@ -378,7 +494,8 @@ float3 ShadePointLight(PointLightData pl, float3 worldPos, float3 N, float3 geom
         const uint face = (a.x >= a.y && a.x >= a.z) ? (d.x > 0.0 ? 0u : 1u)
                         : (a.y >= a.z)               ? (d.y > 0.0 ? 2u : 3u)
                                                      : (d.z > 0.0 ? 4u : 5u);
-        atten *= SampleLocalShadow(pl.shadowIndex + face, worldPos, geometricNormal);
+        atten *= LocalShadow(pl.shadowIndex + face, pl.shadowIndex, worldPos, geometricNormal,
+                             pl.sourceRadius > 0.0 ? pl.sourceRadius : localPcssSourceRadius);
     }
 
     float3 Hp   = normalize(V + Lp);
@@ -434,7 +551,7 @@ float3 ShadeSpotLight(SpotLightData sl, float3 worldPos, float3 N, float3 geomet
     // ── Spot shadow map sampling ─────────────────────────────────
     // Linear-distance tile, sampled by SampleLocalShadow above (block A.1).
     float spotShadow = (sl.shadowIndex != 0xFFFFFFFFu && sl.shadowIndex < localShadowCount)
-                     ? SampleLocalShadow(sl.shadowIndex, worldPos, geometricNormal) : 1.0;
+                     ? LocalShadow(sl.shadowIndex, 0xFFFFFFFFu, worldPos, geometricNormal, localPcssSourceRadius) : 1.0;
 
     float3 Hs   = normalize(V + Ls);
     float  NoHs = saturate(dot(N, Hs));

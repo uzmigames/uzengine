@@ -29,6 +29,8 @@ static auto* cv_PCSSMaxSharpness     = UZ_CVAR_FLOAT("r.Shadow.PCSS.MaxSharpness
 // r.Shadow.PCSSMinPenumbra / r.Shadow.PCSSMaxPenumbra (texels, frame_constants.cpp).
 static auto* cv_SoftPCSS             = UZ_CVAR_BOOL("r.Shadows.SoftPCSS", true, "Directional (CSM) soft shadows: 1 = PCSS variable penumbra (default), 0 = the fixed-radius PCF");
 static auto* cv_SoftPCSSLightSize    = UZ_CVAR_FLOAT("r.Shadows.SoftPCSS.LightSize", 1.0f, "PCSS penumbra scale on the directional light's angular diameter (1 = the light's own lightSourceAngle, 0.5357 deg for the sun)", 0.f, 32.f);
+static auto* cv_LocalSoftPCSS        = UZ_CVAR_BOOL("r.Shadows.SoftPCSS.Local", true, "Point/spot variable-penumbra PCSS; 0 preserves hard local shadows (also disabled by r.Shadows.SoftPCSS=0)");
+static auto* cv_LocalPcssSourceRadius = UZ_CVAR_FLOAT("r.Shadows.SoftPCSS.Local.SourceRadius", 5.0f, "Emitter radius in cm for spots and zero-sourceRadius point lights; 0 keeps those lights hard", 0.f, 100.f);
 
 namespace uz {
 

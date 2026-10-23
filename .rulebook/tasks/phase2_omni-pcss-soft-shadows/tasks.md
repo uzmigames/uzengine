@@ -56,6 +56,54 @@ anchor: it must stay byte-identical to the pre-change default.
       (LightSize is the CVar scale only); the legacy PCF's "texel" is really `atlasColumns` texels
       (it applies 1/shadowMapSize in atlas UV) — left as is, since the OFF path must not move.
 
+## 0E. Local point/spot PCSS (2026-10-23)
+
+- [x] Dedicated `r.Shadows.SoftPCSS.Local` gate, additionally gated by `r.Shadows.SoftPCSS`;
+      OFF calls the unchanged hard local sampler. The CB uses bytes 752/756 of existing padding
+      for the gate and `r.Shadows.SoftPCSS.Local.SourceRadius` (cm, default 5); size stays 2304.
+- [x] Local radial-distance blocker search, Fernando perspective similar-triangles estimate,
+      shared 16-tap Poisson/IGN/clamp helpers, variable-radius PCF, analytic radial receiver-plane
+      comparison and cross-face point-light kernel reprojection. Texture reads stay outside
+      face selection; no sampling in an unrolled break/walk loop.
+- [x] Point lights use their existing positive sourceRadius, otherwise the local radius CVar;
+      spots use the local radius CVar without changing their light-data ABI. Radius zero keeps
+      zero-radius lights hard. Added CPU math coverage and CB offset/layout checks.
+- [x] Default 5 cm radius, 1280x720 point and spot reference scenes using the existing scaled
+      PCSS ground/wall meshes. Ground-edge 10-90% widths at x=-20 / -300 cm (approximately
+      36 / 365 cm blocker-to-receiver separation): point hard 0.86 / 0.84 cm, soft 1.45 / 9.05 cm;
+      spot hard 2.22 / 1.64 cm, soft 2.24 / 9.75 cm. Measurement removes smooth local radiance
+      variation and bins the positive-Y edge in world-space (not tonemapped screenshot values).
+- [x] Frames 95-98: consecutive direct-light HDR values are identical (max 0) for both lights,
+      ON and OFF. PNG frame 95->98 maximum is 1 code in both paths (point 14->11 changed pixels,
+      spot 16->7). No frame term in the local kernel rotation.
+- [x] DeferredLighting GPU mean, timing from frame 100 of 220: point OFF 0.2663 -> ON 0.4084 ms
+      (+0.1421), spot OFF 0.2558 -> ON 0.3457 ms (+0.0898). LocalShadowDepth unchanged within
+      0.00003 ms. Captures/montages and machine-readable measurement: E:/UzmiEngine/local-pcss/.
+      All four feature run.log files have no errors, invalid dumps or shader failures.
+- [x] Pinned Zig 0.15.2 ReleaseFast build exit 0, 163 shaders verified; `npm run test:layouts`
+      exit 0 (Tier A 93/93, Tier B 41/41, Tier C 18/18). Isolated PCSS/CB tests plus a watcher
+      retry: 12/12 passed, including the new local similar-triangles test.
+- [x] Fresh detached 25d64e49 engine vs local gate OFF, reflection-reference frame 95:
+      max code delta 0, 0 / 2,073,600 pixels differ. Native ignored dependencies were mirrored;
+      the engine executable was freshly compiled in that worktree (not copied from the main tree).
+      The point and spot reference OFF frames also match that fresh baseline byte-for-byte
+      (max 0, 0 changed pixels each). Fresh-baseline DeferredLighting is 0.2600 / 0.2539 ms;
+      soft ON adds 0.1484 / 0.0918 ms respectively.
+      The baseline default build's test-install target cannot compile because the committed
+      layered-BSDF tests include the explicitly excluded untracked `pathtracer_furnace_test.h`;
+      that file was neither read nor copied. Baseline runtime/tool targets built; baseline full
+      build exit 1 is this existing missing-test-header dependency, not a PCSS compile failure.
+- [x] Full gtest result (initial 8018-test run: 7997 pass, 17 skip, the three known VfxEditorSlate
+      failures plus DirectoryWatcherTest.Callback_FileModified_NotificationDelivered; the watcher
+      passed the isolated retry, as did all 11 PCSS/CB tests). Final full rerun: 8018 tests,
+      7998 pass, 17 skip, only the three pre-existing VfxEditorSlate failures, command exit 1.
+      No DX12DeviceTest TDR and no DXC sampling-loop miscompile observed.
+
+Default decision: local PCSS stays ON. It is a verified improvement for the bounded point/spot
+reference scenes at the default 5 cm source radius, with exact OFF preservation and no new
+test regression. The thin point-face raster seam already present in the hard reference remains;
+cross-face filtering does not repair missing shadow-depth coverage.
+
 ## 1. Implementation
 
 - [ ] 1.1 Extend `BlockerSearch()` in `shadow_pcss.hlsli` to accept atlas region UV bounds (min/max) so it works within a sub-region of the shadow atlas (point/spot light tile).

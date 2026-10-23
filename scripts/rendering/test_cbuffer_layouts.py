@@ -131,6 +131,7 @@ ENTRIES = [
                 'localShadowNormalOffset': 'localShadowNormalOffset', 'softPCSS': 'softPCSS',
                 'pcssMinPenumbraTexels': 'pcssMinPenumbraTexels', 'pcssMaxPenumbraTexels': 'pcssMaxPenumbraTexels',
                 'cascadePcssDepthToTexelsPacked': 'cascadePcssDepthToTexels',
+                'localSoftPCSS': 'localSoftPCSS', 'localPcssSourceRadius': 'localPcssSourceRadius',
                 'localShadowRaw': 'localShadows'},
         # The struct text alone does not compile: the nested struct and the array bound come from the same header.
         'extra_structs': ['LocalLightShadowData'], 'extra_constants': ['kMaxLocalLightShadows'],

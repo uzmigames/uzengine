@@ -711,7 +711,9 @@ struct ShadowDataCB {
     float    pcssMinPenumbraTexels = 0.5f;  ///< r.Shadow.PCSSMinPenumbra — PCSS kernel radius floor (texels).
     float    pcssMaxPenumbraTexels = 16.0f; ///< r.Shadow.PCSSMaxPenumbra — PCSS kernel radius cap (texels).
     float    cascadePcssDepthToTexels[8] = {}; ///< Per-cascade penumbra texels per unit depth gap (shadow_pcss.h).
-    float    _pad2[4] = {};         ///< Pad CSM section to 768 bytes.
+    uint32_t localSoftPCSS = 0;     ///< r.Shadows.SoftPCSS.Local; 0 preserves the hard local sampler.
+    float    localPcssSourceRadius = 5.0f; ///< Local emitter radius in cm (spot and zero-radius point lights).
+    float    _pad2[2] = {};         ///< Pad CSM section to 768 bytes.
 
     // ── Local Light Shadow Data (appended after CSM section) ──────────────
     // Up to 16 local light shadows. Each entry stores the light-space viewProj
