@@ -152,7 +152,10 @@ public:
     ///
     /// # Returns
     /// `true` if the archive was parsed successfully. `false` if the data
-    /// is too small, has wrong magic, wrong version, or corrupted index.
+    /// is too small, has wrong magic, wrong version, or corrupted index:
+    /// index offset past the trailer, `entryCount` larger than the index
+    /// region can hold, or any entry whose `[offset, offset + size)` range
+    /// falls outside the archive (all checks are overflow-safe).
     ///
     /// # Errors
     /// Logs `Asset::Error` with specific reason on failure.
@@ -239,6 +242,22 @@ static constexpr uint32_t kPakFlagCompressed = 0x1;
 /// Pak blob is XOR scrambled (descramble before decompression).
 static constexpr uint32_t kPakFlagScrambled = 0x2;
 
+/// Largest raw (decompressed) blob size a pak may declare, in bytes.
+///
+/// Equals LZ4's `LZ4_MAX_INPUT_SIZE` (0x7E000000): LZ4 takes the raw size as an
+/// `int`, and `PakCompressBlob()` / `WritePakSplit()` refuse larger blobs, so no
+/// valid pak declares more. Any larger `rawSize` read from an index is corrupt
+/// or crafted.
+static constexpr uint64_t kPakMaxRawBlobSize = 0x7E000000ull;
+
+/// Upper bound of the LZ4 block-format expansion ratio (decompressed / compressed).
+///
+/// One LZ4 sequence costs at least 3 input bytes (token + 2-byte offset) plus one
+/// byte per 255 bytes of extra match length, so a block can never decode to more
+/// than 255 bytes per input byte. A `rawSize` above `compressedSize * 255` cannot
+/// be produced by a valid stream and is rejected before allocating the output.
+static constexpr uint64_t kPakLz4MaxExpansionRatio = 255;
+
 // ─── Compression / Scramble ──────────────────────────────────────────────────
 
 /// Scrambles (and optionally compresses) a raw asset blob for pak storage.
@@ -253,6 +272,7 @@ static constexpr uint32_t kPakFlagScrambled = 0x2;
 ///
 /// # Returns
 /// Scrambled bytes. Size equals `raw.size()` (no compression yet).
+/// Empty (with an `Asset::Error` log) when `raw.size() > kPakMaxRawBlobSize`.
 [[nodiscard]] std::vector<uint8_t> PakCompressBlob(
     const std::vector<uint8_t>& raw, uint64_t pathHash, uint64_t secret);
 
@@ -267,6 +287,13 @@ static constexpr uint32_t kPakFlagScrambled = 0x2;
 ///
 /// # Returns
 /// Original raw bytes on success, empty vector on failure.
+///
+/// # Errors
+/// Logs `Asset::Error` and returns empty when the sizes are inconsistent before
+/// any output allocation: `rawSize > kPakMaxRawBlobSize`, `compressedSize > rawSize`
+/// (the writer only stores LZ4 output when it is strictly smaller), or
+/// `rawSize > compressedSize * kPakLz4MaxExpansionRatio`. Also fails when LZ4
+/// reports a decoded size different from `rawSize`.
 [[nodiscard]] std::vector<uint8_t> PakDecompressBlob(
     const uint8_t* data, size_t compressedSize, size_t rawSize,
     uint64_t pathHash, uint64_t secret);
@@ -467,16 +494,19 @@ public:
 
     /// Opens a .uzpak file for streaming reads.
     ///
-    /// Only opens the file handle -- does NOT read any data from the file.
+    /// Opens the file handle and records the file size (used to bounds-check
+    /// every `ReadBlob()`); does NOT read any data from the file.
     ///
     /// # Returns
-    /// `true` if the file was opened successfully.
+    /// `true` if the file was opened and its size could be determined.
     [[nodiscard]] bool Open(const std::string& pakPath);
 
     /// Reads a blob at the given byte offset and size from the open file.
     ///
-    /// Seeks to `offset` and reads `size` bytes. Returns empty vector on
-    /// any I/O error (seek failure, partial read, file not open).
+    /// Validates `offset <= fileSize && size <= fileSize - offset` before
+    /// allocating, so a crafted index cannot request more bytes than the pak
+    /// holds. Returns empty vector on any error (out-of-bounds range, seek
+    /// failure, partial read, file not open).
     [[nodiscard]] std::vector<uint8_t> ReadBlob(uint64_t offset, uint64_t size);
 
     /// Closes the file handle. Safe to call if already closed or never opened.
@@ -491,6 +521,7 @@ public:
 private:
     std::string m_path;
     FILE* m_file = nullptr;
+    uint64_t m_fileSize = 0;  ///< Size of the open file in bytes, captured by Open()
 };
 
 } // namespace uz

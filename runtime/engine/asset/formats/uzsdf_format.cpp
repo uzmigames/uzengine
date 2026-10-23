@@ -201,19 +201,46 @@ UzSdfParseResult ReadUzSdf(const std::vector<uint8_t>& data) {
 
     for (uint32_t m = 0; m < header.mipLevels; ++m) {
         const auto& md = mipDescs[m];
-        const uint32_t indirectionCount = md.resolutionX * md.resolutionY * md.resolutionZ;
-        const uint64_t indirectionBytes = indirectionCount * sizeof(uint32_t);
-        const uint64_t brickBytes = md.brickCount * sizeof(SdfBrick);
+        // Cell count in 64-bit: a 32-bit product of three file-controlled
+        // resolutions wraps, leaving an indirection table smaller than the grid
+        // that consumers (MeshSdfAsset::GetGridCellCount) iterate over.
+        const uint64_t indirectionCount64 =
+            uint64_t{md.resolutionX} * md.resolutionY * md.resolutionZ;
+        if (indirectionCount64 > UINT32_MAX) {
+            result.error = "MIP " + std::to_string(m) + " grid has " +
+                           std::to_string(indirectionCount64) + " cells (exceeds 32-bit limit)";
+            UZ_LOG(Asset, Error, "ReadUzSdf: {}", result.error);
+            return result;
+        }
+        const auto indirectionCount = static_cast<uint32_t>(indirectionCount64);
+        const uint64_t indirectionBytes = indirectionCount64 * sizeof(uint32_t);
+        const uint64_t brickBytes = uint64_t{md.brickCount} * sizeof(SdfBrick);
 
-        if (readPos + indirectionBytes + brickBytes > data.size()) {
+        // Wrap-safe bounds check (readPos may sit past the end after alignment).
+        const uint64_t remaining = readPos <= data.size() ? data.size() - readPos : 0;
+        if (indirectionBytes > remaining || brickBytes > remaining - indirectionBytes) {
             result.error = "File truncated at MIP " + std::to_string(m);
             UZ_LOG(Asset, Error, "ReadUzSdf: {}", result.error);
             return result;
         }
 
         std::vector<uint32_t> indirection(indirectionCount);
-        std::memcpy(indirection.data(), data.data() + readPos, indirectionBytes);
+        if (indirectionBytes > 0) {
+            std::memcpy(indirection.data(), data.data() + readPos, indirectionBytes);
+        }
         readPos += indirectionBytes;
+
+        // Each cell must be empty (UINT32_MAX) or index a brick of this MIP;
+        // the atlas adds these to its brick offsets without further checks.
+        for (uint32_t cell = 0; cell < indirectionCount; ++cell) {
+            if (indirection[cell] != UINT32_MAX && indirection[cell] >= md.brickCount) {
+                result.error = "MIP " + std::to_string(m) + " cell " + std::to_string(cell) +
+                               " references brick " + std::to_string(indirection[cell]) +
+                               " but only " + std::to_string(md.brickCount) + " exist";
+                UZ_LOG(Asset, Error, "ReadUzSdf: {}", result.error);
+                return result;
+            }
+        }
 
         std::vector<SdfBrick> bricks(md.brickCount);
         if (md.brickCount > 0) {

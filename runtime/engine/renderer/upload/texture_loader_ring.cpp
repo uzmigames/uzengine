@@ -42,30 +42,18 @@ TextureLoadResult TextureLoader::LoadUzTexViaRing(
     // buffer without copying mip data. ReadUzTexture copies all mip blobs into
     // vectors (37-82ms for 2K BC7) — we skip that entirely by computing mip
     // data pointers as offsets into the original `data` buffer.
-    if (size < sizeof(UzTextureHeader)) {
-        UZ_LOG(Renderer, Error, "LoadUzTexViaRing: data too small for header ({}B)", size);
+    // ParseUzTextureLayout applies the same validation as ReadUzTexture: every
+    // mip range lies inside `data` and its size matches its format/dimensions.
+    UzTextureLayout layout;
+    std::string parseError;
+    if (!ParseUzTextureLayout(data, size, layout, parseError)) {
+        UZ_LOG(Renderer, Error, "LoadUzTexViaRing: invalid .uztexture '{}': {}",
+               debugName ? debugName : "unknown", parseError);
         return {};
     }
 
-    UzTextureHeader header;
-    std::memcpy(&header, data, sizeof(header));
-
-    if (header.magic != kUzTextureMagic || header.version != kUzTextureVersion) {
-        UZ_LOG(Renderer, Error, "LoadUzTexViaRing: invalid magic/version for '{}'",
-               debugName ? debugName : "unknown");
-        return {};
-    }
-
-    const size_t mipDescStart = sizeof(UzTextureHeader);
-    const size_t mipDescSize = header.mipCount * sizeof(UzTextureMipLevel);
-    if (size < mipDescStart + mipDescSize) {
-        UZ_LOG(Renderer, Error, "LoadUzTexViaRing: truncated mip descriptors for '{}'",
-               debugName ? debugName : "unknown");
-        return {};
-    }
-
-    std::vector<UzTextureMipLevel> mips(header.mipCount);
-    std::memcpy(mips.data(), data + mipDescStart, mipDescSize);
+    const UzTextureHeader& header = layout.header;
+    const std::vector<UzTextureMipLevel>& mips = layout.mips;
 
     const bool isSRGB = (header.flags & kUzTextureFlag_sRGB) != 0;
     const auto texFmt = static_cast<TextureFormat>(header.format);
@@ -107,28 +95,41 @@ TextureLoadResult TextureLoader::LoadUzTexViaRing(
     // Zero CreateBuffer, zero data copy — reads directly from source buffer.
     for (uint32_t mip = 0; mip < header.mipCount; ++mip) {
         const auto& mipDesc = mips[mip];
-        if (mipDesc.offset + mipDesc.size > size) break;
         const uint8_t* mipSrc = data + mipDesc.offset;
         const uint64_t mipSrcSize = mipDesc.size;
-        if (mipSrcSize == 0) continue;
 
-        // Compute row pitch and number of rows (block rows for BC, pixel rows otherwise).
-        uint32_t srcRowPitch;
-        uint32_t numRows;
+        // Compute row pitch and number of rows (block rows for BC, pixel rows otherwise)
+        // in 64-bit so oversized dimensions cannot wrap.
+        uint64_t srcRowPitch64;
+        uint64_t numRows64;
         if (isBC) {
-            const uint32_t blocksX = (mipDesc.width + 3) / 4;
-            const uint32_t blocksY = (mipDesc.height + 3) / 4;
-            srcRowPitch = blocksX * blockBytes;
-            numRows = blocksY;
+            srcRowPitch64 = ((uint64_t{mipDesc.width} + 3) / 4) * blockBytes;
+            numRows64 = (uint64_t{mipDesc.height} + 3) / 4;
         } else {
-            srcRowPitch = mipDesc.width * bpp;
-            numRows = mipDesc.height;
+            srcRowPitch64 = uint64_t{mipDesc.width} * bpp;
+            numRows64 = mipDesc.height;
         }
 
         // DX12 requires 256-byte row alignment for texture copy operations.
-        constexpr uint32_t kRowAlign = 256;
-        const uint32_t alignedRowPitch = (srcRowPitch + kRowAlign - 1) & ~(kRowAlign - 1);
-        const uint32_t stagingSize = alignedRowPitch * numRows;
+        constexpr uint64_t kRowAlign = 256;
+        const uint64_t alignedRowPitch64 = (srcRowPitch64 + kRowAlign - 1) & ~(kRowAlign - 1);
+        const uint64_t stagingSize64 = alignedRowPitch64 * numRows64;
+
+        // Defense in depth at the copy sink: the rows we read must fit in the
+        // mip blob, and the staging layout must fit the ring's 32-bit sizes.
+        if (srcRowPitch64 * numRows64 > mipSrcSize || stagingSize64 > UINT32_MAX) {
+            UZ_LOG(Renderer, Error,
+                   "LoadUzTexViaRing: mip {} of '{}' needs {} source bytes ({} staging) "
+                   "but the blob holds {}",
+                   mip, debugName ? debugName : "unknown", srcRowPitch64 * numRows64,
+                   stagingSize64, mipSrcSize);
+            device->DestroyTexture(texture);
+            return {};
+        }
+        const auto srcRowPitch = static_cast<uint32_t>(srcRowPitch64);
+        const auto numRows = static_cast<uint32_t>(numRows64);
+        const auto alignedRowPitch = static_cast<uint32_t>(alignedRowPitch64);
+        const auto stagingSize = static_cast<uint32_t>(stagingSize64);
 
         // Suballocate from ring — no buffer creation, no mapping overhead.
         auto alloc = ring.Allocate(stagingSize, kRowAlign);

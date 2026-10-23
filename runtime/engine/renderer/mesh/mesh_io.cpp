@@ -13,6 +13,16 @@
 
 namespace uz {
 
+namespace {
+
+/// Returns true when `[offset, offset + size)` lies within `limit` bytes.
+/// Subtraction form: file-controlled `offset + size` can wrap past UINT64_MAX.
+[[nodiscard]] bool MeshRangeInBounds(uint64_t offset, uint64_t size, uint64_t limit) {
+    return offset <= limit && size <= limit - offset;
+}
+
+} // anonymous namespace
+
 // ─────────────────────────────────────────────────────────────────────────────
 // LoadMesh
 // ─────────────────────────────────────────────────────────────────────────────
@@ -62,8 +72,26 @@ Mesh LoadMesh(const std::string& path) {
         return mesh;
     }
 
+    // Header offsets/sizes are file-controlled: bound them by the real file size
+    // (wrap-safe subtraction form) before allocating buffers for them.
+    file.seekg(0, std::ios::end);
+    const std::streamoff fileEnd = file.tellg();
+    if (!file || fileEnd < 0) {
+        UZ_LOG(Renderer, Error, "Cannot determine mesh file size: path='{}'", path);
+        mesh.header.magic = 0;
+        return mesh;
+    }
+    const auto fileSize = static_cast<uint64_t>(fileEnd);
+
     // Read vertex data
     uint64_t vertexSize = mesh.GetVertexDataSize();
+    if (!MeshRangeInBounds(mesh.header.vertexDataOffset, vertexSize, fileSize)) {
+        UZ_LOG(Renderer, Error,
+               "Truncated vertex data: offset={}, expected={} bytes, file={} bytes, path='{}'",
+               mesh.header.vertexDataOffset, vertexSize, fileSize, path);
+        mesh.header.magic = 0;
+        return mesh;
+    }
     if (vertexSize > 0) {
         mesh.vertexData.resize(static_cast<size_t>(vertexSize));
         file.seekg(static_cast<std::streamoff>(mesh.header.vertexDataOffset));
@@ -80,6 +108,13 @@ Mesh LoadMesh(const std::string& path) {
 
     // Read index data
     uint64_t indexSize = mesh.GetIndexDataSize();
+    if (!MeshRangeInBounds(mesh.header.indexDataOffset, indexSize, fileSize)) {
+        UZ_LOG(Renderer, Error,
+               "Truncated index data: offset={}, expected={} bytes, file={} bytes, path='{}'",
+               mesh.header.indexDataOffset, indexSize, fileSize, path);
+        mesh.header.magic = 0;
+        return mesh;
+    }
     if (indexSize > 0) {
         mesh.indexData.resize(static_cast<size_t>(indexSize));
         file.seekg(static_cast<std::streamoff>(mesh.header.indexDataOffset));
@@ -136,6 +171,16 @@ Mesh LoadMeshFromMemory(const std::vector<uint8_t>& data, const std::string& nam
             const uint32_t dstStride = sizeof(Vertex);
             const uint32_t vertCount = uz.header.vertexCount;
 
+            // The static stream is read as `Vertex` (48 B) per vertex below; a
+            // narrower source stride would read past the parsed vertex data.
+            if (vertCount > 0 && srcStride < dstStride) {
+                UZ_LOG(Renderer, Error,
+                       "UZMS vertexStride {} is smaller than the {}-byte Vertex layout, name='{}'",
+                       srcStride, dstStride, name);
+                mesh.header.magic = 0;
+                return mesh;
+            }
+
             // Strip bone data: copy first 48 bytes per vertex into the static
             // bind-pose stream, but keep a full 56 B copy in `skinnedVertexData`
             // so the GPU skinning compute shader can read the original stream.
@@ -153,17 +198,28 @@ Mesh LoadMeshFromMemory(const std::vector<uint8_t>& data, const std::string& nam
             }
             mesh.indexData = uz.indexData;
 
-            // LOD0 index count from submesh descriptors
-            uint32_t lod0IndexCount = 0;
+            // LOD0 index count from submesh descriptors. Summed in 64-bit and
+            // bounded by the parsed index count: the UZMH header built below
+            // drives how many index bytes GPU upload copies out of indexData.
+            const uint32_t uzIndexCount = uz.header.indexCount; // aligned copy of packed field
+            uint64_t lod0IndexCount64 = 0;
             if (!uz.lods.empty()) {
                 for (uint32_t si = uz.lods[0].submeshOffset;
                      si < uz.lods[0].submeshOffset + uz.lods[0].submeshCount
                      && si < static_cast<uint32_t>(uz.submeshes.size()); ++si) {
-                    lod0IndexCount += uz.submeshes[si].indexCount;
+                    lod0IndexCount64 += uz.submeshes[si].indexCount;
                 }
             } else {
-                lod0IndexCount = uz.header.indexCount;
+                lod0IndexCount64 = uzIndexCount;
             }
+            if (lod0IndexCount64 > uzIndexCount) {
+                UZ_LOG(Renderer, Error,
+                       "UZMS LOD0 submeshes reference {} indices but the mesh has {}, name='{}'",
+                       lod0IndexCount64, uzIndexCount, name);
+                mesh.header.magic = 0;
+                return mesh;
+            }
+            const auto lod0IndexCount = static_cast<uint32_t>(lod0IndexCount64);
 
             // Compute AABB from vertex positions
             Vec3 bMin{FLT_MAX, FLT_MAX, FLT_MAX};
@@ -199,18 +255,29 @@ Mesh LoadMeshFromMemory(const std::vector<uint8_t>& data, const std::string& nam
             mesh.header.lodCount = uz.header.lodCount;
             std::memset(mesh.header.lods, 0, sizeof(mesh.header.lods));
             if (uz.header.lodCount > 1) {
-                uint32_t lodByteOff = lod0IndexCount * uz.header.indexStride;
+                // Indices consumed so far (LOD0 + earlier LODs); 64-bit so
+                // file-controlled submesh counts cannot wrap.
+                uint64_t usedIndices = lod0IndexCount64;
                 for (uint32_t li = 1; li < uz.header.lodCount && li <= 3; ++li) {
                     if (li >= uz.lods.size()) break;
-                    uint32_t lodIdxCount = 0;
+                    uint64_t lodIdxCount = 0;
                     for (uint32_t si = uz.lods[li].submeshOffset;
                          si < uz.lods[li].submeshOffset + uz.lods[li].submeshCount
                          && si < static_cast<uint32_t>(uz.submeshes.size()); ++si) {
                         lodIdxCount += uz.submeshes[si].indexCount;
                     }
-                    mesh.header.lods[li - 1].indexOffset = lodByteOff;
-                    mesh.header.lods[li - 1].indexCount = lodIdxCount;
-                    lodByteOff += lodIdxCount * uz.header.indexStride;
+                    const uint64_t lodByteOff = usedIndices * uz.header.indexStride;
+                    if (lodIdxCount > uzIndexCount - usedIndices ||
+                        lodByteOff > UINT32_MAX) {
+                        UZ_LOG(Renderer, Error,
+                               "UZMS LOD{} submeshes overrun the {}-index buffer, name='{}'",
+                               li, uzIndexCount, name);
+                        mesh.header.magic = 0;
+                        return mesh;
+                    }
+                    mesh.header.lods[li - 1].indexOffset = static_cast<uint32_t>(lodByteOff);
+                    mesh.header.lods[li - 1].indexCount = static_cast<uint32_t>(lodIdxCount);
+                    usedIndices += lodIdxCount;
                 }
             }
 
@@ -252,7 +319,14 @@ Mesh LoadMeshFromMemory(const std::vector<uint8_t>& data, const std::string& nam
     }
 
     const uint64_t vertexSize = mesh.GetVertexDataSize();
-    if (vertexSize > 0 && mesh.header.vertexDataOffset + vertexSize <= data.size()) {
+    if (!MeshRangeInBounds(mesh.header.vertexDataOffset, vertexSize, data.size())) {
+        UZ_LOG(Renderer, Error,
+               "Truncated vertex data: offset={}, expected={} bytes, data={} bytes, name='{}'",
+               mesh.header.vertexDataOffset, vertexSize, data.size(), name);
+        mesh.header.magic = 0;
+        return mesh;
+    }
+    if (vertexSize > 0) {
         mesh.vertexData.resize(static_cast<size_t>(vertexSize));
         std::memcpy(mesh.vertexData.data(),
                     data.data() + mesh.header.vertexDataOffset,
@@ -260,7 +334,14 @@ Mesh LoadMeshFromMemory(const std::vector<uint8_t>& data, const std::string& nam
     }
 
     const uint64_t indexSize = mesh.GetIndexDataSize();
-    if (indexSize > 0 && mesh.header.indexDataOffset + indexSize <= data.size()) {
+    if (!MeshRangeInBounds(mesh.header.indexDataOffset, indexSize, data.size())) {
+        UZ_LOG(Renderer, Error,
+               "Truncated index data: offset={}, expected={} bytes, data={} bytes, name='{}'",
+               mesh.header.indexDataOffset, indexSize, data.size(), name);
+        mesh.header.magic = 0;
+        return mesh;
+    }
+    if (indexSize > 0) {
         mesh.indexData.resize(static_cast<size_t>(indexSize));
         std::memcpy(mesh.indexData.data(),
                     data.data() + mesh.header.indexDataOffset,

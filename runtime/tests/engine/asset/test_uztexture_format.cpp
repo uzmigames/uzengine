@@ -404,6 +404,227 @@ TEST(UzTextureFormat, Read_TruncatedMipData_ReturnsError) {
     EXPECT_FALSE(r.error.empty());
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Crafted files — wrapped offsets, inconsistent mip descriptors
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Builds a valid 4x4 RGBA8 three-mip .uztexture blob.
+static std::vector<uint8_t> MakeValid4x4Blob() {
+    return WriteUzTexture(Make4x4Header(), {
+        MakeSolidMip(4, 4, 255, 0, 0, 255),
+        MakeSolidMip(2, 2, 128, 0, 0, 255),
+        MakeSolidMip(1, 1, 64, 0, 0, 255),
+    });
+}
+
+/// Reads mip descriptor `level` from a .uztexture blob.
+static UzTextureMipLevel GetMipDesc(const std::vector<uint8_t>& blob, uint32_t level) {
+    UzTextureMipLevel mip;
+    std::memcpy(&mip, blob.data() + sizeof(UzTextureHeader) + level * sizeof(UzTextureMipLevel),
+                sizeof(mip));
+    return mip;
+}
+
+/// Overwrites mip descriptor `level` in a .uztexture blob.
+static void SetMipDesc(std::vector<uint8_t>& blob, uint32_t level, const UzTextureMipLevel& mip) {
+    std::memcpy(blob.data() + sizeof(UzTextureHeader) + level * sizeof(UzTextureMipLevel),
+                &mip, sizeof(mip));
+}
+
+/// Overwrites the header of a .uztexture blob.
+static void SetHeader(std::vector<uint8_t>& blob, const UzTextureHeader& h) {
+    std::memcpy(blob.data(), &h, sizeof(h));
+}
+
+TEST(UzTextureFormat, Read_MipOffsetWrapsPastUint64Max_Rejected) {
+    // offset + size wraps to a small value, which passed the old additive check.
+    auto blob = MakeValid4x4Blob();
+    auto mip = GetMipDesc(blob, 0);
+    mip.offset = UINT64_MAX - mip.size + 2;
+    SetMipDesc(blob, 0, mip);
+
+    auto r = ReadUzTexture(blob);
+    EXPECT_FALSE(r.success);
+    EXPECT_NE(r.error.find("exceeds file size"), std::string::npos) << r.error;
+}
+
+TEST(UzTextureFormat, Read_MipOffsetPastEnd_Rejected) {
+    auto blob = MakeValid4x4Blob();
+    auto mip = GetMipDesc(blob, 2);
+    mip.offset = blob.size() - mip.size + 1;
+    SetMipDesc(blob, 2, mip);
+
+    auto r = ReadUzTexture(blob);
+    EXPECT_FALSE(r.success);
+}
+
+TEST(UzTextureFormat, Read_MipSizeSmallerThanDimensionsImply_Rejected) {
+    // A 4x4 RGBA8 mip claiming 4 bytes would let an uploader copy 64 bytes from a 4-byte blob.
+    auto blob = MakeValid4x4Blob();
+    auto mip = GetMipDesc(blob, 0);
+    mip.size = 4;
+    SetMipDesc(blob, 0, mip);
+
+    auto r = ReadUzTexture(blob);
+    EXPECT_FALSE(r.success);
+    EXPECT_NE(r.error.find("mip 0 size"), std::string::npos) << r.error;
+}
+
+TEST(UzTextureFormat, Read_MipSizeLargerThanDimensionsImply_Rejected) {
+    auto blob = MakeValid4x4Blob();
+    auto mip = GetMipDesc(blob, 2);
+    mip.size = 8; // 1x1 RGBA8 is exactly 4 bytes
+    mip.offset -= 4; // keep the range inside the file so only the size rule fires
+    SetMipDesc(blob, 2, mip);
+
+    auto r = ReadUzTexture(blob);
+    EXPECT_FALSE(r.success);
+    EXPECT_NE(r.error.find("mip 2 size"), std::string::npos) << r.error;
+}
+
+TEST(UzTextureFormat, Read_MipDimensionsLargerThanBase_Rejected) {
+    auto blob = MakeValid4x4Blob();
+    auto mip = GetMipDesc(blob, 1);
+    mip.width = 8; // base is 4x4, so mip 1 must be 2x2
+    mip.height = 8;
+    SetMipDesc(blob, 1, mip);
+
+    auto r = ReadUzTexture(blob);
+    EXPECT_FALSE(r.success);
+    EXPECT_NE(r.error.find("mip 1 dimensions"), std::string::npos) << r.error;
+}
+
+TEST(UzTextureFormat, Read_MipDimensionsSmallerThanChain_Rejected) {
+    // Uploaders derive the row count from the header, not the descriptor, so a mip
+    // that under-declares its dimensions must be rejected as well.
+    auto blob = MakeValid4x4Blob();
+    auto mip = GetMipDesc(blob, 0);
+    mip.width = 1;
+    mip.height = 1;
+    mip.size = 4;
+    SetMipDesc(blob, 0, mip);
+
+    auto r = ReadUzTexture(blob);
+    EXPECT_FALSE(r.success);
+}
+
+TEST(UzTextureFormat, Read_MipCountZero_Rejected) {
+    auto blob = MakeValid4x4Blob();
+    auto h = Make4x4Header();
+    h.mipCount = 0;
+    SetHeader(blob, h);
+
+    EXPECT_FALSE(ReadUzTexture(blob).success);
+}
+
+TEST(UzTextureFormat, Read_MipCountBeyondFullChain_Rejected) {
+    // 4x4 has at most 3 levels (4, 2, 1); a 4th descriptor fits in the file but is invalid.
+    auto h = Make4x4Header();
+    auto blob = WriteUzTexture(h, {
+        MakeSolidMip(4, 4, 1, 1, 1, 1), MakeSolidMip(2, 2, 1, 1, 1, 1),
+        MakeSolidMip(1, 1, 1, 1, 1, 1), MakeSolidMip(1, 1, 1, 1, 1, 1),
+    });
+    auto r = ReadUzTexture(blob);
+    EXPECT_FALSE(r.success);
+    EXPECT_NE(r.error.find("mipCount"), std::string::npos) << r.error;
+}
+
+TEST(UzTextureFormat, Read_ZeroWidth_Rejected) {
+    auto blob = MakeValid4x4Blob();
+    auto h = Make4x4Header();
+    h.width = 0;
+    SetHeader(blob, h);
+
+    EXPECT_FALSE(ReadUzTexture(blob).success);
+}
+
+TEST(UzTextureFormat, Read_UnknownFormat_Rejected) {
+    auto blob = MakeValid4x4Blob();
+    auto h = Make4x4Header();
+    h.format = 0xDEAD;
+    SetHeader(blob, h);
+
+    auto r = ReadUzTexture(blob);
+    EXPECT_FALSE(r.success);
+    EXPECT_NE(r.error.find("format"), std::string::npos) << r.error;
+}
+
+TEST(UzTextureFormat, Read_HugeBaseDimensions_RejectedWithoutOverflow) {
+    // width * height * 4 overflows uint64; the size check must not wrap into a match.
+    auto blob = MakeValid4x4Blob();
+    auto h = Make4x4Header();
+    h.width = UINT32_MAX;
+    h.height = UINT32_MAX;
+    h.mipCount = 1;
+    SetHeader(blob, h);
+    auto mip = GetMipDesc(blob, 0);
+    mip.width = UINT32_MAX;
+    mip.height = UINT32_MAX;
+    SetMipDesc(blob, 0, mip);
+
+    EXPECT_FALSE(ReadUzTexture(blob).success);
+}
+
+TEST(UzTextureFormat, Roundtrip_BC7_NonMultipleOf4_BlockSizesAccepted) {
+    // 5x3 BC7: mip0 = 2x1 blocks (32 B), mip1 2x1 px = 1 block (16 B), mip2 1x1 = 1 block.
+    UzTextureHeader h;
+    h.width = 5;
+    h.height = 3;
+    h.mipCount = 3;
+    h.format = static_cast<uint32_t>(TextureFormat::BC7);
+    auto blob = WriteUzTexture(h, {std::vector<uint8_t>(32, 0x11),
+                                   std::vector<uint8_t>(16, 0x22),
+                                   std::vector<uint8_t>(16, 0x33)});
+    auto r = ReadUzTexture(blob);
+    ASSERT_TRUE(r.success) << r.error;
+    EXPECT_EQ(r.file.mips[1].width, 2u);
+    EXPECT_EQ(r.file.mips[1].height, 1u);
+    EXPECT_EQ(r.file.mipData[2][0], 0x33u);
+}
+
+TEST(UzTextureFormat, Read_BC1_MipSizeUsingBC7BlockBytes_Rejected) {
+    // BC1 uses 8-byte blocks; a 16-byte single-block mip is inconsistent.
+    UzTextureHeader h;
+    h.width = 4;
+    h.height = 4;
+    h.mipCount = 1;
+    h.format = static_cast<uint32_t>(TextureFormat::BC1);
+    auto blob = WriteUzTexture(h, {std::vector<uint8_t>(16, 0)});
+    EXPECT_FALSE(ReadUzTexture(blob).success);
+}
+
+TEST(UzTextureFormat, ParseLayout_ValidBlob_ReturnsValidatedMipTable) {
+    auto blob = MakeValid4x4Blob();
+    UzTextureLayout layout;
+    std::string error;
+    ASSERT_TRUE(ParseUzTextureLayout(blob.data(), blob.size(), layout, error)) << error;
+    ASSERT_EQ(layout.mips.size(), 3u);
+    EXPECT_EQ(layout.mips[0].size, 64u);
+    EXPECT_LE(layout.mips[2].offset + layout.mips[2].size, blob.size());
+}
+
+TEST(UzTextureFormat, ParseLayout_NullData_Rejected) {
+    UzTextureLayout layout;
+    std::string error;
+    EXPECT_FALSE(ParseUzTextureLayout(nullptr, 1024, layout, error));
+    EXPECT_FALSE(error.empty());
+}
+
+TEST(UzTextureFormat, ComputeMipSize_FormatsAndOverflow) {
+    uint64_t size = 0;
+    ASSERT_TRUE(ComputeUzTextureMipSize(TextureFormat::Uncompressed_RGBA8, 3, 5, size));
+    EXPECT_EQ(size, 3u * 5u * 4u);
+    ASSERT_TRUE(ComputeUzTextureMipSize(TextureFormat::BC1, 5, 5, size));
+    EXPECT_EQ(size, 2u * 2u * 8u);
+    ASSERT_TRUE(ComputeUzTextureMipSize(TextureFormat::BC4, 1, 1, size));
+    EXPECT_EQ(size, 8u);
+    ASSERT_TRUE(ComputeUzTextureMipSize(TextureFormat::BC5, 8, 4, size));
+    EXPECT_EQ(size, 2u * 1u * 16u);
+    EXPECT_FALSE(ComputeUzTextureMipSize(TextureFormat::Uncompressed_RGBA8,
+                                         UINT32_MAX, UINT32_MAX, size));
+    EXPECT_FALSE(ComputeUzTextureMipSize(static_cast<TextureFormat>(99), 4, 4, size));
+}
+
 TEST(UzTextureFormat, Read_OnSuccess_ErrorStringIsEmpty) {
     auto header = Make4x4Header();
     std::vector<std::vector<uint8_t>> mipData = {

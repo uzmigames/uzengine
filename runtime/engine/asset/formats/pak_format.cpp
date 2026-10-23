@@ -20,6 +20,9 @@
 
 namespace uz {
 
+static_assert(kPakMaxRawBlobSize == static_cast<uint64_t>(LZ4_MAX_INPUT_SIZE),
+              "kPakMaxRawBlobSize must track LZ4_MAX_INPUT_SIZE");
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Alignment helper
 // ─────────────────────────────────────────────────────────────────────────────
@@ -156,27 +159,57 @@ bool PakReader::Load(const std::vector<uint8_t>& data) {
         return false;
     }
 
-    // Read index
-    size_t indexSize = header.entryCount * sizeof(PakIndexEntry);
-    if (trailer.indexOffset + indexSize > data.size() - sizeof(PakTrailer)) {
-        UZ_LOG(Asset, Error, "Pak index exceeds data bounds");
+    // Read index. Every bound below uses the subtraction form
+    // (`offset <= limit && len <= limit - offset`) because indexOffset, entry
+    // offsets and sizes are file-controlled uint64 values: `offset + len` can
+    // wrap past UINT64_MAX and pass an additive check.
+    // Fields of the packed on-disk structs are copied into aligned locals before
+    // being bound to references (UZ_LOG arguments, map keys): a packed local can
+    // sit at any address and a misaligned uint64 reference is undefined behavior.
+    const uint64_t indexOffset = trailer.indexOffset;
+    const uint32_t entryCount = header.entryCount;
+    const uint64_t indexLimit = data.size() - sizeof(PakTrailer);
+    if (indexOffset > indexLimit) {
+        UZ_LOG(Asset, Error, "Pak index offset {} exceeds index region ({} bytes)",
+               indexOffset, indexLimit);
+        return false;
+    }
+    const uint64_t indexCapacity = (indexLimit - indexOffset) / sizeof(PakIndexEntry);
+    if (entryCount > indexCapacity) {
+        UZ_LOG(Asset, Error,
+               "Pak entryCount {} exceeds the {} entries the index region can hold",
+               entryCount, indexCapacity);
         return false;
     }
 
-    m_data = data;
-    m_index.reserve(header.entryCount);
+    std::unordered_map<uint64_t, LoadedEntry> index;
+    index.reserve(entryCount);
 
-    for (uint32_t i = 0; i < header.entryCount; ++i) {
+    for (uint32_t i = 0; i < entryCount; ++i) {
         PakIndexEntry entry;
         std::memcpy(&entry,
-                    m_data.data() + trailer.indexOffset + i * sizeof(PakIndexEntry),
+                    data.data() + indexOffset + uint64_t{i} * sizeof(PakIndexEntry),
                     sizeof(entry));
+        const uint64_t pathHash = entry.pathHash;
+        const uint64_t offset = entry.offset;
+        const uint64_t size = entry.size;
+        const uint64_t contentHash = entry.contentHash;
 
-        m_index[entry.pathHash] = {entry.offset, entry.size, entry.contentHash};
+        if (offset > data.size() || size > data.size() - offset) {
+            UZ_LOG(Asset, Error,
+                   "Pak entry {} (pathHash=0x{:016X}) range [offset={}, size={}] exceeds "
+                   "archive size {}",
+                   i, pathHash, offset, size, data.size());
+            return false;
+        }
+
+        index[pathHash] = {offset, size, contentHash};
     }
 
+    m_data = data;
+    m_index = std::move(index);
     m_loaded = true;
-    UZ_LOG(Asset, Info, "Loaded pak: {} entries, {} bytes", header.entryCount, data.size());
+    UZ_LOG(Asset, Info, "Loaded pak: {} entries, {} bytes", entryCount, data.size());
     return true;
 }
 
@@ -202,7 +235,14 @@ std::vector<uint8_t> PakReader::LookupByHash(uint64_t pathHash) const {
     if (it == m_index.end()) return {};
 
     const auto& entry = it->second;
-    if (entry.offset + entry.size > m_data.size()) return {};
+    // Load() already rejected out-of-range entries; re-checked here (subtraction
+    // form, wrap-safe) so the lookup stays memory-safe on its own.
+    if (entry.offset > m_data.size() || entry.size > m_data.size() - entry.offset) {
+        UZ_LOG(Asset, Error,
+               "Pak lookup 0x{:016X}: range [offset={}, size={}] exceeds archive size {}",
+               pathHash, entry.offset, entry.size, m_data.size());
+        return {};
+    }
 
     return std::vector<uint8_t>(
         m_data.begin() + static_cast<ptrdiff_t>(entry.offset),
@@ -256,6 +296,14 @@ std::vector<uint8_t> PakCompressBlob(
 
     if (raw.empty()) return {};
 
+    // Readers reject rawSize above this limit, so the writer must never emit it
+    // (LZ4 also cannot take a larger int-sized input).
+    if (raw.size() > kPakMaxRawBlobSize) {
+        UZ_LOG(Asset, Error, "PakCompressBlob: blob of {} bytes exceeds the {}-byte pak limit",
+               raw.size(), kPakMaxRawBlobSize);
+        return {};
+    }
+
     // LZ4 compress
     const int srcSize = static_cast<int>(raw.size());
     const int maxDst = LZ4_compressBound(srcSize);
@@ -283,6 +331,30 @@ std::vector<uint8_t> PakDecompressBlob(
     UZ_PROFILE_FUNCTION();
 
     if (data == nullptr || compressedSize == 0) return {};
+
+    // rawSize comes from an untrusted index: validate it against what the
+    // writer can produce and what LZ4 can decode BEFORE allocating the output.
+    if (rawSize > kPakMaxRawBlobSize) {
+        UZ_LOG(Asset, Error,
+               "PakDecompressBlob: rawSize {} exceeds the {}-byte pak blob limit",
+               rawSize, kPakMaxRawBlobSize);
+        return {};
+    }
+    if (compressedSize > rawSize) {
+        UZ_LOG(Asset, Error,
+               "PakDecompressBlob: compressedSize {} larger than rawSize {} (writer never "
+               "stores expanded LZ4 output)",
+               compressedSize, rawSize);
+        return {};
+    }
+    // compressedSize <= rawSize <= kPakMaxRawBlobSize here, so the product cannot overflow.
+    if (rawSize > compressedSize * kPakLz4MaxExpansionRatio) {
+        UZ_LOG(Asset, Error,
+               "PakDecompressBlob: rawSize {} exceeds LZ4's maximum expansion of {} "
+               "compressed bytes (ratio {})",
+               rawSize, compressedSize, kPakLz4MaxExpansionRatio);
+        return {};
+    }
 
     // XOR descramble (into a copy)
     std::vector<uint8_t> descrambled(data, data + compressedSize);
@@ -483,6 +555,13 @@ PakSplitResult WritePakSplit(
 
     // Pack each entry
     for (const auto& entry : entries) {
+        if (entry.data.size() > kPakMaxRawBlobSize) {
+            UZ_LOG(Asset, Error,
+                   "WritePakSplit: asset '{}' is {} bytes, above the {}-byte pak blob limit",
+                   entry.path, entry.data.size(), kPakMaxRawBlobSize);
+            return result;
+        }
+
         const uint64_t pathHash = XXH64(entry.path.data(), entry.path.size(), 0);
         const uint64_t contentHash = XXH64(entry.data.data(), entry.data.size(), 0);
 
@@ -627,25 +706,37 @@ bool MasterIndex::LoadFile(const std::string& path) {
         return false;
     }
 
-    // Validate table offsets are within file bounds
-    const size_t entryTableSize = header.entryCount * sizeof(MasterAssetEntry);
-    if (trailer.entryTableOffset + entryTableSize > data.size()) {
-        UZ_LOG(Asset, Error, "MasterIndex: entry table exceeds file bounds: '{}'", path);
+    // Validate table offsets are within the region before the trailer. Offsets
+    // are file-controlled uint64 values, so use the wrap-safe subtraction form
+    // and bound each count by how many entries the remaining bytes can hold.
+    // Packed-struct fields are copied to aligned locals before reference binding.
+    const uint64_t entryTableOffset = trailer.entryTableOffset;
+    const uint64_t pakTableOffset = trailer.pakTableOffset;
+    const uint32_t entryCount = header.entryCount;
+    const uint32_t pakCount = header.pakCount;
+    const uint64_t tableLimit = data.size() - sizeof(MasterIndexTrailer);
+    if (entryTableOffset > tableLimit ||
+        entryCount > (tableLimit - entryTableOffset) / sizeof(MasterAssetEntry)) {
+        UZ_LOG(Asset, Error,
+               "MasterIndex: entry table (offset={}, count={}) exceeds file bounds ({} bytes): '{}'",
+               entryTableOffset, entryCount, data.size(), path);
         return false;
     }
 
-    const size_t pakTableSize = header.pakCount * sizeof(MasterPakTableEntry);
-    if (trailer.pakTableOffset + pakTableSize > data.size()) {
-        UZ_LOG(Asset, Error, "MasterIndex: pak table exceeds file bounds: '{}'", path);
+    if (pakTableOffset > tableLimit ||
+        pakCount > (tableLimit - pakTableOffset) / sizeof(MasterPakTableEntry)) {
+        UZ_LOG(Asset, Error,
+               "MasterIndex: pak table (offset={}, count={}) exceeds file bounds ({} bytes): '{}'",
+               pakTableOffset, pakCount, data.size(), path);
         return false;
     }
 
     // Read pak table
-    m_pakFilenames.reserve(header.pakCount);
-    for (uint32_t i = 0; i < header.pakCount; ++i) {
+    m_pakFilenames.reserve(pakCount);
+    for (uint32_t i = 0; i < pakCount; ++i) {
         MasterPakTableEntry pakEntry;
         std::memcpy(&pakEntry,
-                    data.data() + trailer.pakTableOffset + i * sizeof(MasterPakTableEntry),
+                    data.data() + pakTableOffset + uint64_t{i} * sizeof(MasterPakTableEntry),
                     sizeof(pakEntry));
         // Guarantee null termination
         pakEntry.filename[kMaxPakFilename - 1] = '\0';
@@ -653,28 +744,30 @@ bool MasterIndex::LoadFile(const std::string& path) {
     }
 
     // Read asset entries and build hash map
-    m_assets.reserve(header.entryCount);
-    for (uint32_t i = 0; i < header.entryCount; ++i) {
+    m_assets.reserve(entryCount);
+    for (uint32_t i = 0; i < entryCount; ++i) {
         MasterAssetEntry entry;
         std::memcpy(&entry,
-                    data.data() + trailer.entryTableOffset + i * sizeof(MasterAssetEntry),
+                    data.data() + entryTableOffset + uint64_t{i} * sizeof(MasterAssetEntry),
                     sizeof(entry));
+        const uint32_t pakId = entry.pakId;
+        const uint64_t pathHash = entry.pathHash;
 
-        if (entry.pakId >= m_pakFilenames.size()) {
+        if (pakId >= m_pakFilenames.size()) {
             UZ_LOG(Asset, Warning,
                    "MasterIndex: entry has pakId={} but only {} paks (skipping)",
-                   entry.pakId, m_pakFilenames.size());
+                   pakId, m_pakFilenames.size());
             continue;
         }
 
         AssetLocation loc;
-        loc.pakFilename = m_pakFilenames[entry.pakId];
+        loc.pakFilename = m_pakFilenames[pakId];
         loc.offset = entry.offset;
         loc.compressedSize = entry.compressedSize;
         loc.rawSize = entry.rawSize;
         loc.contentHash = entry.contentHash;
         loc.typeId = entry.typeId;
-        m_assets[entry.pathHash] = std::move(loc);
+        m_assets[pathHash] = std::move(loc);
     }
 
     m_loaded = true;
@@ -721,8 +814,10 @@ PakStreamReader::~PakStreamReader() {
 
 PakStreamReader::PakStreamReader(PakStreamReader&& other) noexcept
     : m_path(std::move(other.m_path))
-    , m_file(other.m_file) {
+    , m_file(other.m_file)
+    , m_fileSize(other.m_fileSize) {
     other.m_file = nullptr;
+    other.m_fileSize = 0;
 }
 
 PakStreamReader& PakStreamReader::operator=(PakStreamReader&& other) noexcept {
@@ -730,9 +825,29 @@ PakStreamReader& PakStreamReader::operator=(PakStreamReader&& other) noexcept {
         Close();
         m_path = std::move(other.m_path);
         m_file = other.m_file;
+        m_fileSize = other.m_fileSize;
         other.m_file = nullptr;
+        other.m_fileSize = 0;
     }
     return *this;
+}
+
+/// Seeks `file` to `offset` from `origin` using the platform's 64-bit seek.
+static bool SeekFile64(FILE* file, int64_t offset, int origin) {
+#ifdef _WIN32
+    return _fseeki64(file, offset, origin) == 0;
+#else
+    return fseeko(file, static_cast<off_t>(offset), origin) == 0;
+#endif
+}
+
+/// Returns the current 64-bit position of `file`, or -1 on failure.
+static int64_t TellFile64(FILE* file) {
+#ifdef _WIN32
+    return _ftelli64(file);
+#else
+    return static_cast<int64_t>(ftello(file));
+#endif
 }
 
 bool PakStreamReader::Open(const std::string& pakPath) {
@@ -752,6 +867,17 @@ bool PakStreamReader::Open(const std::string& pakPath) {
         return false;
     }
 
+    // Capture the file size once so ReadBlob can bounds-check index-supplied
+    // ranges before allocating a buffer for them.
+    const int64_t endPos = SeekFile64(m_file, 0, SEEK_END) ? TellFile64(m_file) : -1;
+    if (endPos < 0 || !SeekFile64(m_file, 0, SEEK_SET)) {
+        UZ_LOG(Asset, Error, "PakStreamReader: cannot determine size of '{}'", pakPath);
+        std::fclose(m_file);
+        m_file = nullptr;
+        return false;
+    }
+
+    m_fileSize = static_cast<uint64_t>(endPos);
     m_path = pakPath;
     return true;
 }
@@ -766,12 +892,17 @@ std::vector<uint8_t> PakStreamReader::ReadBlob(uint64_t offset, uint64_t size) {
 
     if (size == 0) return {};
 
-    // Seek to the blob offset
-#ifdef _WIN32
-    if (_fseeki64(m_file, static_cast<int64_t>(offset), SEEK_SET) != 0) {
-#else
-    if (fseeko(m_file, static_cast<off_t>(offset), SEEK_SET) != 0) {
-#endif
+    // offset/size come from an untrusted index: reject ranges outside the file
+    // (wrap-safe subtraction form) before allocating `size` bytes.
+    if (offset > m_fileSize || size > m_fileSize - offset) {
+        UZ_LOG(Asset, Error,
+               "PakStreamReader: blob range [offset={}, size={}] exceeds file size {} in '{}'",
+               offset, size, m_fileSize, m_path);
+        return {};
+    }
+
+    // Seek to the blob offset (offset <= m_fileSize, which came from a signed tell)
+    if (!SeekFile64(m_file, static_cast<int64_t>(offset), SEEK_SET)) {
         UZ_LOG(Asset, Error, "PakStreamReader: seek failed at offset {} in '{}'",
                offset, m_path);
         return {};
@@ -794,6 +925,7 @@ void PakStreamReader::Close() {
         std::fclose(m_file);
         m_file = nullptr;
     }
+    m_fileSize = 0;
     m_path.clear();
 }
 

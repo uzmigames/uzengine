@@ -240,6 +240,52 @@ static_assert(sizeof(UzTextureMipLevel) == 24, "UzTextureMipLevel must be exactl
     UzTextureHeader header,
     const std::vector<std::vector<uint8_t>>& mipData);
 
+/// Computes the exact byte size of one mip level of `format` at `width` x `height`.
+///
+/// RGBA8: `width * height * 4`. Block-compressed formats:
+/// `ceil(width/4) * ceil(height/4) * blockSize` (8 for BC1/BC4, 16 for BC3/BC5/BC7).
+///
+/// # Arguments
+/// * `format` - Texture format stored in the header.
+/// * `width` - Mip width in pixels.
+/// * `height` - Mip height in pixels.
+/// * `outSize` - Receives the byte size on success.
+///
+/// # Returns
+/// `false` if `format` is not a known `TextureFormat` or the size overflows uint64.
+[[nodiscard]] bool ComputeUzTextureMipSize(TextureFormat format, uint32_t width,
+                                           uint32_t height, uint64_t& outSize);
+
+/// Validated header and mip descriptor table of a .uztexture, without mip data.
+struct UzTextureLayout {
+    UzTextureHeader header;                 ///< Parsed 64-byte header
+    std::vector<UzTextureMipLevel> mips;    ///< Mip level descriptors (validated)
+};
+
+/// Parses and validates the header and mip table of a .uztexture without copying
+/// mip data, so zero-copy upload paths share the reader's validation.
+///
+/// Applies every rule from the "Validation Rules" section above except the
+/// reserved-flags rule: magic, version, non-zero dimensions, known format,
+/// `1 <= mipCount <= floor(log2(max(w,h))) + 1`, descriptor table in bounds, and
+/// for each mip `i`: `width == max(1, header.width >> i)`,
+/// `height == max(1, header.height >> i)`, `size` equals the size the format
+/// implies for those dimensions, and `[offset, offset + size)` lies inside the
+/// buffer (checked in wrap-safe subtraction form). After success, every mip blob
+/// can be read as `data + mip.offset` for `mip.size` bytes, and `mip.size` covers
+/// the full row pitch * row count an uploader derives from the header dimensions.
+///
+/// # Arguments
+/// * `data` - Raw .uztexture bytes.
+/// * `size` - Number of bytes at `data`.
+/// * `out` - Receives the header and mip table on success.
+/// * `error` - Receives a human-readable reason on failure.
+///
+/// # Returns
+/// `true` if the layout is valid.
+[[nodiscard]] bool ParseUzTextureLayout(const uint8_t* data, size_t size,
+                                        UzTextureLayout& out, std::string& error);
+
 /// Deserialized contents of a .uztexture file.
 struct UzTextureFile {
     UzTextureHeader header;                 ///< Parsed 64-byte header
@@ -256,7 +302,8 @@ struct UzTextureParseResult {
 
 /// Parses a .uztexture binary blob into its header, mip descriptors, and pixel data.
 ///
-/// Validates magic number, version, and data sizes before extracting fields.
+/// Validates the full layout with `ParseUzTextureLayout()` before copying any
+/// mip blob.
 ///
 /// # Arguments
 /// * `data` - Raw bytes of a .uztexture file (minimum 64 bytes for header).
@@ -264,7 +311,8 @@ struct UzTextureParseResult {
 /// # Returns
 /// `UzTextureParseResult` with `success == true` and populated `file` on
 /// valid input. `success == false` with `error` on invalid magic, wrong
-/// version, or truncated data.
+/// version, invalid dimensions/format/mip count, mip descriptors that disagree
+/// with the header, or truncated data.
 [[nodiscard]] UzTextureParseResult ReadUzTexture(const std::vector<uint8_t>& data);
 
 } // namespace uz

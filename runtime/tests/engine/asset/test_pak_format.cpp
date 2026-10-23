@@ -7,8 +7,10 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -223,6 +225,93 @@ TEST(PakFormat, LoadBadTrailerMagicFails) {
     data[data.size() - 1] = 0x00; // Corrupt trailer magic
     PakReader reader;
     EXPECT_FALSE(reader.Load(data));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Crafted archives — integer-wrap and oversized fields must be rejected
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Byte offset of the (single) index entry in a WritePak() archive.
+static uint64_t ReadIndexOffset(const std::vector<uint8_t>& pak) {
+    PakTrailer trailer;
+    std::memcpy(&trailer, pak.data() + pak.size() - sizeof(PakTrailer), sizeof(trailer));
+    return trailer.indexOffset;
+}
+
+/// Overwrites the trailer's indexOffset of a WritePak() archive.
+static void WriteIndexOffset(std::vector<uint8_t>& pak, uint64_t indexOffset) {
+    PakTrailer trailer;
+    std::memcpy(&trailer, pak.data() + pak.size() - sizeof(PakTrailer), sizeof(trailer));
+    trailer.indexOffset = indexOffset;
+    std::memcpy(pak.data() + pak.size() - sizeof(PakTrailer), &trailer, sizeof(trailer));
+}
+
+/// Rewrites the first index entry's offset/size of a WritePak() archive.
+static void WriteFirstEntryRange(std::vector<uint8_t>& pak, uint64_t offset, uint64_t size) {
+    const uint64_t indexOffset = ReadIndexOffset(pak);
+    PakIndexEntry entry;
+    std::memcpy(&entry, pak.data() + indexOffset, sizeof(entry));
+    entry.offset = offset;
+    entry.size = size;
+    std::memcpy(pak.data() + indexOffset, &entry, sizeof(entry));
+}
+
+TEST(PakFormat, Load_IndexOffsetNearUint64Max_RejectedWithoutWrap) {
+    // indexOffset + 40 wraps to a small value, which passed the old additive check.
+    auto data = WritePak({{"a", {1, 2, 3, 4}, 0}});
+    WriteIndexOffset(data, UINT64_MAX - 8);
+    PakReader reader;
+    EXPECT_FALSE(reader.Load(data));
+    EXPECT_FALSE(reader.IsLoaded());
+    EXPECT_EQ(reader.EntryCount(), 0u);
+}
+
+TEST(PakFormat, Load_EntryCountLargerThanIndexRegion_Rejected) {
+    auto data = WritePak({{"a", {1, 2, 3, 4}, 0}});
+    PakHeader header;
+    std::memcpy(&header, data.data(), sizeof(header));
+    header.entryCount = UINT32_MAX;
+    std::memcpy(data.data(), &header, sizeof(header));
+
+    PakReader reader;
+    EXPECT_FALSE(reader.Load(data));
+    EXPECT_FALSE(reader.IsLoaded());
+}
+
+TEST(PakFormat, Load_EntryCountOneMoreThanIndexHolds_Rejected) {
+    auto data = WritePak({{"a", {1}, 0}, {"b", {2}, 0}});
+    PakHeader header;
+    std::memcpy(&header, data.data(), sizeof(header));
+    header.entryCount = 3; // index only holds 2 entries before the trailer
+    std::memcpy(data.data(), &header, sizeof(header));
+
+    PakReader reader;
+    EXPECT_FALSE(reader.Load(data));
+}
+
+TEST(PakFormat, Load_EntryOffsetWrapsPastUint64Max_Rejected) {
+    // offset + size wraps to 2; the old lookup check passed and copied out of bounds.
+    auto data = WritePak({{"a", {1, 2, 3, 4}, 0}});
+    WriteFirstEntryRange(data, UINT64_MAX - 1, 4);
+    PakReader reader;
+    EXPECT_FALSE(reader.Load(data));
+    EXPECT_TRUE(reader.Lookup("a").empty());
+}
+
+TEST(PakFormat, Load_EntrySizeBeyondArchive_Rejected) {
+    auto data = WritePak({{"a", {1, 2, 3, 4}, 0}});
+    WriteFirstEntryRange(data, 64, uint64_t{1} << 40);
+    PakReader reader;
+    EXPECT_FALSE(reader.Load(data));
+}
+
+TEST(PakFormat, Load_EntryEndingExactlyAtArchiveEnd_Accepted) {
+    // Boundary: offset + size == data.size() is in bounds.
+    auto data = WritePak({{"a", {1, 2, 3, 4}, 0}});
+    WriteFirstEntryRange(data, data.size() - 4, 4);
+    PakReader reader;
+    ASSERT_TRUE(reader.Load(data));
+    EXPECT_EQ(reader.Lookup("a").size(), 4u);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -557,6 +646,62 @@ TEST_F(MasterIndexFileTest, Unload_ClearsState) {
     EXPECT_TRUE(idx.PakFilenames().empty());
 }
 
+// ─── MasterIndex crafted files — wrap-around and oversized tables ───────────
+
+/// Writes a minimal .uzpakindex (header + `padding` zero bytes + trailer) with
+/// caller-chosen counts and table offsets.
+static void WriteCraftedMasterIndex(const std::string& path,
+                                    uint32_t pakCount, uint32_t entryCount,
+                                    uint64_t pakTableOffset, uint64_t entryTableOffset,
+                                    size_t padding) {
+    MasterIndexHeader header;
+    header.pakCount = pakCount;
+    header.entryCount = entryCount;
+    MasterIndexTrailer trailer;
+    trailer.pakTableOffset = pakTableOffset;
+    trailer.entryTableOffset = entryTableOffset;
+
+    std::vector<uint8_t> bytes(sizeof(header) + padding + sizeof(trailer), 0);
+    std::memcpy(bytes.data(), &header, sizeof(header));
+    std::memcpy(bytes.data() + bytes.size() - sizeof(trailer), &trailer, sizeof(trailer));
+
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    out.write(reinterpret_cast<const char*>(bytes.data()),
+              static_cast<std::streamsize>(bytes.size()));
+}
+
+TEST_F(MasterIndexFileTest, LoadFile_EntryTableOffsetWraps_Rejected) {
+    // offset + 48 wraps to a small value, which passed the old additive check.
+    WriteCraftedMasterIndex(m_indexPath, 0, 1, sizeof(MasterIndexHeader),
+                            UINT64_MAX - 10, 0);
+    MasterIndex idx;
+    EXPECT_FALSE(idx.LoadFile(m_indexPath));
+    EXPECT_FALSE(idx.IsLoaded());
+}
+
+TEST_F(MasterIndexFileTest, LoadFile_PakTableOffsetWraps_Rejected) {
+    WriteCraftedMasterIndex(m_indexPath, 1, 0, UINT64_MAX - 100,
+                            sizeof(MasterIndexHeader), 0);
+    MasterIndex idx;
+    EXPECT_FALSE(idx.LoadFile(m_indexPath));
+    EXPECT_FALSE(idx.IsLoaded());
+}
+
+TEST_F(MasterIndexFileTest, LoadFile_EntryCountExceedsFile_Rejected) {
+    WriteCraftedMasterIndex(m_indexPath, 0, UINT32_MAX, sizeof(MasterIndexHeader),
+                            sizeof(MasterIndexHeader), sizeof(MasterAssetEntry));
+    MasterIndex idx;
+    EXPECT_FALSE(idx.LoadFile(m_indexPath));
+}
+
+TEST_F(MasterIndexFileTest, LoadFile_TableOverlappingTrailer_Rejected) {
+    // One entry's worth of bytes is present only if the trailer is counted as table data.
+    WriteCraftedMasterIndex(m_indexPath, 0, 1, sizeof(MasterIndexHeader),
+                            sizeof(MasterIndexHeader), sizeof(MasterAssetEntry) - 1);
+    MasterIndex idx;
+    EXPECT_FALSE(idx.LoadFile(m_indexPath));
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // Phase 2: XOR Scramble (PakCompressBlob / PakDecompressBlob)
 // ═════════════════════════════════════════════════════════════════════════════
@@ -660,6 +805,47 @@ TEST(PakScramble, Decompress_SizeMismatch_ReturnsEmpty) {
     const std::vector<uint8_t> data = {0x01, 0x02, 0x03};
     auto result = PakDecompressBlob(data.data(), 3, 10, 0x1, 0x2);
     EXPECT_TRUE(result.empty());
+}
+
+TEST(PakScramble, Decompress_RawSizeAboveBlobLimit_RejectedBeforeAllocation) {
+    // A crafted index claiming a ~16 EiB raw size must not reach the allocator.
+    const std::vector<uint8_t> data(16, 0x00);
+    auto result = PakDecompressBlob(data.data(), data.size(), SIZE_MAX, 0x1, 0x2);
+    EXPECT_TRUE(result.empty());
+
+    result = PakDecompressBlob(data.data(), data.size(),
+                               static_cast<size_t>(kPakMaxRawBlobSize) + 1, 0x1, 0x2);
+    EXPECT_TRUE(result.empty());
+}
+
+TEST(PakScramble, Decompress_RawSizeAboveLz4MaxRatio_Rejected) {
+    const std::vector<uint8_t> data(4, 0x00);
+    const size_t overRatio = data.size() * static_cast<size_t>(kPakLz4MaxExpansionRatio) + 1;
+    auto result = PakDecompressBlob(data.data(), data.size(), overRatio, 0x1, 0x2);
+    EXPECT_TRUE(result.empty());
+}
+
+TEST(PakScramble, Decompress_CompressedLargerThanRaw_Rejected) {
+    const std::vector<uint8_t> data(32, 0x00);
+    auto result = PakDecompressBlob(data.data(), data.size(), 8, 0x1, 0x2);
+    EXPECT_TRUE(result.empty());
+}
+
+TEST(PakScramble, HighlyCompressibleBlob_NearLz4MaxRatio_RoundTrips) {
+    // 1 MiB of zeros compresses close to LZ4's ~255:1 ceiling; the expansion-ratio
+    // guard must still accept the real stream.
+    const std::vector<uint8_t> original(1024 * 1024, 0x00);
+    const uint64_t pathHash = 0x0F0F0F0F0F0F0F0FULL;
+    const uint64_t secret = 0xA5A5A5A5A5A5A5A5ULL;
+
+    auto packed = PakCompressBlob(original, pathHash, secret);
+    ASSERT_LT(packed.size(), original.size());
+    EXPECT_LE(original.size(), packed.size() * kPakLz4MaxExpansionRatio);
+
+    auto restored = PakDecompressBlob(packed.data(), packed.size(), original.size(),
+                                      pathHash, secret);
+    ASSERT_EQ(restored.size(), original.size());
+    EXPECT_EQ(restored, original);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -789,6 +975,27 @@ TEST_F(PakFileTest, StreamReader_ReadBlob_ZeroSize_ReturnsEmpty) {
 
     auto result = reader.ReadBlob(0, 0);
     EXPECT_TRUE(result.empty());
+}
+
+TEST_F(PakFileTest, StreamReader_ReadBlob_RangeBeyondFile_RejectedBeforeAllocation) {
+    std::vector<PakWriteEntry> entries = {{"x", {0x01, 0x02, 0x03, 0x04}, 0}};
+    ASSERT_TRUE(WritePakFile(m_path, entries));
+    const uint64_t fileSize = fs::file_size(m_path);
+
+    PakStreamReader reader;
+    ASSERT_TRUE(reader.Open(m_path));
+
+    // Huge size from a crafted index: must fail without a multi-TB allocation.
+    EXPECT_TRUE(reader.ReadBlob(0, uint64_t{1} << 40).empty());
+    // offset + size wraps past UINT64_MAX.
+    EXPECT_TRUE(reader.ReadBlob(8, UINT64_MAX - 4).empty());
+    // Offset past end of file.
+    EXPECT_TRUE(reader.ReadBlob(fileSize + 1, 1).empty());
+    // One byte past the end.
+    EXPECT_TRUE(reader.ReadBlob(fileSize - 4, 5).empty());
+
+    // Boundary: the last byte range ending exactly at EOF is still readable.
+    EXPECT_EQ(reader.ReadBlob(fileSize - 4, 4).size(), 4u);
 }
 
 } // namespace uz::test
