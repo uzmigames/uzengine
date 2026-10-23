@@ -384,6 +384,12 @@ bool CloudPass::EnsureTemporalPipeline() {
 /// runtime/content/atmosphere), then the working directory. Each source is checked for existence before it is
 /// read, so a missing file costs no warning. Returns an empty vector when no source has it.
 static std::vector<uint8_t> ReadCloudAsset(IVFS* vfs, const std::string& relativePath, std::string& sourceOut) {
+    // The weather-map path is scene data: it must stay a relative path below
+    // each search root, never an absolute path or a '..' escape.
+    if (!NormalizeVfsPath(relativePath)) {
+        UZ_LOG(Renderer, Warning, "CloudPass: rejected asset path outside the content roots");
+        return {};
+    }
     if (vfs && vfs->Exists(relativePath)) {
         sourceOut = "project VFS";
         return vfs->Read(relativePath);

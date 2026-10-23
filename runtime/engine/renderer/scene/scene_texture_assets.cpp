@@ -152,9 +152,6 @@ uint32_t SceneRenderer::LoadTexture(const std::string& path, IVFS* vfs,
     //   3. VFS path (worker reads from thread-safe VFS on background thread)
     //   4. Sync fallback (no async decoder — rare, only if decoder init failed)
 
-    const bool isAbsolute = !path.empty() && (path[0] == '/' || path[0] == '\\' ||
-                             (path.size() > 1 && path[1] == ':'));
-
     // Build cooked companion path: "foo.jpg" → "foo.uztexture"
     std::string cookedPath;
     {
@@ -164,18 +161,20 @@ uint32_t SceneRenderer::LoadTexture(const std::string& path, IVFS* vfs,
         }
     }
 
-    // Try filesystem paths first — worker thread does I/O, main thread is free
+    // Try filesystem paths first — worker thread does I/O, main thread is free.
+    // With a VFS bound both candidates must resolve inside its root
+    // (ResolveAssetFsPath): scene data cannot point the decoder at arbitrary files.
     std::string fsPath;
     if (!cookedPath.empty()) {
-        std::string cookedFs = (vfs && !isAbsolute) ? vfs->ResolvePath(cookedPath) : cookedPath;
-        if (std::ifstream(cookedFs, std::ios::binary).good()) {
-            fsPath = cookedFs;
+        const std::optional<std::string> cookedFs = ResolveAssetFsPath(vfs, cookedPath);
+        if (cookedFs && std::ifstream(*cookedFs, std::ios::binary).good()) {
+            fsPath = *cookedFs;
         }
     }
     if (fsPath.empty()) {
-        std::string rawFs = (vfs && !isAbsolute) ? vfs->ResolvePath(path) : path;
-        if (std::ifstream(rawFs, std::ios::binary).good()) {
-            fsPath = rawFs;
+        const std::optional<std::string> rawFs = ResolveAssetFsPath(vfs, path);
+        if (rawFs && std::ifstream(*rawFs, std::ios::binary).good()) {
+            fsPath = *rawFs;
         }
     }
 
@@ -208,9 +207,9 @@ uint32_t SceneRenderer::LoadTexture(const std::string& path, IVFS* vfs,
             }
         }
     } else if (m_asyncDecoder) {
-        // Last resort: submit path as-is to worker (filesystem path, no VFS)
-        std::string rawPath = (vfs && !isAbsolute) ? vfs->ResolvePath(path) : path;
-        m_asyncDecoder->Submit(rawPath, isSRGB, path);
+        // Last resort, reached only without a VFS (a bound VFS takes the branch
+        // above): submit the application-supplied filesystem path as-is.
+        m_asyncDecoder->Submit(path, isSRGB, path);
         m_asyncPendingSlots[path] = slotIndex;
     }
 
@@ -381,12 +380,11 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
             }
         }
         if (!cpuMesh.IsValid()) {
-            // Filesystem fallback: resolve via VFS or use as-is.
-            const bool isAbsolute = !path.empty() && (path[0] == '/' || path[0] == '\\' ||
-                                     (path.size() > 1 && path[1] == ':'));
-            const std::string resolvedPath = (vfs && !isAbsolute)
-                ? vfs->ResolvePath(path) : path;
-            cpuMesh = uz::LoadMesh(resolvedPath);
+            // Filesystem fallback: contained in the VFS root when one is bound.
+            const std::optional<std::string> fsPath = ResolveAssetFsPath(vfs, path);
+            if (fsPath) {
+                cpuMesh = uz::LoadMesh(*fsPath);
+            }
         }
         if (!cpuMesh.IsValid()) {
             UZ_LOG(Renderer, Error, "SceneRenderer: failed to load queued mesh '{}'", path);

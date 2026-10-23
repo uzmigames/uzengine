@@ -3,6 +3,10 @@
 #include "log.h"
 #include "engine/asset/vfs.h"
 
+#include <optional>
+#include <string>
+#include <vector>
+
 /// Lua bindings for virtual filesystem API (file read, write, directory queries).
 
 extern "C" {
@@ -32,6 +36,30 @@ static constexpr const char* kVfsRegistryKey = "uz_vfs";
     return static_cast<IVFS*>(p);
 }
 
+/// Reads argument 1 as a script-supplied VFS path and checks containment.
+///
+/// Scripts are untrusted content, so the path must be a logical path below
+/// the VFS root (`NormalizeVfsPath`) whatever backend is mounted. The full
+/// Lua length is kept so an embedded NUL is rejected instead of silently
+/// truncating the path at the C boundary. Raises a Lua argument error if
+/// argument 1 is not a string.
+///
+/// # Returns
+/// The path exactly as given (backends do their own normalization), or
+/// `std::nullopt` after logging a warning when it is rejected.
+[[nodiscard]] static std::optional<std::string> CheckScriptPath(lua_State* L, const char* function) {
+    size_t length = 0;
+    const char* data = luaL_checklstring(L, 1, &length);
+    std::string path(data, length);
+    if (!NormalizeVfsPath(path)) {
+        UZ_LOG(Scripting, Warning,
+               "uz.vfs.{}: rejected path outside the VFS root (absolute, drive, NUL or '..' escape)",
+               function);
+        return std::nullopt;
+    }
+    return path;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Lua C functions — uz.vfs.*
 // ─────────────────────────────────────────────────────────────────────────────
@@ -40,7 +68,8 @@ static constexpr const char* kVfsRegistryKey = "uz_vfs";
 ///
 /// Reads an asset as raw binary bytes. The returned Lua string may contain
 /// embedded null bytes (uses lua_pushlstring for binary safety).
-/// Returns nil if the asset does not exist or VFS is not set.
+/// Returns nil if the asset does not exist, the path leaves the VFS root,
+/// or VFS is not set.
 static int VfsRead(lua_State* L) {
     IVFS* vfs = GetVFS(L);
     if (!vfs) {
@@ -48,8 +77,12 @@ static int VfsRead(lua_State* L) {
         return 1;
     }
 
-    const char* path = luaL_checkstring(L, 1);
-    std::vector<uint8_t> data = vfs->Read(path);
+    const std::optional<std::string> path = CheckScriptPath(L, "read");
+    if (!path) {
+        lua_pushnil(L);
+        return 1;
+    }
+    std::vector<uint8_t> data = vfs->Read(*path);
     if (data.empty()) {
         lua_pushnil(L);
         return 1;
@@ -63,7 +96,8 @@ static int VfsRead(lua_State* L) {
 ///
 /// Reads an asset as a text string. Identical to read() but uses
 /// lua_pushstring which expects null-terminated UTF-8 data.
-/// Returns nil if the asset does not exist or VFS is not set.
+/// Returns nil if the asset does not exist, the path leaves the VFS root,
+/// or VFS is not set.
 static int VfsReadText(lua_State* L) {
     IVFS* vfs = GetVFS(L);
     if (!vfs) {
@@ -71,8 +105,12 @@ static int VfsReadText(lua_State* L) {
         return 1;
     }
 
-    const char* path = luaL_checkstring(L, 1);
-    std::vector<uint8_t> data = vfs->Read(path);
+    const std::optional<std::string> path = CheckScriptPath(L, "read_text");
+    if (!path) {
+        lua_pushnil(L);
+        return 1;
+    }
+    std::vector<uint8_t> data = vfs->Read(*path);
     if (data.empty()) {
         lua_pushnil(L);
         return 1;
@@ -88,7 +126,7 @@ static int VfsReadText(lua_State* L) {
 /// uz.vfs.exists(path) -> bool
 ///
 /// Returns true if the asset exists in the VFS, false otherwise.
-/// Returns false if VFS is not set.
+/// Returns false if the path leaves the VFS root or VFS is not set.
 static int VfsExists(lua_State* L) {
     IVFS* vfs = GetVFS(L);
     if (!vfs) {
@@ -96,8 +134,8 @@ static int VfsExists(lua_State* L) {
         return 1;
     }
 
-    const char* path = luaL_checkstring(L, 1);
-    lua_pushboolean(L, vfs->Exists(path) ? 1 : 0);
+    const std::optional<std::string> path = CheckScriptPath(L, "exists");
+    lua_pushboolean(L, (path && vfs->Exists(*path)) ? 1 : 0);
     return 1;
 }
 

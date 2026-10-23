@@ -79,13 +79,13 @@ static Mesh LoadCpuMeshByPath(const std::string& path, IVFS* vfs) {
         }
         return cpuMesh;
     }
-    // Resolve to absolute path for filesystem access
-    const bool isAbsolute = !path.empty() && (path[0] == '/' || path[0] == '\\' ||
-                             (path.size() > 1 && path[1] == ':'));
-    const std::string resolvedPath = (vfs && !isAbsolute)
-        ? vfs->ResolvePath(path)
-        : path;
-    return uz::LoadMesh(resolvedPath);
+    // Filesystem fallback. With a VFS bound the path must resolve inside its
+    // root: scene data must not be able to point the loader at arbitrary files.
+    const std::optional<std::string> fsPath = ResolveAssetFsPath(vfs, path);
+    if (!fsPath) {
+        return cpuMesh;
+    }
+    return uz::LoadMesh(*fsPath);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -167,12 +167,11 @@ uint32_t SceneRenderer::RequestMeshAsync(const std::string& path, IVFS* vfs,
 
     // Prefer a resolved filesystem path: workers then use plain file I/O and
     // do not serialize on the shared VFS mutex. Fall back to a VFS read on
-    // the worker when the file is not directly reachable (pak-only assets).
-    const bool isAbsolute = (path[0] == '/' || path[0] == '\\' ||
-                             (path.size() > 1 && path[1] == ':'));
-    const std::string fsPath = (vfs && !isAbsolute) ? vfs->ResolvePath(path) : path;
-    if (std::ifstream(fsPath, std::ios::binary).good()) {
-        m_asyncMeshLoader->Submit(fsPath, path);
+    // the worker when the file is not directly reachable (pak-only assets);
+    // the VFS read applies the same root containment.
+    const std::optional<std::string> fsPath = ResolveAssetFsPath(vfs, path);
+    if (fsPath && std::ifstream(*fsPath, std::ios::binary).good()) {
+        m_asyncMeshLoader->Submit(*fsPath, path);
     } else if (vfs) {
         m_asyncMeshLoader->SubmitVFS(vfs, path, path);
     } else {
@@ -427,15 +426,20 @@ void SceneRenderer::ServiceSdfBakes(IRHICommandList* cmdList) {
             if (path.compare(0, 8, "builtin:") == 0) {
                 Mesh cpuMesh = LoadCpuMeshByPath(path, m_lastVfs);   // procedural, cheap
                 if (!MeshSdfBakeQueue::FillFromMesh(request, cpuMesh)) continue;
-            } else if (m_lastVfs && m_lastVfs->Exists(path) && !std::filesystem::exists(m_lastVfs->ResolvePath(path))) {
-                request.sourceBytes = m_lastVfs->Read(path);          // pak: the bytes, parsed on the worker
-                request.sourcePath = path;
-                if (request.sourceBytes.empty()) continue;
             } else {
-                // A real file: the worker reads and parses it (a 15 MB read cost the main thread ~25 ms).
-                const bool isAbsolute = !path.empty() && (path[0] == '/' || path[0] == '\\' ||
-                                         (path.size() > 1 && path[1] == ':'));
-                request.sourcePath = (m_lastVfs && !isAbsolute) ? m_lastVfs->ResolvePath(path) : path;
+                // Contained in the VFS root when a VFS is bound (see ResolveAssetFsPath).
+                const std::optional<std::string> fsPath = ResolveAssetFsPath(m_lastVfs, path);
+                const bool onDisk = fsPath && std::filesystem::exists(*fsPath);
+                if (!onDisk && m_lastVfs && m_lastVfs->Exists(path)) {
+                    request.sourceBytes = m_lastVfs->Read(path);      // pak: the bytes, parsed on the worker
+                    request.sourcePath = path;
+                    if (request.sourceBytes.empty()) continue;
+                } else if (fsPath) {
+                    // A real file: the worker reads and parses it (a 15 MB read cost the main thread ~25 ms).
+                    request.sourcePath = *fsPath;
+                } else {
+                    continue;
+                }
             }
             m_sdfBakeQueue->Submit(std::move(request));
             ++requeued;
