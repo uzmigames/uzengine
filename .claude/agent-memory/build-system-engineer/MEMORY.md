@@ -1,0 +1,1 @@
+- [pwsh -Command trailing args execute](feedback_pwsh_command_args.md) — never pass a .ps1 path after `pwsh -Command`; it runs the script (setup.ps1 incident)
