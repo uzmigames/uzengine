@@ -102,6 +102,42 @@ TEST(Mat4Test, PerspectiveCreates) {
     EXPECT_TRUE(p != Mat4::Identity());
 }
 
+TEST(Mat4PerspectiveReversedZ, ClipWEqualsDepth) {
+    const Mat4 projection = Mat4::Perspective(XM_PIDIV2, 2.0f, 0.25f, 100.0f);
+    for (float depth : {0.25f, 1.0f, 2.0f, 10.0f, 100.0f}) {
+        SCOPED_TRACE(depth);
+        const Vec4 clip = projection * Vec4(0.5f, -0.25f, depth, 1.0f);
+        EXPECT_NEAR(clip.w, depth, 1e-6f);
+    }
+}
+
+TEST(Mat4PerspectiveReversedZ, NearAndFarMapToOneAndZero) {
+    const Mat4 projection = Mat4::Perspective(XM_PIDIV2, 2.0f, 0.25f, 100.0f);
+    const Vec4 nearClip = projection * Vec4(0.0f, 0.0f, 0.25f, 1.0f);
+    const Vec4 farClip = projection * Vec4(0.0f, 0.0f, 100.0f, 1.0f);
+    ASSERT_GT(nearClip.w, 0.0f);
+    ASSERT_GT(farClip.w, 0.0f);
+    EXPECT_NEAR(nearClip.z / nearClip.w, 1.0f, 1e-6f);
+    EXPECT_NEAR(farClip.z / farClip.w, 0.0f, 1e-6f);
+}
+
+TEST(Mat4PerspectiveReversedZ, ScreenCoordinatesScaleWithInverseDepth) {
+    // A 90-degree vertical FOV and aspect 2 give unit vertical and half horizontal scale.
+    const Mat4 projection = Mat4::Perspective(XM_PIDIV2, 2.0f, 0.25f, 100.0f);
+    float previousDepth = 1.0f;
+    for (float depth : {1.0f, 2.0f, 4.0f, 16.0f}) {
+        SCOPED_TRACE(depth);
+        const Vec4 clip = projection * Vec4(1.0f, -0.5f, depth, 1.0f);
+        ASSERT_GT(clip.w, 0.0f);
+        EXPECT_NEAR(clip.x / clip.w, 0.5f / depth, 1e-6f);
+        EXPECT_NEAR(clip.y / clip.w, -0.5f / depth, 1e-6f);
+        const float ndcDepth = clip.z / clip.w;
+        EXPECT_GT(ndcDepth, 0.0f);
+        EXPECT_LT(ndcDepth, previousDepth);
+        previousDepth = ndcDepth;
+    }
+}
+
 TEST(Mat4Test, LookAtCreates) {
     Mat4 v = Mat4::LookAt(Vec3(0, 0, -5), Vec3::Zero(), Vec3::Up());
     EXPECT_TRUE(v != Mat4::Identity());
