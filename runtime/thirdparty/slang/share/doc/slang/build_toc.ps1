@@ -5,6 +5,8 @@ $job = Start-Job -ArgumentList $PSScriptRoot -ScriptBlock {
     Add-Type -ReferencedAssemblies $assemblies -TypeDefinition $code -Language CSharp
     $path = Join-Path -Path $args[0] -ChildPath "user-guide"
     [toc.Builder]::Run($path);
+    $path = Join-Path -Path $args[0] -ChildPath "gfx-user-guide"
+    [toc.Builder]::Run($path);
 }
 Wait-Job $job
 Receive-Job -Job $job

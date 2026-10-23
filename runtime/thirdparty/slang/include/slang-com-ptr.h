@@ -3,6 +3,7 @@
 
 #include "slang-com-helper.h"
 
+#include <assert.h>
 #include <cstddef>
 
 namespace Slang
@@ -88,7 +89,7 @@ public:
     {
     }
 
-#if SLANG_HAS_MOVE_SEMANTICS
+#ifdef SLANG_HAS_MOVE_SEMANTICS
     /// Move Ctor
     SLANG_FORCE_INLINE ComPtr(ThisType&& rhs)
         : m_ptr(rhs.m_ptr)

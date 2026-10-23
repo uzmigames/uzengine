@@ -44,7 +44,6 @@ Items with ^ means there is some discussion about support later in the document 
 | [Shader Execution Reordering](#ser)                  | No    | Yes ^     | Yes ^   | No             | No    | No        |
 | [debugBreak](#debug-break)                           | No    | No        | Yes     | Yes            | No    | Yes       |
 | [realtime clock](#realtime-clock)                    | No    | Yes ^     | Yes     | Yes            | No    | No        |
-| [Switch Fall-Through](#switch-fallthrough)           | No ^  | Yes       | Yes     | Yes            | Yes   | Yes       |
 
 <a id="half"></a>
 
@@ -204,7 +203,7 @@ In practice to write shader code that works across D3D12 and VK you should have 
 
 ## tex.Load
 
-tex.Load on a read-only texture is supported on CUDA for `Texture1D`, `Texture2D`, `Texture3D`, and the 1D/2D array forms; the mip map selection argument is ignored (the fetch reads the base level). Load is also allowed on RWTexture types on CUDA. Note: half-typed textures are not supported for Load or SampleLevel on CUDA (use a float texture).
+tex.Load is only supported on CUDA for Texture1D. Additionally CUDA only allows such access for linear memory, meaning the bound texture can also not have mip maps. Load _is_ allowed on RWTexture types of other dimensions including 1D on CUDA.
 
 <a id="full-bool"></a>
 
@@ -292,13 +291,7 @@ There is preliminary [Mesh Shader support](https://github.com/shader-slang/slang
 
 More information about [Shader Execution Reordering](shader-execution-reordering.md).
 
-Currently support is available in D3D12 via NVAPI. For Vulkan, Slang uses the
-[GL_EXT_shader_invocation_reorder](https://github.com/KhronosGroup/GLSL/blob/master/extensions/ext/GLSL_EXT_shader_invocation_reorder.txt)
-extension by default for implicit SPIR-V SER capability upgrades. The
-[GL_NV_shader_invocation_reorder](https://github.com/KhronosGroup/GLSL/blob/master/extensions/nv/GLSL_NV_shader_invocation_reorder.txt)
-path remains available when the NV capability or extension is requested explicitly;
-NV-named GLSL entry points such as `hitObjectIsHitNV` continue to require that NV
-path.
+Currently support is available in D3D12 via NVAPI, and for Vulkan via the [GL_NV_shader_invocation_reorder](https://github.com/KhronosGroup/GLSL/blob/master/extensions/nv/GLSL_NV_shader_invocation_reorder.txt) extension.
 
 <a id="debug-break"></a>
 
@@ -335,32 +328,3 @@ On Vulkan this is supported via [VK_KHR_shader_clock extension](https://registry
 On CUDA this is supported via [clock](https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#time-function).
 
 Currently this is not supported on CPU, although this will potentially be added in the future.
-
-<a id="switch-fallthrough"></a>
-
-## Switch Fall-Through
-
-Switch fall-through allows code in one case to execute and then continue into the next case without a `break`:
-
-```hlsl
-switch(value)
-{
-case 0:
-    x = 10;
-    // Fall through to case 1
-case 1:
-    result = x + value;
-    break;
-}
-```
-
-This is natively supported on most targets. However, D3D11 (FXC/DXBC) and WGSL do not support fall-through in their switch statements.
-
-For these targets, Slang restructures the code by duplicating the fall-through destination into each source case. This produces functionally correct results, but has implications:
-
-- **Code size**: The generated code may be larger due to duplication.
-- **Wave convergence**: If the duplicated code contains wave/subgroup operations, each copy executes independently, which may affect convergence behavior compared to native fall-through.
-
-When restructuring occurs, Slang emits warning 41026 to alert developers to this behavior change.
-
-To avoid restructuring, ensure each case ends with `break`, `return`, or another control transfer statement.

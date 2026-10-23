@@ -139,55 +139,44 @@ namespace toc
                 node.fileID = Path.GetFileNameWithoutExtension(f);
                 outputSB.AppendFormat("  {0}.md\n", node.fileID);
                 bool mainTitleFound = false;
-                bool verbatimMode = false;
-
                 for (int i = 1; i < content.Length; i++)
                 {
-                    String line = content[i];
-
-                    if (line.StartsWith("```"))
-                        verbatimMode = !verbatimMode;
-
-                    if (verbatimMode)
-                        continue;
-
-                    if (line.StartsWith("==="))
+                    if (content[i].StartsWith("==="))
                     {
                         mainTitleFound = true;
                         node.title = content[i-1];
                         node.shortTitle = maybeGetShortTitle(node.title, content, i);
                     }
-                    if (line.StartsWith("---") &&
-                        line.IndexOf('|') == -1) // check that this is not a table header/content separator
+                    if (content[i].StartsWith("---"))
                     {
                         if (!mainTitleFound) continue;
                         node.sections.Add(content[i-1]);
                         node.sectionShortTitles.Add(maybeGetShortTitle(content[i - 1], content, i));
                     }
-                    if (line.StartsWith("#") && !line.StartsWith("##") && node.title == null)
+                    if (content[i].StartsWith("#") && !content[i].StartsWith("##") && node.title == null)
                     {
                         mainTitleFound = true;
-                        node.title = line.Substring(1, line.Length - 1).Trim();
+                        node.title = content[i].Substring(1, content[i].Length - 1).Trim();
                         node.shortTitle = maybeGetShortTitle(node.title, content, i);
                     }
-                    if (line.StartsWith("##") && !line.StartsWith("###"))
+                    if (content[i].StartsWith("##") && !content[i].StartsWith("###"))
                     {
                         if (!mainTitleFound) continue;
-                        var sectionStr = line.Substring(2, line.Length - 2).Trim();
+                        var sectionStr = content[i].Substring(2, content[i].Length - 2).Trim();
                         node.sections.Add(sectionStr);
                         node.sectionShortTitles.Add(maybeGetShortTitle(sectionStr, content, i));
                     }
-                    if (line.StartsWith("permalink:"))
+                    if (content[i].StartsWith("permalink:"))
                     {
                         var prefixLength = ("permalink:").Length;
-                        var permaPath = line.Substring(prefixLength, line.Length - prefixLength).Trim();
+                        var permaPath = content[i].Substring(prefixLength, content[i].Length - prefixLength).Trim();
                         node.fileID = Path.GetFileName(permaPath);
                     }
                 }
                 if (node.title == null)
                 {
                     outputSB.AppendFormat("Error: {0} does not define a title.", f);
-                    node.title = "Untitled";
+                    node.title = "Untitiled";
                 }
                 var titleSecs = Path.GetFileName(f).Split('-');
                 foreach (var s in titleSecs)
