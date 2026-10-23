@@ -463,6 +463,8 @@ TEST(RTReflectionPhaseB, TlasIsBuiltForTheReflectionsAloneAndNeverWithoutDxr) {
     EXPECT_FALSE(RTFrameNeedsTLAS(true, false, false));   // r.RayTracing.Reflections 0: the old frame
     EXPECT_FALSE(RTFrameNeedsTLAS(false, true, true));    // no DXR: nothing, whatever the switches
     EXPECT_FALSE(RTFrameNeedsTLAS(false, false, true));
+    EXPECT_TRUE(RTFrameNeedsTLAS(true, false, false, true));
+    EXPECT_FALSE(RTFrameNeedsTLAS(false, false, false, true));
 }
 
 // The pass runs only with DXR, the switch and a non-empty TLAS; each missing fact is the fallback.

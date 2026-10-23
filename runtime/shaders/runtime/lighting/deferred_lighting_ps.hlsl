@@ -11,6 +11,9 @@
 #include "light_types.hlsli"
 #ifdef UZ_RECT_LIGHTS
 #include "ltc.hlsli"
+#ifdef UZ_AREA_LIGHT_SHADOWS
+#include "area_light_shadows.hlsli"
+#endif
 #endif
 #include "ibl.hlsli"
 #include "../gi/rc_probe_guard.hlsli"
@@ -578,7 +581,11 @@ float3 ShadeSpotLight(SpotLightData sl, float3 worldPos, float3 N, float3 geomet
 // as before (an untaken uniform branch in the same shader already moved 55 pixels by 1 LSB).
 // @ref Heitz, Dupuy, Hill, Neubelt 2016 "Real-Time Polygonal-Light Shading with Linearly Transformed Cosines"
 float3 ShadeRectLight(RectLightData rl, float3 worldPos, float3 N, float3 V, float NoV,
-                      float roughness, float3 F0, float3 F90, float3 diffColor)
+                      float roughness, float3 F0, float3 F90, float3 diffColor
+#ifdef UZ_AREA_LIGHT_SHADOWS
+                      , float3 geometricNormal, float2 areaShadowShift
+#endif
+                      )
 {
     const float3 toCenter = rl.position - worldPos;
     const float  distSq   = dot(toCenter, toCenter);
@@ -609,11 +616,22 @@ float3 ShadeRectLight(RectLightData rl, float3 worldPos, float3 N, float3 V, flo
 
     const float3 spec = specForm * (F0 * t2.x + (F90 - F0) * t2.y) * rl.specularScale;
     const float3 diff = diffForm * diffColor * rl.diffuseScale;
+#ifdef UZ_AREA_LIGHT_SHADOWS
+    if (!any(diff + spec > 0.0)) return 0.0;
+    const float2 visibility = AreaShadowVisibility(rl, worldPos, geometricNormal, N, V, LtcInverseMatrix(t1),
+                                                   areaShadowShift);
+    return (diff * visibility.x + spec * visibility.y) * rl.color * (window * window);
+#else
     return (diff + spec) * rl.color * (window * window);
+#endif
 }
 #ifdef UZ_SHAPED_LIGHTS
 float3 ShadeShapedLight(RectLightData rl, float3 worldPos, float3 N, float3 V, float NoV,
-                        float roughness, float3 F0, float3 F90, float3 diffColor)
+                        float roughness, float3 F0, float3 F90, float3 diffColor
+#ifdef UZ_AREA_LIGHT_SHADOWS
+                        , float3 geometricNormal, float2 areaShadowShift
+#endif
+                        )
 {
     const float3 toCenter = rl.position - worldPos;
     const float f = dot(toCenter, toCenter) / max(rl.range * rl.range, 1e-4);
@@ -640,9 +658,18 @@ float3 ShadeShapedLight(RectLightData rl, float3 worldPos, float3 N, float3 V, f
     const float specForm = LtcEvaluatePolygon(N, V, worldPos, LtcInverseMatrix(t1), vertices, count, twoSided);
     const float3x3 identity = float3x3(1, 0, 0, 0, 1, 0, 0, 0, 1);
     const float diffForm = LtcEvaluatePolygon(N, V, worldPos, identity, vertices, count, twoSided);
+#ifdef UZ_AREA_LIGHT_SHADOWS
+    if (diffForm <= 0.0 && specForm <= 0.0) return 0.0;
+    const float2 visibility = AreaShadowVisibility(rl, worldPos, geometricNormal, N, V, LtcInverseMatrix(t1),
+                                                   areaShadowShift);
+    return (diffForm * diffColor * rl.diffuseScale * visibility.x
+          + specForm * (F0 * t2.x + (F90 - F0) * t2.y) * rl.specularScale * visibility.y)
+          * rl.color * (window * window);
+#else
     return (diffForm * diffColor * rl.diffuseScale
           + specForm * (F0 * t2.x + (F90 - F0) * t2.y) * rl.specularScale)
           * rl.color * (window * window);
+#endif
 }
 #endif
 #endif
@@ -929,14 +956,25 @@ LightingOutput main(FSInput input) {
     if (rectLightCount > 0u && rectLightsSrv != kSentinelSrvIndex
         && ltcMatrixSrv != kSentinelSrvIndex && ltcMagnitudeSrv != kSentinelSrvIndex) {
         StructuredBuffer<RectLightData> rectLights = ResourceDescriptorHeap[rectLightsSrv];
+#ifdef UZ_AREA_LIGHT_SHADOWS
+        const float2 areaShadowShift = AreaShadowShift(input.positionCS.xy, uint(timeParams.z));
+#endif
         [loop]
         for (uint ri = 0u; ri < rectLightCount; ++ri) {
 #ifdef UZ_SHAPED_LIGHTS
             if ((rectLights[ri].flags & (kRectLightFlag_Disk | kRectLightFlag_Tube)) != 0u) {
-                Lo += ShadeShapedLight(rectLights[ri], worldPos, N, V, NoV, roughness, F0, F90, diffColor);
+                Lo += ShadeShapedLight(rectLights[ri], worldPos, N, V, NoV, roughness, F0, F90, diffColor
+#ifdef UZ_AREA_LIGHT_SHADOWS
+                                       , geometricNormal, areaShadowShift
+#endif
+                                       );
             } else
 #endif
-            Lo += ShadeRectLight(rectLights[ri], worldPos, N, V, NoV, roughness, F0, F90, diffColor);
+            Lo += ShadeRectLight(rectLights[ri], worldPos, N, V, NoV, roughness, F0, F90, diffColor
+#ifdef UZ_AREA_LIGHT_SHADOWS
+                                 , geometricNormal, areaShadowShift
+#endif
+                                 );
         }
     }
 #endif

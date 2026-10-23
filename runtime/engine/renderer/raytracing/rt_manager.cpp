@@ -51,6 +51,10 @@ static auto* cv_RTAO          = UZ_CVAR_BOOL("r.RayTracing.AO", false,
 static auto* cv_RTGI          = UZ_CVAR_BOOL("r.RayTracing.GI", false,
     "Enable ray-traced global illumination");
 
+static auto* cv_AreaLightShadows = UZ_CVAR_BOOL("r.Lighting.AreaLightShadows", true,
+    "DXR soft shadows for LTC rectangle, disk and tube lights (requires a non-empty TLAS; "
+    "frames without area lights or without DXR are unchanged)");
+
 namespace uz {
 
 bool RTManager::Init(IRHIDevice* device, uint32_t maxInstances) {
@@ -86,10 +90,10 @@ bool RTManager::Init(IRHIDevice* device, uint32_t maxInstances) {
 
 void RTManager::BeginFrame(const DrawCommand* drawCommands, uint32_t drawCount,
                             const GPUMesh* meshes, uint32_t meshCount,
-                            IRHICommandList* cmdList) {
+                            IRHICommandList* cmdList, bool hasAreaLights) {
     // Checked each frame — the master switch and the reflections switch can be toggled at
     // runtime; with both off nothing is built and the TLAS stays empty.
-    if (!NeedsTLAS()) return;
+    if (!NeedsTLAS(hasAreaLights)) return;
 
     m_tlasMgr.Rebuild(drawCommands, drawCount, meshes, meshCount, m_blasMgr, cmdList);
 }
@@ -108,8 +112,13 @@ bool RTManager::IsEnabled() const {
     return m_initialized && cv_RTEnabled->value >= 0.5f;
 }
 
-bool RTManager::NeedsTLAS() const {
-    return RTFrameNeedsTLAS(m_initialized, cv_RTEnabled->value >= 0.5f, cv_RTReflections->value >= 0.5f);
+bool RTManager::NeedsTLAS(bool hasAreaLights) const {
+    return RTFrameNeedsTLAS(m_initialized, cv_RTEnabled->value >= 0.5f,
+                           cv_RTReflections->value >= 0.5f, hasAreaLights && cv_AreaLightShadows->value >= 0.5f);
+}
+
+bool RTManager::AreaLightShadowsAvailable() const {
+    return RTReflectionsAvailable(m_initialized, cv_AreaLightShadows->value >= 0.5f, GetTLASInstanceCount());
 }
 
 bool RTManager::ReflectionsAvailable() const {

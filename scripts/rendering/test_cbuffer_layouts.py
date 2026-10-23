@@ -145,7 +145,7 @@ ENTRIES = [
                 'clusterListSrv': 'clusterListSrv', 'clusterListUav': 'clusterListUav', 'clusterSlots': 'clusterSlots', 'clusterFlags': 'clusterFlags',
                 'clusterViewWidth': 'clusterViewWidth', 'clusterViewHeight': 'clusterViewHeight',
                 'rectLightCount': 'rectLightCount', 'rectLightsSrv': 'rectLightsSrv', 'ltcMatrixSrv': 'ltcMatrixSrv', 'ltcMagnitudeSrv': 'ltcMagnitudeSrv',
-                'surfaceCacheParamsSrv': 'surfaceCacheParamsSrv'},
+                'surfaceCacheParamsSrv': 'surfaceCacheParamsSrv', 'areaShadowTlasSrv': 'areaShadowTlasSrv'},
         'extra_structs': ['PointLightData', 'SpotLightData'],
         'extra_constants': ['kMaxPointLights', 'kMaxSpotLights', 'kClusterTileSize', 'kClusterSlices', 'kClusterSlotsMax', 'kClusterRecordUints',
                             'kClusterFlag_Enabled', 'kClusterFlag_Debug'],

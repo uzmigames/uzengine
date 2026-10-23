@@ -27,12 +27,13 @@ struct GPUMesh;
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Whether the frame rebuilds the TLAS: every ray-traced feature under the `r.RayTracing` master
-/// switch, or the reflections on their own — since Phase B `r.RayTracing.Reflections` defaults on
+/// switch, reflections, or requested area-light shadows. Since Phase B reflections default on
 /// and implies the TLAS build without switching any other RT feature on (DDGI, RT shadows / AO,
 /// the path tracer's TLAS and the UV test pass stay under the master switch). Nothing on a
 /// device without DXR (`dxrReady` = RTManager initialised).
-[[nodiscard]] inline bool RTFrameNeedsTLAS(bool dxrReady, bool masterSwitch, bool reflectionsSwitch) noexcept {
-    return dxrReady && (masterSwitch || reflectionsSwitch);
+[[nodiscard]] inline bool RTFrameNeedsTLAS(bool dxrReady, bool masterSwitch, bool reflectionsSwitch,
+                                        bool areaLightShadowsSwitch = false) noexcept {
+    return dxrReady && (masterSwitch || reflectionsSwitch || areaLightShadowsSwitch);
 }
 
 /// Whether the ray-traced reflection pass can run this frame: DXR initialised, the switch on and a
@@ -72,7 +73,7 @@ public:
     /// Call once per frame before any RT render passes.
     void BeginFrame(const DrawCommand* drawCommands, uint32_t drawCount,
                     const GPUMesh* meshes, uint32_t meshCount,
-                    IRHICommandList* cmdList);
+                    IRHICommandList* cmdList, bool hasAreaLights);
 
     /// Returns the TLAS SRV index in the global descriptor heap.
     [[nodiscard]] uint32_t GetTLASSRVIndex() const;
@@ -88,13 +89,14 @@ public:
     /// Returns true if RT is initialized AND r.RayTracing is enabled.
     [[nodiscard]] bool IsEnabled() const;
 
-    /// Returns true if the frame must rebuild the TLAS in BeginFrame(): the master switch, or
-    /// the default-on reflections alone (`RTFrameNeedsTLAS`).
-    [[nodiscard]] bool NeedsTLAS() const;
+    /// Master switch, reflections, or area shadows when the frame carries area lights.
+    [[nodiscard]] bool NeedsTLAS(bool hasAreaLights) const;
 
     /// Returns true if the ray-traced reflection pass can run this frame: IsReflectionsEnabled()
     /// with a built, non-empty TLAS (`RTReflectionsAvailable`). False = the SSR / probe fallback.
     [[nodiscard]] bool ReflectionsAvailable() const;
+
+    [[nodiscard]] bool AreaLightShadowsAvailable() const;
 
     /// Returns true if the RT UV test pass (r.RayTracing.TestPass) is active.
     [[nodiscard]] bool IsTestPassEnabled() const;

@@ -625,7 +625,8 @@ struct LightingCB {
     /// SDF reflections read the cache through it. UINT32_MAX = no cache (the hit shading unchanged).
     /// Written at execution by the surface-cache resolve pass (the record exists only then).
     uint32_t surfaceCacheParamsSrv = UINT32_MAX;
-    float    _pad2[39] = {};                     ///< Pad to 43264 bytes (256-byte multiple).
+    uint32_t areaShadowTlasSrv = UINT32_MAX;      ///< Only read by the area-shadow PSO permutation.
+    float    _pad2[38] = {};                     ///< Pad to 43264 bytes (256-byte multiple).
 };
 
 static_assert(sizeof(LightingCB) % 256 == 0, "LightingCB must be a multiple of 256 bytes (D3D12 CB alignment)");
@@ -636,6 +637,7 @@ static_assert(offsetof(LightingCB, clusterViewHeight) == 43084, "LightingCB::clu
 static_assert(offsetof(LightingCB, rectLightCount) == 43088, "LightingCB::rectLightCount offset");
 static_assert(offsetof(LightingCB, ltcMagnitudeSrv) == 43100, "LightingCB::ltcMagnitudeSrv offset");
 static_assert(offsetof(LightingCB, surfaceCacheParamsSrv) == 43104, "LightingCB::surfaceCacheParamsSrv offset (Phase D stage 3, the former pad)");
+static_assert(offsetof(LightingCB, areaShadowTlasSrv) == 43108, "LightingCB::areaShadowTlasSrv offset");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LocalLightShadowData — per-light shadow projection data for local lights

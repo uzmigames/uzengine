@@ -1,3 +1,35 @@
+## Phase E: DXR area-source visibility (2026-10-23)
+
+- [x] `r.Lighting.AreaLightShadows` defaults ON. A separate deferred PSO adds
+  16 Hammersley source samples per area light, toroidally shifted per pixel
+  (IGN) and per frame (R2) so the existing TAA accumulates them (a shared
+  fixed pattern banded the disk/tube penumbras). OFF, frames without area
+  lights and the non-DXR fallback keep the old unshadowed permutation.
+- Rectangle and disk samples cover their area uniformly; tube samples cover
+  the cylinder and both hemispheres in proportion to surface area.
+- Diffuse and LTC-specular visibility are normalized independently using
+  their lobe density and the emitter cosine / squared distance. These
+  self-normalized ratios are bounded in [0,1] (no fireflies), with an O(1/N)
+  finite-sample bias (diffuse < 0.01; 0.031 on a sharp glossy cell in the
+  gtest). No dedicated temporal history or spatial blur; TAA accumulates.
+- The TLAS demand includes this switch independently of reflections and the
+  RT master switch; a missing or empty TLAS selects the unshadowed fallback.
+  One SRV index reuses LightingCB padding without growing its C++ allocation
+  or the deferred root signature.
+- CPU tests cover clear/blocked/bounded visibility, quadrature convergence,
+  separate diffuse/glossy weighting and the additional TLAS-demand switch.
+  `scripts/rendering/area-light-shadows/` supplies an occluder scene and
+  bounded rect/disk/tube raster/PT capture and analysis commands.
+- Evidence (2026-10-23, `E:/UzmiEngine/area-shadow-evidence/v2`): shadow-ROI
+  RMSE vs PT OFF->ON rect 0.0625->0.0060, disk 0.0694->0.0040, tube
+  0.0304->0.0031; max code delta 0 for reflection-reference OFF/ON/default
+  vs c40cab0b, rect OFF vs c40cab0b, no-DXR vs OFF; default == ON. Temporal
+  std in the ROI <= 1.6e-3 HDR mean (~0.5 display code). Added
+  DeferredLighting (median of 3, 640x360, one light) rect +0.086 ms, disk
+  +0.024 ms, tube +0.001 ms. The PT fixtures use fov 38.58: the
+  `--path-trace` camera spans 2x tan(fov/2) of the raster one (pre-existing,
+  open follow-up; it also affects the area-light-shapes PT pairs).
+
 ## 1. Implementation
 
 - [x] 1.1 Generate LTC precomputed textures — `scripts/rendering/bake_ltc_lut.py` re-implements Heitz et al. 2016's reference fitter (GGX + height-correlated Smith, 64×64, Nelder-Mead on (m11, m22, m13), MIS cubic error, the reference warm-start order; 14 s on 32 cores, deterministic). Cross-checked against the published tables shipped by three.js (`RectAreaLightTexturesLib`): magnitude/fresnel agree to 2e-4 everywhere, matrix entries to a median relative 1.3e-4 for roughness ≥ 0.2 (only the degenerate θ = 1.57 row differs). Embedded as `runtime/engine/renderer/lighting/ltc_lut_data.inc` (float32, 344 KB), created on demand as 64×64 RGBA32F (M⁻¹, packed like the reference `ltc_1`) + RG32F (magnitude, fresnel) textures by `ltc_lut.cpp`. 32-bit because the near-mirror columns hold entries up to ~1e5.

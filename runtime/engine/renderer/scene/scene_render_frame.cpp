@@ -110,7 +110,8 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     // Under the `r.RayTracing` master switch (every RT feature) or, since Phase B, for the
     // default-on reflections alone (RTManager::NeedsTLAS); the UV test pass below stays under
     // the master switch (IsTestPassEnabled).
-    if (m_rtManager && m_rtManager->NeedsTLAS()) {
+    const bool hasAreaLights = ctx.lightData.rectLightCount + ctx.lightData.shapedLightCount > 0u;
+    if (m_rtManager && m_rtManager->NeedsTLAS(hasAreaLights)) {
         if (m_gpuProfileEnabled) {
             m_device->GpuProfilerBeginTimestamp(cmdList, "RT_BLAS_TLAS");
         }
@@ -119,7 +120,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         m_rtManager->BeginFrame(
             cmds.data(), static_cast<uint32_t>(cmds.size()),
             m_meshes.data(), static_cast<uint32_t>(m_meshes.size()),
-            cmdList);
+            cmdList, hasAreaLights);
 
         if (m_gpuProfileEnabled) {
             m_device->GpuProfilerEndTimestamp(cmdList, "RT_BLAS_TLAS");

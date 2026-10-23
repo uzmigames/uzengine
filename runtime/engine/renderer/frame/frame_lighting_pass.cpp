@@ -22,8 +22,10 @@
 #include "cvar.h"
 #include "shader_manager.h"   // the UZ_RECT_LIGHTS lighting permutation (rect area lights)
 #include "engine_shaders.h"
+#include "raytracing/rt_manager.h"
 
 #include <cstring>
+#include <string>
 
 /// Lighting decomposition debug view, read by deferred_lighting_ps.hlsl
 /// through the lighting pass root constants (GBufferIndices).
@@ -122,20 +124,21 @@ void SceneRenderer::RegisterLightCullPass(rg::RgBuilder& rgBuilder, FrameContext
     });
 }
 
-RHIPipelineHandle SceneRenderer::EnsureRectLightLightingPipeline(bool cloudGroundShadows, bool shapedLights) {
-    const int slot = (cloudGroundShadows ? 1 : 0) + (shapedLights ? 2 : 0);
+RHIPipelineHandle SceneRenderer::EnsureRectLightLightingPipeline(bool cloudGroundShadows, bool shapedLights, bool areaShadows) {
+    const int slot = (cloudGroundShadows ? 1 : 0) + (shapedLights ? 2 : 0) + (areaShadows ? 4 : 0);
     if (m_rectLightLightingPipeline[slot].IsValid()) return m_rectLightLightingPipeline[slot];
     if (m_rectLightPipelineFailed[slot]) return RHIPipelineHandle::Invalid();
 
     if (!m_rectLightFullscreenVS.IsValid()) {
         m_rectLightFullscreenVS = m_shaderMgr->CreateShader(EngineShader::FullscreenVS, RHIShaderStage::Vertex);
     }
-    const char* defines = shapedLights
+    std::string defines = shapedLights
         ? (cloudGroundShadows ? "UZ_CLOUD_GROUND_SHADOWS=1;UZ_RECT_LIGHTS=1;UZ_SHAPED_LIGHTS=1"
                               : "UZ_RECT_LIGHTS=1;UZ_SHAPED_LIGHTS=1")
         : (cloudGroundShadows ? "UZ_CLOUD_GROUND_SHADOWS=1;UZ_RECT_LIGHTS=1" : "UZ_RECT_LIGHTS=1");
+    if (areaShadows) defines += ";UZ_AREA_LIGHT_SHADOWS=1";
     m_rectLightLightingPS[slot] = m_shaderMgr->CreateShaderWithDefines(EngineShader::DeferredLightingPS,
-        RHIShaderStage::Pixel, defines);
+        RHIShaderStage::Pixel, defines.c_str());
     if (!m_rectLightFullscreenVS.IsValid() || !m_rectLightLightingPS[slot].IsValid()) {
         UZ_LOG(Renderer, Error, "SceneRenderer: rect area light lighting permutation (cloud shadows={}) failed to compile; "
                "rect lights are skipped", cloudGroundShadows);
@@ -225,7 +228,7 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
 
     if (!debugActive) {
         LightingPassDesc lightDesc{};
-        const auto* lightingCB = reinterpret_cast<const LightingCB*>(ctx.lightingAlloc.cpuPtr);
+        auto* lightingCB = reinterpret_cast<LightingCB*>(ctx.lightingAlloc.cpuPtr);
         if (lightingCB && lightingCB->clusterListSrv != UINT32_MAX && m_clusterListBuffer.IsValid()) {
             lightDesc.clusterListResource = rgBuilder.ImportTrackedBuffer("LightClusterList", m_clusterListBuffer);
         }
@@ -251,9 +254,11 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
         // carry one, so the stock pipeline (and its output) is untouched for every other scene.
         if (ctx.bindless && lightingCB && lightingCB->rectLightCount > 0
             && lightingCB->rectLightsSrv != UINT32_MAX && m_ltcLut.IsReady()) {
+            const bool areaShadows = m_rtManager && m_rtManager->AreaLightShadowsAvailable();
+            lightingCB->areaShadowTlasSrv = areaShadows ? m_rtManager->GetTLASSRVIndex() : UINT32_MAX;
             const RHIPipelineHandle rectPso =
                 EnsureRectLightLightingPipeline(lightDesc.cloudShadowCascadeCount != 0,
-                                                ctx.lightData.shapedLightCount > 0);
+                                                ctx.lightData.shapedLightCount > 0, areaShadows);
             if (rectPso.IsValid()) lightDesc.pipeline = rectPso;
         }
         lightDesc.albedoSrvIndex      = m_gbuffer.albedoSRV;

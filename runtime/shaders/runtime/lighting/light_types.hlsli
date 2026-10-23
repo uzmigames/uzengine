@@ -89,7 +89,8 @@ cbuffer LightingCB : register(b2)
 
     // ── Surface radiance cache (Phase D stage 3) in the former pad, offset 43104; mirrors constant_buffers.h ──
     uint   surfaceCacheParamsSrv; // bindless SRV of the frame's StructuredBuffer<SurfaceCacheParams> (0xffffffff = no cache)
-    float  _lightPad2[42];     // pad; the C++ struct is 43264 bytes
+    uint   areaShadowTlasSrv;
+    float  _lightPad2[42];     // retain the unshadowed shader's reflected extent
 };
 
 /// The cluster a pixel of the lighting pass belongs to: its 32-pixel tile and its logarithmic depth

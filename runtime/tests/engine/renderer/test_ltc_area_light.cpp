@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 using namespace uz;
@@ -187,7 +188,100 @@ double BruteForce(D3 N, D3 V, D3 P, const M3& Minv, D3 c, D3 right, double hw, D
 
 const M3 kIdentity{};
 
+// Independent area integral for the weighted-visibility estimator in
+// area_light_shadows.hlsli. An occluder cuts x < cut out of a horizontal source.
+double ShadowVisibility(const M3& inverse, double cut, int resolution) {
+    double visible = 0.0, total = 0.0;
+    for (int y = 0; y < resolution; ++y) {
+        for (int x = 0; x < resolution; ++x) {
+            const D3 target{(x + 0.5) / resolution * 4.0 - 2.0,
+                            (y + 0.5) / resolution * 2.0 - 1.0, 3.0};
+            const double distance2 = Dot(target, target);
+            const D3 direction = Normalize(target);
+            const D3 q = inverse * direction;
+            const double q2 = Dot(q, q);
+            const double weight = std::fmax(q.z, 0.0) / (q2 * q2) * direction.z / distance2;
+            total += weight;
+            if (target.x >= cut) visible += weight;
+        }
+    }
+    return total > 0.0 ? visible / total : 1.0;
+}
+
+// One frame of the shader estimator (AreaShadowVisibility): 16 Hammersley points on the
+// same source, toroidally shifted by `shift` (AreaShadowShift: per pixel + R2 per frame).
+double RotatedShadowVisibility(const M3& inverse, double cut, double sx, double sy) {
+    constexpr int kSamples = 16;
+    double visible = 0.0, total = 0.0;
+    for (uint32_t i = 0; i < kSamples; ++i) {
+        uint32_t bits = i;
+        bits = (bits << 16u) | (bits >> 16u);
+        bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
+        bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
+        bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
+        bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
+        double ux = (i + 0.5) / kSamples + sx, uy = bits * 2.3283064365386963e-10 + sy;
+        ux -= std::floor(ux);
+        uy -= std::floor(uy);
+        const D3 target{ux * 4.0 - 2.0, uy * 2.0 - 1.0, 3.0};
+        const D3 direction = Normalize(target);
+        const D3 q = inverse * direction;
+        const double q2 = Dot(q, q);
+        const double weight = std::fmax(q.z, 0.0) / (q2 * q2) * direction.z / Dot(target, target);
+        total += weight;
+        if (target.x >= cut) visible += weight;
+    }
+    return total > 0.0 ? visible / total : 1.0;
+}
+
 } // namespace
+
+TEST(LtcAreaShadowTest, VisibilityIsBoundedAndPreservesClearAndBlockedSources) {
+    for (const auto& inverse : {kIdentity, LtcInverseMatrix(MatrixCell(32, 16))}) {
+        EXPECT_DOUBLE_EQ(ShadowVisibility(inverse, -3.0, 64), 1.0);
+        EXPECT_DOUBLE_EQ(ShadowVisibility(inverse, 3.0, 64), 0.0);
+        for (const double cut : {-1.5, -0.5, 0.0, 0.5, 1.5}) {
+            const double visibility = ShadowVisibility(inverse, cut, 64);
+            EXPECT_GE(visibility, 0.0);
+            EXPECT_LE(visibility, 1.0);
+            EXPECT_NEAR(visibility, ShadowVisibility(inverse, cut, 256), 0.002);
+        }
+    }
+    EXPECT_NEAR(ShadowVisibility(kIdentity, 0.0, 64), 0.5, 1e-12);
+}
+
+// The per-pixel/per-frame shift that TAA accumulates: every frame is bounded (no fireflies),
+// clear and blocked sources stay exact, and the frame average converges to the dense integral.
+// Each frame is a self-normalized ratio, so the average of ratios keeps an O(1/N) bias: within
+// 0.01 for the diffuse lobe, measured 0.031 for this sharp glossy cell at N = 16.
+TEST(LtcAreaShadowTest, RotatedSamplesAreBoundedAndAccumulateToTheDenseVisibility) {
+    for (const auto& [inverse, tolerance] : {std::pair{kIdentity, 0.01},
+                                             std::pair{LtcInverseMatrix(MatrixCell(32, 16)), 0.04}}) {
+        for (const double cut : {-1.5, -0.5, 0.0, 0.5, 1.5}) {
+            const double reference = ShadowVisibility(inverse, cut, 256);
+            double sum = 0.0;
+            constexpr int kFrames = 256;
+            for (int frame = 0; frame < kFrames; ++frame) {
+                double sx = 0.37 + frame * 0.7548776662, sy = 0.81 + frame * 0.5698402910;
+                sx -= std::floor(sx);
+                sy -= std::floor(sy);
+                const double v = RotatedShadowVisibility(inverse, cut, sx, sy);
+                EXPECT_GE(v, 0.0);
+                EXPECT_LE(v, 1.0);
+                sum += v;
+            }
+            EXPECT_NEAR(sum / kFrames, reference, tolerance) << "cut " << cut;
+        }
+        EXPECT_DOUBLE_EQ(RotatedShadowVisibility(inverse, -3.0, 0.3, 0.6), 1.0);
+        EXPECT_DOUBLE_EQ(RotatedShadowVisibility(inverse, 3.0, 0.3, 0.6), 0.0);
+    }
+}
+
+TEST(LtcAreaShadowTest, GlossyAndDiffuseVisibilityAreNotAUniformAreaFraction) {
+    const double diffuse = ShadowVisibility(kIdentity, 0.5, 128);
+    const double glossy = ShadowVisibility(LtcInverseMatrix(MatrixCell(32, 16)), 0.5, 128);
+    EXPECT_GT(std::fabs(diffuse - glossy), 0.01);
+}
 
 // ── Tables ───────────────────────────────────────────────────────────────────
 

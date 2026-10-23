@@ -64,10 +64,10 @@
     /// built on first use for frames that carry an area light so the
     /// stock pipeline's DXIL stays byte-identical for every other scene (frame_lighting_pass.cpp).
     RHIShaderHandle   m_rectLightFullscreenVS;
-    RHIShaderHandle   m_rectLightLightingPS[4];
-    RHIPipelineHandle m_rectLightLightingPipeline[4];
-    bool              m_rectLightPipelineFailed[4] = {};
-    RHIPipelineHandle EnsureRectLightLightingPipeline(bool cloudGroundShadows, bool shapedLights);
+    RHIShaderHandle   m_rectLightLightingPS[8];
+    RHIPipelineHandle m_rectLightLightingPipeline[8];
+    bool              m_rectLightPipelineFailed[8] = {};
+    RHIPipelineHandle EnsureRectLightLightingPipeline(bool cloudGroundShadows, bool shapedLights, bool areaShadows);
 
     // ── GBuffer + Shadow Atlas ─────────────────────────────────────────────
 
