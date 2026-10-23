@@ -12,6 +12,16 @@
     "Other"
   ],
   "main": "./out/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "UzEngine loads its native runtime and executes the workspace's project Lua scripts, scenes and shaders, so it only runs in trusted workspaces."
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "UzEngine passes real file-system paths of scenes and content roots to its native runtime, which cannot read virtual file systems."
+    }
+  },
   "activationEvents": [
     "onLanguage:uzscene",
     "onLanguage:uzproject",

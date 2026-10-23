@@ -374,7 +374,7 @@ describe('viewport webview protocol', () => {
     let receive: (event: { data: unknown }) => void = () => {};
     const postMessage = vi.fn();
     const chunks: Array<{ type: string; data: Uint8Array }> = [];
-    const script = panel.webview.html.match(/<script>([\s\S]*?)<\/script>/)![1];
+    const script = panel.webview.html.match(/<script nonce="[^"]+">([\s\S]*?)<\/script>/)![1];
     runInNewContext(script, {
       acquireVsCodeApi: () => ({ postMessage }),
       document: { getElementById, addEventListener: vi.fn() },
