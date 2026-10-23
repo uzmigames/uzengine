@@ -44,6 +44,28 @@ zig build -Doptimize=ReleaseFast   # Shipping performance
 - Tracy compiled out (`TRACY_ENABLE` not defined in release builds)
 - spdlog minimum level: Info
 
+## Build Options
+
+| Zig option | CMake cache variable | Default | Effect |
+|------------|----------------------|---------|--------|
+| `-Dtracy=true\|false` | `UZ_TRACY=AUTO\|ON\|OFF` | On for `Debug`/`ReleaseSafe` (CMake `Debug`/`RelWithDebInfo`), off for `ReleaseFast`/`ReleaseSmall` (CMake `Release`/`MinSizeRel`) | Compiles the Tracy profiler client (`TRACY_ENABLE`, `TRACY_ON_DEMAND`). When off, `UZ_PROFILE_*` CPU macros expand to nothing and no profiler socket exists. |
+
+When Tracy is on, the build always adds `TRACY_ONLY_LOCALHOST` and
+`TRACY_NO_BROADCAST`: the client listens on loopback only and sends no UDP
+discovery broadcasts. The Tracy protocol lets a connected viewer read arbitrary
+process memory (symbol code queries) and open files by path (source queries),
+so the listener must never be reachable from the network. To profile a remote
+machine, forward the port over SSH (`ssh -L 8086:localhost:8086 host`) instead
+of widening the bind.
+
+```bash
+zig build -Doptimize=ReleaseFast -Dtracy=true   # Profile an optimized build
+zig build -Dtracy=false                          # Debug build without Tracy
+```
+
+The engine's CMake path ignores Tracy on MSVC (`TRACY_ENABLE` is never defined
+for the MSVC compiler).
+
 ## DLL Deployment
 
 ### Agility SDK

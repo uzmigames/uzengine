@@ -4,6 +4,11 @@
 /// basis_universal transcoder, and astcenc are correctly installed, headers
 /// compile, and core functionality works end-to-end.
 
+// STATIC keeps this TU's decoder private. A non-static copy would satisfy every
+// stbi_* reference in test_runtime, so the linker would never pull the
+// runtime's format-restricted stb_impl.cpp and engine loaders under test would
+// silently decode formats (GIF, PSD, ...) that the shipped runtime rejects.
+#define STB_IMAGE_STATIC
 #define STB_IMAGE_IMPLEMENTATION
 // Use STATIC variant to avoid duplicate extern symbols when linked alongside editor.lib,
 // which also defines STB_IMAGE_WRITE_IMPLEMENTATION. Each TU gets its own static copies.

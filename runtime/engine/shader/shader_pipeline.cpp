@@ -18,6 +18,7 @@
 
 #include "shader_permutation.h"
 
+#include <algorithm>
 #include <sstream>
 
 #define XXH_INLINE_ALL
