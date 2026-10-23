@@ -6,7 +6,7 @@ Priority review: 2026-10-10. Stabilize the current Windows renderer and editor b
 
 **Start with the first ready item below. Phase numbers and old `in-progress` metadata do not set priority.**
 
-Inventory: 86 task directories; 2 blocked; 9 completed; 5 in-progress; 66 pending; 4 untracked.
+Inventory: 66 task directories; 2 blocked; 4 in-progress; 56 pending; 4 untracked.
 Progress is read from current checklists. Completed metadata is a closure claim, not fresh test evidence.
 
 P0 = trustworthy execution and state/lifetime blockers; P1 = current visual correctness; P2 = complete existing paths and measured improvements; P3 = expansion.
@@ -15,36 +15,39 @@ Planning gates and dependencies below are local queue constraints; they do not r
 
 ## Next action
 
+[Fix dx12 first frame resource state crash](tasks/phase0_fix-dx12-first-frame-resource-state-crash/tasks.md)
 
-2.1 Graph imports switched to tracked imports (the design's 7.1) with the required fixes.
+5.1 Run vfx_viewport_app with DX12 debug layer -> zero D3D12 errors. **BLOCKED (toolchain, not crash-fix)**: demo build fails — PATH Zig 0.16 breaks build_common.zig:201/439 (0.15.2-only); vendored 0.15.2 then fails link `__hash_memory` (runtime.lib built with 0.16 libcxx vs 0.15.2 demo). Needs a consistent-toolchain rebuild (separate build-system task). Crash fix verified on the main uzengine binary instead (GBV 120f, zero barrier errors). See verification.md.
 
-## P0 — execution order (6 items)
-
-| Order | Work and scope | Why now | Readiness |
-|---|---|---|---|
-| 40 | [Fix entity lifetime, scene loading and editor ownership](tasks/phase0_project-stabilization-audit/tasks.md) — items 2.1, 2.2, 2.3, 2.4, 2.5, 2.6 | Bound ECS generations, serialize world mutation, preserve scenes on load failure, bound IPC and remove absolute discovery paths. | Ready for next action |
-
-## P1 — execution order (10 items)
+## P0 — execution order (1 items)
 
 | Order | Work and scope | Why now | Readiness |
 |---|---|---|---|
-| 90 | [Correct material graph context and glass contracts](tasks/phase0_project-stabilization-audit/tasks.md) — items 3.5, 3.6 | Real time, camera, object, vertex and viewport data precede BRDF feature expansion. | Ready for next action |
+| 30 | [Fix dx12 first frame resource state crash](tasks/phase0_fix-dx12-first-frame-resource-state-crash/tasks.md) — 29/31 checked; pending | Reproduce the old startup crash on the current build and reconcile remaining init barriers; do not reintroduce frame-index state guesses. | Ready for next action |
+
+## P1 — execution order (4 items)
+
+| Order | Work and scope | Why now | Readiness |
+|---|---|---|---|
+| 95 | [Scene load readiness](tasks/phase0_scene-load-readiness/tasks.md) — 0/24 checked; in-progress | The Present gate renders invisible frames (1.05 s of a 2.6 s Sponza pre-load), the first presented frame inherits GI history from a partial scene, and capture determinism rests on a worker wait. Explicit readiness states and a reveal-time temporal rebase fix the cause; schedule after the temporal gate since 1.2 edits the same history state. | Ready for next action |
+| 150 | [Vfx mesh bindless attr read bug](tasks/phase0_vfx-mesh-bindless-attr-read-bug/tasks.md) — 10/17 checked; blocked | Garbage mesh-particle attributes are a correctness defect; retain the existing GPU-capture blocker, not a fake ready state. | Waiting: existing Rulebook blocker: read task evidence |
 | 160 | [Vfx sort pipeline hardware validation](tasks/phase16_vfx-sort-pipeline-hardware-validation/tasks.md) — 0/15 checked; blocked | Validate mesh-particle sorting only after attribute reads work; requires real DX12 capture evidence. | Waiting: existing Rulebook blocker: read task evidence; phase0_vfx-mesh-bindless-attr-read-bug |
+| 170 | [Accept the corrected renderer with images and sequences](tasks/phase0_project-stabilization-audit/tasks.md) — items 4.1 | Record matched Falcor and temporal evidence before treating the renderer as the next feature baseline. | Ready for next action |
 
-## P2 — execution order (14 items)
+## P2 — execution order (11 items)
 
 | Order | Work and scope | Why now | Readiness |
 |---|---|---|---|
-| 190 | [Publish actual tracer and post-process capability limits](tasks/phase0_project-stabilization-audit/tasks.md) — items 3.7 | Documentation must distinguish working paths from unfinished features; no new effect implementation is implied. | Ready for next action |
-| 200 | [Falcor dlss integration](tasks/phase1_falcor-dlss-integration/tasks.md) — 10/14 checked; pending | Finish RTX validation after correct motion/history and path-agnostic capability selection. | Waiting: gate temporal; gate visual |
-| 210 | [Fsr2 full integration](tasks/phase2_fsr2-full-integration/tasks.md) — 0/23 checked; pending | SDK integration follows the P1 unavailable-backend guard and valid velocity; it is not the guard itself. | Waiting: gate temporal; gate visual |
+| 200 | [Falcor dlss integration](tasks/phase1_falcor-dlss-integration/tasks.md) — 10/14 checked; pending | Finish RTX validation after correct motion/history and path-agnostic capability selection. | Waiting: gate visual |
+| 210 | [Fsr2 full integration](tasks/phase2_fsr2-full-integration/tasks.md) — 0/23 checked; pending | SDK integration follows the P1 unavailable-backend guard and valid velocity; it is not the guard itself. | Waiting: gate visual |
 | 220 | [Reflection probes](tasks/phase3a-3.37.0-reflection-probes/tasks.md) — 12/20 checked; pending | Verify the partially implemented local-reflection fallback before wider reflection expansion. | Waiting: gate visual |
-| 250 | [Multi material multi uv](tasks/phase5-5.1.0-multi-material-multi-uv/tasks.md) — 5/47 checked; pending | Asset correctness for real multi-primitive meshes; upstream of lightmaps and advanced material authoring. | Waiting: gate materials; gate visual |
-| 260 | [Fbx skeletal animation pipeline](tasks/phase3-3.0.0-fbx-skeletal-animation-pipeline/tasks.md) — 30/84 checked; pending | Consolidate import/skinning/animation ownership before expanding the two overlapping phase4 tasks. | Waiting: gate temporal; gate visual |
+| 230 | [Ssr stochastic refactor](tasks/phase2_ssr-stochastic-refactor/tasks.md) — 43/64 checked; pending | Reconcile later layered-reflection fixes first; remaining work overlaps reflection probes and denoising. | Waiting: phase3a-3.37.0-reflection-probes; gate visual |
+| 240 | [Volumetric clouds rewrite](tasks/phase0-3.1.0-volumetric-clouds-rewrite/tasks.md) — 76/78 checked; pending | Finish graph integration and verify current clouds before the separate UE5 parity expansion. | Waiting: gate visual |
+| 250 | [Multi material multi uv](tasks/phase5-5.1.0-multi-material-multi-uv/tasks.md) — 5/47 checked; pending | Asset correctness for real multi-primitive meshes; upstream of lightmaps and advanced material authoring. | Waiting: gate visual |
+| 260 | [Fbx skeletal animation pipeline](tasks/phase3-3.0.0-fbx-skeletal-animation-pipeline/tasks.md) — 30/84 checked; pending | Consolidate import/skinning/animation ownership before expanding the two overlapping phase4 tasks. | Waiting: gate visual |
 | 270 | [Lod system](tasks/phase3a-3.38.0-lod-system/tasks.md) — 5/18 checked; pending | Measure geometry cost and complete LOD behavior against a stable image baseline. | Waiting: gate visual |
-| 280 | [Editor visual tools](tasks/phase5-5.1.0-editor-visual-tools/tasks.md) — 33/51 checked; pending | Finish picking/gizmo visual checks after editor/world ownership is safe. | Waiting: gate lifecycle; gate visual |
-| 290 | [Measure batching, VFS and maintain shared layouts](tasks/phase0_project-stabilization-audit/tasks.md) — items 5.1, 5.2, 5.3, 6.1, 6.2, 6.3 | Optimize measured costs and simplify boundaries after correctness, then close the umbrella with evidence. | Waiting: gate visual |
-| 300 | [Vscode pass inspector ui](tasks/phase5-5.2.0-vscode-pass-inspector-ui/tasks.md) — 0/20 checked; untracked | Useful diagnostic UI, but existing CLI diagnostics already unblock P0/P1 work. | Waiting: gate lifecycle |
+| 280 | [Editor visual tools](tasks/phase5-5.1.0-editor-visual-tools/tasks.md) — 33/51 checked; pending | Finish picking/gizmo visual checks after editor/world ownership is safe. | Waiting: gate visual |
+| 300 | [Vscode pass inspector ui](tasks/phase5-5.2.0-vscode-pass-inspector-ui/tasks.md) — 0/20 checked; untracked | Useful diagnostic UI, but existing CLI diagnostics already unblock P0/P1 work. | Ready for next action |
 | 310 | [Quality scalability system](tasks/phase3a-quality-scalability-system/tasks.md) — 0/45 checked; untracked | Presets must describe working validated capabilities, not conceal correctness defects. | Waiting: gate visual |
 
 ## P3 — execution order (31 items)
@@ -54,36 +57,36 @@ Planning gates and dependencies below are local queue constraints; they do not r
 | 400 | [Port metal shader pipeline](tasks/phase1_port-metal-shader-pipeline/tasks.md) — 8/14 checked; in-progress | Preserve existing work but defer platform expansion behind the current Windows stability objective; needs macOS validation. | Waiting: gate visual |
 | 410 | [Volumetric clouds ue5 parity](tasks/phase2-volumetric-clouds-ue5-parity/tasks.md) — 0/133 checked; untracked | Feature parity follows the cloud core; its historic P1 label is not today's execution priority. | Waiting: phase0-3.1.0-volumetric-clouds-rewrite |
 | 420 | [Omni pcss soft shadows](tasks/phase2_omni-pcss-soft-shadows/tasks.md) — 0/17 checked; pending | Shadow-quality expansion after current lighting and state correctness. | Waiting: gate visual |
-| 430 | [Area lights ltc](tasks/phase3a-3.33.0-area-lights-ltc/tasks.md) — 0/20 checked; pending | New light model; not required to stabilize existing point/spot/directional paths. | Waiting: gate materials; gate visual |
-| 440 | [Falcor layered materials](tasks/phase1_falcor-layered-materials/tasks.md) — 0/12 checked; pending | Choose residual layered-material scope after reconciling existing advanced-material implementations. | Waiting: gate materials; gate visual |
-| 450 | [Anisotropic ggx brdf](tasks/phase2_anisotropic-ggx-brdf/tasks.md) — 4/24 checked; pending | New BRDF integration follows correct material context and layout contracts. | Waiting: gate materials; gate visual |
-| 460 | [Advanced sss burley profile](tasks/phase2_advanced-sss-burley-profile/tasks.md) — 0/26 checked; pending | Character material expansion; current renderer stability has higher user impact. | Waiting: gate materials; gate visual |
-| 470 | [F82 extended fresnel](tasks/phase2_f82-extended-fresnel/tasks.md) — 0/14 checked; pending | Additional Fresnel model after the existing material path is trustworthy. | Waiting: gate materials; gate visual |
-| 480 | [Iridescence thin film](tasks/phase2_iridescence-thin-film/tasks.md) — 0/19 checked; pending | Specialized appearance feature, not a current stability blocker. | Waiting: gate materials; gate visual |
-| 490 | [Anti tiling material](tasks/phase2_anti-tiling-material/tasks.md) — 0/30 checked; pending | Authoring enhancement after material inputs and UV handling are sound. | Waiting: gate materials; gate visual |
+| 430 | [Area lights ltc](tasks/phase3a-3.33.0-area-lights-ltc/tasks.md) — 0/20 checked; pending | New light model; not required to stabilize existing point/spot/directional paths. | Waiting: gate visual |
+| 440 | [Falcor layered materials](tasks/phase1_falcor-layered-materials/tasks.md) — 13/26 checked; pending | Choose residual layered-material scope after reconciling existing advanced-material implementations. | Waiting: gate visual |
+| 450 | [Anisotropic ggx brdf](tasks/phase2_anisotropic-ggx-brdf/tasks.md) — 4/24 checked; pending | New BRDF integration follows correct material context and layout contracts. | Waiting: gate visual |
+| 460 | [Advanced sss burley profile](tasks/phase2_advanced-sss-burley-profile/tasks.md) — 0/26 checked; pending | Character material expansion; current renderer stability has higher user impact. | Waiting: gate visual |
+| 470 | [F82 extended fresnel](tasks/phase2_f82-extended-fresnel/tasks.md) — 0/14 checked; pending | Additional Fresnel model after the existing material path is trustworthy. | Waiting: gate visual |
+| 480 | [Iridescence thin film](tasks/phase2_iridescence-thin-film/tasks.md) — 0/19 checked; pending | Specialized appearance feature, not a current stability blocker. | Waiting: gate visual |
+| 490 | [Anti tiling material](tasks/phase2_anti-tiling-material/tasks.md) — 0/30 checked; pending | Authoring enhancement after material inputs and UV handling are sound. | Waiting: gate visual |
 | 500 | [Agx tonemapping](tasks/phase2_agx-tonemapping/tasks.md) — 0/17 checked; pending | Optional tone-mapper expansion; do not change the reference transform during correctness work. | Waiting: gate visual |
 | 510 | [Lens flare](tasks/phase3a-3.24.0-lens-flare/tasks.md) — 4/19 checked; pending | Implement a complete effect only after current post-process capabilities are explicit. | Waiting: gate visual |
 | 520 | [Baked lightmap gi](tasks/phase2_baked-lightmap-gi/tasks.md) — 0/27 checked; pending | A separate GI/asset pipeline, not a remedy for broken real-time GI. | Waiting: phase5-5.1.0-multi-material-multi-uv; gate visual |
-| 530 | [Falcor light bvh](tasks/phase1_falcor-light-bvh/tasks.md) — 0/16 checked; pending | Large emissive-light sampling scalability; justify with a measured workload first. | Waiting: gate visual |
-| 540 | [Falcor restir di](tasks/phase1_falcor-restir-di/tasks.md) — 0/22 checked; pending | Advanced lighting architecture after the chosen light-sampling contract and temporal inputs. | Waiting: phase1_falcor-light-bvh; gate temporal; gate visual |
-| 550 | [Falcor nrd denoiser](tasks/phase1_falcor-nrd-denoiser/tasks.md) — 0/13 checked; pending | Define and validate noisy producer buffers before introducing another temporal consumer. | Waiting: gate temporal; gate visual |
-| 560 | [Falcor volumetric media](tasks/phase1_falcor-volumetric-media/tasks.md) — 0/18 checked; pending | New heterogeneous-volume support after existing atmosphere/fog is validated. | Waiting: gate visual |
-| 570 | [Falcor hair rendering](tasks/phase1_falcor-hair-rendering/tasks.md) — 0/20 checked; pending | New geometry and material pipeline with no dependency from current stabilization. | Waiting: gate materials; gate visual |
-| 600 | [Enhanced input system](tasks/phase4-4.0.0-enhanced-input-system/tasks.md) — 0/36 checked; pending | Gameplay milestone after the current editor/renderer is stable. | Waiting: gate lifecycle; gate visual |
-| 610 | [Physics jolt core](tasks/phase4-4.2.0-physics-jolt-core/tasks.md) — 0/32 checked; pending | New gameplay subsystem; no physics implementation is required to repair current rendering. | Waiting: gate lifecycle; gate visual |
+| 530 | [Falcor light bvh](tasks/phase1_falcor-light-bvh/tasks.md) — 23/26 checked; pending | Large emissive-light sampling scalability; justify with a measured workload first. | Waiting: gate visual |
+| 540 | [Falcor restir di](tasks/phase1_falcor-restir-di/tasks.md) — 26/48 checked; pending | Advanced lighting architecture after the chosen light-sampling contract and temporal inputs. | Waiting: phase1_falcor-light-bvh; gate visual |
+| 550 | [Falcor nrd denoiser](tasks/phase1_falcor-nrd-denoiser/tasks.md) — 14/24 checked; pending | Define and validate noisy producer buffers before introducing another temporal consumer. | Waiting: gate visual |
+| 560 | [Falcor volumetric media](tasks/phase1_falcor-volumetric-media/tasks.md) — 19/34 checked; pending | New heterogeneous-volume support after existing atmosphere/fog is validated. | Waiting: gate visual |
+| 570 | [Falcor hair rendering](tasks/phase1_falcor-hair-rendering/tasks.md) — 12/32 checked; pending | New geometry and material pipeline with no dependency from current stabilization. | Waiting: gate visual |
+| 600 | [Enhanced input system](tasks/phase4-4.0.0-enhanced-input-system/tasks.md) — 0/36 checked; pending | Gameplay milestone after the current editor/renderer is stable. | Waiting: gate visual |
+| 610 | [Physics jolt core](tasks/phase4-4.2.0-physics-jolt-core/tasks.md) — 0/32 checked; pending | New gameplay subsystem; no physics implementation is required to repair current rendering. | Waiting: gate visual |
 | 620 | [Physics queries character](tasks/phase4-4.2.1-physics-queries-character/tasks.md) — 0/30 checked; pending | Queries and character behavior require the physics core. | Waiting: phase4-4.2.0-physics-jolt-core |
 | 630 | [Camera system](tasks/phase4-4.1.0-camera-system/tasks.md) — 0/23 checked; pending | The complete proposal includes input-driven camera modes and collision-aware spring arms. | Waiting: phase4-4.0.0-enhanced-input-system; phase4-4.2.1-physics-queries-character |
-| 640 | [Audio core](tasks/phase4-4.4.0-audio-core/tasks.md) — 0/27 checked; pending | Gameplay expansion after core lifetime and renderer acceptance. | Waiting: gate lifecycle; gate visual |
+| 640 | [Audio core](tasks/phase4-4.4.0-audio-core/tasks.md) — 0/27 checked; pending | Gameplay expansion after core lifetime and renderer acceptance. | Waiting: gate visual |
 | 650 | [Audio 3d advanced](tasks/phase4-4.4.1-audio-3d-advanced/tasks.md) — 0/28 checked; pending | Complete spatial/occlusion scope needs audio foundations and physics queries. | Waiting: phase4-4.4.0-audio-core; phase4-4.2.1-physics-queries-character |
-| 660 | [Game dll abi](tasks/phase6-6.0.0-game-dll-abi/tasks.md) — 0/24 checked; pending | Stabilize world ownership and handles before exposing a game ABI. | Waiting: gate lifecycle; gate visual |
+| 660 | [Game dll abi](tasks/phase6-6.0.0-game-dll-abi/tasks.md) — 0/24 checked; pending | Stabilize world ownership and handles before exposing a game ABI. | Waiting: gate visual |
 | 670 | [Ui runtime core](tasks/phase6-6.1.0-ui-runtime-core/tasks.md) — 0/28 checked; pending | New runtime UI stack after the current renderer baseline. | Waiting: gate visual |
 | 680 | [Ui data binding events](tasks/phase6-6.1.1-ui-data-binding-events/tasks.md) — 0/24 checked; pending | Interactive binding needs UI rendering and input routing. | Waiting: phase6-6.1.0-ui-runtime-core; phase4-4.0.0-enhanced-input-system |
-| 690 | [Save system](tasks/phase6-6.2.0-save-system/tasks.md) — 0/25 checked; pending | Persistence should build on safe scene loading and stable entity identity. | Waiting: gate lifecycle |
-| 700 | [Navigation recast detour](tasks/phase6-6.3.0-navigation-recast-detour/tasks.md) — 0/26 checked; pending | Gameplay navigation expansion, independent of current visual defects. | Waiting: gate lifecycle; gate visual |
+| 690 | [Save system](tasks/phase6-6.2.0-save-system/tasks.md) — 0/25 checked; pending | Persistence should build on safe scene loading and stable entity identity. | Ready for next action |
+| 700 | [Navigation recast detour](tasks/phase6-6.3.0-navigation-recast-detour/tasks.md) — 0/26 checked; pending | Gameplay navigation expansion, independent of current visual defects. | Waiting: gate visual |
 | 710 | [Behavior trees](tasks/phase6-6.4.0-behavior-trees/tasks.md) — 0/38 checked; pending | The proposed gameplay behaviors depend on navigation. | Waiting: phase6-6.3.0-navigation-recast-detour |
-| 720 | [Ui modal dialog framework](tasks/phase10_10.2.0-ui-modal-dialog-framework/tasks.md) — 0/10 checked; pending | Editor authoring convenience after correct input ownership and reliable core workflows. | Waiting: gate lifecycle |
+| 720 | [Ui modal dialog framework](tasks/phase10_10.2.0-ui-modal-dialog-framework/tasks.md) — 0/10 checked; pending | Editor authoring convenience after correct input ownership and reliable core workflows. | Ready for next action |
 
-## Reconcile before scheduling or archiving (23)
+## Reconcile before scheduling or archiving (18)
 
 These are scope/status reviews, not new implementation assignments. Do not repeat old implementations or mark remaining work done just to archive.
 
@@ -105,7 +108,7 @@ These are scope/status reviews, not new implementation assignments. Do not repea
 | [Architecture risk fixes](tasks/phase3a-3.41.0-architecture-risk-fixes/tasks.md) | pending; 2/27 | March risk assumptions predate bindless/clustered/shadow changes. Revalidate the claims before a broad refactor. |
 | [Skeletal mesh gpu skinning](tasks/phase4-4.3.0-skeletal-mesh-gpu-skinning/tasks.md) | pending; 0/25 | Overlaps the partly implemented FBX/skeletal pipeline; reconcile data/previous-pose ownership before starting duplicate classes. |
 | [Animation runtime](tasks/phase4-4.3.1-animation-runtime/tasks.md) | pending; 0/32 | Overlaps the FBX animation task; separate missing playback/state-machine scope from existing import/skinning work. |
-| [Falcor path tracer](tasks/phase1_falcor-path-tracer/tasks.md) | pending; 0/21 | A second tracer design overlaps the runtime tracer. Choose scope and architecture after current tracer reconciliation; do not build both independently. |
+| [Falcor path tracer](tasks/phase1_falcor-path-tracer/tasks.md) | pending; 21/21 | A second tracer design overlaps the runtime tracer. Choose scope and architecture after current tracer reconciliation; do not build both independently. |
 | [Profiling ipc bridge](tasks/phase4_4.12.0_profiling-ipc-bridge/tasks.md) | pending; 0/28 | Proposal still contains the Why template. Define current IPC/profiling contract before scheduling implementation. |
 
 ## Coordination — do not execute as a competing feature task
@@ -113,7 +116,7 @@ These are scope/status reviews, not new implementation assignments. Do not repea
 - [Project stabilization audit](tasks/phase0_project-stabilization-audit/tasks.md): Tracking umbrella; execute the scoped milestones above, not all 28 items before any other task.
 - [Ue5 visual parity roadmap](tasks/phase3a-3.50.0-ue5-visual-parity-roadmap/tasks.md): Broad roadmap, not an executable bug task. Its old parity percentage and feature ticks are not present-day acceptance.
 
-## Completed-status closure candidates (6)
+## Completed-status closure candidates (0)
 
 The user asked Claude to archive completed tasks. [Read the archive handoff](../docs/planning/claude-rulebook-archive-handoff.md).
 Validate evidence and archive with Rulebook; this view does not archive or certify implementations.
