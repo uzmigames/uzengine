@@ -19,6 +19,7 @@
 #include "../math/vector3.h"
 
 #include <gtest/gtest.h>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -60,7 +61,7 @@ public:
     [[nodiscard]] std::string Name() const override { return "StubVFS"; }
 
     /// ResolvePath returns the path unchanged (stub has no real filesystem root).
-    [[nodiscard]] std::string ResolvePath(const std::string& path) const override {
+    [[nodiscard]] std::optional<std::string> ResolvePath(const std::string& path) const override {
         return path;
     }
 

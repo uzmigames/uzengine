@@ -354,10 +354,13 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
         if (!meshComp.materialGraphPath.empty() && m_materialManager && m_materialPipeline) {
             // Lazy-load the graph on first encounter
             if (meshComp.materialGraphId == UINT32_MAX) {
-                // Resolve VFS-relative path to absolute filesystem path
-                const std::string absPath = vfs ? vfs->ResolvePath(meshComp.materialGraphPath)
-                                                : meshComp.materialGraphPath;
-                meshComp.materialGraphId = m_materialManager->LoadMaterial(absPath);
+                // Resolve the VFS-relative path to a filesystem path inside the
+                // VFS root; a path that escapes it (or a pak-only VFS) has none.
+                const std::optional<std::string> graphFsPath =
+                    ResolveAssetFsPath(vfs, meshComp.materialGraphPath);
+                meshComp.materialGraphId = graphFsPath
+                    ? m_materialManager->LoadMaterial(*graphFsPath)
+                    : UINT32_MAX;
                 if (meshComp.materialGraphId == UINT32_MAX) {
                     UZ_LOG(Renderer, Warning, "Failed to load material graph: '{}'",
                            meshComp.materialGraphPath);

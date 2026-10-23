@@ -9,6 +9,7 @@
 #include "engine/vfx/budget/vfx_budget.h"
 #include "engine/vfx/asset/vfx_composite.h"
 #include "engine/vfx/parameters/vfx_parameter_store.h"
+#include "engine/asset/vfs.h"
 #include "engine/logging/log.h"
 #include "vector3.h"
 
@@ -21,6 +22,7 @@ extern "C" {
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <string>
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Log category
@@ -45,6 +47,9 @@ namespace uz {
 
 /// Registry key under which the VFXSystem* lightuserdata is stored.
 static constexpr const char* kVFXSystemRegistryKey = "uz_vfx_system";
+
+/// Registry key of the IVFS* set by `LuaSetVFS` — must match lua_scene_io_api.cpp.
+static constexpr const char* kVfsRegistryKey = "uz_vfs";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Emitter handle encoding
@@ -1205,7 +1210,10 @@ static int VFXGetEmitterCount(lua_State* L) {
 /// and skipped.
 ///
 /// # Parameters
-/// - `path`     (string): Filesystem path to the .uzvfx_composite file.
+/// - `path`     (string): VFS path to the .uzvfx_composite file, read through
+///   the VFS registered with `LuaSetVFS`. Scripts are untrusted content, so
+///   the path must stay inside the VFS root (`NormalizeVfsPath`); without a
+///   registered VFS nothing is read and an empty table is returned.
 /// - `position` (table): World-space origin `{x, y, z}` for offset application.
 ///   Each matched emitter's `spawnVelocity` origin is set to `position + entry.offset`.
 ///
@@ -1330,7 +1338,11 @@ static int VFXGetUserAttrCount(lua_State* L) {
 /// - Modifies `startDelay`, `timeSinceRegistration`, `isEmitting`, and
 ///   `spawnVelocity` on matched emitters.
 static int VFXSpawnComposite(lua_State* L) {
-    const char* path = luaL_checkstring(L, 2);
+    // Keep the full Lua length so an embedded NUL is rejected rather than
+    // silently truncating the path.
+    size_t pathLength = 0;
+    const char* pathData = luaL_checklstring(L, 2, &pathLength);
+    const std::string path(pathData, pathLength);
 
     if (!lua_istable(L, 3)) {
         return luaL_error(L,
@@ -1345,7 +1357,22 @@ static int VFXSpawnComposite(lua_State* L) {
         return 1;
     }
 
-    auto composite = VFXComposite::Load(path);
+    lua_getfield(L, LUA_REGISTRYINDEX, kVfsRegistryKey);
+    auto* vfs = static_cast<IVFS*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    if (!vfs) {
+        UZ_LOG(VFX, Warning, "uz.vfx:spawn_composite — VFS not set; cannot read composites");
+        lua_newtable(L);
+        return 1;
+    }
+    if (!NormalizeVfsPath(path)) {
+        UZ_LOG(VFX, Warning,
+            "uz.vfx:spawn_composite — rejected path outside the VFS root (absolute, drive, NUL or '..' escape)");
+        lua_newtable(L);
+        return 1;
+    }
+
+    auto composite = VFXComposite::Load(path, vfs);
     if (!composite) {
         UZ_LOG(VFX, Error,
             "uz.vfx:spawn_composite — failed to load composite '{}'", path);

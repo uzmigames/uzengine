@@ -108,7 +108,8 @@ public:
     ///
     /// # Returns
     /// The resolved real filesystem path, or `std::nullopt` if no mount matches
-    /// the path's prefix.
+    /// the path's prefix, or if the path contains a `..` segment or a NUL byte
+    /// (it could otherwise climb out of the mount's real directory).
     ///
     /// # Examples
     /// ```cpp
