@@ -83,6 +83,8 @@ static auto* cv_EnvMIS = UZ_CVAR_BOOL("r.EnvMIS", true,
     "Environment-MIS specular on smooth metals (replaces the split-sum term by its coverage; off = split-sum only). Inactive while r.GI.Reflections is on.");
 static auto* cv_SdfFinalGather = UZ_CVAR_INT("r.GI.FinalGather", 0, "Gather diffuse illumination from surface hemisphere rays", 0, 1);
 static auto* cv_SdfDiffuseSamples = UZ_CVAR_INT("r.GI.FinalGather.Samples", 8, "Cosine-weighted rays per diffuse surface gather", 1, 32);
+static auto* cv_GIValidSampleReject = UZ_CVAR_BOOL("r.GI.ValidSampleReject", false,
+    "Recover reliable receiver normals and exclude unavailable diffuse gather samples from reconstruction");
 // Diagnostic candidate (ledger H-31): how the gather's sample set is rotated from frame to frame.
 // 0 is the shipping path, whose rotation is locked to frame parity; 1 is the pre-registered
 // Kronecker advance. Default 0 — this is evaluated, not adopted.
@@ -861,7 +863,8 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
         perFrame.sdfReflectionSkySrv = perFrame.prefilteredSrvIndex;
         perFrame.sdfReflectionSamples = static_cast<uint32_t>(cv_SdfReflectionSamples->value);
         perFrame.sdfReflectionPlainMean = cv_SdfReflectionHdrWeight->value ? 0u : 1u;
-        perFrame.sdfSampleRotation = static_cast<uint32_t>(cv_SdfSampleRotation->value);
+        perFrame.sdfSampleRotation = static_cast<uint32_t>(cv_SdfSampleRotation->value)
+            | (cv_GIValidSampleReject->value ? 0x80000000u : 0u);
         perFrame.sdfReflectionTraceSteps = static_cast<uint32_t>(cv_SdfReflectionSteps->value);
         perFrame.sdfReflectionTraceDistance = cv_SdfReflectionDistance->value;
         perFrame.sdfReflectionVoxelSize = m_globalDistanceField.GetVoxelSize(0);

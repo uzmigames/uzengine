@@ -8,12 +8,27 @@
 /// radiance — the estimate the plain gather converges to.
 #include "gi/ssgi_renderer.h"
 #include "../../../shaders/runtime/include/restir_math.hlsli"
+#include "../../../shaders/runtime/ssgi/ssgi_sample_validity.hlsli"
 #include <gtest/gtest.h>
 #include <array>
 #include <cmath>
 #include <cstddef>
 #include <functional>
 #include <vector>
+
+TEST(SsgiGatherValidity, ExcludesUnavailableBlackButCountsGenuinelyUnlitSamples) {
+    // The exact GPU weight function is shared by spatial, temporal and upsample taps.
+    const auto reconstruct = [](float blackSampleCount, bool enabled) {
+        const float litWeight = uz::SsgiAvailableWeight(0.25f, 1.0f, enabled);
+        const float blackWeight = uz::SsgiAvailableWeight(0.75f, blackSampleCount, enabled);
+        return (4.0f * litWeight + 0.0f * blackWeight) / (litWeight + blackWeight);
+    };
+    EXPECT_FLOAT_EQ(reconstruct(0.0f, true), 4.0f);
+    EXPECT_FLOAT_EQ(reconstruct(1.0f, true), 1.0f);
+    EXPECT_FLOAT_EQ(reconstruct(0.0f, false), 1.0f);
+    EXPECT_FLOAT_EQ(uz::SsgiAvailableWeight(1.0f, 0.0f, true), 0.0f);
+    EXPECT_FLOAT_EQ(uz::SsgiAvailableWeight(1.0f, 64.0f, true), 1.0f);
+}
 
 namespace {
 constexpr unsigned kSamples = 3;

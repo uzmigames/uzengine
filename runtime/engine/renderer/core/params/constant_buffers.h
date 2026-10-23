@@ -293,7 +293,7 @@ struct PerFrameCB {
     uint32_t sdfReflectionPlainMean = 0;   ///< 1 = GatherSdfReflections averages rays plainly (r.GI.Reflections.HdrWeight=0); 0 = Karis weight.
     /// CVar r.GI.FinalGather.SampleRotation — 0 = radical inverse of the frame-strided seed
            /// (shipping), 1 = Kronecker advance in the frame index (candidate, ledger H-31).
-    uint32_t sdfSampleRotation = 0;
+    uint32_t sdfSampleRotation = 0; ///< Low 31 bits: rotation mode; bit 31: r.GI.ValidSampleReject. Layout unchanged.
     uint32_t materialMapMask = 0;  ///< Diagnostic: bit0 = ignore normal maps, bit1 = ignore material AO maps (r.Material.NormalMap / .AOMap = 0).
     uint32_t sdfRawClipmapSrv[4] = {UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX};
 

@@ -177,7 +177,7 @@ void main(uint3 DTid : SV_DispatchThreadID) {
 
 #ifdef UZ_BINDLESS
     if (sdfDiffuseSamples != 0) {
-        float3 geometricNormal = SurfaceGeometricNormal(depthTex,fullPx,uint2(fullWidth,fullHeight),depth,worldPos);
+        float3 geometricNormal = SurfaceGatherGeometricNormal(depthTex,fullPx,uint2(fullWidth,fullHeight),depth,worldPos,N);
         float3 origin, firstDirection;
         float4 rays[UZ_GATHER_MAX_REPORTED_RAYS];
         float2 rotationUsed;
@@ -187,7 +187,7 @@ void main(uint3 DTid : SV_DispatchThreadID) {
         float3 gathered = GatherSurfaceLightingIdentified(worldPos,N,geometricNormal,uint2(fullPx),
                                                           g_frameIndex,origin,seed,firstDirection,resolved,
                                                           rays,reportedRays,rotationUsed,cascadeStats,clipmap0);
-        outputTex[pixel] = float4(gathered,1.0);
+        outputTex[pixel] = float4(gathered,RejectUnavailableGatherSamples() && !resolved ? 0.0 : 1.0);
         aoOutputTex[pixel] = 1.0;
         // Region dump (diagnostics): what was sampled and what was read, see common/region_dump.hlsli.
         // Guarded so a normal frame neither writes records nor traces the extra probe ray.
@@ -214,7 +214,7 @@ void main(uint3 DTid : SV_DispatchThreadID) {
             }
             UzGatherDumpHalf(pixel, fullSize, 27u, float4(gathered, float(reportedRays)));
             UzGatherDumpHalf(pixel, fullSize, 28u,
-                             float4(rotationUsed, asfloat(sdfSampleRotation), 0.0));
+                             float4(rotationUsed, asfloat(sdfSampleRotation & 0x7fffffffu), 0.0));
             // +29 where the rays ended with respect to clipmap 0; +30 clipmap 0 as this shader saw it.
             UzGatherDumpHalf(pixel, fullSize, 29u, cascadeStats);
             UzGatherDumpHalf(pixel, fullSize, 30u, clipmap0);

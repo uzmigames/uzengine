@@ -42,10 +42,17 @@ void main(uint3 id : SV_DispatchThreadID) {
         if (IsSkyDepth(sd)) continue;
         float3 sn = OctDecode(normalTex.Load(int3(sp,0)).rg);
         float weight = exp(-float(x*x+y*y)/8.0) * SurfaceWeight(position,normal,SurfacePosition(sp,sd,fullSize),sn,asfloat(g_sigmaNormalBits));
-        colorSum += inputTex.Load(int3(p,0)).rgb * weight;
+        float4 sample = inputTex.Load(int3(p,0));
+        weight = SsgiAvailableWeight(weight,sample.a,RejectUnavailableGatherSamples());
+        colorSum += sample.rgb * weight;
         aoSum += inputAO.Load(int3(p,0)) * weight;
         weightSum += weight;
     }
-    outputTex[pixel] = float4(colorSum / weightSum,1.0);
-    outputAO[pixel] = aoSum / weightSum;
+    if (RejectUnavailableGatherSamples() && weightSum <= 0.0) {
+        outputTex[pixel] = 0.0;
+        outputAO[pixel] = 1.0;
+    } else {
+        outputTex[pixel] = float4(colorSum / weightSum,1.0);
+        outputAO[pixel] = aoSum / weightSum;
+    }
 }

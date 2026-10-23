@@ -86,7 +86,9 @@ void main(uint3 id : SV_DispatchThreadID) {
         if (!SurfaceCompatible(position,normal,samplePosition,sn)) continue;
         float weight = (x == 0 ? 1.0-fraction.x : fraction.x) * (y == 0 ? 1.0-fraction.y : fraction.y);
         weight *= SurfaceWeight(position,normal,samplePosition,sn,asfloat(g_normalPowerBits));
-        colorSum += inputTex.Load(int3(hp,0)).rgb*weight;
+        float4 sample = inputTex.Load(int3(hp,0));
+        weight = SsgiAvailableWeight(weight,sample.a,RejectUnavailableGatherSamples());
+        colorSum += sample.rgb*weight;
         aoSum += inputAO.Load(int3(hp,0))*weight;
         weightSum += weight;
         tapWeights[y*2+x] = weight;
@@ -94,7 +96,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     float3 result = weightSum > 0.0 ? colorSum/weightSum : 0.0;
     uint state = weightSum > 0.0 ? UZ_UPSAMPLE_BILATERAL : UZ_UPSAMPLE_EMPTY;
     if (weightSum <= 0.0 && sdfDiffuseSamples != 0) {
-        float3 geometricNormal = SurfaceGeometricNormal(depthTex,pixel,fullSize,depth,position);
+        float3 geometricNormal = SurfaceGatherGeometricNormal(depthTex,pixel,fullSize,depth,position,normal);
         result = GatherSurfaceLighting(position,normal,geometricNormal,id.xy,uint(timeParams.z));
         state = UZ_UPSAMPLE_FALLBACK;
     }

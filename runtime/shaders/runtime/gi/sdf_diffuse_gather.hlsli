@@ -28,6 +28,7 @@
 /// @ref Roberts 2018 "The Unreasonable Effectiveness of Quasirandom Sequences".
 /// @ref Cranley and Patterson 1976 "Randomization of Number Theoretic Methods".
 float2 SdfDiffuseRotation(uint2 pixel, uint frame, uint mode) {
+    mode &= 0x7fffffffu; // PerFrameCB packs diffuse sample-validity rejection in bit 31.
     if (mode == 0u) {
         uint seed = pixel.x * 1664525u + pixel.y * 1013904223u + frame * 747796405u;
         return float2(RadicalInverseVdC(seed), RadicalInverseVdC(seed ^ 0x9e3779b9u));
