@@ -39,3 +39,86 @@
 - Montage: `E:/UzmiEngine/area-ltc/area-light-ltc-raster-vs-pt.jpg`.
 
 Deferred to later stages: disk / line / tube (sphere+capsule) area lights, area-light shadows (`shadowIndex` reserved), rect lights in the SM5 (non-bindless) lighting path and in the path tracer's own light list (it only sees emissive meshes), light cookies (`sourceTexture`). Pre-existing observations, out of scope: the raster G-buffer only writes emissive when an emissive texture is bound (a constant-only emissive material shows black in raster, visible in the PT), and the path tracer skips emissive NEE when `PathCanContinue(bounce + 1, maxBounces)` is false, so `MaxBounces` must be ≥ 2 for direct lighting from emissive meshes.
+
+## Phase E: disk and line/tube LTC (2026-10-23)
+
+- [x] Disk/ellipse: 32-vertex contour, the existing LTC matrix/magnitude LUTs,
+  and a convex-polygon integral with the horizon closing edge retained.
+- [x] Line/tube: a constant-radiance capsule, not a flat rectangular billboard.
+  Integrate its visible silhouette: exposed arcs of the endpoint spheres'
+  tangent circles, joined by the cylinder's two tangent generators (up to 66 vertices).
+  End-on and zero-length sphere limits are covered.
+- [x] Scene types `disk`, `tube`, and `line` (canonicalized to `tube` on save).
+  Reuse `RectLightComponent::Shape` and the 80-byte `RectLightData` record:
+  disk width/height are full diameters; tube width is center-segment length
+  along local right and height is diameter. Color times intensity is radiance.
+- [x] Additive, type-gated `UZ_SHAPED_LIGHTS` permutation, also compiled with
+  cloud-ground shadows. Both stock and rectangle-only permutations remain separate.
+  The LightingCB stays 43264 bytes and the structured-buffer stride stays 80 bytes;
+  no layout-test or LUT changes were needed. The shared deferred budget remains 16 lights.
+- [x] Keep new shapes out of the legacy CPU rectangle list, merging them only
+  for deferred LTC upload. This prevents the unchanged rectangle-only surface-cache
+  consumer from treating disks/capsules as quads. New shapes are unshadowed,
+  deferred/bindless direct lights; GI-cache integration is not part of this stage.
+- [x] Four new gtests: disk on-axis analytic; ellipse horizon and table-lobe
+  area integral; capsule side/oblique/horizon/table-lobe area integral; capsule
+  end-on, zero-length sphere, inside and zero-radius cases.
+- [x] Reproducible reference scenes, emissive disk/capsule mesh generation,
+  bounded capture/analysis/performance commands in `scripts/rendering/area-light-shapes/`.
+  Run `verify.py prepare --out E:/UzmiEngine/area-ltc-shapes/final` before capture.
+
+### Final evidence
+
+All builds used `.tools/zig-x86_64-windows-0.15.2/zig.exe`; all runs were bounded
+to at most 180 seconds. No commit or archive was created.
+
+- Pinned ReleaseFast build: exit 0, shader integrity 163 shaders. Both new shader
+  permutations (plain and cloud-ground-shadow) also compile with DXC, exit 0.
+- `npm run test:layouts`: exit 0, including RectLightData 80-byte stride.
+- Final required gtests: 8022 tests / 8002 passed / 17 skipped / exactly the
+  three documented pre-existing failures:
+  `VfxEditorSlate.WorkbenchHasTwoColumns`,
+  `VfxEditorSlate.TitleBarReflectsEmitterName`,
+  `VfxEditorSlate.StatusBarBindingsReflectTelemetry`.
+  Test command exits 1 for those failures; all four new shape tests pass.
+  No DX12DeviceTest TDR occurred.
+- Fresh detached `7b5d3c15` worktree baseline: final reflection-reference frame 95
+  at 1920x1080 has **max_code_delta 0**. Existing rectangle-only LTC scene,
+  frame 95 at 1280x720, also has **max_code_delta 0**. Captures:
+  `E:/UzmiEngine/area-ltc-shapes/{baseline,rect-baseline}` versus
+  `E:/UzmiEngine/area-ltc-shapes/final/{no-shape-ref,no-shape-rect}`.
+  The fresh baseline's engine artifact built and rendered successfully; its
+  default all-artifact build cannot compile the tracked layered-BSDF tests because
+  their included untracked `pathtracer_furnace_test.h` is absent in a fresh worktree.
+  That excluded header was not changed or copied.
+- Correctness: 640x360, central 32x32 floor ROI, albedo 0.6, roughness 1,
+  radiance 6, height 200 cm, black environment, exposure 1, TAA HDR records.
+  Disk diameters 120x120 cm; capsule center segment 120 cm, diameter 30 cm.
+  Smooth-surface Lambert integration includes both capsule hemispheres.
+  Relative RMSE is normalized by mean analytic ROI radiance:
+
+  | Type | Analytic mean Lo | LTC mean Lo | PT mean Lo (frame 383) | LTC/analytic RMSE | PT/analytic RMSE | LTC/PT RMSE |
+  | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+  | Disk | 0.29630207 | 0.29438076 | 0.29309822 | 0.6487% | 1.2509% | 0.7612% |
+  | Tube | 0.11463619 | 0.11456797 | 0.11371355 | 0.0615% | 2.8428% | 2.8260% |
+
+  Disk on-axis analytic `F=3600/43600`, `Lo=0.2972477064`; quadrature agrees.
+  Quadrature order refinement changes disk by at most 1.7e-16 and tube by 3.3e-7.
+  CPU capsule-center contour form factor is 0.03192527 versus independent Lambert
+  area integration 0.03193241 (about -0.022%).
+  PT convergence from frame 95 to 383 reduces LTC/PT ROI RMSE from 0.8766% to
+  0.7612% (disk) and 4.8415% to 2.8260% (tube). PT retains the existing intrinsic
+  dielectric specular/diffuse energy partition; that residual is not pure LTC error.
+  `verify.py analyze --frame 383 --max-relative-rmse .03 --out E:/UzmiEngine/area-ltc-shapes/final`
+  exits 0. Reports: `analysis.json`, `analysis-f383.json`.
+  Montage: `E:/UzmiEngine/area-ltc-shapes/final/montage-f383.png`
+  (disk and tube, raster on left / PT on right); inspected after final build.
+- RTX 5080 GPU performance, 640x360, one light versus matched `r.Lights.AreaLTC=0`
+  control, 100 measured timestamp samples starting at frame 32:
+  disk DeferredLighting 0.298673 - 0.0731709 = **+0.225502 ms/light**;
+  tube 0.627703 - 0.0734054 = **+0.554298 ms/light**.
+  GPU frame deltas are +0.225691 and +0.557542 ms respectively.
+  These are single bounded timing runs, not confidence intervals.
+- Fourteen final capture logs contain no renderer/device/region errors.
+  Logs are not warning-free: the same baseline SkyCubemapCapturePS warmup,
+  font/VFX glyph and play-mode warnings remain, outside this change's scope.

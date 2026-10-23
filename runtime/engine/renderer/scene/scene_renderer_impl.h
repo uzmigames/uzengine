@@ -60,13 +60,14 @@
     RectLightBuffer m_rectLightBuffer;
     bool   m_rectLightBufferFailed = false;
     /// Deferred lighting PSO permutations with UZ_RECT_LIGHTS=1 ([0] plain, [1] with
-    /// UZ_CLOUD_GROUND_SHADOWS=1), built on first use for frames that carry a rect light so the
+    /// UZ_CLOUD_GROUND_SHADOWS=1; slots 2/3 also set UZ_SHAPED_LIGHTS=1 for disks/tubes),
+    /// built on first use for frames that carry an area light so the
     /// stock pipeline's DXIL stays byte-identical for every other scene (frame_lighting_pass.cpp).
     RHIShaderHandle   m_rectLightFullscreenVS;
-    RHIShaderHandle   m_rectLightLightingPS[2];
-    RHIPipelineHandle m_rectLightLightingPipeline[2];
-    bool              m_rectLightPipelineFailed[2] = {false, false};
-    RHIPipelineHandle EnsureRectLightLightingPipeline(bool cloudGroundShadows);
+    RHIShaderHandle   m_rectLightLightingPS[4];
+    RHIPipelineHandle m_rectLightLightingPipeline[4];
+    bool              m_rectLightPipelineFailed[4] = {};
+    RHIPipelineHandle EnsureRectLightLightingPipeline(bool cloudGroundShadows, bool shapedLights);
 
     // ── GBuffer + Shadow Atlas ─────────────────────────────────────────────
 

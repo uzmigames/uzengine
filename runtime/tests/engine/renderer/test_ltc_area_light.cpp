@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 using namespace uz;
 
@@ -338,6 +339,8 @@ TEST(RectLightLayoutTest, RectLightDataIsFiveFloat4Rows) {
     EXPECT_EQ(offsetof(RectLightData, diffuseScale), 68u);
     EXPECT_EQ(offsetof(RectLightData, shadowIndex), 72u);
     EXPECT_EQ(kRectLightFlag_TwoSided, 1u);
+    EXPECT_EQ(kRectLightFlag_Disk, 2u);
+    EXPECT_EQ(kRectLightFlag_Tube, 4u);
 }
 
 TEST(RectLightLayoutTest, LightingCBKeepsItsSizeAndPutsTheRectFieldsInTheFormerPad) {
@@ -362,4 +365,165 @@ TEST(RectLightLayoutTest, LightingCBKeepsItsSizeAndPutsTheRectFieldsInTheFormerP
     EXPECT_EQ(cb.ltcMagnitudeSrv, UINT32_MAX);
     // The per-frame buffer holds kMaxRectLights 80-byte records (the StructuredBuffer stride).
     EXPECT_EQ(sizeof(RectLightData) * kMaxRectLights, 1280u);
+}
+
+namespace {
+
+// Port of the shaped-light HLSL: identical contour generation, horizon closing
+// edge and 32 segments. Reference integration below samples actual emitter area.
+double PolygonForm(const std::vector<D3>& points, D3 N, const M3& transform = {}) {
+    if (points.size() < 3) return 0.0;
+    D3 T1 = std::fabs(N.z) < 0.999 ? D3{0, 0, 1} : D3{1, 0, 0};
+    T1 = Normalize(T1 - N * Dot(T1, N));
+    const D3 T2 = Cross(N, T1);
+    auto local = [&](D3 p) { return transform * D3{Dot(T1, p), Dot(T2, p), Dot(N, p)}; };
+    D3 a = local(points.back()), entry{}, exit{};
+    bool crossed = false;
+    double sum = 0;
+    for (D3 p : points) {
+        const D3 b = local(p);
+        if (a.z > 0 && b.z > 0) {
+            sum += LtcIntegrateEdge(Normalize(a), Normalize(b));
+        } else if ((a.z > 0) != (b.z > 0)) {
+            const D3 h = Normalize(a + (b - a) * (a.z / (a.z - b.z)));
+            if (a.z > 0) {
+                sum += LtcIntegrateEdge(Normalize(a), h);
+                exit = h;
+            } else {
+                sum += LtcIntegrateEdge(h, Normalize(b));
+                entry = h;
+            }
+            crossed = true;
+        }
+        a = b;
+    }
+    if (crossed) sum += LtcIntegrateEdge(exit, entry);
+    return std::fabs(sum) / (2 * kPi);
+}
+
+std::vector<D3> DiskContour(D3 c, D3 ex, D3 ey) {
+    std::vector<D3> v;
+    for (int i = 0; i < 32; ++i) {
+        const double a = i * 2 * kPi / 32;
+        v.push_back(c + ex * std::cos(a) + ey * std::sin(a));
+    }
+    return v;
+}
+
+std::vector<D3> CapsuleContour(D3 c, D3 axis, double halfLength, double radius) {
+    std::vector<D3> points;
+    if (radius <= 0) return points;
+    const double t = std::fmax(-halfLength, std::fmin(halfLength, Dot(-c, axis)));
+    if (Length(c + axis * t) <= radius) return points;
+    for (int end = 0; end < 2; ++end) {
+        const bool first = end == 0;
+        const D3 center = c + axis * (first ? -halfLength : halfLength);
+        const double d2 = Dot(center, center), invD = 1.0 / std::sqrt(d2);
+        const D3 W = center * invD;
+        const double axial = Dot(W, axis);
+        const D3 projected = axis - W * axial;
+        const double len = Length(projected), s = std::sqrt(1 - radius * radius / d2);
+        D3 U;
+        double angle;
+        if (len < 1e-6) {
+            if ((first && axial < 0) || (!first && axial > 0)) continue;
+            U = Normalize(Cross(W, std::fabs(W.z) < 0.999 ? D3{0, 0, 1} : D3{0, 1, 0}));
+            angle = first ? 0 : kPi;
+        } else {
+            U = projected * (1.0 / len);
+            const double k = radius * invD * axial / (s * len);
+            if ((first && k <= -1) || (!first && k >= 1)) continue;
+            angle = std::acos(std::fmax(-1.0, std::fmin(1.0, k)));
+        }
+        const D3 T = Cross(W, U), origin = center - W * (radius * radius * invD);
+        const double start = first ? angle : -angle, sweep = first ? 2 * (kPi - angle) : 2 * angle;
+        for (int i = 0; i <= 32; ++i) {
+            const double a = start + sweep * i / 32;
+            points.push_back(origin + (U * std::cos(a) + T * std::sin(a)) * (radius * s));
+        }
+    }
+    return points;
+}
+
+double AreaSample(D3 p, D3 emitN, double area, D3 N, const M3& transform) {
+    const double d2 = Dot(p, p);
+    const D3 w = p * (1.0 / std::sqrt(d2));
+    D3 T1 = std::fabs(N.z) < 0.999 ? D3{0, 0, 1} : D3{1, 0, 0};
+    T1 = Normalize(T1 - N * Dot(T1, N));
+    const D3 transformed = transform * D3{Dot(T1, w), Dot(Cross(N, T1), w), Dot(N, w)};
+    const double l = Length(transformed);
+    return std::fmax(0.0, transformed.z) * std::fabs(transform.Det()) / (kPi * l * l * l * l)
+         * std::fmax(0.0, Dot(-w, emitN)) / d2 * area;
+}
+
+double CapsuleIntegral(D3 c, double halfLength, double radius, D3 N, const M3& transform = {}) {
+    // Axis +X. Cylinder in (x,phi), hemispheres in (normal.x,phi); equal-area quadrature.
+    constexpr int res = 400;
+    double sum = 0;
+    for (int i = 0; i < res; ++i) {
+        const double u = (i + 0.5) / res;
+        for (int j = 0; j < res; ++j) {
+            const double phi = (j + 0.5) * 2 * kPi / res;
+            const D3 radial{0, std::cos(phi), std::sin(phi)};
+            sum += AreaSample(c + D3{(2 * u - 1) * halfLength, 0, 0} + radial * radius,
+                              radial, 2 * halfLength * radius * 2 * kPi / (res * res), N, transform);
+            for (int side : {-1, 1}) {
+                const D3 normal = D3{side * u, 0, 0} + radial * std::sqrt(1 - u * u);
+                sum += AreaSample(c + D3{side * halfLength, 0, 0} + normal * radius,
+                                  normal, radius * radius * 2 * kPi / (res * res), N, transform);
+            }
+        }
+    }
+    return sum;
+}
+
+} // namespace
+
+TEST(LtcShapeTest, DiskOnAxisMatchesAnalytic) {
+    for (double radius : {5.0, 60.0, 200.0, 1000.0}) {
+        const double ref = radius * radius / (200 * 200 + radius * radius);
+        const double got = PolygonForm(DiskContour({0, 0, 200}, {radius, 0, 0}, {0, radius, 0}), {0, 0, 1});
+        EXPECT_NEAR(got, ref, ref * 0.007);
+    }
+}
+
+TEST(LtcShapeTest, EllipseHorizonAndTableLobeMatchAreaIntegral) {
+    const D3 c{35, 10, 80}, ex{90, 0, 0}, ey{0, 40, 0};
+    for (D3 N : {D3{0, 0, 1}, Normalize(D3{1, 0.2, 0.1})}) {
+        for (M3 transform : {M3{}, LtcInverseMatrix(MatrixCell(32, 32))}) {
+            double ref = 0;
+            constexpr int res = 500;
+            for (int i = 0; i < res; ++i) {
+                const double r = std::sqrt((i + 0.5) / res);
+                for (int j = 0; j < res; ++j) {
+                    const double a = (j + 0.5) * 2 * kPi / res;
+                    ref += AreaSample(c + ex * (r * std::cos(a)) + ey * (r * std::sin(a)),
+                                      {0, 0, -1}, kPi * 90 * 40 / (res * res), N, transform);
+                }
+            }
+            EXPECT_NEAR(PolygonForm(DiskContour(c, ex, ey), N, transform), ref, ref * 0.012);
+        }
+    }
+}
+
+TEST(LtcShapeTest, CapsuleSideObliqueHorizonAndTableLobeMatchAreaIntegral) {
+    for (D3 c : {D3{0, 0, 200}, D3{140, -40, 100}}) {
+        for (D3 N : {D3{0, 0, 1}, Normalize(D3{1, 0.2, 0.1})}) {
+            for (M3 transform : {M3{}, LtcInverseMatrix(MatrixCell(32, 32))}) {
+                const double ref = CapsuleIntegral(c, 60, 15, N, transform);
+                const double got = PolygonForm(CapsuleContour(c, {1, 0, 0}, 60, 15), N, transform);
+                EXPECT_NEAR(got, ref, ref * 0.012 + 1e-6);
+            }
+        }
+    }
+}
+
+TEST(LtcShapeTest, CapsuleEndOnAndZeroLengthMatchSphereAnalytic) {
+    // Sphere viewed along its centre direction: projected solid angle / pi = r²/d².
+    EXPECT_NEAR(PolygonForm(CapsuleContour({0, 0, 200}, {0, 0, 1}, 60, 15), {0, 0, 1}),
+                15.0 * 15.0 / (140.0 * 140.0), 1e-4);
+    EXPECT_NEAR(PolygonForm(CapsuleContour({0, 0, 200}, {1, 0, 0}, 0, 15), {0, 0, 1}),
+                15.0 * 15.0 / (200.0 * 200.0), 1e-4);
+    EXPECT_TRUE(CapsuleContour({0, 0, 0}, {1, 0, 0}, 60, 15).empty());
+    EXPECT_TRUE(CapsuleContour({0, 0, 200}, {1, 0, 0}, 60, 0).empty());
 }

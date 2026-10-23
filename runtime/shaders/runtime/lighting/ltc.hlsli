@@ -179,4 +179,117 @@ float LtcEvaluate(float3 N, float3 V, float3 P, float3x3 Minv,
     return sum / (2.0 * 3.14159265358979);
 }
 
+#ifdef UZ_SHAPED_LIGHTS
+// New shapes stay out of both the stock and rectangle-only shader permutations.
+// A disk is a 32-gon; a capsule is its convex visible contour, not a rectangle
+// billboard. Radiance is constant, so integrating this contour integrates the
+// complete visible emitter without tessellating its surface or counting hidden faces.
+static const uint kLtcShapeSegments = 32u;
+static const uint kLtcShapeVertices = 66u;
+
+float LtcEvaluatePolygon(float3 N, float3 V, float3 P, float3x3 Minv,
+                         float3 vertices[66], uint count, bool twoSided)
+{
+    if (count < 3u) return 0.0;
+    float3 T1 = V - N * dot(V, N);
+    if (dot(T1, T1) < 1e-8) {
+        T1 = abs(N.z) < 0.999 ? float3(0, 0, 1) : float3(1, 0, 0);
+        T1 -= N * dot(T1, N);
+    }
+    T1 = normalize(T1);
+    const float3x3 M = mul(Minv, float3x3(T1, cross(N, T1), N));
+    float sum = 0.0;
+    float3 entry = 0.0, exitPoint = 0.0;
+    bool crossed = false;
+    float3 a = mul(M, vertices[count - 1u] - P);
+    [loop]
+    for (uint i = 0u; i < count; ++i) {
+        const float3 b = mul(M, vertices[i] - P);
+        const bool aboveA = a.z > 0.0, aboveB = b.z > 0.0;
+        if (aboveA && aboveB) {
+            sum += LtcIntegrateEdge(normalize(a), normalize(b));
+        } else if (aboveA != aboveB) {
+            const float3 h = normalize(lerp(a, b, a.z / (a.z - b.z)));
+            if (aboveA) {
+                sum += LtcIntegrateEdge(normalize(a), h);
+                exitPoint = h;
+            } else {
+                sum += LtcIntegrateEdge(h, normalize(b));
+                entry = h;
+            }
+            crossed = true;
+        }
+        a = b;
+    }
+    // Convexity guarantees one entry and one exit. The horizon closing edge is
+    // essential: simply discarding below-horizon edges loses its projected area.
+    if (crossed) sum += LtcIntegrateEdge(exitPoint, entry);
+    return (twoSided ? abs(sum) : max(0.0, -sum)) / (2.0 * 3.14159265358979);
+}
+
+uint LtcDiskVertices(float3 center, float3 ex, float3 ey, out float3 vertices[66])
+{
+    [loop]
+    for (uint i = 0u; i < kLtcShapeSegments; ++i) {
+        float s, c;
+        sincos(float(i) * (2.0 * 3.14159265358979 / float(kLtcShapeSegments)), s, c);
+        vertices[i] = center + ex * c + ey * s;
+    }
+    return kLtcShapeSegments;
+}
+
+// Tangent circle of a sphere as seen from P. Only the arc whose outward normal
+// points away from the other endpoint belongs to the capsule silhouette. The two
+// arcs are joined by the cylinder's two straight tangent generators.
+void LtcCapsuleArc(float3 center, float3 P, float3 axis, float radius, bool firstEnd,
+                   inout float3 vertices[66], inout uint count)
+{
+    const float3 offset = center - P;
+    const float d2 = dot(offset, offset);
+    const float invD = rsqrt(d2);
+    const float3 W = offset * invD;
+    const float axial = dot(W, axis);
+    const float3 projectedAxis = axis - W * axial;
+    const float projectedLen = length(projectedAxis);
+    const float s = sqrt(max(0.0, 1.0 - radius * radius / d2));
+    float3 U;
+    float angle;
+    if (projectedLen < 1e-6) {
+        // End-on: exactly one complete sphere contour is exposed.
+        if ((firstEnd && axial < 0.0) || (!firstEnd && axial > 0.0)) return;
+        U = abs(W.z) < 0.999 ? normalize(cross(W, float3(0, 0, 1)))
+                                : normalize(cross(W, float3(0, 1, 0)));
+        angle = firstEnd ? 0.0 : 3.14159265358979;
+    } else {
+        U = projectedAxis / projectedLen;
+        const float k = radius * invD * axial / (s * projectedLen);
+        if ((firstEnd && k <= -1.0) || (!firstEnd && k >= 1.0)) return;
+        angle = acos(clamp(k, -1.0, 1.0));
+    }
+    const float3 T = cross(W, U);
+    const float start = firstEnd ? angle : -angle;
+    const float sweep = firstEnd ? 2.0 * (3.14159265358979 - angle) : 2.0 * angle;
+    const float3 circleCenter = center - W * (radius * radius * invD);
+    [loop]
+    for (uint i = 0u; i <= kLtcShapeSegments; ++i) {
+        float sn, cs;
+        sincos(start + sweep * (float(i) / float(kLtcShapeSegments)), sn, cs);
+        vertices[count++] = circleCenter + (U * cs + T * sn) * (radius * s);
+    }
+}
+
+uint LtcCapsuleVertices(float3 center, float3 axis, float halfLength, float radius,
+                        float3 P, out float3 vertices[66])
+{
+    if (radius <= 0.0) return 0u;
+    const float3 d = P - center;
+    const float3 closest = center + axis * clamp(dot(d, axis), -halfLength, halfLength);
+    if (dot(P - closest, P - closest) <= radius * radius) return 0u;
+    uint count = 0u;
+    LtcCapsuleArc(center - axis * halfLength, P, axis, radius, true, vertices, count);
+    LtcCapsuleArc(center + axis * halfLength, P, axis, radius, false, vertices, count);
+    return count;
+}
+#endif
+
 #endif // UZ_LIGHTING_LTC_HLSLI

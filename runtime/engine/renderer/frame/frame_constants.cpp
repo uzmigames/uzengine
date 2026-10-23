@@ -566,14 +566,26 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
         // Rect area lights (phase3a 3.33.0): this frame's lights go to the per-frame structured
         // buffer (created on first use) and the LTC tables' SRVs into the CB. Scenes without a rect
         // light leave count 0 and the sentinels, and create nothing.
-        if (ctx.lightData.rectLightCount > 0 && m_ltcLut.IsReady()) {
+        const uint32_t areaLightCount = ctx.lightData.rectLightCount + ctx.lightData.shapedLightCount;
+        if (areaLightCount > 0 && m_ltcLut.IsReady()) {
             if (!m_rectLightBuffer.IsValid() && !m_rectLightBufferFailed) {
                 m_rectLightBufferFailed = !CreateRectLightBuffer(m_device, m_rectLightBuffer);
             }
+            // The legacy CPU rectangle list stays rectangle-only. Merge new shapes
+            // solely for deferred LTC; the untouched GI consumers do not support them.
+            RectLightData areaLights[kMaxRectLights];
+            const RectLightData* lights = ctx.lightData.rectLights;
+            if (ctx.lightData.shapedLightCount > 0) {
+                for (uint32_t i = 0; i < ctx.lightData.rectLightCount; ++i)
+                    areaLights[i] = ctx.lightData.rectLights[i];
+                for (uint32_t i = 0; i < ctx.lightData.shapedLightCount; ++i)
+                    areaLights[ctx.lightData.rectLightCount + i] = ctx.lightData.shapedLights[i];
+                lights = areaLights;
+            }
             const uint32_t srv = WriteRectLightBuffer(m_device, m_rectLightBuffer, ctx.frameIndex,
-                                                      ctx.lightData.rectLights, ctx.lightData.rectLightCount);
+                                                      lights, areaLightCount);
             if (srv != UINT32_MAX) {
-                lightingCB->rectLightCount  = ctx.lightData.rectLightCount;
+                lightingCB->rectLightCount  = areaLightCount;
                 lightingCB->rectLightsSrv   = srv;
                 lightingCB->ltcMatrixSrv    = m_ltcLut.matrixSrv;
                 lightingCB->ltcMagnitudeSrv = m_ltcLut.magnitudeSrv;

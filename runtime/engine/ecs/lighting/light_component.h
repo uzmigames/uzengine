@@ -418,10 +418,15 @@ protected:
 /// @ref Heitz, Dupuy, Hill, Neubelt 2016 "Real-Time Polygonal-Light Shading with Linearly Transformed Cosines"
 class RectLightComponent : public LightComponent {
 public:
-    /// Full width of the rectangle along the component's right axis (cm). Default: 100.
+    /// Area-light geometry. Disk uses width/height as diameters; tube uses width as the
+    /// centre-segment length and height as diameter (a capsule along the right axis).
+    enum class Shape : uint32_t { Rectangle, Disk, Tube };
+    Shape shape = Shape::Rectangle;
+
+    /// Full width / disk diameter / tube centre-segment length along the right axis (cm).
     float width = 100.0f;
 
-    /// Full height of the rectangle along the component's up axis (cm). Default: 100.
+    /// Full height / disk diameter along up, or tube diameter (cm). Default: 100.
     float height = 100.0f;
 
     /// Attenuation radius (cm) measured from the rectangle's centre: the light fades to zero there

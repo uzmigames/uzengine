@@ -97,6 +97,11 @@ struct LightFrameData {
     /// unless the world has a RectLightComponent and r.Lights.AreaLTC is on.
     RectLightData rectLights[kMaxRectLights];
     uint32_t rectLightCount = 0;
+
+    /// Deferred-only disk/capsule lights. Keep these separate until the LTC upload:
+    /// rectangle-only consumers (including the surface cache) must not read them as quads.
+    RectLightData shapedLights[kMaxRectLights];
+    uint32_t shapedLightCount = 0;
 };
 
 /// True when the world has at least one RectLightComponent and r.Lights.AreaLTC is on: the frame

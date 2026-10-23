@@ -538,6 +538,8 @@ static constexpr uint32_t kMaxRectLights = 16;
 
 /// RectLightData flag bits.
 static constexpr uint32_t kRectLightFlag_TwoSided = 1u << 0;   ///< Emits from both faces of the rectangle.
+static constexpr uint32_t kRectLightFlag_Disk = 1u << 1;       ///< Ellipse with halfWidth/halfHeight radii.
+static constexpr uint32_t kRectLightFlag_Tube = 1u << 2;       ///< Capsule: halfWidth segment, halfHeight radius.
 
 /// Rectangular area light for the deferred lighting pass, shaded with Linearly Transformed Cosines.
 ///
@@ -560,7 +562,7 @@ struct RectLightData {
     Vec3     up;                   ///< Unit axis of the height.
     float    halfHeight;           ///< Half extent along `up` (cm).
     Vec3     color;                ///< Emitted radiance (colour x intensity, linear HDR).
-    uint32_t flags;                ///< kRectLightFlag_*.
+    uint32_t flags;                ///< kRectLightFlag_*: rectangle by default, disk or capsule flags select shape.
     float    specularScale;        ///< Per-light specular multiplier. Default: 1.0.
     float    diffuseScale;         ///< Per-light diffuse multiplier. Default: 1.0.
     uint32_t shadowIndex = UINT32_MAX; ///< Reserved for area-light shadows (stage 1: always unshadowed).

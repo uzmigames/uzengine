@@ -434,7 +434,7 @@ void ApplyRectLightFields(RectLightComponent& light,
 
 /// Parses the `"light"` component JSON and emplaces the appropriate light type.
 ///
-/// Dispatches on the `"type"` string: "directional", "point", "spot", or "rect".
+/// Dispatches on `"type"`: directional, point, spot, rect, disk, or tube (line is a tube alias).
 /// Logs a warning and skips if the type is missing or unrecognized.
 void ParseLightComponent(World& world,
                           Entity entity,
@@ -453,9 +453,12 @@ void ParseLightComponent(World& world,
     } else if (lightType == "spot") {
         auto& light = world.GetRegistry().emplace<SpotLightComponent>(enttEntity);
         ApplySpotLightFields(light, comp);
-    } else if (lightType == "rect") {
+    } else if (lightType == "rect" || lightType == "disk" || lightType == "tube" || lightType == "line") {
         auto& light = world.GetRegistry().emplace<RectLightComponent>(enttEntity);
         ApplyRectLightFields(light, comp);
+        light.shape = lightType == "disk" ? RectLightComponent::Shape::Disk
+                    : lightType == "rect" ? RectLightComponent::Shape::Rectangle
+                                          : RectLightComponent::Shape::Tube;
     } else {
         CountLoadWarning();
         UZ_LOG(Scene, Warning,
@@ -1403,7 +1406,8 @@ nlohmann::json SerializeEntity(const World& world, entt::entity enttEntity) {
     // Rect area light (phase3a 3.33.0)
     if (const auto* light = registry.try_get<RectLightComponent>(enttEntity)) {
         nlohmann::json lightJson;
-        lightJson["type"]          = "rect";
+        lightJson["type"]          = light->shape == RectLightComponent::Shape::Disk ? "disk"
+                                  : light->shape == RectLightComponent::Shape::Tube ? "tube" : "rect";
         lightJson["color"]         = WriteVec3(light->color);
         lightJson["intensity"]     = light->intensity;
         lightJson["width"]         = light->width;

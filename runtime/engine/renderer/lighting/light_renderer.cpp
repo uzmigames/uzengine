@@ -230,7 +230,7 @@ LightFrameData ExtractLightingFromECS(
         if (cv_LightsAreaLTC->value != 0.0f) {
             auto rectLightView = world->GetRegistry().view<RectLightComponent>();
             for (auto enttEntity : rectLightView) {
-                if (result.rectLightCount >= kMaxRectLights) break;
+                if (result.rectLightCount + result.shapedLightCount >= kMaxRectLights) break;
 
                 auto& rl = rectLightView.get<RectLightComponent>(enttEntity);
 
@@ -250,7 +250,9 @@ LightFrameData ExtractLightingFromECS(
                     lightCol = lightCol * KelvinToRgb(rl.temperature);
                 }
 
-                RectLightData& rld = result.rectLights[result.rectLightCount];
+                const bool shaped = rl.shape != RectLightComponent::Shape::Rectangle;
+                RectLightData& rld = shaped ? result.shapedLights[result.shapedLightCount]
+                                           : result.rectLights[result.rectLightCount];
                 rld.position      = pos;
                 rld.range         = rl.range;
                 rld.right         = (rot * Vec3::Right()).Normalized();
@@ -259,10 +261,13 @@ LightFrameData ExtractLightingFromECS(
                 rld.halfHeight    = std::max(rl.height, 0.0f) * 0.5f;
                 rld.color         = lightCol * rl.intensity;
                 rld.flags         = rl.twoSided ? kRectLightFlag_TwoSided : 0u;
+                if (rl.shape == RectLightComponent::Shape::Disk) rld.flags |= kRectLightFlag_Disk;
+                if (rl.shape == RectLightComponent::Shape::Tube) rld.flags |= kRectLightFlag_Tube;
                 rld.specularScale = rl.specularScale;
                 rld.diffuseScale  = rl.diffuseScale;
                 rld.shadowIndex   = UINT32_MAX;
-                result.rectLightCount++;
+                if (shaped) result.shapedLightCount++;
+                else result.rectLightCount++;
             }
         }
 

@@ -122,16 +122,20 @@ void SceneRenderer::RegisterLightCullPass(rg::RgBuilder& rgBuilder, FrameContext
     });
 }
 
-RHIPipelineHandle SceneRenderer::EnsureRectLightLightingPipeline(bool cloudGroundShadows) {
-    const int slot = cloudGroundShadows ? 1 : 0;
+RHIPipelineHandle SceneRenderer::EnsureRectLightLightingPipeline(bool cloudGroundShadows, bool shapedLights) {
+    const int slot = (cloudGroundShadows ? 1 : 0) + (shapedLights ? 2 : 0);
     if (m_rectLightLightingPipeline[slot].IsValid()) return m_rectLightLightingPipeline[slot];
     if (m_rectLightPipelineFailed[slot]) return RHIPipelineHandle::Invalid();
 
     if (!m_rectLightFullscreenVS.IsValid()) {
         m_rectLightFullscreenVS = m_shaderMgr->CreateShader(EngineShader::FullscreenVS, RHIShaderStage::Vertex);
     }
+    const char* defines = shapedLights
+        ? (cloudGroundShadows ? "UZ_CLOUD_GROUND_SHADOWS=1;UZ_RECT_LIGHTS=1;UZ_SHAPED_LIGHTS=1"
+                              : "UZ_RECT_LIGHTS=1;UZ_SHAPED_LIGHTS=1")
+        : (cloudGroundShadows ? "UZ_CLOUD_GROUND_SHADOWS=1;UZ_RECT_LIGHTS=1" : "UZ_RECT_LIGHTS=1");
     m_rectLightLightingPS[slot] = m_shaderMgr->CreateShaderWithDefines(EngineShader::DeferredLightingPS,
-        RHIShaderStage::Pixel, cloudGroundShadows ? "UZ_CLOUD_GROUND_SHADOWS=1;UZ_RECT_LIGHTS=1" : "UZ_RECT_LIGHTS=1");
+        RHIShaderStage::Pixel, defines);
     if (!m_rectLightFullscreenVS.IsValid() || !m_rectLightLightingPS[slot].IsValid()) {
         UZ_LOG(Renderer, Error, "SceneRenderer: rect area light lighting permutation (cloud shadows={}) failed to compile; "
                "rect lights are skipped", cloudGroundShadows);
@@ -248,7 +252,8 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
         if (ctx.bindless && lightingCB && lightingCB->rectLightCount > 0
             && lightingCB->rectLightsSrv != UINT32_MAX && m_ltcLut.IsReady()) {
             const RHIPipelineHandle rectPso =
-                EnsureRectLightLightingPipeline(lightDesc.cloudShadowCascadeCount != 0);
+                EnsureRectLightLightingPipeline(lightDesc.cloudShadowCascadeCount != 0,
+                                                ctx.lightData.shapedLightCount > 0);
             if (rectPso.IsValid()) lightDesc.pipeline = rectPso;
         }
         lightDesc.albedoSrvIndex      = m_gbuffer.albedoSRV;

@@ -611,6 +611,40 @@ float3 ShadeRectLight(RectLightData rl, float3 worldPos, float3 N, float3 V, flo
     const float3 diff = diffForm * diffColor * rl.diffuseScale;
     return (diff + spec) * rl.color * (window * window);
 }
+#ifdef UZ_SHAPED_LIGHTS
+float3 ShadeShapedLight(RectLightData rl, float3 worldPos, float3 N, float3 V, float NoV,
+                        float roughness, float3 F0, float3 F90, float3 diffColor)
+{
+    const float3 toCenter = rl.position - worldPos;
+    const float f = dot(toCenter, toCenter) / max(rl.range * rl.range, 1e-4);
+    const float window = saturate(1.0 - f * f);
+    if (window <= 0.0) return 0.0;
+    const bool tube = (rl.flags & kRectLightFlag_Tube) != 0u;
+    const bool twoSided = tube || (rl.flags & kRectLightFlag_TwoSided) != 0u;
+    if (!twoSided && dot(cross(rl.right, rl.up), -toCenter) <= 0.0) return 0.0;
+    float3 vertices[66];
+    uint count;
+    if (tube) {
+        count = LtcCapsuleVertices(rl.position, rl.right, rl.halfWidth, rl.halfHeight,
+                                   worldPos, vertices);
+    } else {
+        if (rl.halfWidth <= 0.0 || rl.halfHeight <= 0.0) return 0.0;
+        count = LtcDiskVertices(rl.position, rl.right * rl.halfWidth,
+                                rl.up * rl.halfHeight, vertices);
+    }
+    Texture2D<float4> ltcMatrix = ResourceDescriptorHeap[ltcMatrixSrv];
+    Texture2D<float2> ltcMagnitude = ResourceDescriptorHeap[ltcMagnitudeSrv];
+    const float2 uv = LtcLutUV(roughness, NoV);
+    const float4 t1 = ltcMatrix.SampleLevel(clampSampler, uv, 0.0);
+    const float2 t2 = ltcMagnitude.SampleLevel(clampSampler, uv, 0.0);
+    const float specForm = LtcEvaluatePolygon(N, V, worldPos, LtcInverseMatrix(t1), vertices, count, twoSided);
+    const float3x3 identity = float3x3(1, 0, 0, 0, 1, 0, 0, 0, 1);
+    const float diffForm = LtcEvaluatePolygon(N, V, worldPos, identity, vertices, count, twoSided);
+    return (diffForm * diffColor * rl.diffuseScale
+          + specForm * (F0 * t2.x + (F90 - F0) * t2.y) * rl.specularScale)
+          * rl.color * (window * window);
+}
+#endif
 #endif
 
 LightingOutput main(FSInput input) {
@@ -897,6 +931,11 @@ LightingOutput main(FSInput input) {
         StructuredBuffer<RectLightData> rectLights = ResourceDescriptorHeap[rectLightsSrv];
         [loop]
         for (uint ri = 0u; ri < rectLightCount; ++ri) {
+#ifdef UZ_SHAPED_LIGHTS
+            if ((rectLights[ri].flags & (kRectLightFlag_Disk | kRectLightFlag_Tube)) != 0u) {
+                Lo += ShadeShapedLight(rectLights[ri], worldPos, N, V, NoV, roughness, F0, F90, diffColor);
+            } else
+#endif
             Lo += ShadeRectLight(rectLights[ri], worldPos, N, V, NoV, roughness, F0, F90, diffColor);
         }
     }

@@ -11,6 +11,8 @@ static const uint kMaxSpotLights  = 128;   // was 16
 static const uint kMaxRectLights  = 16;    // phase3a 3.33.0: rectangular area lights (LTC)
 static const uint kLightFlag_InverseSquared = 1u;
 static const uint kRectLightFlag_TwoSided   = 1u;
+static const uint kRectLightFlag_Disk       = 2u;
+static const uint kRectLightFlag_Tube       = 4u;
 
 // Cluster list record (cluster_assign_cs.hlsl): [count | flags] then kClusterSlotsMax light slots. A slot
 // is the light's index in its array, bit 15 set for a spot light, points first then spots, each in index
