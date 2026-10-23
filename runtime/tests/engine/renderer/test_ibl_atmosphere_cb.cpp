@@ -442,9 +442,11 @@ TEST(SkyAtmosphereComponent, FallbackSunAngularRadius) {
     EXPECT_NEAR(comp.sunAngularRadius, 0.00872665f, 1e-6f);
 }
 
-TEST(SkyAtmosphereComponent, FallbackSunDiskIntensityIsOne) {
+// Authored default (disk HDR ~2 with the fallback illuminance of 20); the reference
+// identity scale 1.0 was tried on 2026-10-10 and rolled back, see the header.
+TEST(SkyAtmosphereComponent, FallbackSunDiskIntensityIsAuthoredTenth) {
     SkyAtmosphereComponent comp{};
-    EXPECT_FLOAT_EQ(comp.sunDiskIntensity, 1.0f);
+    EXPECT_FLOAT_EQ(comp.sunDiskIntensity, 0.1f);
 }
 
 TEST(SkyAtmosphereComponent, EnabledByDefault) {

@@ -164,11 +164,13 @@ struct SkyAtmosphereComponent {
     float sunAngularRadius = 0.00872665f;
 
     /// Sun disk brightness multiplier. Scales the visible sun circle in the sky
-    /// (sky_atmosphere_ps.hlsl). Default 1.0: the identity scale, so the disk
-    /// keeps the luminance the sun illuminance gives it; exposure, not this
-    /// factor, brings it into display range.
+    /// (sky_atmosphere_ps.hlsl): sunIlluminance (20) * sunDiskIntensity is the
+    /// disk's HDR value. Authored default 0.1 (disk HDR ~2: a visible bright spot
+    /// that does not drive auto exposure or blow out without bloom). The reference
+    /// identity scale is 1.0; the 2026-10-10 switch to it was rolled back on
+    /// 2026-10-23 together with the fog defaults, see height_fog_component.h.
     /// @ref Hillaire 2020 "A Scalable and Production Ready Sky and Atmosphere Rendering Technique"
-    float sunDiskIntensity = 1.0f;
+    float sunDiskIntensity = 0.1f;
 
     /// Direction TOWARDS the sun used for the sky when no DirectionalLight exists in the world
     /// (a scene without a sun entity). Scene key `sun_direction` [x, y, z], normalized at use. A
