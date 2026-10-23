@@ -32,19 +32,22 @@ namespace uz {
 /// The fog pass reads scene depth, reconstructs world position, computes
 /// fog density along the view ray, and blends the fog color over the scene.
 struct HeightFogComponent : public CBDirtyMixin {
-    /// Fog inscattering luminance in linear space. Default: black.
+    /// Fog inscattering luminance in linear space.
     /// @ref Hillaire 2015 "Physically Based and Unified Volumetric Rendering in Frostbite"
-    /// The standard exponential height fog default is black: the haze colour comes
-    /// from the sky atmosphere ambient injection (sky light colour, see
-    /// fog_renderer.cpp), so a non-zero authored colour adds to it rather than
-    /// standing in for it.
-    Vec3 color = {0.0f, 0.0f, 0.0f};
+    /// Deliberate deviation from the reference default (black): the reference relies
+    /// on the sky atmosphere injecting the sky's luminance into the fog, while the
+    /// injection in height_fog_ps.hlsl scales the authored sky-light colour and
+    /// renders a black fog as a dark, warm haze (verified on sample/demo, 2026-10-23).
+    /// This authored bluish haze stays the default until that injection reproduces
+    /// the sky luminance; an authored colour adds to the injection, it does not
+    /// replace it.
+    Vec3 color = {0.45f, 0.55f, 0.65f};
 
     /// Base fog density factor. Higher = thicker fog. Range: [0, 10].
-    /// Default 0.0436 — the density of the fog actor in the reference default
-    /// level, the same placement that `baseHeight = -5000` reproduces (the
-    /// component-level constructor default is 0.02; it has no base height of its own).
-    float density = 0.0436f;
+    /// Default 0.15: clearly visible fog at ~100 m with `baseHeight = -5000`.
+    /// The reference default-level actor uses 0.0436 at the same placement; the
+    /// denser authored default pairs with the authored colour above.
+    float density = 0.15f;
 
     /// Height falloff coefficient. Controls how quickly fog thins with altitude.
     /// Works in conjunction with baseHeight: fog is densest at baseHeight and
@@ -80,10 +83,11 @@ struct HeightFogComponent : public CBDirtyMixin {
 
     // ── Directional Inscattering (sun-facing fog glow) ────────────────────
 
-    /// Color of the directional inscattering (sun-facing fog glow). Default: black
-    /// (disabled). Scaled by the sun luminance in fog_renderer.cpp.
+    /// Color of the directional inscattering (sun-facing fog glow). Scaled by the
+    /// sun luminance in fog_renderer.cpp. Authored warm glow; the reference default
+    /// is black (disabled). Same deliberate deviation as `color` above.
     /// @ref Hillaire 2015 "Physically Based and Unified Volumetric Rendering in Frostbite"
-    Vec3 directionalInscatteringColor = {0.0f, 0.0f, 0.0f};
+    Vec3 directionalInscatteringColor = {1.0f, 0.85f, 0.5f};
 
     /// Exponent controlling the tightness of the directional inscattering cone.
     /// Higher = tighter sun halo.
