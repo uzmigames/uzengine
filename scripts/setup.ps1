@@ -11,6 +11,9 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RootDir = Split-Path -Parent $ScriptDir
 $ThirdPartyDir = Join-Path $RootDir "runtime\thirdparty"
 $TempDir = Join-Path $RootDir ".setup_temp"
+# Shared with scripts/setup-native.ps1: prebuilt archives that both setup paths
+# fetch are pinned (URL + SHA-256) in this one place.
+$NativeLockPath = Join-Path $ScriptDir "native-dependencies.lock.json"
 
 if (-not (Test-Path $ThirdPartyDir)) { New-Item -ItemType Directory -Path $ThirdPartyDir | Out-Null }
 if (-not (Test-Path $TempDir)) { New-Item -ItemType Directory -Path $TempDir | Out-Null }
@@ -21,24 +24,182 @@ Write-Host ""
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
+function Invoke-Git {
+    # Local "Continue": under the script-wide "Stop", Windows PowerShell 5.1
+    # (what setup.bat launches) turns every git stderr line into a terminating
+    # NativeCommandError, so exit codes could never be inspected.
+    # Callers quote the pathspec separator ('--'): PowerShell consumes a bare
+    # -- as its own end-of-parameters marker before it reaches $args.
+    $ErrorActionPreference = "Continue"
+    $output = & git @args 2>&1 | ForEach-Object { "$_" }
+    return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = (($output | Out-String).Trim()) }
+}
+
+function Get-Sha256 {
+    param([string]$Path)
+    return (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
+}
+
+function Get-GitFileState {
+    # "clean" when the file is tracked by this repo and identical to HEAD,
+    # "modified" when tracked with uncommitted changes, otherwise "untracked".
+    param([string]$Path)
+    $tracked = Invoke-Git -C $RootDir ls-files --error-unmatch '--' $Path
+    if ($tracked.ExitCode -ne 0) { return "untracked" }
+    $diff = Invoke-Git -C $RootDir diff --quiet HEAD '--' $Path
+    if ($diff.ExitCode -eq 0) { return "clean" }
+    return "modified"
+}
+
+function Test-PinnedFile {
+    # Decides whether an existing file may be kept instead of trusting it
+    # blindly. $true: it matches the pinned SHA-256, or it is tracked by this
+    # repo and identical to HEAD (committed local patches and autocrlf line
+    # endings legitimately change the bytes; git history covers those).
+    # $false: it is missing, or an untracked file that fails the pin, so the
+    # caller downloads the pinned artifact over it. A tracked file with
+    # uncommitted changes is never overwritten: that is someone's work.
+    param([string]$Label, [string]$Path, [string]$Sha256)
+    if (-not (Test-Path -LiteralPath $Path)) { return $false }
+    $leaf = Split-Path -Leaf $Path
+    $expected = $Sha256.ToLowerInvariant()
+    $actual = Get-Sha256 -Path $Path
+    if ($actual -eq $expected) {
+        Write-Host "  [$Label] $leaf verified (sha256 $($expected.Substring(0, 12))), skipping." -ForegroundColor Green
+        return $true
+    }
+    switch (Get-GitFileState -Path $Path) {
+        "clean" {
+            Write-Host "  [$Label] WARN: $leaf differs from pinned upstream sha256 $($expected.Substring(0, 12)) but matches the committed copy (local patch or line endings), skipping." -ForegroundColor DarkYellow
+            return $true
+        }
+        "modified" {
+            throw "[$Label] $Path has uncommitted changes and does not match pinned SHA-256 $expected. Commit or discard them, then rerun setup."
+        }
+        default {
+            Write-Host "  [$Label] $leaf does not match pinned SHA-256 (expected $expected, found $actual), replacing with the pinned artifact..." -ForegroundColor Yellow
+            return $false
+        }
+    }
+}
+
 function Download-File {
-    param([string]$Url, [string]$OutFile)
+    # Every download is pinned. The bytes land in "<OutFile>.download" and are
+    # moved into place only once the hash matches, so a failed or tampered
+    # fetch never leaves a file that a later run would find and keep.
+    param(
+        [Parameter(Mandatory = $true)][string]$Url,
+        [Parameter(Mandatory = $true)][string]$OutFile,
+        [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-fA-F]{64}$')][string]$Sha256)
+    $partial = "$OutFile.download"
+    if (Test-Path -LiteralPath $partial) { Remove-Item -Force -LiteralPath $partial }
     Write-Host "  Downloading $Url..." -ForegroundColor Gray
     # -f makes curl exit non-zero on HTTP >= 400 instead of writing the error
     # body to disk, which would surface later as a corrupt-archive failure.
-    curl.exe -fsSL -o $OutFile $Url
-    if ($LASTEXITCODE -ne 0) { Write-Error "Failed to download $Url (curl exit $LASTEXITCODE)" }
+    curl.exe -fsSL -o $partial $Url
+    if ($LASTEXITCODE -ne 0) {
+        Remove-Item -Force -LiteralPath $partial -ErrorAction SilentlyContinue
+        throw "Failed to download $Url (curl exit $LASTEXITCODE)"
+    }
+    $expected = $Sha256.ToLowerInvariant()
+    $actual = Get-Sha256 -Path $partial
+    if ($actual -ne $expected) {
+        Remove-Item -Force -LiteralPath $partial
+        throw "SHA-256 mismatch for $Url (expected $expected, got $actual). The download was deleted."
+    }
+    Move-Item -Force -LiteralPath $partial -Destination $OutFile
+}
+
+function Get-LockedPackage {
+    # Reads one package (url + sha256) from scripts/native-dependencies.lock.json.
+    param([string]$Name)
+    $lock = Get-Content -Raw -LiteralPath $NativeLockPath | ConvertFrom-Json
+    $matched = @($lock.packages | Where-Object { $_.name -eq $Name })
+    if ($matched.Count -ne 1) { throw "Expected exactly one '$Name' package in $NativeLockPath, found $($matched.Count)" }
+    $pkg = $matched[0]
+    if ($pkg.sha256 -notmatch '^[0-9a-f]{64}$' -or -not $pkg.url) {
+        throw "Package '$Name' in $NativeLockPath lacks a url or a valid sha256"
+    }
+    return $pkg
+}
+
+function Set-PinnedCommit {
+    # Moves a fresh clone to its pinned commit and proves HEAD is exactly it.
+    # Branches move and tags can be re-pointed; the commit SHA cannot.
+    param([string]$Name, [string]$Path, [string]$Ref, [string]$Commit)
+    $short = $Commit.Substring(0, 12)
+    $head = Invoke-Git -C $Path rev-parse HEAD
+    if ($head.ExitCode -eq 0 -and $head.Output -ne $Commit) {
+        Write-Host "  [$Name] $Ref is now at $($head.Output.Substring(0, 12)); checking out pinned $short..." -ForegroundColor Gray
+    }
+    # A --depth 1 clone only holds the ref's tip; fetch the pinned commit by SHA.
+    $present = Invoke-Git -C $Path cat-file -e "$Commit^{commit}"
+    if ($present.ExitCode -ne 0) {
+        $fetch = Invoke-Git -C $Path fetch --quiet --depth 1 origin $Commit
+        if ($fetch.ExitCode -ne 0) {
+            Write-Host $fetch.Output -ForegroundColor DarkGray
+            throw "[$Name] pinned commit $Commit could not be fetched from origin"
+        }
+    }
+    $checkout = Invoke-Git -C $Path -c advice.detachedHead=false checkout --quiet --detach $Commit
+    if ($checkout.ExitCode -ne 0) {
+        Write-Host $checkout.Output -ForegroundColor DarkGray
+        throw "[$Name] checkout of pinned commit $Commit failed"
+    }
+    $verify = Invoke-Git -C $Path rev-parse HEAD
+    if ($verify.ExitCode -ne 0 -or $verify.Output -ne $Commit) {
+        throw "[$Name] HEAD is '$($verify.Output)' after checkout, expected pinned commit $Commit"
+    }
+    Write-Host "  [$Name] verified HEAD $short" -ForegroundColor Green
+}
+
+function Confirm-ExistingCheckout {
+    # Verifies an existing dependency directory instead of trusting it.
+    param([string]$Name, [string]$Path, [string]$Commit)
+    $short = $Commit.Substring(0, 12)
+    if (Test-Path -LiteralPath (Join-Path $Path ".git")) {
+        $head = Invoke-Git -C $Path rev-parse HEAD
+        if ($head.ExitCode -ne 0 -or $head.Output -ne $Commit) {
+            throw "[$Name] existing checkout $Path is at '$($head.Output)', expected pinned commit $Commit. Delete the directory and rerun setup."
+        }
+        Write-Host "  [$Name] already exists at pinned commit $short, skipping." -ForegroundColor Green
+        return
+    }
+    $index = Invoke-Git -C $RootDir ls-files -s '--' $Path
+    $entries = @($index.Output -split "`r?`n" | Where-Object { $_ })
+    if ($index.ExitCode -ne 0 -or $entries.Count -eq 0) {
+        Write-Host "  [$Name] WARN: exists without .git and is not tracked by this repo, so it cannot be verified against $short. Delete it to re-clone the pinned commit." -ForegroundColor DarkYellow
+        return
+    }
+    if ($entries.Count -eq 1 -and $entries[0] -match '^160000 ([0-9a-f]{40}) ') {
+        if ($Matches[1] -ne $Commit) {
+            throw "[$Name] the git index records gitlink commit $($Matches[1]) but setup pins $Commit"
+        }
+        Write-Host "  [$Name] WARN: gitlink matches pinned $short, but the checkout has no .git so its files cannot be verified; skipping." -ForegroundColor DarkYellow
+        return
+    }
+    $status = Invoke-Git -C $RootDir status --porcelain '--' $Path
+    if ($status.ExitCode -eq 0 -and $status.Output) {
+        $changed = @($status.Output -split "`r?`n").Count
+        Write-Host "  [$Name] WARN: vendored tree has $changed uncommitted change(s) relative to this repo's git history (upstream $short); skipping." -ForegroundColor DarkYellow
+        return
+    }
+    Write-Host "  [$Name] already exists (vendored tree without .git, covered by this repo's git history; upstream $short), skipping." -ForegroundColor DarkYellow
 }
 
 function Clone-Repo {
-    param([string]$Name, [string]$Url, [string]$Branch, [string[]]$KeepDirs, [string[]]$RemoveDirs)
+    param(
+        [string]$Name, [string]$Url, [string]$Branch,
+        [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$Commit,
+        [string[]]$KeepDirs, [string[]]$RemoveDirs)
+    $Commit = $Commit.ToLowerInvariant()
     $path = Join-Path $ThirdPartyDir $Name
     if ((Test-Path $path) -and (Get-ChildItem $path | Measure-Object).Count -gt 0) {
-        Write-Host "  [$Name] already exists, skipping." -ForegroundColor Green
+        Confirm-ExistingCheckout -Name $Name -Path $path -Commit $Commit
         return
     }
     if (Test-Path $path) { Remove-Item -Recurse -Force $path }
-    Write-Host "  [$Name] cloning $Branch..." -ForegroundColor Yellow
+    Write-Host "  [$Name] cloning $Branch @ $($Commit.Substring(0, 12))..." -ForegroundColor Yellow
     # $path is quoted: the repo may live under a directory containing spaces
     # (e.g. C:\Users\First Last\...), which git would otherwise parse as extra
     # positional arguments and reject with "Too many arguments".
@@ -46,6 +207,13 @@ function Clone-Repo {
     if ($LASTEXITCODE -ne 0) {
         Write-Host $cloneOutput -ForegroundColor DarkGray
         Write-Error "Failed to clone $Name"
+    }
+    try {
+        Set-PinnedCommit -Name $Name -Path $path -Ref $Branch -Commit $Commit
+    } catch {
+        # Never leave an unverified tree behind for the next run to find.
+        Remove-Item -Recurse -Force $path -ErrorAction SilentlyContinue
+        throw
     }
 
     # Remove .git
@@ -66,19 +234,28 @@ function Download-Extract-Zip {
     # complete. Source trees are committed to git but *.dll/*.lib/*.exe are
     # gitignored, so a fresh clone leaves these directories present but
     # missing every binary. Testing the directory alone would skip forever.
-    param([string]$Name, [string]$Url, [string]$SubPath, [string]$VerifyFile)
+    # -Sha256 pins the archive; -VerifyFileSha256 pins that artifact, so an
+    # existing extraction is verified rather than trusted.
+    param(
+        [string]$Name, [string]$Url,
+        [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-fA-F]{64}$')][string]$Sha256,
+        [string]$SubPath, [string]$VerifyFile,
+        [ValidatePattern('^[0-9a-fA-F]{64}$')][string]$VerifyFileSha256)
+    if ($VerifyFile -and -not $VerifyFileSha256) { throw "[$Name] -VerifyFile requires -VerifyFileSha256" }
     $path = Join-Path $ThirdPartyDir $Name
-    $probe = if ($VerifyFile) { Join-Path $path $VerifyFile } else { $path }
-    if (Test-Path $probe) {
-        Write-Host "  [$Name] already exists, skipping." -ForegroundColor Green
+    if ($VerifyFile) {
+        $probe = Join-Path $path $VerifyFile
+        if (Test-PinnedFile -Label $Name -Path $probe -Sha256 $VerifyFileSha256) { return }
+        if ((Test-Path $path) -and -not (Test-Path $probe)) {
+            Write-Host "  [$Name] incomplete (missing $VerifyFile), re-extracting..." -ForegroundColor Yellow
+        }
+    } elseif (Test-Path $path) {
+        Write-Host "  [$Name] WARN: already exists and has no -VerifyFile to check, skipping." -ForegroundColor DarkYellow
         return
-    }
-    if ($VerifyFile -and (Test-Path $path)) {
-        Write-Host "  [$Name] incomplete (missing $VerifyFile), re-extracting..." -ForegroundColor Yellow
     }
     $zip = Join-Path $TempDir "$Name.zip"
     Write-Host "  [$Name] downloading..." -ForegroundColor Yellow
-    Download-File -Url $Url -OutFile $zip
+    Download-File -Url $Url -OutFile $zip -Sha256 $Sha256
 
     if ($SubPath) {
         $tempExtract = Join-Path $TempDir "${Name}_temp"
@@ -91,6 +268,12 @@ function Download-Extract-Zip {
         Expand-Archive -Path $zip -DestinationPath $path -Force
     }
     Remove-Item $zip
+    if ($VerifyFile) {
+        $actual = Get-Sha256 -Path $probe
+        if ($actual -ne $VerifyFileSha256.ToLowerInvariant()) {
+            throw "[$Name] extracted $VerifyFile has SHA-256 $actual, expected $($VerifyFileSha256.ToLowerInvariant())"
+        }
+    }
 }
 
 function Apply-Patches {
@@ -122,15 +305,15 @@ function Apply-Patches {
 }
 
 function Download-Header {
-    param([string]$Name, [string]$Url, [string]$FileName)
+    param(
+        [string]$Name, [string]$Url, [string]$FileName,
+        [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-fA-F]{64}$')][string]$Sha256)
     $dir = Join-Path $ThirdPartyDir $Name
-    if (Test-Path $dir) {
-        Write-Host "  [$Name] already exists, skipping." -ForegroundColor Green
-        return
-    }
+    $file = Join-Path $dir $FileName
+    if (Test-PinnedFile -Label $Name -Path $file -Sha256 $Sha256) { return }
     Write-Host "  [$Name] downloading header..." -ForegroundColor Yellow
     New-Item -ItemType Directory -Path $dir -Force | Out-Null
-    Download-File -Url $Url -OutFile (Join-Path $dir $FileName)
+    Download-File -Url $Url -OutFile $file -Sha256 $Sha256
 }
 
 # ─── Prerequisites ──────────────────────────────────────────────────────────
@@ -148,6 +331,10 @@ function Refresh-Path {
 # std.fs (0.15) or std.Io.Dir (0.16) directory API at compile time.
 $ZigPinnedVersion = "0.15.2"
 $ZigToolsDir = Join-Path $RootDir ".tools\zig-x86_64-windows-$ZigPinnedVersion"
+# Archive hash = the "shasum" published in https://ziglang.org/download/index.json;
+# zig.exe hash taken from that verified archive.
+$ZigZipSha256 = "3a0ed1e8799a2f8ce2a6e6290a9ff22e6906f8227865911fb7ddedc3cc14cb0c"
+$ZigExeSha256 = "d408dd38eed3e5204af841bcebf70502a4dbbb8399a3a3262be55059370bc018"
 
 function Test-ZigVersionOk {
     param([string]$Cmd)
@@ -165,25 +352,28 @@ if (Get-Command zig -ErrorAction SilentlyContinue) {
 }
 if (-not $systemZigVer) { Refresh-Path; if (Get-Command zig -ErrorAction SilentlyContinue) { $systemZigVer = Test-ZigVersionOk "zig" } }
 
-# 2. Check pinned local zig
-$localZigOk = (Test-Path (Join-Path $ZigToolsDir "zig.exe"))
+# 2. Check pinned local zig (verified by hash, not just presence)
+$localZigExe = Join-Path $ZigToolsDir "zig.exe"
 
 if ($systemZigVer) {
     Write-Host "  Zig: $systemZigVer (system)" -ForegroundColor Green
-} elseif ($localZigOk) {
-    $localVer = & (Join-Path $ZigToolsDir "zig.exe") version
+} elseif (Test-PinnedFile -Label "zig" -Path $localZigExe -Sha256 $ZigExeSha256) {
+    $localVer = & $localZigExe version
     Write-Host "  Zig: $localVer (.tools/)" -ForegroundColor Green
 } else {
     Write-Host "  Zig 0.15.x not found. Downloading $ZigPinnedVersion to .tools\..." -ForegroundColor Yellow
     $zigZip = Join-Path $TempDir "zig-$ZigPinnedVersion.zip"
     $zigUrl = "https://ziglang.org/download/$ZigPinnedVersion/zig-x86_64-windows-$ZigPinnedVersion.zip"
-    Download-File -Url $zigUrl -OutFile $zigZip
+    Download-File -Url $zigUrl -OutFile $zigZip -Sha256 $ZigZipSha256
     $toolsRoot = Join-Path $RootDir ".tools"
     if (-not (Test-Path $toolsRoot)) { New-Item -ItemType Directory -Path $toolsRoot | Out-Null }
     Expand-Archive -Path $zigZip -DestinationPath $toolsRoot -Force
     Remove-Item $zigZip
-    if (-not (Test-Path (Join-Path $ZigToolsDir "zig.exe"))) {
+    if (-not (Test-Path $localZigExe)) {
         Write-Error "Zig extraction failed: $ZigToolsDir\zig.exe not found"
+    }
+    if ((Get-Sha256 -Path $localZigExe) -ne $ZigExeSha256) {
+        throw "Zig extraction produced a zig.exe that does not match pinned SHA-256 $ZigExeSha256"
     }
     $localVer = & (Join-Path $ZigToolsDir "zig.exe") version
     Write-Host "  Zig: $localVer (.tools/)" -ForegroundColor Green
@@ -213,14 +403,21 @@ Write-Host "[2/8] Setting up vcpkg..." -ForegroundColor Cyan
 
 $VcpkgDir = Join-Path $ThirdPartyDir "vcpkg"
 $VcpkgExe = Join-Path $VcpkgDir "vcpkg.exe"
+# The vcpkg commit pins the port versions (zlib/zstd sources carry SHA512s in
+# their portfiles) and the vcpkg tool that bootstrap-vcpkg.bat downloads.
+$VcpkgCommit = "f6735d5aa1537081e8d425372ea7e585b0ad65e8"
 
 if (-not (Test-Path $VcpkgExe)) {
     Write-Host "  Cloning vcpkg..." -ForegroundColor Yellow
     git clone --depth 1 https://github.com/Microsoft/vcpkg.git $VcpkgDir
+    if ($LASTEXITCODE -ne 0) { Write-Error "Failed to clone vcpkg (git exit $LASTEXITCODE)" }
+    # vcpkg keeps its .git (it resolves port versions through git), so the
+    # pinned checkout stays verifiable on later runs.
+    Set-PinnedCommit -Name "vcpkg" -Path $VcpkgDir -Ref "master" -Commit $VcpkgCommit
     & (Join-Path $VcpkgDir "bootstrap-vcpkg.bat") -disableMetrics
     if (-not (Test-Path $VcpkgExe)) { Write-Error "vcpkg bootstrap failed!" }
 } else {
-    Write-Host "  vcpkg already installed." -ForegroundColor Green
+    Confirm-ExistingCheckout -Name "vcpkg" -Path $VcpkgDir -Commit $VcpkgCommit
 }
 
 $VcpkgPackages = @("zlib", "zstd")
@@ -239,24 +436,28 @@ Write-Host "[3/8] Cloning thirdparty repos..." -ForegroundColor Cyan
 Clone-Repo -Name "directx_headers" `
     -Url "https://github.com/microsoft/DirectX-Headers.git" `
     -Branch "v1.619.1" `
+    -Commit "9e393d6d8a3b30dcc6f2806ef604ec16a27b0d7e" `
     -RemoveDirs @("test", "googletest")
 
 # D3D12 Memory Allocator
 Clone-Repo -Name "d3d12ma" `
     -Url "https://github.com/GPUOpen-LibrariesAndSDKs/D3D12MemoryAllocator.git" `
     -Branch "v3.1.0" `
+    -Commit "0fa62ed3a0a69b73230a8ec1faa752d4061c8dc8" `
     -RemoveDirs @("docs", "tools")
 
 # spdlog (logging)
 Clone-Repo -Name "spdlog" `
     -Url "https://github.com/gabime/spdlog.git" `
     -Branch "v1.17.0" `
+    -Commit "79524ddd08a4ec981b7fea76afd08ee05f83755d" `
     -RemoveDirs @("bench", "example", "logos", "scripts", "tests")
 
 # Tracy (profiling) — keep only LICENSE + public/ (client lib + headers)
 Clone-Repo -Name "tracy" `
     -Url "https://github.com/wolfpld/tracy.git" `
     -Branch "v0.13.1" `
+    -Commit "05cceee0df3b8d7c6fa87e9638af311dbabc63cb" `
     -RemoveDirs @("capture", "cmake", "csvexport", "doc", "dtl", "examples", "extra",
                   "getopt", "icon", "imgui", "import", "manual", "nfd", "profiler",
                   "python", "server", "test", "update", "zstd")
@@ -277,46 +478,56 @@ if (Test-Path $tracyPath) {
 Clone-Repo -Name "mimalloc" `
     -Url "https://github.com/microsoft/mimalloc.git" `
     -Branch "v2.2.4" `
+    -Commit "fbd8b99c2b828428947d70fdc046bb55609be93e" `
     -RemoveDirs @("docs", "test", "bench", "ide", "out")
 
 # jemalloc (alternative allocator)
 Clone-Repo -Name "jemalloc" `
     -Url "https://github.com/jemalloc/jemalloc.git" `
     -Branch "5.3.0" `
+    -Commit "54eaed1d8b56b1aa528be3bdd1877e59c56fa90c" `
     -RemoveDirs @("doc", "test", "scripts", "msvc")
 
-# dlmalloc (lightweight allocator)
+# dlmalloc (lightweight allocator), 2.8.6. The author's server has no
+# versioned URL, so the hash (identical to the vendored file) is the pin.
 Download-Header -Name "dlmalloc" `
     -Url "https://gee.cs.oswego.edu/pub/misc/malloc.c" `
-    -FileName "dlmalloc.c"
+    -FileName "dlmalloc.c" `
+    -Sha256 "be7be56b40b4b31417e74e77687f9b96127ea6cae534cf236aee40a4c739508d"
 
 # atomic_queue (lock-free queue)
+# master pinned to the commit whose tree matches the vendored files exactly.
 Clone-Repo -Name "atomic_queue" `
     -Url "https://github.com/max0x7ba/atomic_queue.git" `
     -Branch "master" `
+    -Commit "bce850fdce9010db3111e79bfe45040d42c678b1" `
     -RemoveDirs @("benchmarks", "doc", "html", "scripts", "src")
 
 # DirectXMath
 Clone-Repo -Name "directxmath" `
     -Url "https://github.com/microsoft/DirectXMath.git" `
     -Branch "apr2025" `
+    -Commit "56206b1916646b29b37e1eac56e96e2008d6c71f" `
     -RemoveDirs @("SHMath", "XDSP", "Spherical", "Extensions", "MatrixStack", "Tests", "Utilities")
 
 # SAL stub for non-MSVC platforms (DirectXMath requires sal.h)
+# Pinned to dotnet/runtime 5c4e2a30, the last commit to change sal.h; its blob
+# is identical to the vendored copy.
 $salPath = Join-Path $ThirdPartyDir "directxmath\Inc\sal.h"
-if (-not (Test-Path $salPath)) {
+$salSha256 = "e26ee611231a859b5a800eb2e1606e7ca03b8e3981d7c98cf1ca20c89b658b68"
+if (-not (Test-PinnedFile -Label "sal.h" -Path $salPath -Sha256 $salSha256)) {
     Write-Host "  [sal.h] downloading cross-platform stub..." -ForegroundColor Yellow
     Download-File `
-        -Url "https://raw.githubusercontent.com/dotnet/runtime/main/src/coreclr/pal/inc/rt/sal.h" `
-        -OutFile $salPath
-} else {
-    Write-Host "  [sal.h] already exists, skipping." -ForegroundColor Green
+        -Url "https://raw.githubusercontent.com/dotnet/runtime/5c4e2a301ec1dd8ef75a3ba98e5be1ff2cea0130/src/coreclr/pal/inc/rt/sal.h" `
+        -OutFile $salPath `
+        -Sha256 $salSha256
 }
 
 # glm (math, header-only)
 Clone-Repo -Name "glm" `
     -Url "https://github.com/g-truc/glm.git" `
     -Branch "1.0.3" `
+    -Commit "8d1fd52e5ab5590e2c81768ace50c72bae28f2ed" `
     -RemoveDirs @("doc", "test", "util")
 
 # EnTT (ECS — header-only, engine/ecs/core/world.h includes <entt/entt.hpp>)
@@ -324,60 +535,73 @@ Clone-Repo -Name "glm" `
 Clone-Repo -Name "entt" `
     -Url "https://github.com/skypjack/entt.git" `
     -Branch "v3.16.0" `
+    -Commit "b4e58bdd364ad72246c123a0c28538eab3252672" `
     -RemoveDirs @("docs", "test", "docker")
 
 # nlohmann/json (config parsing)
 Download-Header -Name "nlohmann" `
     -Url "https://github.com/nlohmann/json/releases/download/v3.12.0/json.hpp" `
-    -FileName "json.hpp"
+    -FileName "json.hpp" `
+    -Sha256 "aaf127c04cb31c406e5b04a63f1ae89369fccde6d8fa7cdda1ed4f32dfc5de63"
 
 # GoogleTest (testing framework)
 Clone-Repo -Name "googletest" `
     -Url "https://github.com/google/googletest.git" `
     -Branch "v1.17.0" `
+    -Commit "52eb8108c5bdec04579160ae17225d66034bd723" `
     -RemoveDirs @("ci", "docs", "googlemock", "fake_fuchsia_sdk", "test", "samples")
 
 # SPIRV-Reflect (shader reflection)
 Clone-Repo -Name "spirv-reflect" `
     -Url "https://github.com/KhronosGroup/SPIRV-Reflect.git" `
     -Branch "vulkan-sdk-1.4.309.0" `
+    -Commit "c637858562fbce1b6f5dc7ca48d4e8a5bd117b70" `
     -RemoveDirs @("examples", "tests", "docs", "scripts", "cmake")
 
 # xxhash (fast hashing)
 Clone-Repo -Name "xxhash" `
     -Url "https://github.com/Cyan4973/xxHash.git" `
     -Branch "v0.8.3" `
+    -Commit "e626a72bc2321cd320e953a0ccf1584cad60f363" `
     -RemoveDirs @("tests", "doc", "cmake_unofficial", "contrib")
 
 # lz4 (fast compression for .uzpak asset archives)
 Clone-Repo -Name "lz4" `
     -Url "https://github.com/lz4/lz4.git" `
     -Branch "v1.10.0" `
+    -Commit "ebb370ca83af193212df4dcbadcc5d87bc0de2f0" `
     -KeepDirs @("lib") `
     -RemoveDirs @("tests", "doc", "programs", "contrib", "examples", "ossfuzz", "build")
 
 # SSE Math Fun (SIMD math functions)
+# master pinned to its tip, which matches the vendored files exactly.
 Clone-Repo -Name "sse_mathfun" `
     -Url "https://github.com/RJVB/sse_mathfun.git" `
     -Branch "master" `
+    -Commit "0f462645698320643decdb5f79d211733b2a97d6" `
     -RemoveDirs @()
 
 # MikkTSpace (tangent space generation)
+# master pinned to its tip (vendored mikktspace.c carries a committed local fix).
 Clone-Repo -Name "mikktspace" `
     -Url "https://github.com/mmikk/MikkTSpace.git" `
     -Branch "master" `
+    -Commit "3e895b49d05ea07e4c2133156cfa94369e19e409" `
     -RemoveDirs @()
 
 # ufbx (FBX file parser — single-file C library, MIT license)
 Clone-Repo -Name "ufbx" `
     -Url "https://github.com/ufbx/ufbx.git" `
     -Branch "v0.14.3" `
+    -Commit "19bdb7e7ef02eb914d5e7211a3685f50ee6d27e3" `
     -RemoveDirs @("test", "data", "examples", "misc", "extra", "bindings")
 
 # stb (image loading/writing/resizing — header-only, keep only needed headers)
+# master pinned to the last commit before stb_image_resize 2.18, the version vendored here.
 Clone-Repo -Name "stb" `
     -Url "https://github.com/nothings/stb.git" `
     -Branch "master" `
+    -Commit "2fb8c5a3deb2110c89669f8d6f36e5833b556b44" `
     -RemoveDirs @("docs", "data", "tests", "tools", "deprecated")
 
 # Keep only the headers we use
@@ -394,12 +618,14 @@ if (Test-Path $stbPath) {
 Clone-Repo -Name "spng" `
     -Url "https://github.com/randy408/libspng.git" `
     -Branch "v0.7.4" `
+    -Commit "fb768002d4288590083a476af628e51c3f1d47cd" `
     -RemoveDirs @("docs", "tests", "benchmarks", "examples", "fuzzing")
 
 # libjpeg-turbo (fast JPEG decode with SIMD)
 Clone-Repo -Name "libjpeg-turbo" `
     -Url "https://github.com/libjpeg-turbo/libjpeg-turbo.git" `
     -Branch "3.1.3" `
+    -Commit "af9c1c268520a29adf98cad5138dafe612b3d318" `
     -RemoveDirs @("doc", "java", "release", "win", "fuzz", "cmakescripts", "md5", "testimages", "sharedlib")
 
 # Remove CLI tools, test files, build configs (keep only lib source + headers)
@@ -425,6 +651,7 @@ if (Test-Path $jtPath) {
 Clone-Repo -Name "tinyexr" `
     -Url "https://github.com/syoyo/tinyexr.git" `
     -Branch "v1.0.9" `
+    -Commit "5fcb4dcb6e3abf96214b67e5c54db1ceec6a455c" `
     -RemoveDirs @("examples", "experimental", "test", "deps", "cmake", "jni")
 
 # Keep only the header + miniz dependency
@@ -434,26 +661,32 @@ if (Test-Path $texrPath) {
     # Download miniz if missing (tinyexr requires it for EXR decompression)
     $minizH = Join-Path $texrPath "miniz.h"
     $minizC = Join-Path $texrPath "miniz.c"
-    # miniz 3.0.0 from tinyexr deps (with MINIZ_EXPORT stub prepended)
-    if (-not (Test-Path $minizH)) {
+    # miniz 3.0.0 from tinyexr deps (with MINIZ_EXPORT stub prepended), pinned
+    # to the v1.0.9 tag's commit. Upstream's miniz.h already carries the stub.
+    $minizBase = "https://raw.githubusercontent.com/syoyo/tinyexr/5fcb4dcb6e3abf96214b67e5c54db1ceec6a455c/deps/miniz"
+    $minizHSha256 = "295d1a0041aea09609598c0f1f35c1977ca05ad662acbadcfdaac44c140af37b"
+    $minizCSha256 = "44d54a3caedf3eae0adc6b6e5a5024c5ba6543abc81d20e741d0353b801e57d3"
+    if (-not (Test-PinnedFile -Label "tinyexr" -Path $minizH -Sha256 $minizHSha256)) {
         Write-Host "  [tinyexr] downloading miniz.h..." -ForegroundColor Yellow
-        Download-File -Url "https://raw.githubusercontent.com/syoyo/tinyexr/v1.0.9/deps/miniz/miniz.h" -OutFile $minizH
+        Download-File -Url "$minizBase/miniz.h" -OutFile $minizH -Sha256 $minizHSha256
         # Prepend MINIZ_EXPORT define if missing (standalone builds need this)
         $content = Get-Content $minizH -Raw
         if ($content -notmatch 'MINIZ_EXPORT') {
             "#ifndef MINIZ_EXPORT`n#define MINIZ_EXPORT`n#endif`n$content" | Set-Content $minizH -NoNewline
         }
     }
-    if (-not (Test-Path $minizC)) {
+    if (-not (Test-PinnedFile -Label "tinyexr" -Path $minizC -Sha256 $minizCSha256)) {
         Write-Host "  [tinyexr] downloading miniz.c..." -ForegroundColor Yellow
-        Download-File -Url "https://raw.githubusercontent.com/syoyo/tinyexr/v1.0.9/deps/miniz/miniz.c" -OutFile $minizC
+        Download-File -Url "$minizBase/miniz.c" -OutFile $minizC -Sha256 $minizCSha256
     }
 }
 
 # basis_universal (GPU texture compression — BC7, ASTC, ETC2)
+# master pinned to its tip on the vendoring date; the vendored encoder/transcoder match it exactly.
 Clone-Repo -Name "basis_universal" `
     -Url "https://github.com/BinomialLLC/basis_universal.git" `
     -Branch "master" `
+    -Commit "28e76f6e340e688188c94386ff068e437e1222ca" `
     -RemoveDirs @("webgl", "test_files", "bin", "OpenCL", "build", "cmd_help", "contrib",
                   "example", "example_capi", "example_transcoding", "khronos", "python",
                   "shader_deblocking", "zstd", "encoder_lib")
@@ -475,12 +708,15 @@ if (Test-Path $basisPath) {
 Clone-Repo -Name "astcenc" `
     -Url "https://github.com/ARM-software/astc-encoder.git" `
     -Branch "5.3.0" `
+    -Commit "30aabb3f42406df45a910d8496f9bee17eeba9bb" `
     -RemoveDirs @("Docs", "Test", "Jenkins", "Utils")
 
 # etcpak (GPU texture compressor — BC1/BC3/BC7/ETC1/ETC2, same as Godot)
+# master pinned to "Release 2.1", the commit whose tree matches the vendored files exactly.
 Clone-Repo -Name "etcpak" `
     -Url "https://github.com/wolfpld/etcpak.git" `
     -Branch "master" `
+    -Commit "7f15da4739cc5f8562311bdbb800436986d268ca" `
     -RemoveDirs @("build", ".github")
 
 # Remove build files from root (keep Source/ + LICENSE)
@@ -493,9 +729,11 @@ if (Test-Path $astcPath) {
 }
 
 # LuaJIT 2.1 (Lua scripting runtime — requires MSVC to build)
+# v2.1 branch pinned to the commit matching the vendored sources (only line endings differ).
 Clone-Repo -Name "luajit" `
     -Url "https://github.com/LuaJIT/LuaJIT.git" `
     -Branch "v2.1" `
+    -Commit "659a61693aa3b87661864ad0f12eee14c865cd7f" `
     -RemoveDirs @("doc", "etc")
 
 $luajitLib = Join-Path $ThirdPartyDir "luajit\src\lua51.lib"
@@ -518,18 +756,21 @@ if (-not (Test-Path $luajitLib)) {
 Clone-Repo -Name "vulkan_headers" `
     -Url "https://github.com/KhronosGroup/Vulkan-Headers.git" `
     -Branch "v1.4.342" `
+    -Commit "3cfca3829608e778cf59b0dab55d77f4f6c79bee" `
     -RemoveDirs @("tests", "cmake")
 
 # volk (Vulkan meta-loader — dynamic function dispatch, no static vulkan-1.lib needed)
 Clone-Repo -Name "volk" `
     -Url "https://github.com/zeux/volk.git" `
     -Branch "vulkan-sdk-1.4.304.1" `
+    -Commit "0b17a763ba5643e32da1b2152f8140461b3b7345" `
     -RemoveDirs @("cmake", "test")
 
 # VMA — Vulkan Memory Allocator (AMD, GPU memory sub-allocation)
 Clone-Repo -Name "vma" `
     -Url "https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git" `
     -Branch "v3.2.1" `
+    -Commit "c788c52156f3ef7bc7ab769cb03c110a53ac8fcb" `
     -RemoveDirs @("docs", "tools", "cmake")
 
 # Crashpad (crash reporting) — deferred to milestone 2.x when crash reporting is implemented
@@ -538,9 +779,11 @@ Write-Host "  [crashpad] skipped (not needed until 2.x crash reporting)" -Foregr
 # ─── Post-Processing & Upscaling ──────────────────────────────────────────
 
 # AMD FidelityFX SDK 2.x (FSR4, Radiance Caching, Denoiser)
+# main pinned to "AMD FSR SDK 2.2.0", the commit matching all vendored files.
 Clone-Repo -Name "amd-fidelityfx" `
     -Url "https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK.git" `
     -Branch "main" `
+    -Commit "e236f2304dcda35f282fdddd085f41e2ff48c86a" `
     -RemoveDirs @("docs", "samples", "tools", "PrebuiltSignedDLL", "framework", "BuildFidelityFXSolution.bat")
 
 # AMD FidelityFX SDK 1.1.4 (Brixelizer GI — removed in 2.x)
@@ -549,39 +792,50 @@ Clone-Repo -Name "amd-fidelityfx" `
 Clone-Repo -Name "amd-fidelityfx-1.1" `
     -Url "https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK.git" `
     -Branch "v1.1.4" `
+    -Commit "c6efa6bf7f2027b3ec94f28578bb5965eabb9e55" `
     -RemoveDirs @("docs", "samples", "tools", "PrebuiltSignedDLL", "framework", "BuildFidelityFXSolution.bat")
 
 # NVIDIA DLSS SDK (Deep Learning Super Sampling — AI temporal upscaling)
 # Provides nvsdk_ngx headers + nvngx_dlss.dll runtime. Requires NVIDIA RTX GPU.
 # NOTE: The SDK is ~200MB; runtime/thirdparty/dlss/ is .gitignored.
+# main pinned to "DLSS 310.5.3 SDK", the commit matching the local (gitignored) SDK.
 Clone-Repo -Name "dlss" `
     -Url "https://github.com/NVIDIA/DLSS.git" `
     -Branch "main" `
+    -Commit "982b0d19f9e35fef8e1b3109efa6b95470563866" `
     -RemoveDirs @("doc", "samples", "utils", "tests")
 
 # SMAA — Subpixel Morphological Anti-Aliasing (header-only HLSL/GLSL)
+# master pinned to its tip (unchanged since 2013), matching the vendored files.
 Clone-Repo -Name "smaa" `
     -Url "https://github.com/iryoku/smaa.git" `
     -Branch "master" `
+    -Commit "71c806a838bdd7d517df19192a20f0c61b3ca29d" `
     -RemoveDirs @("Demo", "Scripts")
 
 # ─── Mesh & Geometry Tools ────────────────────────────────────────────────
 
 # MikkTSpace — Industry-standard tangent space generation (Morten Mikkelsen)
+# Pinned to the same commit as the clone above (master tip since 2020).
 Download-Header -Name "mikktspace" `
-    -Url "https://raw.githubusercontent.com/mmikk/MikkTSpace/master/mikktspace.h" `
-    -FileName "mikktspace.h"
+    -Url "https://raw.githubusercontent.com/mmikk/MikkTSpace/3e895b49d05ea07e4c2133156cfa94369e19e409/mikktspace.h" `
+    -FileName "mikktspace.h" `
+    -Sha256 "17fc433894f24c73753d548086cc4d8c5c0379f4a6edfb98b5da243e4f0bc3d0"
 # Also download the .c implementation
 $mikktDir = Join-Path $ThirdPartyDir "mikktspace"
 $mikktC = Join-Path $mikktDir "mikktspace.c"
-if (-not (Test-Path $mikktC)) {
-    Download-File -Url "https://raw.githubusercontent.com/mmikk/MikkTSpace/master/mikktspace.c" -OutFile $mikktC
+$mikktCSha256 = "de87e74107df766ce68108801262bd8d53899414236b59810509a8fc2a51e288"
+if (-not (Test-PinnedFile -Label "mikktspace" -Path $mikktC -Sha256 $mikktCSha256)) {
+    Download-File -Url "https://raw.githubusercontent.com/mmikk/MikkTSpace/3e895b49d05ea07e4c2133156cfa94369e19e409/mikktspace.c" `
+        -OutFile $mikktC -Sha256 $mikktCSha256
 }
 
 # xatlas — UV atlas generation (lightmaps, LOD baking)
+# master pinned to its tip, which matches the vendored files exactly.
 Clone-Repo -Name "xatlas" `
     -Url "https://github.com/jpcy/xatlas.git" `
     -Branch "master" `
+    -Commit "f700c7790aaa030e794b52ba7791a05c085faf0c" `
     -RemoveDirs @("extra", "viewer", "test")
 
 # meshoptimizer — vertex cache / overdraw / fetch optimization, simplification
@@ -589,6 +843,7 @@ Clone-Repo -Name "xatlas" `
 Clone-Repo -Name "meshoptimizer" `
     -Url "https://github.com/zeux/meshoptimizer.git" `
     -Branch "v0.21" `
+    -Commit "47aafa533b439a78b53cd2854c177db61be7e666" `
     -RemoveDirs @("demo", "js", "gltf", "tools")
 
 # fastgltf — glTF 2.0 parser (bundles simdjson under deps/simdjson)
@@ -596,21 +851,28 @@ Clone-Repo -Name "meshoptimizer" `
 Clone-Repo -Name "fastgltf" `
     -Url "https://github.com/spnda/fastgltf.git" `
     -Branch "v0.8.0" `
+    -Commit "d4734a7e55d8d25155e755d895e018e423845cd0" `
     -RemoveDirs @("tests", "examples", "docs")
 
 # fastgltf pulls the simdjson singleheader at CMake configure time. The Zig
 # build compiles deps/simdjson/simdjson.cpp directly, so fetch it here instead.
 # Version must match SIMDJSON_TARGET_VERSION in fastgltf/CMakeLists.txt.
 $simdjsonVersion = "3.9.4"
+$simdjsonCommit = "3620e9d151a1a74ee8132af3770f3e28b4b4b66c"  # tag v3.9.4
+$simdjsonSha256 = @{
+    "simdjson.h"   = "88a44cd77e0b443724f52bed7a3b86bcd84ed1c29a451ecc94210fc7d6aef069"
+    "simdjson.cpp" = "a0410ae49e2e2fd967330fc22f91d7a06f3f6c5988bf53faa4855c2e3dee2805"
+}
 $simdjsonDir = Join-Path $ThirdPartyDir "fastgltf\deps\simdjson"
 foreach ($f in @("simdjson.h", "simdjson.cpp")) {
     $dst = Join-Path $simdjsonDir $f
-    if (-not (Test-Path $dst)) {
+    if (-not (Test-PinnedFile -Label "simdjson" -Path $dst -Sha256 $simdjsonSha256[$f])) {
         New-Item -ItemType Directory -Path $simdjsonDir -Force | Out-Null
         Write-Host "  [simdjson] downloading $f ($simdjsonVersion)..." -ForegroundColor Yellow
         Download-File `
-            -Url "https://raw.githubusercontent.com/simdjson/simdjson/v$simdjsonVersion/singleheader/$f" `
-            -OutFile $dst
+            -Url "https://raw.githubusercontent.com/simdjson/simdjson/$simdjsonCommit/singleheader/$f" `
+            -OutFile $dst `
+            -Sha256 $simdjsonSha256[$f]
     }
 }
 
@@ -620,6 +882,7 @@ foreach ($f in @("simdjson.h", "simdjson.cpp")) {
 Clone-Repo -Name "libpng" `
     -Url "https://github.com/pnggroup/libpng.git" `
     -Branch "v1.6.49" `
+    -Commit "640204280f8109d7165f95d2b177f89baf20b253" `
     -RemoveDirs @("contrib", "projects", "tests")
 
 # libpng needs pnglibconf.h — copy the prebuilt version from scripts/
@@ -637,12 +900,14 @@ if ((Test-Path $prebuilt) -and -not (Test-Path $target)) {
 Clone-Repo -Name "msdfgen" `
     -Url "https://github.com/Chlumsky/msdfgen.git" `
     -Branch "v1.13" `
+    -Commit "1874bcf7d9624ccc85b4bc9a85d78116f690f35b" `
     -RemoveDirs @("cmake", "test")
 
 # FreeType — Font rasterization (hinting, CJK, complex scripts)
 Clone-Repo -Name "freetype" `
     -Url "https://github.com/freetype/freetype.git" `
     -Branch "VER-2-13-3" `
+    -Commit "42608f77f20749dd6ddc9e0536788eaad70ea4b5" `
     -RemoveDirs @("docs", "tests", "builds")
 
 # ─── Downloads ──────────────────────────────────────────────────────────────
@@ -650,25 +915,36 @@ Clone-Repo -Name "freetype" `
 Write-Host ""
 Write-Host "[4/8] Downloading prebuilt packages..." -ForegroundColor Cyan
 
-# DXC (DirectX Shader Compiler)
+# DXC (DirectX Shader Compiler) v1.9.2602: URL + archive hash from the native lock
+$dxcPackage = Get-LockedPackage -Name "dxc"
 Download-Extract-Zip -Name "dxc" `
-    -Url "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2602/dxc_2026_02_20.zip" `
-    -VerifyFile "bin\x64\dxcompiler.dll"
+    -Url $dxcPackage.url `
+    -Sha256 $dxcPackage.sha256 `
+    -VerifyFile "bin\x64\dxcompiler.dll" `
+    -VerifyFileSha256 "b86a738ece4c05dbe2d9bbb29668a2ccb28a0740773c9b027cdc61e8d07b4d75"
 
 # ─── DirectX 12 Agility SDK ───────────────────────────────────────────────
 # D3D12Core.dll must sit next to the exe (see engine/rhi/dx12/dx12_agility.cpp,
 # which exports D3D12SDKVersion/D3D12SDKPath). Version must match
 # D3D12_SDK_VERSION from thirdparty/directx_headers/include/directx/d3d12.h.
 # Shipped as a NuGet package, which is a plain zip with a build/native/ layout.
+# URL + package hash come from the native lock; D3D12Core.dll's hash was taken
+# from that verified package.
 $agilityDir = Join-Path $ThirdPartyDir "agility"
 $agilityCore = Join-Path $agilityDir "bin\x64\D3D12Core.dll"
-if (-not (Test-Path $agilityCore)) {
-    $agilityVersion = "1.619.2"
+$agilityVersion = "1.619.2"
+$agilityCoreSha256 = "90770bc8028ebb9f78051f903343b0aabc12fe7a2b886e007278b5312ba6f101"
+if (-not (Test-PinnedFile -Label "agility" -Path $agilityCore -Sha256 $agilityCoreSha256)) {
+    $agilityPackage = Get-LockedPackage -Name "agility"
+    if ($agilityPackage.url -notmatch [regex]::Escape("/$agilityVersion/")) {
+        throw "[agility] native lock URL $($agilityPackage.url) is not version $agilityVersion"
+    }
     $agilityZip = Join-Path $TempDir "agility.zip"
     Write-Host "  [agility] downloading D3D12 Agility SDK $agilityVersion..." -ForegroundColor Yellow
     Download-File `
-        -Url "https://www.nuget.org/api/v2/package/Microsoft.Direct3D.D3D12/$agilityVersion" `
-        -OutFile $agilityZip
+        -Url $agilityPackage.url `
+        -OutFile $agilityZip `
+        -Sha256 $agilityPackage.sha256
 
     $agilityTemp = Join-Path $TempDir "agility_temp"
     Expand-Archive -Path $agilityZip -DestinationPath $agilityTemp -Force
@@ -681,13 +957,13 @@ if (-not (Test-Path $agilityCore)) {
     Remove-Item -Recurse -Force $agilityTemp
     Remove-Item $agilityZip
 
-    if (Test-Path $agilityCore) {
-        Write-Host "  [agility] installed $agilityVersion" -ForegroundColor Green
-    } else {
+    if (-not (Test-Path $agilityCore)) {
         Write-Error "Agility SDK extraction failed - D3D12Core.dll not found"
     }
-} else {
-    Write-Host "  [agility] already exists, skipping." -ForegroundColor Green
+    if ((Get-Sha256 -Path $agilityCore) -ne $agilityCoreSha256) {
+        throw "[agility] extracted D3D12Core.dll does not match pinned SHA-256 $agilityCoreSha256"
+    }
+    Write-Host "  [agility] installed $agilityVersion" -ForegroundColor Green
 }
 
 # ─── FXC (d3dcompiler_47.dll — SM5.0 fallback path) ───────────────────────
@@ -711,21 +987,32 @@ if (-not (Test-Path $fxcDll)) {
 # ─── Metal Dependencies (macOS build cross-compile support) ──────────────────
 
 # metal-cpp (Apple's C++ wrapper for Metal — macOS only, downloaded for cross-ref)
-# Using GitHub mirror — easier for automated setup than Apple's developer portal zip.
-Clone-Repo -Name "metal-cpp" `
-    -Url "https://github.com/AdrenalineJunkieDev/metal-cpp.git" `
-    -Branch "metal-cpp_macOS15.2_iOS18.2" `
-    -RemoveDirs @()
+# Apple's official macOS 15.2 / iOS 18.2 archive. The GitHub mirror previously
+# cloned here no longer exists; this archive's 98 files match the vendored tree
+# (line endings aside), so the version is unchanged.
+Download-Extract-Zip -Name "metal-cpp" `
+    -Url "https://developer.apple.com/metal/cpp/files/metal-cpp_macOS15.2_iOS18.2.zip" `
+    -Sha256 "3437e4abfbd3d45217f34772ef3502f31ba3358e5fb6ac9d0ca952a047bcfe25" `
+    -SubPath "metal-cpp" `
+    -VerifyFile "Metal\Metal.hpp" `
+    -VerifyFileSha256 "cd1795c2d97fa914c8a37895d394789bd753f921e7bdea60d6c945a5a7687cf1"
 
 # Slang (HLSL→MSL/SPIR-V shader compiler, Windows prebuilt)
 # macOS uses libslang.dylib; see setup.sh for the macOS download.
 $slangArch = "windows-x86_64"
+# Archive hash and bin\slang.dll hash per architecture (v2025.6.3 release assets).
+$slangZipSha256 = "3f96b69f775566a748099a4fefa4cfe6a42227192a57857034b8e47bc8919024"
+$slangDllSha256 = "0e75de82197e8e40cbf7e9d614d4599529b75b5f88808d7d2176d67ec4a3666d"
 if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq [System.Runtime.InteropServices.Architecture]::Arm64) {
     $slangArch = "windows-aarch64"
+    $slangZipSha256 = "0ae490a77cf54227d1d14d13da65c62b04a6a7f1fd662798bcb8e9b6d4f4b054"
+    $slangDllSha256 = "ae9fceeeaff5210bdb52f99e3cb7ecb70c85b5785747496accf290b84a4c3a46"
 }
 Download-Extract-Zip -Name "slang" `
     -Url "https://github.com/shader-slang/slang/releases/download/v2025.6.3/slang-2025.6.3-$slangArch.zip" `
-    -VerifyFile "bin\slang.dll"
+    -Sha256 $slangZipSha256 `
+    -VerifyFile "bin\slang.dll" `
+    -VerifyFileSha256 $slangDllSha256
 
 # ─── FFmpeg (H.264 hardware encoding for viewport frame streaming) ────────
 
@@ -748,12 +1035,16 @@ if ((Test-Path $ffmpegDir) -and -not (Test-Path $ffmpegBinDir)) {
 # Probe an import lib, not the directory: the headers and *.dll.a files are
 # committed but *.lib and bin/*.dll are gitignored, so a fresh clone has the
 # directory without anything the linker needs.
+# The build (BtbN autobuild-2026-03-31-13-11, n8.1) and its archive hash come
+# from the native lock, never the moving "latest" release; avcodec.lib's hash
+# was taken from that verified archive.
 $ffmpegLib = Join-Path $ffmpegDir "lib\avcodec.lib"
-if (-not (Test-Path $ffmpegLib)) {
-    $ffmpegZipUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl-shared.zip"
+$ffmpegLibSha256 = "aae17c97ec976acfab98a5b865273274dffcc3bcc59c7ab401a6b33db04b9ee5"
+if (-not (Test-PinnedFile -Label "ffmpeg" -Path $ffmpegLib -Sha256 $ffmpegLibSha256)) {
+    $ffmpegPackage = Get-LockedPackage -Name "ffmpeg"
     $ffmpegZip = Join-Path $TempDir "ffmpeg.zip"
     Write-Host "  [ffmpeg] downloading LGPL shared build..." -ForegroundColor Yellow
-    Download-File -Url $ffmpegZipUrl -OutFile $ffmpegZip
+    Download-File -Url $ffmpegPackage.url -OutFile $ffmpegZip -Sha256 $ffmpegPackage.sha256
 
     # Extract to temp, then merge inner dir into thirdparty/ffmpeg
     $ffmpegTemp = Join-Path $TempDir "ffmpeg_temp"
@@ -783,8 +1074,9 @@ if (-not (Test-Path $ffmpegLib)) {
         $p = Join-Path $ffmpegDir "bin\$_"
         if (Test-Path $p) { Remove-Item -Force $p }
     }
-} else {
-    Write-Host "  [ffmpeg] already exists, skipping." -ForegroundColor Green
+    if (-not (Test-Path $ffmpegLib) -or (Get-Sha256 -Path $ffmpegLib) -ne $ffmpegLibSha256) {
+        throw "[ffmpeg] installed lib\avcodec.lib is missing or does not match pinned SHA-256 $ffmpegLibSha256"
+    }
 }
 
 # ─── Global Cleanup ────────────────────────────────────────────────────────
@@ -892,9 +1184,11 @@ if (-not $allOk) { Write-Warning "Some image libraries are incomplete. Check abo
 # ─── RenderDoc API ─────────────────────────────────────────────────────────
 # Single-header API for in-application frame capture integration.
 # Source: https://github.com/baldurk/renderdoc
+# Pinned to the commit tag v1.35 points to.
 Download-Header -Name "renderdoc" `
-    -Url "https://raw.githubusercontent.com/baldurk/renderdoc/v1.35/renderdoc/api/app/renderdoc_app.h" `
-    -FileName "renderdoc_app.h"
+    -Url "https://raw.githubusercontent.com/baldurk/renderdoc/8a394019fdb62ad82be87bfd338a5ec43f4a5d95/renderdoc/api/app/renderdoc_app.h" `
+    -FileName "renderdoc_app.h" `
+    -Sha256 "0ab27bfa81235ebfc8f4c48111399ea81477eb4f77665e6209c9247daee91b94"
 
 # ─── Summary ───────────────────────────────────────────────────────────────
 
