@@ -13,7 +13,7 @@
     "rebuild": "npm run build:runtime && cmake-js rebuild -d . --runtime=electron --runtime-version=39.8.0 --CDCMAKE_BUILD_TYPE=Release"
   },
   "dependencies": {
-    "node-addon-api": "^8.6.0"
+    "node-addon-api": "^8.9.2"
   },
   "devDependencies": {
     "cmake-js": "^8.0.0"
