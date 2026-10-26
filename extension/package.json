@@ -12,6 +12,16 @@
     "Other"
   ],
   "main": "./out/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "UzEngine loads its native runtime and executes the workspace's project Lua scripts, scenes and shaders, so it only runs in trusted workspaces."
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "UzEngine passes real file-system paths of scenes and content roots to its native runtime, which cannot read virtual file systems."
+    }
+  },
   "activationEvents": [
     "onLanguage:uzscene",
     "onLanguage:uzproject",
@@ -201,18 +211,18 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@vscode/extension-telemetry": "^1.5.0"
+    "@vscode/extension-telemetry": "^1.5.2"
   },
   "devDependencies": {
-    "@sentry/browser": "^10.43.0",
-    "@types/node": "^25.4.0",
-    "@types/vscode": "^1.110.0",
-    "@typescript-eslint/eslint-plugin": "^8.57.0",
-    "@typescript-eslint/parser": "^8.57.0",
-    "@vitest/coverage-v8": "4.0.18",
-    "eslint": "^9.39.4",
-    "prettier": "^3.8.1",
-    "typescript": "^5.9.3",
-    "vitest": "4.0.18"
+    "@sentry/browser": "^11.8.0",
+    "@types/node": "^26.6.5",
+    "@types/vscode": "~1.85.0",
+    "@typescript-eslint/eslint-plugin": "^8.72.0",
+    "@typescript-eslint/parser": "^8.72.0",
+    "@vitest/coverage-v8": "4.1.12",
+    "eslint": "^10.13.0",
+    "prettier": "^3.9.10",
+    "typescript": "~6.0.3",
+    "vitest": "4.1.12"
   }
 }

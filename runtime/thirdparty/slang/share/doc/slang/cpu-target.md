@@ -6,7 +6,7 @@ Slang has preliminary support for producing CPU source and binaries.
 # Features
 
 * Can compile C/C++/Slang source to binaries (executables, shared libraries or [directly executable](#host-callable))
-* Does *not* require a C/C++ compiler to be installed if [slang-llvm](#slang-llvm) is available (as distributed with slang binary distributions)
+* Does *not* require a C/C++ be installed if [slang-llvm](#slang-llvm) is available (as distributed with slang binary distributions)
 * Can compile Slang source into C++ source code
 * Supports compute style shaders 
 
@@ -47,7 +47,6 @@ In the API the `SlangCompileTarget`s are
 ```
 SLANG_C_SOURCE             ///< The C language
 SLANG_CPP_SOURCE           ///< The C++ language
-SLANG_CPP_HEADER           ///< The C++ language (header)
 SLANG_HOST_CPP_SOURCE,     ///< C++ code for `host` style 
 ```        
    
@@ -55,7 +54,6 @@ Using the `-target` command line option
 
 * `C_SOURCE`: c
 * `CPP_SOURCE`: cpp,c++,cxx
-* `CPP_HEADER`: hpp
 * `HOST_CPP_SOURCE`: host-cpp,host-c++,host-cxx
 
 Note! Output of C source is not currently supported.
@@ -148,7 +146,7 @@ Please look at the [ABI](#abi) section for more specifics around ABI usage espec
 
     // We can now find exported functions/variables via findSymbolAddressByName
 
-    // For a __global export __extern_cpp int myGlobal;
+    // For a __global public __extern_cpp int myGlobal;
     {    
         auto myGlobalPtr = (int*)sharedLibrary->findSymbolAddressByName("myGlobal");
         if (myGlobalPtr)
@@ -159,7 +157,7 @@ Please look at the [ABI](#abi) section for more specifics around ABI usage espec
     
     // To get a function 
     // 
-    // export __extern_cpp int add(int a, int b);
+    // public __extern_cpp int add(int a, int b);
     
     // Test a free function
     {
@@ -205,20 +203,20 @@ Under the covers when Slang is used to generate a binary via a C/C++ compiler, i
 
 In a typical Slang [shader like](#compile-style) scenario, functionality is exposed via entry points. It can be convenient and desirable to be able to call Slang functions directly from application code, and not just via entry points. By default non entry point functions are *removed* if they are not reachable by the specified entry point. Additionally for non entry point functions Slang typically generates function names that differ from the original name. 
 
-To work around these two issues the `export` and `__extern_cpp` modifiers can be used.
+To work around these two issues the `public` and `__extern_cpp` modifiers can be used.
 
-`export` marks the variable or function to be preserved for library export: it is kept alive in the generated C++ source even if it isn't reached from an entry point, along with any function or variable it accesses. (`public` by contrast is only a *visibility* modifier — it controls whether a symbol is visible to other modules, and does not by itself keep the symbol in the generated host C++.) Note that `export` on its own preserves the symbol under a *mangled* name and does not produce a declaration in the generated `-target hpp` header; pair it with `__extern_cpp` (below) to keep the original name and get a header declaration.
+`public` makes the variable or function visible outside of the module even if it isn't used within the module. For the function to work it will also keep around any function or variable it accesses. 
 
 Note! Some care is needed here around [context threading](#context-threading) - if a function or any function a function accesses requires state held in the context, the signature of the function will be altered to include the context as the first parameter.
 
-Marking a function or variable `export` does not by itself mean the name remains the same — the exported symbol is still mangled. To keep the original name, add the `__extern_cpp` modifier. Combining `export` with `__extern_cpp` gives an application-callable symbol that is both preserved in the generated host C++ and emitted under its original, unmangled name (and, for `-target hpp`, declared in the header). For example
+Making a function or variable `public` does not mean that the name remains the same. To indicate that the name should not be altered use the `__extern_cpp` modifier. For example
 
 ```
 // myGlobal will be visible to the application (note the __global modifier additionally means it has C++ global behavior)
-__global export __extern_cpp int myGlobal;
+__global public __extern_cpp int myGlobal;
 
 // myFunc is available to the application
-export __extern_cpp int myFunc(int a)
+public __extern_cpp myFunc(int a) 
 {
     return a * a;
 }
@@ -272,10 +270,10 @@ Doing so means
 
 One disadvantage of using `__global` is in multi-threaded environments, with multiple launches on multiple CPU threads, there is only one global and will likely cause problems unless the global value is the same across all threads.
 
-It may be useful to set a global directly via host code, without having to write a function to enable the access. This is possible by using [`export`](#visibility) and [`__extern_cpp`](#visibility) modifiers. For example 
+It may be useful to set a global directly via host code, without having to write a function to enable the access. This is possible by using [`public`](#visibility) and [`__extern_cpp`](#visibility) modifiers. For example 
 
 ```
-__global export __extern_cpp int myGlobal;
+__global public __extern_cpp int myGlobal;
 ```
 
 The global can now be set from host code via

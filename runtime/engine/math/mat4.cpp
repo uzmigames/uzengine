@@ -61,6 +61,7 @@ Mat4 Mat4::Perspective(float fov, float aspect, float near_plane, float far_plan
     result.m._33 = -near_plane / range;                // Reversed-Z: maps near→1, far→0
     result.m._43 = (near_plane * far_plane) / range;   // Reversed-Z: positive offset
     result.m._34 = 1.0f;                               // Perspective divide (w = z)
+    result.m._44 = 0.0f;                               // Default Mat4 is identity; clip w must not include +1.
     return result;
 }
 

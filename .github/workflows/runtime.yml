@@ -27,6 +27,9 @@ concurrency:
   group: runtime-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   build-test:
     name: Build & Test
@@ -40,16 +43,16 @@ jobs:
       # Over this size the cache is emptied before saving, so it cannot grow without bound.
       ZIG_CACHE_LIMIT_GB: 12
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
 
       # Archives are stored by SHA-256 and re-verified, so a stale prefix match is safe.
       - name: Restore native download cache
         id: native-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .tools/native-cache
           key: native-${{ runner.os }}-${{ hashFiles('scripts/native-dependencies.lock.json') }}
@@ -60,14 +63,14 @@ jobs:
 
       - name: Save native download cache
         if: steps.native-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .tools/native-cache
           key: ${{ steps.native-cache.outputs.cache-primary-key }}
 
       # setup-zig's own cache wipes itself above 2 GiB, which a Debug build exceeds.
       - name: Install Zig
-        uses: mlugg/setup-zig@v2
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.15.2
           use-cache: false
@@ -81,7 +84,7 @@ jobs:
       # Run-unique key so every run saves its updated state; the newest prefix match is restored.
       - name: Restore Zig cache
         id: zig-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.ZIG_CACHE_PATH }}
           key: ${{ env.ZIG_CACHE_VERSION }}-${{ runner.os }}-${{ hashFiles('runtime/build.zig', 'runtime/build.zig.zon', 'scripts/native-dependencies.lock.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -120,7 +123,7 @@ jobs:
       # always(): the test step currently fails, and partial work from cancelled runs is still reusable.
       - name: Save Zig cache
         if: ${{ always() && steps.build-debug.conclusion != 'skipped' }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.ZIG_CACHE_PATH }}
           key: ${{ steps.zig-cache.outputs.cache-primary-key }}

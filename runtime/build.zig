@@ -11,6 +11,11 @@ fn linkLibCpp(b: *std.Build, mod: *std.Build.Module, is_apple: bool) void {
     }
 }
 
+/// Joins two compiler flag lists; the result lives as long as the build graph.
+fn concatFlags(b: *std.Build, head: []const []const u8, tail: []const []const u8) []const []const u8 {
+    return std.mem.concat(b.allocator, []const u8, &.{ head, tail }) catch @panic("OOM");
+}
+
 pub fn build(b: *std.Build) void {
     // Default output to build/ — user can override with -p <path>
     if (std.mem.endsWith(u8, b.install_prefix, "zig-out")) {
@@ -49,8 +54,22 @@ pub fn build(b: *std.Build) void {
     // Default: false — runtime.lib only (play mode / headless)
     const build_editor = b.option(bool, "editor", "Build editor.lib alongside runtime.lib") orelse false;
 
-    const cpp_flags: []const []const u8 =
-        &.{ "-std=c++23", "-DSPDLOG_COMPILED_LIB", "-DUZ_PROFILING_ENABLED", "-DTRACY_ENABLE", "-DTRACY_ON_DEMAND", "-DSPNG_STATIC" };
+    // -Dtracy=true|false → compile the Tracy profiler client (TRACY_ENABLE).
+    // Default follows docs/engine/06-build-toolchain/05-build-configs.md:
+    // on for Debug/ReleaseSafe, off for ReleaseFast/ReleaseSmall (shipping).
+    // When on, the client binds to loopback only and never broadcasts: the
+    // Tracy protocol lets a connected peer read arbitrary process memory and
+    // open files by path, so it must never be reachable from the network.
+    const tracy_enabled = b.option(bool, "tracy", "Compile the Tracy profiler client, loopback-only (default: on for Debug/ReleaseSafe, off for ReleaseFast/ReleaseSmall)") orelse switch (optimize) {
+        .Debug, .ReleaseSafe => true,
+        .ReleaseFast, .ReleaseSmall => false,
+    };
+    const tracy_defines: []const []const u8 = if (tracy_enabled)
+        &.{ "-DTRACY_ENABLE", "-DTRACY_ON_DEMAND", "-DTRACY_ONLY_LOCALHOST", "-DTRACY_NO_BROADCAST" }
+    else
+        &.{};
+
+    const cpp_flags = concatFlags(b, &.{ "-std=c++23", "-DSPDLOG_COMPILED_LIB", "-DUZ_PROFILING_ENABLED", "-DSPNG_STATIC" }, tracy_defines);
 
     // ── Include path tables (shared between runtime and tests) ───────────
 
@@ -412,12 +431,12 @@ pub fn build(b: *std.Build) void {
         runtime_mod.addCSourceFiles(.{
             .root = b.path("platform/macos"),
             .files = &.{"platform_window.mm"},
-            .flags = &.{ "-std=c++17", "-ObjC++", "-fno-objc-arc", "-DSPDLOG_COMPILED_LIB", "-DUZ_PROFILING_ENABLED", "-DTRACY_ENABLE", "-DTRACY_ON_DEMAND" },
+            .flags = concatFlags(b, &.{ "-std=c++17", "-ObjC++", "-fno-objc-arc", "-DSPDLOG_COMPILED_LIB", "-DUZ_PROFILING_ENABLED" }, tracy_defines),
         });
 
         // Metal RHI backend — all files compiled as Objective-C++ because they
         // include <Metal/Metal.h> which uses @class/@interface ObjC syntax.
-        const objcxx_flags = &.{ "-std=c++17", "-ObjC++", "-fno-objc-arc", "-DSPDLOG_COMPILED_LIB", "-DUZ_PROFILING_ENABLED", "-DTRACY_ENABLE", "-DTRACY_ON_DEMAND" };
+        const objcxx_flags = concatFlags(b, &.{ "-std=c++17", "-ObjC++", "-fno-objc-arc", "-DSPDLOG_COMPILED_LIB", "-DUZ_PROFILING_ENABLED" }, tracy_defines);
         runtime_mod.addCSourceFiles(.{
             .root = b.path("engine/rhi/metal"),
             .files = &.{ "metal_device.cpp", "metal_resource_creation.cpp", "metal_command_list.cpp", "metal_fence.cpp", "metal_gpu_profiler.cpp", "metal_swapchain.mm" },
@@ -425,7 +444,7 @@ pub fn build(b: *std.Build) void {
         });
 
         // Tracy Metal wrapper — requires ARC (compiled separately from the rest of the backend)
-        const objcxx_arc_flags = &.{ "-std=c++17", "-ObjC++", "-fobjc-arc", "-DSPDLOG_COMPILED_LIB", "-DUZ_PROFILING_ENABLED", "-DTRACY_ENABLE", "-DTRACY_ON_DEMAND" };
+        const objcxx_arc_flags = concatFlags(b, &.{ "-std=c++17", "-ObjC++", "-fobjc-arc", "-DSPDLOG_COMPILED_LIB", "-DUZ_PROFILING_ENABLED" }, tracy_defines);
         runtime_mod.addCSourceFiles(.{
             .root = b.path("engine/rhi/metal"),
             .files = &.{"metal_tracy_gpu.mm"},
@@ -644,11 +663,13 @@ pub fn build(b: *std.Build) void {
         .flags = cpp_flags,
     });
 
-    // Thirdparty — Tracy
+    // Thirdparty — Tracy. Always compiled: without TRACY_ENABLE it reduces to
+    // TracySystem (tracy::SetThreadName, used by UZ_PROFILE_THREAD) and the
+    // profiler client, sockets and UDP broadcast are compiled out.
     runtime_mod.addCSourceFiles(.{
         .root = b.path(tp ++ "tracy/public"),
         .files = &.{"TracyClient.cpp"},
-        .flags = &.{ "-std=c++17", "-DTRACY_ENABLE", "-DTRACY_ON_DEMAND" },
+        .flags = concatFlags(b, &.{"-std=c++17"}, tracy_defines),
     });
 
     // Thirdparty — basis_universal transcoder (with KTX2 + Zstd support)
@@ -1164,7 +1185,7 @@ pub fn build(b: *std.Build) void {
         // UZ_API in runtime.h expands to __declspec(dllexport), making every
         // uz_* function definition in this .obj an exported DLL symbol.
         // All include paths that runtime.cpp needs are added below.
-        const dll_cpp_flags = cpp_flags ++ &[_][]const u8{"-DUZ_BUILDING_DLL=1"};
+        const dll_cpp_flags = concatFlags(b, cpp_flags, &.{"-DUZ_BUILDING_DLL=1"});
         dll_mod.addCSourceFiles(.{
             .root = b.path("engine/app"),
             .files = &.{"runtime.cpp"},

@@ -77,8 +77,32 @@ void ShaderVFS::Clear() {
 // Resolution
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// True if `path` (already '/'-normalized) has a ".." segment. Callers
+/// collapse legitimate relative includes before resolving
+/// (ShaderSourceManager::ResolveIncludePath), so a surviving ".." can only
+/// climb out of a mount's real directory.
+static bool HasParentSegment(const std::string& path) {
+    size_t start = 0;
+    while (start <= path.size()) {
+        size_t end = path.find('/', start);
+        if (end == std::string::npos) end = path.size();
+        if (path.compare(start, end - start, "..") == 0) return true;
+        start = end + 1;
+    }
+    return false;
+}
+
 std::optional<std::string> ShaderVFS::Resolve(const std::string& virtualPath) const {
     std::string normalized = NormalizePath(virtualPath);
+
+    // Shader sources choose their own #include paths, so the virtual path is
+    // data: refuse anything that could leave the mounted directory or be
+    // truncated at the C file API boundary.
+    if (normalized.find('\0') != std::string::npos || HasParentSegment(normalized)) {
+        UZ_LOG(IO, Warning, "ShaderVFS: rejected virtual path escaping its mount: '{}'",
+               normalized.substr(0, normalized.find('\0')));
+        return std::nullopt;
+    }
 
     // Search in reverse order — last mount wins
     for (auto it = m_mounts.rbegin(); it != m_mounts.rend(); ++it) {

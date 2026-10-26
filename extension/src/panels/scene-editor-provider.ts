@@ -16,17 +16,12 @@
 import * as vscode from 'vscode';
 import type { RuntimeClient } from '../runtime-client';
 import type { SceneTreeProvider } from './scene-tree-panel';
+import { parseSceneEditorMessage } from './webview-messages.js';
+import { buildWebviewCsp, createNonce, escapeHtml } from './webview-security.js';
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-type WebViewMessage =
-  | { type: 'ready' }
-  | { type: 'mouseMove'; x: number; y: number }
-  | { type: 'mouseButton'; button: number; pressed: boolean }
-  | { type: 'key'; keycode: number; pressed: boolean }
-  | { type: 'scroll'; delta: number }
-  | { type: 'decoderError'; message: string }
-  | { type: 'resize'; width: number; height: number };
+/// Title shown when the document has no usable `name` (invalid JSON, missing
+/// or non-string field — the `.uzscene` schema types `name` as a string).
+const FALLBACK_SCENE_NAME = 'Unknown Scene';
 
 // ── SceneEditorProvider ───────────────────────────────────────────────────────
 
@@ -84,13 +79,23 @@ export class SceneEditorProvider implements vscode.CustomTextEditorProvider {
       }
     }
 
-    webviewPanel.webview.options = { enableScripts: true };
+    // The page loads no local files; an empty root list denies all of them.
+    webviewPanel.webview.options = { enableScripts: true, localResourceRoots: [] };
     webviewPanel.webview.html = this.buildHtml(document);
 
-    webviewPanel.webview.onDidReceiveMessage((msg: WebViewMessage) => {
+    webviewPanel.webview.onDidReceiveMessage((raw: unknown) => {
       // Ignore messages from stale sessions (e.g. the old webview still
       // sending after resolveCustomTextEditor was called again).
       if (mySession !== this.sessionId) return;
+
+      // Webview content is untrusted: drop anything that is not a known
+      // message with in-range fields before it can reach the runtime. The
+      // payload is not echoed so a hostile page cannot inject log text.
+      const msg = parseSceneEditorMessage(raw);
+      if (msg === undefined) {
+        this.log.warn('[SceneEditor] rejected malformed webview message');
+        return;
+      }
 
       if (!this.viewportCreated) {
         // Only accept 'ready' and 'resize' before viewport is created.
@@ -391,21 +396,32 @@ export class SceneEditorProvider implements vscode.CustomTextEditorProvider {
 
   // ── Private — HTML ────────────────────────────────────────────────────────
 
-  private buildHtml(document: vscode.TextDocument): string {
-    let sceneName = 'Unknown Scene';
+  /// Reads the display name from the `.uzscene` JSON. The result is untrusted
+  /// workspace text and must be HTML-escaped before interpolation.
+  private static readSceneName(document: vscode.TextDocument): string {
     try {
-      const json = JSON.parse(document.getText());
-      if (json.name) sceneName = json.name;
+      const json: unknown = JSON.parse(document.getText());
+      if (
+        typeof json === 'object' &&
+        json !== null &&
+        'name' in json &&
+        typeof json.name === 'string' &&
+        json.name.length > 0
+      ) {
+        return json.name;
+      }
     } catch {
-      /* invalid JSON */
+      // Invalid JSON while the user is mid-edit — fall back to the default title.
     }
+    return FALLBACK_SCENE_NAME;
+  }
 
-    const csp = [
-      "default-src 'none'",
-      "style-src 'unsafe-inline'",
-      "script-src 'unsafe-inline'",
-      'img-src data: blob:',
-    ].join('; ');
+  private buildHtml(document: vscode.TextDocument): string {
+    const sceneName = escapeHtml(SceneEditorProvider.readSceneName(document));
+    const nonce = createNonce();
+    // The page draws decoded VideoFrames onto a canvas and loads no images,
+    // media, fonts or network resources, so only nonce'd inline code is allowed.
+    const csp = buildWebviewCsp(nonce);
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -414,7 +430,7 @@ export class SceneEditorProvider implements vscode.CustomTextEditorProvider {
 <meta http-equiv="Content-Security-Policy" content="${csp}">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${sceneName}</title>
-<style>
+<style nonce="${nonce}">
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
@@ -478,7 +494,7 @@ export class SceneEditorProvider implements vscode.CustomTextEditorProvider {
     <button id="btn-world"  class="active" title="World Space">World</button>
     <span id="stats">-- FPS</span>
 </div>
-<script>
+<script nonce="${nonce}">
 (function () {
     'use strict';
     var vscode = acquireVsCodeApi();

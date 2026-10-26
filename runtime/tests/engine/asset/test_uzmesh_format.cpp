@@ -477,6 +477,72 @@ TEST(UzMeshFormat, Read_TruncatedIndexData_ReturnsError) {
     EXPECT_FALSE(r.error.empty());
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Crafted headers — out-of-range offsets and invalid strides
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Returns a valid triangle .uzmesh blob with its header rewritten by `patch`.
+template <typename Patch>
+static std::vector<uint8_t> MakePatchedTriangleBlob(Patch patch) {
+    auto blob = WriteUzMesh(MakeMinimalHeader(), {MakeSingleLOD()}, {MakeSingleSubmesh()},
+                            MakeTriangleVertexBytes(), MakeTriangleIndexBytes());
+    UzMeshHeader h;
+    std::memcpy(&h, blob.data(), sizeof(h));
+    patch(h);
+    std::memcpy(blob.data(), &h, sizeof(h));
+    return blob;
+}
+
+TEST(UzMeshFormat, Read_VertexDataOffsetPastEnd_Rejected) {
+    auto blob = MakePatchedTriangleBlob([](UzMeshHeader& h) { h.vertexDataOffset = UINT32_MAX; });
+    auto r = ReadUzMesh(blob);
+    EXPECT_FALSE(r.success);
+    EXPECT_NE(r.error.find("vertex data"), std::string::npos) << r.error;
+}
+
+TEST(UzMeshFormat, Read_IndexDataOffsetPastEnd_Rejected) {
+    auto blob = MakePatchedTriangleBlob([](UzMeshHeader& h) { h.indexDataOffset = UINT32_MAX - 4; });
+    auto r = ReadUzMesh(blob);
+    EXPECT_FALSE(r.success);
+    EXPECT_NE(r.error.find("index data"), std::string::npos) << r.error;
+}
+
+TEST(UzMeshFormat, Read_HugeVertexCountTimesStride_Rejected) {
+    auto blob = MakePatchedTriangleBlob([](UzMeshHeader& h) {
+        h.vertexCount = UINT32_MAX;
+        h.vertexStride = UINT32_MAX;
+    });
+    EXPECT_FALSE(ReadUzMesh(blob).success);
+}
+
+TEST(UzMeshFormat, Read_ZeroVertexStrideWithVertices_Rejected) {
+    auto blob = MakePatchedTriangleBlob([](UzMeshHeader& h) { h.vertexStride = 0; });
+    auto r = ReadUzMesh(blob);
+    EXPECT_FALSE(r.success);
+    EXPECT_NE(r.error.find("vertexStride"), std::string::npos) << r.error;
+}
+
+TEST(UzMeshFormat, Read_InvalidIndexStride_Rejected) {
+    auto blob = MakePatchedTriangleBlob([](UzMeshHeader& h) { h.indexStride = 1; });
+    auto r = ReadUzMesh(blob);
+    EXPECT_FALSE(r.success);
+    EXPECT_NE(r.error.find("indexStride"), std::string::npos) << r.error;
+}
+
+TEST(UzMeshFormat, Read_SkeletonPathLengthPastEnd_Rejected) {
+    auto blob = WriteUzMesh(MakeMinimalHeader(), {MakeSingleLOD()}, {MakeSingleSubmesh()},
+                            MakeTriangleVertexBytes(), MakeTriangleIndexBytes(),
+                            "skeletons/hero.uzskel");
+    UzMeshHeader h;
+    std::memcpy(&h, blob.data(), sizeof(h));
+    h.reserved[0] = UINT32_MAX;
+    std::memcpy(blob.data(), &h, sizeof(h));
+
+    auto r = ReadUzMesh(blob);
+    EXPECT_FALSE(r.success);
+    EXPECT_NE(r.error.find("skeleton path"), std::string::npos) << r.error;
+}
+
 TEST(UzMeshFormat, Read_OnSuccess_ErrorStringIsEmpty) {
     auto header = MakeMinimalHeader();
     auto blob = WriteUzMesh(header, {MakeSingleLOD()}, {MakeSingleSubmesh()},

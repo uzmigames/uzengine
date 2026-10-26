@@ -1,6 +1,7 @@
 #include "lua_math_api.h"
 
 #include "log.h"
+#include "lua_sandbox.h"
 
 /// Lua bindings for math utilities (vec3 and related vector operations).
 
@@ -419,6 +420,10 @@ static void RegisterVec3Metatable(lua_State* L) {
 
     // Create metatable "uz.Vec3"
     luaL_newmetatable(L, kVec3Meta);                  // [methods, mt]
+
+    // Shared by every script: hide it so no script can rewrite the operators
+    // other scripts use.
+    LuaSandboxProtectMetatable(L);
 
     lua_pushcfunction(L, Vec3Add);
     lua_setfield(L, -2, "__add");

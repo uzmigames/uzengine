@@ -2,7 +2,9 @@
 
 #include <gtest/gtest.h>
 #include "mesh.h"
+#include "uzmesh_format.h"
 
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -340,4 +342,128 @@ TEST_F(MeshFileTest, FileSizeMatchesExpected) {
     auto fileSize = std::filesystem::file_size(m_testPath);
     uint64_t expected = sizeof(MeshHeader) + cube.GetVertexDataSize() + cube.GetIndexDataSize();
     EXPECT_EQ(fileSize, expected);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Crafted files — wrapped offsets and oversized counts must be rejected
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Serializes a cube mesh with its header rewritten by `patch`.
+template <typename Patch>
+static std::vector<uint8_t> MakePatchedCubeBytes(Patch patch) {
+    Mesh cube = MeshBuilder::CreateCube(1.0f);
+    patch(cube.header);
+    std::vector<uint8_t> bytes(sizeof(MeshHeader));
+    std::memcpy(bytes.data(), &cube.header, sizeof(MeshHeader));
+    bytes.insert(bytes.end(), cube.vertexData.begin(), cube.vertexData.end());
+    bytes.insert(bytes.end(), cube.indexData.begin(), cube.indexData.end());
+    return bytes;
+}
+
+TEST(MeshMemoryLoadTest, VertexOffsetWrapsPastUint64Max_Rejected) {
+    // offset + size wraps to a small value, which passed the old additive check
+    // and made memcpy read from data + ~2^64.
+    auto bytes = MakePatchedCubeBytes([](MeshHeader& h) {
+        h.vertexDataOffset = UINT64_MAX - 16;
+    });
+    Mesh mesh = LoadMeshFromMemory(bytes, "wrapped_vertex");
+    EXPECT_FALSE(mesh.IsValid());
+    EXPECT_TRUE(mesh.vertexData.empty());
+}
+
+TEST(MeshMemoryLoadTest, IndexOffsetWrapsPastUint64Max_Rejected) {
+    auto bytes = MakePatchedCubeBytes([](MeshHeader& h) {
+        h.indexDataOffset = UINT64_MAX - 8;
+    });
+    Mesh mesh = LoadMeshFromMemory(bytes, "wrapped_index");
+    EXPECT_FALSE(mesh.IsValid());
+}
+
+TEST(MeshMemoryLoadTest, VertexCountBeyondData_Rejected) {
+    auto bytes = MakePatchedCubeBytes([](MeshHeader& h) { h.vertexCount = UINT32_MAX; });
+    Mesh mesh = LoadMeshFromMemory(bytes, "huge_vertex_count");
+    EXPECT_FALSE(mesh.IsValid());
+}
+
+TEST(MeshMemoryLoadTest, ValidCubeBytes_Loads) {
+    auto bytes = MakePatchedCubeBytes([](MeshHeader&) {});
+    Mesh mesh = LoadMeshFromMemory(bytes, "cube");
+    ASSERT_TRUE(mesh.IsValid());
+    EXPECT_EQ(mesh.vertexData.size(), mesh.GetVertexDataSize());
+    EXPECT_EQ(mesh.indexData.size(), mesh.GetIndexDataSize());
+}
+
+TEST_F(MeshFileTest, LoadVertexSizeBeyondFile_RejectedBeforeAllocation) {
+    // A ~4 GiB * 48 B vertex claim must fail on the file-size check, not on resize().
+    auto bytes = MakePatchedCubeBytes([](MeshHeader& h) { h.vertexCount = UINT32_MAX; });
+    {
+        std::ofstream f(m_testPath, std::ios::binary);
+        f.write(reinterpret_cast<const char*>(bytes.data()),
+                static_cast<std::streamsize>(bytes.size()));
+    }
+    Mesh mesh = LoadMesh(m_testPath);
+    EXPECT_FALSE(mesh.IsValid());
+    EXPECT_TRUE(mesh.vertexData.empty());
+}
+
+TEST_F(MeshFileTest, LoadIndexOffsetWraps_Rejected) {
+    auto bytes = MakePatchedCubeBytes([](MeshHeader& h) {
+        h.indexDataOffset = UINT64_MAX - 4;
+    });
+    {
+        std::ofstream f(m_testPath, std::ios::binary);
+        f.write(reinterpret_cast<const char*>(bytes.data()),
+                static_cast<std::streamsize>(bytes.size()));
+    }
+    Mesh mesh = LoadMesh(m_testPath);
+    EXPECT_FALSE(mesh.IsValid());
+}
+
+// ─── UZMS (skinned .uzmesh) fallback path ───────────────────────────────────
+
+/// Builds a UZMS mesh of `vertexCount` vertices at `stride` bytes and a
+/// 3-index buffer, with one LOD whose submesh claims `submeshIndexCount` indices.
+static std::vector<uint8_t> MakeUzmsBytes(uint32_t stride, uint32_t submeshIndexCount) {
+    constexpr uint32_t kVertexCount = 3;
+    UzMeshHeader h;
+    h.lodCount = 1;
+    h.totalSubmeshCount = 1;
+    h.vertexCount = kVertexCount;
+    h.indexCount = 3;
+    h.vertexStride = stride;
+    h.indexStride = sizeof(uint32_t);
+
+    UzMeshLOD lod;
+    lod.submeshCount = 1;
+    UzMeshSubmesh sub;
+    sub.indexCount = submeshIndexCount;
+
+    std::vector<uint8_t> vertices(static_cast<size_t>(kVertexCount) * stride, 0);
+    const uint32_t indices[3] = {0, 1, 2};
+    std::vector<uint8_t> indexBytes(sizeof(indices));
+    std::memcpy(indexBytes.data(), indices, sizeof(indices));
+    return WriteUzMesh(h, {lod}, {sub}, vertices, indexBytes);
+}
+
+TEST(MeshMemoryLoadTest, Uzms_StrideNarrowerThanVertex_Rejected) {
+    // 32-byte vertices read as 48-byte Vertex would run past the vertex data.
+    auto bytes = MakeUzmsBytes(32, 3);
+    Mesh mesh = LoadMeshFromMemory(bytes, "uzms_narrow");
+    EXPECT_FALSE(mesh.IsValid());
+}
+
+TEST(MeshMemoryLoadTest, Uzms_SubmeshIndexCountBeyondBuffer_Rejected) {
+    // GPU upload copies GetIndexDataSize() bytes, derived from submesh counts.
+    auto bytes = MakeUzmsBytes(56, 1000);
+    Mesh mesh = LoadMeshFromMemory(bytes, "uzms_overrun");
+    EXPECT_FALSE(mesh.IsValid());
+}
+
+TEST(MeshMemoryLoadTest, Uzms_SkinnedStride_ConvertsToStatic) {
+    auto bytes = MakeUzmsBytes(56, 3);
+    Mesh mesh = LoadMeshFromMemory(bytes, "uzms_ok");
+    ASSERT_TRUE(mesh.IsValid());
+    EXPECT_EQ(mesh.header.vertexStride, sizeof(Vertex));
+    EXPECT_EQ(mesh.vertexData.size(), mesh.GetVertexDataSize());
+    EXPECT_LE(mesh.GetIndexDataSize(), mesh.indexData.size());
 }

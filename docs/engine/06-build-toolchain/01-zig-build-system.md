@@ -121,7 +121,7 @@ const cpp_flags = &.{ "-std=c++17", "-DSPDLOG_COMPILED_LIB" };
 |--------|------------|-----|
 | `dx12_d3d12ma.cpp` | `-fno-sanitize=undefined`, `-Wno-switch`, `-Wno-unused-private-field` | D3D12MA upstream code triggers Clang warnings/UBSan false positives |
 | `metal_swapchain.mm` | `-fno-objc-arc`, `-fobjc-arc-exceptions`, `-std=c++17` | Objective-C++ file requiring Metal framework access |
-| `TracyClient.cpp` | `-DTRACY_ENABLE`, `-DTRACY_ON_DEMAND` | Tracy must be compiled with its feature defines |
+| `TracyClient.cpp` | `-DTRACY_ENABLE`, `-DTRACY_ON_DEMAND`, `-DTRACY_ONLY_LOCALHOST`, `-DTRACY_NO_BROADCAST` (only with `-Dtracy=true`, see [Build Options](05-build-configs.md#build-options)) | Tracy must be compiled with its feature defines; the client is loopback-only |
 | `basisu_transcoder.cpp` | `-DBASISD_SUPPORT_KTX2_ZSTD=0` | Disable zstd dependency (not needed for transcoding) |
 | `spirv_reflect.c` | `-std=c11` | C source, not C++ |
 | `miniz.c` | `-std=c11` | C source (zlib-compatible compression for tinyexr) |

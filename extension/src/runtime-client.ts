@@ -279,8 +279,7 @@ export class RuntimeClient implements vscode.Disposable {
    */
   async getCodecExtradata(): Promise<Buffer | null> {
     const b64 = (await this.send({ id: 0, cmd: 'getCodecExtradata' }, 'getCodecExtradata')) as
-      | string
-      | null;
+      string | null;
     if (!b64) return null;
     return Buffer.from(b64, 'base64');
   }
@@ -395,8 +394,7 @@ export class RuntimeClient implements vscode.Disposable {
    */
   async captureScreenshot(): Promise<Buffer | null> {
     const b64 = (await this.send({ id: 0, cmd: 'captureScreenshot' }, 'captureScreenshot')) as
-      | string
-      | null;
+      string | null;
     if (!b64) return null;
     return Buffer.from(b64, 'base64');
   }
@@ -552,7 +550,10 @@ export class RuntimeClient implements vscode.Disposable {
     }
     if (this.pending.size >= kMaxPendingRequests) {
       return Promise.reject(
-        new RuntimeClientError('backpressure', `RuntimeClient: too many pending requests (cmd=${label})`),
+        new RuntimeClientError(
+          'backpressure',
+          `RuntimeClient: too many pending requests (cmd=${label})`,
+        ),
       );
     }
     this.ensureWorker();
@@ -571,7 +572,9 @@ export class RuntimeClient implements vscode.Disposable {
     return new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new RuntimeClientError('timeout', `RuntimeClient: request timed out (cmd=${label})`));
+        reject(
+          new RuntimeClientError('timeout', `RuntimeClient: request timed out (cmd=${label})`),
+        );
       }, requestBudgets[cmd.cmd] ?? 10_000);
       this.pending.set(id, { resolve, reject, label, timer });
       try {

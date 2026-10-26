@@ -18,24 +18,8 @@ import * as vscode from 'vscode';
 import { FrameGate } from '../frame-gate.js';
 import type { RuntimeClient } from '../runtime-client';
 import type { SceneTreeProvider } from './scene-tree-panel';
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-/** Union of all messages sent from the WebView JS to the extension host. */
-type WebViewMessage =
-  | { type: 'ready' }
-  | { type: 'requestKeyframe' }
-  | { type: 'resize'; width: number; height: number }
-  | { type: 'mouseMove'; x: number; y: number }
-  /**
-   * Sent while the pointer is locked (right-click camera orbit).
-   * `dx`/`dy` are the raw `MouseEvent.movementX/Y` deltas in pixels.
-   */
-  | { type: 'mouseDelta'; dx: number; dy: number }
-  | { type: 'mouseButton'; button: number; pressed: boolean }
-  /** `code` is the `KeyboardEvent.code` string, e.g. `'KeyW'`, `'ArrowUp'`. */
-  | { type: 'key'; code: string; pressed: boolean; modifiers: number }
-  | { type: 'scroll'; delta: number };
+import { parseViewportMessage, type ViewportMessage } from './webview-messages.js';
+import { buildWebviewCsp, createNonce } from './webview-security.js';
 
 // ── ViewportPanel ─────────────────────────────────────────────────────────────
 
@@ -153,9 +137,12 @@ export class ViewportPanel {
     // Dispose this wrapper when the panel is closed by the user.
     this.panel.onDidDispose(() => this.dispose());
 
-    // Handle messages arriving from the WebView JavaScript.
-    this.panel.webview.onDidReceiveMessage((msg: WebViewMessage) => {
-      void this.handleWebViewMessage(msg);
+    // Handle messages arriving from the WebView JavaScript. Webview content is
+    // untrusted, so anything that is not a known message with in-range fields
+    // is dropped before it can reach the runtime.
+    this.panel.webview.onDidReceiveMessage((raw: unknown) => {
+      const msg = parseViewportMessage(raw);
+      if (msg !== undefined) void this.handleWebViewMessage(msg);
     });
 
     // Pause / resume the render loop when the panel visibility changes.
@@ -223,14 +210,19 @@ export class ViewportPanel {
         if (this.disposed) return;
         if (this.statsInFlight >= 2) return;
         this.statsInFlight++;
-        void Promise.resolve(this.panel.webview.postMessage({
-          type: 'stats',
-          fps: stats.fps,
-          frameMs: stats.frameMs,
-          drawCalls: stats.drawCalls,
-          vertices: stats.vertices,
-          triangles: stats.triangles,
-        })).then(() => this.statsInFlight--, () => this.statsInFlight--);
+        void Promise.resolve(
+          this.panel.webview.postMessage({
+            type: 'stats',
+            fps: stats.fps,
+            frameMs: stats.frameMs,
+            drawCalls: stats.drawCalls,
+            vertices: stats.vertices,
+            triangles: stats.triangles,
+          }),
+        ).then(
+          () => this.statsInFlight--,
+          () => this.statsInFlight--,
+        );
       },
       // onEncodedFrame callback — H.264 NAL as base64 string
       (nalBase64: string, key: boolean) => {
@@ -241,10 +233,15 @@ export class ViewportPanel {
         }
         if (!this.frameGate.shouldDeliver(key)) return;
         this.framesInFlight++;
-        void Promise.resolve(this.panel.webview.postMessage({ type: 'frame', data: nalBase64, key }))
-          .then((delivered) => {
-            if (!delivered) this.dropFrame();
-          }, () => this.dropFrame())
+        void Promise.resolve(
+          this.panel.webview.postMessage({ type: 'frame', data: nalBase64, key }),
+        )
+          .then(
+            (delivered) => {
+              if (!delivered) this.dropFrame();
+            },
+            () => this.dropFrame(),
+          )
           .finally(() => this.framesInFlight--);
       },
     );
@@ -290,7 +287,7 @@ export class ViewportPanel {
 
   // ── Private — message handling ────────────────────────────────────────────
 
-  private async handleWebViewMessage(msg: WebViewMessage): Promise<void> {
+  private async handleWebViewMessage(msg: ViewportMessage): Promise<void> {
     switch (msg.type) {
       case 'ready':
         await this.startRenderLoop();
@@ -314,9 +311,10 @@ export class ViewportPanel {
         this.client.mouseButton(msg.button, msg.pressed);
         break;
       case 'key': {
-        const vk = ViewportPanel.KEY_MAP[msg.code];
-        if (vk !== undefined) {
-          this.client.keyEx(vk, msg.pressed, msg.modifiers ?? 0);
+        // Own-property lookup only: inherited names such as `constructor` or
+        // `__proto__` must not resolve to a non-numeric "key code".
+        if (Object.hasOwn(ViewportPanel.KEY_MAP, msg.code)) {
+          this.client.keyEx(ViewportPanel.KEY_MAP[msg.code], msg.pressed, msg.modifiers);
         }
         break;
       }
@@ -411,11 +409,10 @@ export class ViewportPanel {
 
   /// Returns the complete inline HTML for the WebviewPanel.
   private buildHtml(): string {
-    const csp = [
-      "default-src 'none'",
-      "style-src 'unsafe-inline'",
-      "script-src 'unsafe-inline'",
-    ].join('; ');
+    const nonce = createNonce();
+    // Frames arrive as H.264 NAL units drawn onto a canvas; the host never
+    // posts `jpeg` messages, so no image, media or network source is allowed.
+    const csp = buildWebviewCsp(nonce);
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -424,7 +421,7 @@ export class ViewportPanel {
 <meta http-equiv="Content-Security-Policy" content="${csp}">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>UzEngine Viewport</title>
-<style>
+<style nonce="${nonce}">
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
@@ -557,7 +554,7 @@ export class ViewportPanel {
     </div>
 </div>
 
-<script>
+<script nonce="${nonce}">
 (function () {
     'use strict';
 

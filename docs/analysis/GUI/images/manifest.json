@@ -1,0 +1,357 @@
+{
+  "created": "2026-10-23",
+  "revision": 5,
+  "kind": "Document-oriented neutral-gray static GUI design proposals",
+  "navigation": "document-type",
+  "generator": "tools/render_visuals.py",
+  "sources": [
+    {
+      "path": "docs/analysis/GUI/images/sources/uzmi-icon.png",
+      "sha256": "f6021b5c117845ddcb344223f80be68941d265290a72db64affe6e8cd2f52094"
+    },
+    {
+      "path": "sample/content/textures/DH_HQ_BaseColor.jpg",
+      "sha256": "9d3f7b3fd9754656b40bd703618037400f268f8f04a92ece6c187e6320145ca6"
+    },
+    {
+      "path": "sample/content/textures/DH_HQ_Emissive.jpg",
+      "sha256": "2f558d3efc6f6a30b1c013e48780ca7f5fa3a7498d48a606412c2140abe53c0a"
+    },
+    {
+      "path": "sample/content/textures/DH_HQ_Normal.jpg",
+      "sha256": "fb84fd4b49470184eb39002aa8de14c34d3f90791dc7d28c681cd9585a94b59d"
+    },
+    {
+      "path": "sample/content/textures/DH_HQ_ORM.png",
+      "sha256": "981fe4c59f7d47972594dd3205ef5d9b17f1a09b684c52c630de7a3852e75b8c"
+    },
+    {
+      "path": "sample/content/meshes/DamagedHelmetHQ.uzmesh",
+      "sha256": "bb04e8490fa105d9dd823612219d3e025af1912be195612a839a718f775d2c81"
+    },
+    {
+      "path": "docs/analysis/GUI/tools/icons/lucide.ttf",
+      "sha256": "0ff17e4ce16364d2dae72689336262960e7d5067cfcdb07ca283465a2a34af48"
+    },
+    {
+      "path": "docs/analysis/GUI/tools/icons/info.json",
+      "sha256": "951a23c65a08f084d8e0153fb2a9febc48f65cfeecddebdccb43fe20f773935d"
+    },
+    {
+      "path": "docs/analysis/GUI/tools/icons/LICENSE",
+      "sha256": "1e7290b35280a048667bbf0ebabac1c7fd52a75300e8b2946ac165715997f2bc"
+    },
+    {
+      "path": "icon.ico",
+      "sha256": "a533a6caa3c7772a6f98bb4fac1dfcd8175404f93c95e2f0198b0ef412b4d387"
+    },
+    {
+      "path": "docs/analysis/GUI/images/sources/sponza-manifest.json",
+      "sha256": "74adbb5e2343e30a68fd147e35e43e1c5c88696ebc1513e4dd0cb25bc84e7c34"
+    },
+    {
+      "path": "docs/analysis/GUI/images/sources/sponza-run.log",
+      "sha256": "94d955ccea2e777377aacfe729c77d669ed13db2146d9bb17398a4db9b1a12d1"
+    },
+    {
+      "path": "docs/analysis/GUI/images/sources/sponza_680.png",
+      "sha256": "5d7cc71dd7a12bf20412b87f734115ec01721bcfa9af97c3c6e4db86e398613c"
+    },
+    {
+      "path": "docs/analysis/GUI/images/sources/materials-manifest.json",
+      "sha256": "cc8d1bfe1e2d7f36cc84e626c910a5678f502adcf7008eb4c90c6c325202fc6a"
+    },
+    {
+      "path": "docs/analysis/GUI/images/sources/materials-run.log",
+      "sha256": "1a3063a2c41c480d7de8df1811eb81b355ef5f8a6127c34dd112b4cac2857634"
+    },
+    {
+      "path": "docs/analysis/GUI/images/sources/materials_240.png",
+      "sha256": "8be5a52b1bcbb7fdc970e862980a1a4e18bc28dc11426c142af5657468fece60"
+    },
+    {
+      "path": "docs/analysis/GUI/images/sources/damaged-quarter-manifest.json",
+      "sha256": "38daab252f0e590909a8943fbeaf27d76c9d2644c0fd1a3a221a61bb7595ba83"
+    },
+    {
+      "path": "docs/analysis/GUI/images/sources/damaged-quarter-run.log",
+      "sha256": "6aac0b38880df691ed523701e5db78fc06d4892f48c96534dea2477f433075cd"
+    },
+    {
+      "path": "docs/analysis/GUI/images/sources/damaged-quarter_240.png",
+      "sha256": "17dd549059140864bdcecf8fa02c21dfb6042cd6821544889ffeadb1c435f804"
+    },
+    {
+      "path": "docs/analysis/GUI/images/sources/damaged-front-manifest.json",
+      "sha256": "f055a3b5e84b5401a3604d5b58d9e529583dead3821c3ebccf4bca76615ba4a0"
+    },
+    {
+      "path": "docs/analysis/GUI/images/sources/damaged-front-run.log",
+      "sha256": "55903522ee7d58860b3fdcd4165784a945d2e538db11e98aacf87a34024ddc58"
+    },
+    {
+      "path": "docs/analysis/GUI/images/sources/damaged-front_240.png",
+      "sha256": "d818b36f0c96afb57788725317c8e3e6648f4bc23c2283699b4dbca0a952ed44"
+    },
+    {
+      "path": "docs/analysis/GUI/images/sources/damaged-side-manifest.json",
+      "sha256": "945d23cf602b916297b1327ef5dba48c0168c689c1e3aa9e968bb0b8a3ba411b"
+    },
+    {
+      "path": "docs/analysis/GUI/images/sources/damaged-side-run.log",
+      "sha256": "5e69d1449dc6b6d445e8817b3f2f2b7fc82abaf1a7cf6be410c4ff9beeef524c"
+    },
+    {
+      "path": "docs/analysis/GUI/images/sources/damaged-side_240.png",
+      "sha256": "96ec4f0883b02de7edd194485d14ed6622a8931ddbe0499bd1bd38fa36c1253d"
+    },
+    {
+      "path": "docs/analysis/GUI/images/sources/damaged-back-manifest.json",
+      "sha256": "4419d916532636cc237cacea603a1d5f9970bc26e955f4dab943edf4de5129cc"
+    },
+    {
+      "path": "docs/analysis/GUI/images/sources/damaged-back-run.log",
+      "sha256": "1a40d5110119e061225f5e6f29a924723863fad4f8ce5eb9fbc46f260367c42b"
+    },
+    {
+      "path": "docs/analysis/GUI/images/sources/damaged-back_240.png",
+      "sha256": "69cc1f542c4a39bc16da831febf21f1cc8aac24919e8d6b5272ad2395509fdc3"
+    },
+    {
+      "path": "docs/analysis/GUI/images/sources/character-manifest.json",
+      "sha256": "afc2bf4154ce47f3699d30b93bac0475d6a99f5263721f9e1de377944927f2ad"
+    },
+    {
+      "path": "docs/analysis/GUI/images/sources/character-run.log",
+      "sha256": "7fdcdacfb4e040f343be18bdf6db1764e4a689bde17d3093412fa4716752f61f"
+    },
+    {
+      "path": "docs/analysis/GUI/images/sources/character_120.png",
+      "sha256": "7e9adb54e501dc86952c3f9aca3476963b81c8ba9739058f43682423a632504c"
+    },
+    {
+      "path": "docs/analysis/GUI/images/sources/character_240.png",
+      "sha256": "92c307c27060929541759309fd3f838ce54ac80fc95ceb978850817b503e83d7"
+    },
+    {
+      "path": "sample/projects/sponza.uzproject",
+      "sha256": "e6dd9806b5b66dabf078cf3ae1a886e46e5de7c6d524e7527884835a4e60bd11"
+    },
+    {
+      "path": "sample/content/scenes/sponza.uzscene",
+      "sha256": "1a4cc809c0fa10a0d26bde6c1d07e44861970dc0fa465a0074a08fc82fdfc1af"
+    },
+    {
+      "path": "sample/projects/material_showcase.uzproject",
+      "sha256": "715266fc94fdc61efad6f159b49255e656bd7c00a5d498db7431e806fe65cc62"
+    },
+    {
+      "path": "sample/content/scenes/material_showcase.uzscene",
+      "sha256": "fd94973df568bf9f502bad7baa9e2c348e065fd8bdea8ac01a2feecfdac9ac9f"
+    },
+    {
+      "path": "sample/projects/damaged_helmet.uzproject",
+      "sha256": "3303c2846ce85e2ad0be3c0d82ff2590ef0391cb37633769ecac2883b00bd3cb"
+    },
+    {
+      "path": "sample/content/scenes/damaged_helmet.uzscene",
+      "sha256": "ad4a6bdfcc51e84dbe44941ba5f3bd26a23bfde6bcbaea613b9ffa4c31826cf1"
+    },
+    {
+      "path": "sample/projects/fbx_test.uzproject",
+      "sha256": "2f7485f6b88a678c912fcc56ed49fb0d4b8c43eb6a63e490bbc2ebdb2f9269a7"
+    },
+    {
+      "path": "sample/content/scenes/fbx_test.uzscene",
+      "sha256": "6bbd3dc7caafa96f2ad10dcd70e66a300b542539d22ef8748b695e04cf72f862"
+    },
+    {
+      "path": "sample/content/meshes/mushroommonster/MushroomMonster_Low.uzskel",
+      "sha256": "a7ac5995cf194ab8da141aefc4511ad5f5a28e3c46762b6cfaae46d5e694b4cb"
+    },
+    {
+      "path": "sample/content/meshes/mushroommonster/MushroomMonster_Low.uzmesh",
+      "sha256": "c1c2ef5f85d125e96da0cd9e47ec377f63a2123d42518b5a19c9ced93e91f525"
+    },
+    {
+      "path": "sample/content/meshes/mushroommonster/animations/AS_Mushroom_Idle.uzanim",
+      "sha256": "750cd79e61a376b6a6abba312ab1b08111f0f27fd0c0116347155dd57059e86f"
+    },
+    {
+      "path": "sample/content/meshes/mushroommonster/mushroom_monster.uzmat",
+      "sha256": "be52dc085a776df2a106be53146bffb32be6705cf1915bcb1d23813daf1fccad"
+    },
+    {
+      "path": "sample/content/scripts/mushroom_controller.lua",
+      "sha256": "060b222e5430d71e425b09282e9a15780c1e2c8c758529516afc95bab07d3181"
+    }
+  ],
+  "outputs": [
+    {
+      "file": "00-architecture.png",
+      "description": "Proposed native host architecture; not shipping topology.",
+      "width": 1920,
+      "height": 1200,
+      "sha256": "ed7dd5d409db260c3c6157d4044667534fe6cb9c1afceade808f13060c0b0c3e"
+    },
+    {
+      "file": "01-scene-workspace.png",
+      "description": "Scene workspace using sample Sponza frame 680.",
+      "width": 1920,
+      "height": 1200,
+      "sha256": "e14595eb414450c29171fe03ae483439c73d1f57e79a2f410f84e9cf8d8e5e73"
+    },
+    {
+      "file": "02-code-workspace.png",
+      "description": "Code workspace proposal; illustrative code and service states.",
+      "width": 1920,
+      "height": 1200,
+      "sha256": "32bf8689550b92fa034264b01c6700c082a3aa39c7e07a4a6fb65aab858bad34"
+    },
+    {
+      "file": "03-agent-review.png",
+      "description": "Agent review proposal; no provider session or approved patch.",
+      "width": 1920,
+      "height": 1200,
+      "sha256": "823e04238ae7d392f73d8a3a957727da7ebc1a500ec5bdb0f5c3a18adce0069f"
+    },
+    {
+      "file": "04-asset-lab.png",
+      "description": "Asset library with DamagedHelmet runtime capture and its four real material maps.",
+      "width": 1920,
+      "height": 1200,
+      "sha256": "1a8ebf3d90fb7826f6723d055a7af70628c0f2836488ec64b8343fbb3ecceebc"
+    },
+    {
+      "file": "05-model-generation.png",
+      "description": "Meshy workflow concept; local stand-in, no paid generation.",
+      "width": 1920,
+      "height": 1200,
+      "sha256": "44f41fda629224cd0e43ffdd43d5b503df3af3d8ff650454bb2ab3c9ee5b132a"
+    },
+    {
+      "file": "06-paint-roundtrip.png",
+      "description": "Paint workflow concept; no EZPainter connection or paint operation.",
+      "width": 1920,
+      "height": 1200,
+      "sha256": "3ca825358c6be13375f771d1af703ca76a276d1ee19b6ea351368e59d3c9757d"
+    },
+    {
+      "file": "07-vfx-workspace.png",
+      "description": "VFX authoring concept with synthetic trail illustration.",
+      "width": 1920,
+      "height": 1200,
+      "sha256": "ee6e722ae6a3f96cda2db59993005759d8b0489cd7b14eb0f52d1cf536cd37ae"
+    },
+    {
+      "file": "08-diagnostics-jobs.png",
+      "description": "Diagnostic concept using current capture identities and observed warnings.",
+      "width": 1920,
+      "height": 1200,
+      "sha256": "dc5d94611834cd757c2da5538a6cd11131d9152a8437ac98da1d723503dc3262"
+    },
+    {
+      "file": "09-material-graph.png",
+      "description": "Material document with source textures and draft graph; no shader compilation.",
+      "width": 1920,
+      "height": 1200,
+      "sha256": "b375549e16abd3706db717ccce56bfa2b15314f88a572f2c464fc19a0d5114c1"
+    },
+    {
+      "file": "10-control-rig.png",
+      "description": "Rig proposal with captured MushroomMonster; draft controls, no solver evaluation or joint overlay.",
+      "width": 1920,
+      "height": 1200,
+      "sha256": "259b84e42021b4718c4640a733aef29f7dca93f668d0247546d41a1597b60911"
+    },
+    {
+      "file": "11-animation-editor.png",
+      "description": "Animation proposal with runtime Idle capture; displayed keys are drafts, not extracted/evaluated tracks.",
+      "width": 1920,
+      "height": 1200,
+      "sha256": "40b4070969f0b9ca258f1bf81e161186ae5cd40aaf24c71b8b60d6d040f50971"
+    },
+    {
+      "file": "contact-sheet.png",
+      "description": "Overview of document-oriented design studies.",
+      "width": 1440,
+      "height": 1344,
+      "sha256": "31d1806f0f99908af690884086ba0808d9593ddf65c5e790bbb02b8807729ff7"
+    }
+  ],
+  "runtime_capture": {
+    "binary_sha256": "2c866adb624599de524b14fd382c7a308a1f07bc87aae02202f97b01cadcbd40",
+    "runs": [
+      {
+        "name": "sponza",
+        "frames": [
+          680
+        ],
+        "exit_code": 0
+      },
+      {
+        "name": "materials",
+        "frames": [
+          240
+        ],
+        "exit_code": 0
+      },
+      {
+        "name": "damaged-quarter",
+        "frames": [
+          240
+        ],
+        "exit_code": 0
+      },
+      {
+        "name": "damaged-front",
+        "frames": [
+          240
+        ],
+        "exit_code": 0
+      },
+      {
+        "name": "damaged-side",
+        "frames": [
+          240
+        ],
+        "exit_code": 0
+      },
+      {
+        "name": "damaged-back",
+        "frames": [
+          240
+        ],
+        "exit_code": 0
+      },
+      {
+        "name": "character",
+        "frames": [
+          120,
+          240
+        ],
+        "exit_code": 1,
+        "failure": "D3D12MA shutdown assertion: 3 live allocations, 6881280 bytes"
+      }
+    ],
+    "fresh_runs": true,
+    "matched_benchmark": false
+  },
+  "icons": {
+    "package": "lucide-static",
+    "version": "0.468.0",
+    "license": "tools/icons/LICENSE"
+  },
+  "notes": [
+    "Original root .screenshots directory deleted after explicit user confirmation.",
+    "New runtime captures replace historical images; PNGs are not color-retouched.",
+    "Source runs include warnings; successful capture does not certify renderer correctness.",
+    "GUI is static proposal; no native shell or agent/provider integration implemented.",
+    "DamagedHelmet mesh, maps and lighting come from sample/projects/damaged_helmet.uzproject; only CLI cameras changed. License not verified; not Meshy output.",
+    "VFX trail is synthetic. All authoring state is illustrative unless capture identity is explicit.",
+    "MushroomMonster is a runtime capture with Idle playback. Run exited 1 during shutdown; rig controls and timeline keys remain unevaluated proposals.",
+    "Sample PNGs are copied losslessly. Composition uses aspect-preserving resampling and background crops, without recoloring or fabricated object views.",
+    "Files choose their editor. Scene linked code requires an explicit association; agents and external authoring are contextual panels.",
+    "Generator itself does not launch an engine, browser, provider or external tool."
+  ]
+}

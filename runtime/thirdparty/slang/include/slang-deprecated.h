@@ -478,18 +478,8 @@ extern "C"
 
     If the size of a type cannot be statically computed, perhaps because it depends on
     a generic parameter that has not been bound to a specific value, this function returns zero.
-
-    Use spReflectionType_GetSpecializedElementCount if the size is dependent on
-    a link time constant
     */
     SLANG_API size_t spReflectionType_GetElementCount(SlangReflectionType* type);
-
-    /** The same as spReflectionType_GetElementCount except it takes into account specialization
-     * information from the given reflection info
-     */
-    SLANG_API size_t spReflectionType_GetSpecializedElementCount(
-        SlangReflectionType* type,
-        SlangReflection* reflection);
 
     SLANG_API SlangReflectionType* spReflectionType_GetElementType(SlangReflectionType* type);
 
@@ -512,22 +502,9 @@ extern "C"
 
     SLANG_API SlangReflectionType* spReflectionTypeLayout_GetType(SlangReflectionTypeLayout* type);
     SLANG_API SlangTypeKind spReflectionTypeLayout_getKind(SlangReflectionTypeLayout* type);
-    /** Get the size of a type layout in the specified parameter category.
-     *
-     * Returns `SLANG_UNBOUNDED_SIZE` for unbounded resources (e.g., unsized arrays).
-     * Returns `SLANG_UNKNOWN_SIZE` when the size depends on unresolved generic parameters or
-     * link-time constants.
-     */
     SLANG_API size_t spReflectionTypeLayout_GetSize(
         SlangReflectionTypeLayout* type,
         SlangParameterCategory category);
-
-    /** Get the stride of a type layout in the specified parameter category.
-     *
-     * Returns `SLANG_UNBOUNDED_SIZE` for unbounded resources.
-     * Returns `SLANG_UNKNOWN_SIZE` when stride depends on unresolved generic parameters or
-     * link-time constants.
-     */
     SLANG_API size_t spReflectionTypeLayout_GetStride(
         SlangReflectionTypeLayout* type,
         SlangParameterCategory category);
@@ -548,12 +525,6 @@ extern "C"
     SLANG_API SlangReflectionVariableLayout* spReflectionTypeLayout_GetExplicitCounter(
         SlangReflectionTypeLayout* typeLayout);
 
-    /** Get the stride between elements of an array type layout.
-     *
-     * Returns `SLANG_UNBOUNDED_SIZE` for unbounded resources.
-     * Returns `SLANG_UNKNOWN_SIZE` when element stride depends on unresolved generic parameters or
-     * link-time constants.
-     */
     SLANG_API size_t spReflectionTypeLayout_GetElementStride(
         SlangReflectionTypeLayout* type,
         SlangParameterCategory category);
@@ -594,12 +565,6 @@ extern "C"
     SLANG_API SlangInt spReflectionTypeLayout_isBindingRangeSpecializable(
         SlangReflectionTypeLayout* typeLayout,
         SlangInt index);
-    /** Get the binding count for a binding range at the specified index.
-     *
-     * Returns `SLANG_UNBOUNDED_SIZE` for unbounded resources.
-     * Returns `SLANG_UNKNOWN_SIZE` when the count depends on unresolved generic parameters or
-     * link-time constants.
-     */
     SLANG_API SlangInt spReflectionTypeLayout_getBindingRangeBindingCount(
         SlangReflectionTypeLayout* typeLayout,
         SlangInt index);
@@ -636,22 +601,10 @@ extern "C"
     SLANG_API SlangInt spReflectionTypeLayout_getDescriptorSetDescriptorRangeCount(
         SlangReflectionTypeLayout* typeLayout,
         SlangInt setIndex);
-    /** Get the index offset for a descriptor range within a descriptor set.
-     *
-     * Returns `SLANG_UNKNOWN_SIZE` when the offset depends on unresolved generic parameters or
-     * link-time constants.
-     */
     SLANG_API SlangInt spReflectionTypeLayout_getDescriptorSetDescriptorRangeIndexOffset(
         SlangReflectionTypeLayout* typeLayout,
         SlangInt setIndex,
         SlangInt rangeIndex);
-
-    /** Get the descriptor count for a descriptor range within a descriptor set.
-     *
-     * Returns `SLANG_UNBOUNDED_SIZE` for unbounded resources.
-     * Returns `SLANG_UNKNOWN_SIZE` when the count depends on unresolved generic parameters or
-     * link-time constants.
-     */
     SLANG_API SlangInt spReflectionTypeLayout_getDescriptorSetDescriptorRangeDescriptorCount(
         SlangReflectionTypeLayout* typeLayout,
         SlangInt setIndex,
@@ -670,11 +623,6 @@ extern "C"
     SLANG_API SlangInt spReflectionTypeLayout_getSubObjectRangeBindingRangeIndex(
         SlangReflectionTypeLayout* typeLayout,
         SlangInt subObjectRangeIndex);
-    /** Get the space offset for a sub-object range.
-     *
-     * Returns `SLANG_UNKNOWN_SIZE` when the offset depends on unresolved generic parameters or
-     * link-time constants.
-     */
     SLANG_API SlangInt spReflectionTypeLayout_getSubObjectRangeSpaceOffset(
         SlangReflectionTypeLayout* typeLayout,
         SlangInt subObjectRangeIndex);
@@ -710,15 +658,9 @@ extern "C"
         SlangReflectionVariable* var,
         SlangSession* globalSession,
         char const* name);
-    /** DEPRECATED: use `slang::VariableReflection::getDefaultValueBlob` and check for a null blob
-     * instead. */
     SLANG_API bool spReflectionVariable_HasDefaultValue(SlangReflectionVariable* inVar);
-    /** DEPRECATED: use `slang::VariableReflection::getDefaultValueBlob` instead. */
     SLANG_API SlangResult
     spReflectionVariable_GetDefaultValueInt(SlangReflectionVariable* inVar, int64_t* rs);
-    /** DEPRECATED: use `slang::VariableReflection::getDefaultValueBlob` instead. */
-    SLANG_API SlangResult
-    spReflectionVariable_GetDefaultValueFloat(SlangReflectionVariable* inVar, float* rs);
     SLANG_API SlangReflectionGeneric* spReflectionVariable_GetGenericContainer(
         SlangReflectionVariable* var);
     SLANG_API SlangReflectionVariable* spReflectionVariable_applySpecializations(
@@ -733,20 +675,9 @@ extern "C"
     SLANG_API SlangReflectionTypeLayout* spReflectionVariableLayout_GetTypeLayout(
         SlangReflectionVariableLayout* var);
 
-    /** Get the offset of a variable in the specified parameter category.
-     *
-     * Returns `SLANG_UNKNOWN_SIZE` when the offset depends on unresolved generic parameters or
-     * link-time constants.
-     */
     SLANG_API size_t spReflectionVariableLayout_GetOffset(
         SlangReflectionVariableLayout* var,
         SlangParameterCategory category);
-
-    /** Get the register space/set of a variable in the specified parameter category.
-     *
-     * Returns `SLANG_UNKNOWN_SIZE` when the space depends on unresolved generic parameters or
-     * link-time constants.
-     */
     SLANG_API size_t spReflectionVariableLayout_GetSpace(
         SlangReflectionVariableLayout* var,
         SlangParameterCategory category);
@@ -809,9 +740,6 @@ extern "C"
     SLANG_API SlangReflectionGeneric* spReflectionDecl_castToGeneric(SlangReflectionDecl* decl);
     SLANG_API SlangReflectionType* spReflection_getTypeFromDecl(SlangReflectionDecl* decl);
     SLANG_API SlangReflectionDecl* spReflectionDecl_getParent(SlangReflectionDecl* decl);
-    SLANG_API SlangReflectionModifier* spReflectionDecl_findModifier(
-        SlangReflectionDecl* decl,
-        SlangModifierID modifierID);
 
     // Generic Reflection
 
@@ -865,18 +793,7 @@ extern "C"
 
     // Shader Parameter Reflection
 
-    /** Get the binding index for a shader parameter.
-     *
-     * Returns `SLANG_UNKNOWN_SIZE` when the index depends on unresolved generic parameters or
-     * link-time constants.
-     */
     SLANG_API unsigned spReflectionParameter_GetBindingIndex(SlangReflectionParameter* parameter);
-
-    /** Get the binding space for a shader parameter.
-     *
-     * Returns `SLANG_UNKNOWN_SIZE` when the space depends on unresolved generic parameters or
-     * link-time constants.
-     */
     SLANG_API unsigned spReflectionParameter_GetBindingSpace(SlangReflectionParameter* parameter);
 
     SLANG_API SlangResult spIsParameterLocationUsed(
@@ -977,10 +894,6 @@ extern "C"
         SlangReflection* reflection,
         SlangReflectionType* reflType,
         char const* name);
-    SLANG_API SlangReflectionFunction* spReflection_TryResolveOverloadedFunction(
-        SlangReflection* reflection,
-        uint32_t candidateCount,
-        SlangReflectionFunction** candidates);
 
     SLANG_API SlangUInt spReflection_getEntryPointCount(SlangReflection* reflection);
     SLANG_API SlangReflectionEntryPoint* spReflection_getEntryPointByIndex(
@@ -990,19 +903,7 @@ extern "C"
         SlangReflection* reflection,
         char const* name);
 
-    /** Get the binding index for the global constant buffer.
-     *
-     * Returns `SLANG_UNKNOWN_SIZE` when the binding depends on unresolved generic parameters or
-     * link-time constants.
-     */
     SLANG_API SlangUInt spReflection_getGlobalConstantBufferBinding(SlangReflection* reflection);
-
-    /** Get the size of the global constant buffer.
-     *
-     * Returns `SLANG_UNBOUNDED_SIZE` for unbounded resources.
-     * Returns `SLANG_UNKNOWN_SIZE` when the size depends on unresolved generic parameters or
-     * link-time constants.
-     */
     SLANG_API size_t spReflection_getGlobalConstantBufferSize(SlangReflection* reflection);
 
     SLANG_API SlangReflectionType* spReflection_specializeType(
@@ -1050,18 +951,6 @@ extern "C"
     SLANG_API char const* spGetTranslationUnitSource(
         SlangCompileRequest* request,
         int translationUnitIndex);
-
-    /** Get the descriptor set/space index reserved for the bindless resource heap.
-     *
-     * This is a layout/reflection reservation made before final target lowering and
-     * optimization. It can remain non-negative even when the emitted target code no
-     * longer uses a bindless heap/resource-handle path. Query `IBindlessResourceMetadata`
-     * from target metadata to determine whether such a path survived in the compiled
-     * target IR.
-     *
-     * Returns -1 only when no bindless heap space was reserved for the program layout.
-     */
-    SLANG_API SlangInt spReflection_getBindlessSpaceIndex(SlangReflection* reflection);
 #ifdef __cplusplus
 }
 #endif
@@ -1705,8 +1594,6 @@ struct ICompileRequest : public ISlangUnknown
 
     virtual SLANG_NO_THROW void SLANG_MCALL
     setTargetEmbedDownstreamIR(int targetIndex, bool value) = 0;
-
-    virtual SLANG_NO_THROW void SLANG_MCALL setTargetForceCLayout(int targetIndex, bool value) = 0;
 };
 
     #define SLANG_UUID_ICompileRequest ICompileRequest::getTypeGuid()

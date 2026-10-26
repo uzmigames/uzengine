@@ -21,14 +21,14 @@ Compiling a Program
 -------------------
 
 The first step in reflecting a shader program is, unsurprisingly, to compile it.
-Currently reflection information cannot be queried from code compiled via the command-line `slangc` tool, so applications that want to perform reflection on Slang shader code should use the [compilation API](08-compiling.md#using-the-compilation-api) to compile a program, and then use `getLayout()` to extract reflection information:
+Currently reflection information cannot be queried from code compiled via the command-line `slangc` tool, so applications that want to perform reflection on Slang shader code should use the [compilation API](./compiling#using-the-compilation-api) to compile a program, and then use `getLayout()` to extract reflection information:
 
 ```c++
 slang::IComponentType* program = ...;
 slang::ProgramLayout* programLayout = program->getLayout(targetIndex);
 ```
 
-For more information, see the [relevant section](08-compiling.md#layout-and-reflection) of the chapter on compilation.
+For more information, see the [relevant section](./compiling#layout-and-reflection) of the chapter on compilation.
 
 Types and Variables
 -------------------
@@ -98,14 +98,6 @@ type:
   kind: Scalar
 ```
 
-`getName()` and `getFullName()` return the structural type name without any
-type-level modifier wrappers (`no_diff`, `unorm`, `snorm`, ...). For example,
-a `no_diff float3` parameter and a `unorm float4` field both reflect with the
-underlying structural kind (`Scalar`/`Vector`) and a name that omits the
-modifier. To inspect a modifier on a specific declaration, use
-`findModifier()` on the owning `VariableReflection` /
-`FunctionReflection`.
-
 Additional information can be queried from a `TypeReflection`, depending on its kind:
 
 ```c++
@@ -139,7 +131,7 @@ case slang::TypeReflection::Kind::Scalar:
 ```
 
 The `slang::ScalarType` enumeration includes cases for the built-in integer and floating-point types (for example, `slang::ScalarType::UInt64` and `slang::ScalarType::Float16`), as well as the basic `bool` type (`slang::ScalarType::Bool`).
-The `void` type is also considered a scalar type (`slang::ScalarType::Void`).
+The `void` type is also considered a scalar type (`slang::ScalarType::Void`);
 
 #### Structure Types
 
@@ -193,7 +185,7 @@ fields:
 
 #### Arrays
 
-An array type like `int[3]` is defined by the number and type of elements in the array, which can be queried with `getElementCount()` and `getElementType()`, respectively:
+An array type like `int[3]` is defined by the number and type of elements in the array, which can be queried with `getElementCount()` and `getElementType`, respectively:
 
 ```c++
 case slang::TypeReflection::Kind::Array:
@@ -453,8 +445,7 @@ void printOffset(
     case slang::ParameterCategory::UnorderedAccess:
     case slang::ParameterCategory::SamplerState:
     case slang::ParameterCategory::DescriptorTableSlot:
-        print("space: "); print(spaceOffset);
-        break;
+        print("space: "); print(spaceOffset);    
     }
 }
 ```
@@ -560,7 +551,7 @@ void printTypeLayout(slang::TypeLayoutReflection* typeLayout)
     {
     default:
         break;
-
+    
         // ...
     }
 }
@@ -658,7 +649,7 @@ ParameterBlock<Material> material;
 ```
 
 When this is laid out for Vulkan, the `Material` type will consume 3 bindings, but the `material` parameter will instead consume one space.
-A `ParameterBlock<>` type hides the bindings/registers/slots used by its element.
+A `ParameterBLock<>` type hides the bindings/registers/slots used by its element.
 
 ##### When Things Leak
 
@@ -726,7 +717,7 @@ struct LightingEnvironment
 ParameterBlock<LightingEnvironment> lightEnv;
 ```
 
-If this example is compiled for Vulkan, the `LightingEnvironment` type uses 316 bytes and one `binding` (ParameterCategory::DescriptorTableSlot), while `lightEnv` uses one descriptor `set` (ParameterCategory::SubElementRegisterSpace).
+If this example is compiled for Vulkan, the `LightingEnvironment` type uses 316 bytes and one `binding` (ParameterCategory::DescriptorTableSlot), while `lightEnv` uses one descriptor `set`  (ParameterCategory::SubElementRegisterSpace).
 
 What is not clear in the above description, however, is that because `LightingEnvironment` uses ordinary bytes, the Slang compiler will have to implicitly allocate a `binding` for a constant buffer to hold those bytes.
 Conceptually, the layout is similar to what would be produced for `ParameterBlock<ConstantBuffer<LightingEnvironment>>`.
@@ -766,14 +757,14 @@ case slang::TypeReflection::Kind::ShaderStorageBuffer:
     {
         print("container: ");
         printOffsets(typeLayout->getContainerVarLayout());
-
+    
         auto elementVarLayout = typeLayout->getElementVarLayout();
         print("element: ");
         printOffsets(elementVarLayout);
 
         print("type layout: ");
         printTypeLayout(
-            elementVarLayout->getTypeLayout());
+            elementVarLayout->getTypeLayout();
     }
     break;
 ```
@@ -869,7 +860,7 @@ element:
         unit: Uniform # bytes
     alignment in bytes: 16
     stride in bytes: 64
-    fields:
+    fields:                  
       - name: "material"
         offset:
           relative:
@@ -894,7 +885,7 @@ The implementation of the reflection API makes an effort to ensure that the type
 Programs and Scopes
 -------------------
 
-So far, our presentation has largely been bottom-up: we have shown how to recursively perform reflection on types, variables, and their layouts, but we have not yet shown how to get this recursive traversal started.
+So far, our presentation has largely been bottom-up: we have shown how to recursively perform reflection on types, variables, and their layouts, but we have not yet shown how how to get this recursive traversal started.
 We will now proceed top-down for a bit, and look at how to reflect the top-level parameters of a program.
 
 A `ProgramLayout` is typically obtained using `IComponentType::getLayout()` after compiling and linking a Slang program.
@@ -1146,7 +1137,7 @@ case SLANG_STAGE_COMPUTE:
 #### Varying Parameters
 
 So far we have primarily been talking about the *uniform* shader parameters of a program: those that can be passed in from application code to shader code.
-Slang's reflection API also reflects the *varying* shader parameters that are passed between stages of a pipeline.
+Slang's reflection API also reflects the *varying* shader parameters that appear are passed between stages of a pipeline.
 
 Variable and type layouts for varying shader parameters will typically show usage of:
 
@@ -1178,6 +1169,7 @@ Semantics are only relevant for shader parameters that became part of the varyin
 A semantic is decomposed into both a name and an index (e.g., `TEXCOORD5` has a name of `"TEXCOORD"` and an index of `5`).
 This information can be reflected with `getSemanticName()` and `getSemanticIndex()`:
 
+```c++
 
 ```c++
 void printVarLayout(slang::VariableLayoutReflection* varLayout)
@@ -1249,7 +1241,7 @@ uniform Params params;
 
 we expect that the cumulative offset of `params.material.glossMap` in units of Vulkan `binding`s can be computed by summing up the offsets in that unit of `params` (0), `material` (1), and `glossMap` (1).
 
-When recursively traversing the parameters of a shader, our example application will track an access path as a singly-linked list of variable layouts that points up the stack, from the deepest variable to the shallowest:
+When recursively traversing the parameters of a shader, out example application will track an access path as a singly-linked list of variable layouts that points up the stack, from the deepest variable to the shallowest:
 
 ```c++
 struct AccessPathNode
@@ -1264,7 +1256,7 @@ struct AccessPath
 };
 ```
 
-For the example code above, if our recursive traversal is at `params.material.glossMap`, then the access path will start with a node for `glossMap` which points to a node for `material`, which points to a node for `params`.
+For the example code above, if our recursive traversal is at `params.material.glossMap`, then the access path will start with a node for `glossMap` which points to a node for `material`, which points to a node for `glossMap`.
 
 For many layout units, we can calculate a cumulative offset simply by summing up contributions along the entire access path, with logic like the following:
 
@@ -1364,7 +1356,7 @@ The calls to `printOffsets()`, `printTypeLayout()`, etc. inside of `printScope()
 
 #### Array-Like Types
 
-When traversing an array, matrix, or vector type, it is impossible to compute a single cumulative offset that is applicable to all elements of the type.
+When the traversing an array, matrix, or vector type, it is impossible to compute a single cumulative offset that is applicable to all elements of the type.
 The recursive calls to `printTypeLayout()` in these cases will simply pass in an empty `AccessPath`.
 For example:
 
@@ -1397,7 +1389,7 @@ struct A
 struct B
 {
     float4 y;
-    ConstantBuffer<A> a;
+    ConstantBuffer<Inner> a;
 }
 struct C
 {
@@ -1409,7 +1401,7 @@ uniform C c;
 ```
 
 When compiling for D3D12, the cumulative byte offset of `c.b` is 16, but the cumulative byte offset of `c.b.a.x` needs to be zero, because its byte offset should be measured relative to the enclosing constant buffer `c.b.a`.
-In contrast, the cumulative offset of `c.b` in `t` registers is one, and the cumulative offset of `c.b.a.t` needs to be two.
+In contrast, the cumulative of offset of `c.b` in `t` registers is one, and the cumulative offset of `c.b.a.t` needs to be two.
 
 Similarly, when calculating the cumulative offsets of variables inside a parameter block (for targets that can allocate each parameter block its own space), it is important not to sum contributions past an enclosing parameter block.
 
@@ -1564,34 +1556,6 @@ program->getEntryPointMetadata(
         &entryPointMetadata);
 ```
 
-Target-wide post-emit metadata is queried through `IComponentType::getTargetMetadata()`. For
-`DescriptorHandle<T>`, `ProgramLayout::getBindlessSpaceIndex()` reports the frontend-reserved
-bindless space, which can be non-negative even when the emitted target does not use a descriptor
-heap path. Hosts should cast target metadata to `IBindlessResourceMetadata` and use
-`usesBindlessResourceHeap()` as a post-lowering signal, then combine it with the target binding
-model when deciding whether an explicit bindless resource heap binding is required:
-
-```c++
-slang::IComponentType* program = ...;
-Slang::ComPtr<slang::IMetadata> targetMetadata;
-Slang::ComPtr<slang::IBlob> diagnostics;
-if (SLANG_FAILED(program->getTargetMetadata(
-        0, // target index
-        targetMetadata.writeRef(),
-        diagnostics.writeRef())))
-{
-    // Handle error.
-    return;
-}
-
-auto bindlessMetadata = static_cast<slang::IBindlessResourceMetadata*>(
-    targetMetadata->castAs(slang::IBindlessResourceMetadata::getTypeGuid()));
-if (bindlessMetadata && bindlessMetadata->usesBindlessResourceHeap())
-{
-    // Bind the descriptor heap for this compiled target.
-}
-```
-
 When traversal of reflection data reaches a leaf parameter, the application can use `IMetadata::isParameterLocationUsed()` with the absolute location of that parameter for a given layout unit:
 
 ```c++
@@ -1629,7 +1593,7 @@ unsigned calculateParameterStageMask(
         auto layoutUnit = varLayout->getCategoryByIndex(i);
         auto offset = calculateCumulativeOffset(
             varLayout, layoutUnit, accessPath);
-
+        
         mask |= calculateStageMask(
             layoutUnit, offset);
     }
@@ -1661,79 +1625,6 @@ void printVarLayout(
     // ...
 }
 ```
-
-### Target-Specific Limitations
-
-On targets where entry point varying inputs are packed into a single struct parameter during legalization (currently Metal and WGSL), `isParameterLocationUsed` cannot distinguish between used and unused individual varying inputs.
-The post-emit metadata is recorded at the struct level, so if any varying input is used, all varying input locations covered by the struct will be reported as used.
-
-This limitation does not apply to SPIR-V or GLSL targets, where each varying input becomes a separate global parameter that can be individually eliminated by dead code elimination and individually tracked in the metadata.
-Non-varying resource types (e.g., `DescriptorTableSlot`, `ShaderResource`) are not affected by this limitation on any target.
-
-See the [Metal](a2-02-metal-target-specific.md#limitation-isparameterlocationused-for-varying-inputs) and [WGSL](a2-03-wgsl-target-specific.md#limitation-isparameterlocationused-for-varying-inputs) target-specific documentation for details.
-
-JSON Reflection Output
-----------------------
-
-In addition to the programmatic reflection API described above, the command-line compiler can emit reflection information as JSON with the `-reflection-json <path>` option.
-The JSON mirrors the same mental model, so the concepts introduced in this chapter carry over directly.
-
-### Scopes: `globalScope` and per-entry-point `scope`
-
-The most important structural elements are the *scopes*.
-Just as `printScope` (in the [reflection-api](https://github.com/shader-slang/slang/tree/master/examples/reflection-api) example) is invoked uniformly on `getGlobalParamsVarLayout()` for the global scope and on each entry point's `getVarLayout()`, the JSON output describes both scopes with the same shape:
-
-* a top-level `"globalScope"` object, and
-* a `"scope"` object on each entry in `"entryPoints"`.
-
-A scope object has a `"kind"` that names how the scope's parameters were allocated:
-
-* `"none"` — the parameters bind directly, with no automatically-introduced container.
-* `"constantBuffer"` — the scope's ordinary (byte-consuming) parameters were gathered into an automatically-introduced constant buffer (the `$Globals` constant buffer, for the global scope).
-
-When `"kind"` is `"constantBuffer"`, the object also carries a `"binding"` — the container's *own* binding, i.e. the register / descriptor slot / space that the automatically-introduced constant buffer occupies.
-This is the information that the flat `"parameters"` list (see below) cannot express: it explains, for example, which descriptor slot the `$Globals` constant buffer consumes, so that the indices of the remaining resources no longer appear to have unexplained holes.
-The scope object's *shape* is the same across targets, but the `"binding"` payload is target-dependent — it uses whatever category the layout system assigned for that target (e.g. `"constantBuffer"` for an HLSL constant-buffer register, `"descriptorTableSlot"` for Vulkan/SPIR-V, `"uniform"` with an offset for the CPU/CUDA targets).
-
-The scope's contained parameters appear in a nested `"parameters"` array, using the same parameter objects as elsewhere in the output.
-Note that an explicit `ConstantBuffer<T>` or `ParameterBlock<T>` declared at global scope is one of the scope's *parameters*, not a wrapper around the scope: it appears in that array with its own `"binding"`, and its container/element structure is described on the parameter's own `"type"`.
-
-For example, given loose global uniforms alongside some resources:
-
-```hlsl
-float4       gTint;
-float        gScale;
-Texture2D    gTex;
-SamplerState gSamp;
-```
-
-the `"globalScope"` (for a SPIR-V target) reports the `$Globals` constant buffer's own binding and then its parameters:
-
-```jsonc
-"globalScope": {
-    "kind": "constantBuffer",
-    "binding": { "kind": "descriptorTableSlot", "index": 0 },
-    "parameters": [
-        { "name": "gTint",  "binding": { "kind": "uniform", "offset": 0,  "size": 16 }, "type": { /* ... */ } },
-        { "name": "gScale", "binding": { "kind": "uniform", "offset": 16, "size": 4  }, "type": { /* ... */ } },
-        { "name": "gTex",   "binding": { "kind": "descriptorTableSlot", "index": 1 },   "type": { /* ... */ } },
-        { "name": "gSamp",  "binding": { "kind": "descriptorTableSlot", "index": 2 },   "type": { /* ... */ } }
-    ]
-}
-```
-
-Here the `$Globals` constant buffer occupies `descriptorTableSlot` index 0, which is exactly why `gTex` and `gSamp` land at indices 1 and 2 — a gap the flat `"parameters"` list leaves unexplained.
-
-### The flat `parameters` list is retained
-
-The top-level `"parameters"` array, and each entry point's own `"parameters"` and `"bindings"` arrays, are emitted exactly as before.
-They remain for backwards compatibility, but they do not describe the binding of an automatically-introduced constant buffer or parameter block; the `"globalScope"` / `"scope"` objects are the complete representation and should be preferred by new consumers.
-
-### The `version` field
-
-The output carries a top-level `"version"` field using semantic versioning.
-Output *without* a `"version"` field should be treated as implicitly `"1.0"`.
-The scope objects described above were added in `"1.1"`; because they are strictly additive (every `"1.0"` key is emitted unchanged), a consumer that only understands the older schema can ignore them, while a consumer that requires the scope representation can reject output older than `"1.1"`.
 
 Conclusion
 ----------

@@ -4,6 +4,7 @@
 
 #include "script_component.h"
 #include "lua_vm.h"
+#include "lua_sandbox.h"
 #include "log.h"
 #include "world.h"
 #include "entity.h"
@@ -62,32 +63,6 @@ static_assert(sizeof(void*) >= 8,
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal helpers
 // ─────────────────────────────────────────────────────────────────────────────
-
-/// Creates a sandboxed environment table on top of the Lua stack and returns its
-/// registry reference.
-///
-/// The environment is an empty table whose `__index` metamethod points to `_G`,
-/// so scripts can read all standard globals while any globals they SET are
-/// isolated to their own table.
-///
-/// Stack effect: zero (table is stored in registry and popped).
-///
-/// # Returns
-/// - A valid registry ref on success.
-/// - `LUA_REFNIL` if the Lua state is not available.
-[[nodiscard]] static int CreateScriptEnv(lua_State* L) {
-    // env = {}
-    lua_newtable(L);                       // [env]
-
-    // mt = {}; mt.__index = _G
-    lua_newtable(L);                       // [env, mt]
-    lua_pushvalue(L, LUA_GLOBALSINDEX);    // [env, mt, _G]  (LuaJIT Lua 5.1 API)
-    lua_setfield(L, -2, "__index");        // [env, mt]   mt.__index = _G
-    lua_setmetatable(L, -2);              // [env]        setmetatable(env, mt)
-
-    const int ref = luaL_ref(L, LUA_REGISTRYINDEX); // []
-    return ref;
-}
 
 /// Applies the per-script environment to the chunk function so that the chunk's
 /// globals refer to `env` instead of `_G`.
@@ -216,7 +191,9 @@ static void LoadAndStartScript(lua_State* L, IVFS* vfs, CScript& script, Entity 
     }
 
     // ── 3. Create per-entity environment table ───────────────────────────────
-    script.envRef = CreateScriptEnv(L);
+    // Fresh table per script; reads fall through to the sandbox's read-only
+    // whitelist, so one script can neither see nor alter another's globals.
+    script.envRef = LuaSandboxCreateScriptEnv(L);
     if (script.envRef == LUA_REFNIL) {
         UZ_LOG(Scripting, Error,
             "ScriptSystem: failed to create env for script='{}'", script.scriptPath);

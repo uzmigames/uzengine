@@ -49,8 +49,9 @@
 ///
 /// // Writing via VFS (LooseFileVFS only — PakVFS is read-only):
 /// auto json = VFXPresetSerializer::SerializeToString("fire", cfg, rate);
-/// auto resolved = vfs->ResolvePath("vfx/presets/fire.json");
-/// // write `json` to `resolved` via std::ofstream or platform file_write_all
+/// std::optional<std::string> resolved = vfs->ResolvePath("vfx/presets/fire.json");
+/// // nullopt = no filesystem mapping or path outside the VFS root;
+/// // otherwise write `json` to `*resolved` via std::ofstream or platform file_write_all
 /// ```
 ///
 /// # Thread Safety

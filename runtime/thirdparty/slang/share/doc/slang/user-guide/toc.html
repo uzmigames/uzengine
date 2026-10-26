@@ -42,7 +42,6 @@
 <li data-link="convenience-features#subscript-operator"><span>Subscript Operator</span></li>
 <li data-link="convenience-features#tuple-types"><span>Tuple Types</span></li>
 <li data-link="convenience-features#optionalt-type"><span>`Optional&lt;T&gt;` type</span></li>
-<li data-link="convenience-features#conditionalt-bool-condition-type"><span>`Conditional&lt;T, bool condition&gt;` Type</span></li>
 <li data-link="convenience-features#if_let-syntax"><span>`if_let` syntax</span></li>
 <li data-link="convenience-features#reinterprett-operation"><span>`reinterpret&lt;T&gt;` operation</span></li>
 <li data-link="convenience-features#pointers-limited"><span>Pointers (limited)</span></li>
@@ -50,10 +49,8 @@
 <li data-link="convenience-features#extensions"><span>Extensions</span></li>
 <li data-link="convenience-features#multi-level-break"><span>Multi-level break</span></li>
 <li data-link="convenience-features#force-inlining"><span>Force inlining</span></li>
-<li data-link="convenience-features#error-handling"><span>Error handling</span></li>
 <li data-link="convenience-features#special-scoping-syntax"><span>Special Scoping Syntax</span></li>
-<li data-link="convenience-features#lambda-expressions-experimental"><span>Lambda Expressions (Experimental)</span></li>
-<li data-link="convenience-features#user-defined-attributes-experimental"><span>User-Defined Attributes (Experimental)</span></li>
+<li data-link="convenience-features#user-defined-attributes-experimental"><span>User Defined Attributes (Experimental)</span></li>
 </ul>
 </li>
 <li data-link="modules"><span>Modules and Access Control</span>
@@ -69,11 +66,9 @@
 <ul class="toc_list">
 <li data-link="capabilities#capability-atoms-and-capability-requirements"><span>Capability Atoms and Capability Requirements</span></li>
 <li data-link="capabilities#conflicting-capabilities"><span>Conflicting Capabilities</span></li>
-<li data-link="capabilities#capabilities-between-parent-and-members"><span>Capabilities Between Parent and Members</span></li>
-<li data-link="capabilities#capabilities-between-subtype-and-supertype"><span>Capabilities Between Subtype and Supertype</span></li>
-<li data-link="capabilities#capabilities-of-extensions"><span>Capabilities of Extensions</span></li>
-<li data-link="capabilities#capabilities-between-requirement-and-implementation"><span>Capabilities Between Requirement and Implementation</span></li>
-<li data-link="capabilities#capabilities-of-functions"><span>Capabilities of Functions</span></li>
+<li data-link="capabilities#requirements-in-parent-scope"><span>Requirements in Parent Scope</span></li>
+<li data-link="capabilities#inference-of-capability-requirements"><span>Inference of Capability Requirements</span></li>
+<li data-link="capabilities#inference-on-target_switch"><span>Inference on target_switch</span></li>
 <li data-link="capabilities#capability-aliases"><span>Capability Aliases</span></li>
 <li data-link="capabilities#validation-of-capability-requirements"><span>Validation of Capability Requirements</span></li>
 </ul>
@@ -128,7 +123,6 @@
 <li data-link="reflection#programs-and-scopes"><span>Programs and Scopes</span></li>
 <li data-link="reflection#calculating-cumulative-offsets"><span>Calculating Cumulative Offsets</span></li>
 <li data-link="reflection#determining-whether-parameters-are-used"><span>Determining Whether Parameters Are Used</span></li>
-<li data-link="reflection#json-reflection-output"><span>JSON Reflection Output</span></li>
 <li data-link="reflection#conclusion"><span>Conclusion</span></li>
 </ul>
 </li>
@@ -151,16 +145,9 @@
 <li data-link="link-time-specialization#link-time-constants"><span>Link-time Constants</span></li>
 <li data-link="link-time-specialization#link-time-types"><span>Link-time Types</span></li>
 <li data-link="link-time-specialization#providing-default-settings"><span>Providing Default Settings</span></li>
-<li data-link="link-time-specialization#using-precompiled-modules-with-the-api"><span>Using Precompiled Modules with the API</span></li>
+<li data-link="link-time-specialization#restrictions"><span>Restrictions</span></li>
+<li data-link="link-time-specialization#using-precompiling-modules-with-the-api"><span>Using Precompiling Modules with the API</span></li>
 <li data-link="link-time-specialization#additional-remarks"><span>Additional Remarks</span></li>
-</ul>
-</li>
-<li data-link="language-version"><span>Language Version</span>
-<ul class="toc_list">
-<li data-link="language-version#the-legacy-slang-language"><span>The Legacy Slang Language</span></li>
-<li data-link="language-version#slang-2025"><span>Slang 2025</span></li>
-<li data-link="language-version#slang-2026"><span>Slang 2026</span></li>
-<li data-link="language-version#slang-202c-in-development"><span>Slang 202c (in development)</span></li>
 </ul>
 </li>
 <li data-link="a1-special-topics"><span>Special Topics</span>
@@ -189,7 +176,7 @@
 <li data-link="a1-04-interop#defining-intrinsic-types"><span>Defining Intrinsic Types</span></li>
 <li data-link="a1-04-interop#injecting-preludes"><span>Injecting Preludes</span></li>
 <li data-link="a1-04-interop#managing-cross-platform-code"><span>Managing Cross-Platform Code</span></li>
-<li data-link="a1-04-interop#inline-spir-v-assembly"><span>Inline SPIR-V Assembly</span></li>
+<li data-link="a1-04-interop#inline-spirv-assembly"><span>Inline SPIRV Assembly</span></li>
 </ul>
 </li>
 <li data-link="a1-05-uniformity"><span>Uniformity Analysis</span>
@@ -200,15 +187,13 @@
 </li>
 </ul>
 </li>
-<li data-link="a2-target-specific-features"><span>Target-Specific Features</span>
+<li data-link="a2-target-specific-features"><span>Target-specific features</span>
 <ul class="toc_list">
-<li data-link="spirv-target-specific"><span>SPIR-V-Specific Functionalities</span>
+<li data-link="spirv-target-specific"><span>SPIR-V specific functionalities</span>
 <ul class="toc_list">
 <li data-link="spirv-target-specific#experimental-support-for-the-older-versions-of-spir-v"><span>Experimental support for the older versions of SPIR-V</span></li>
-<li data-link="spirv-target-specific#memory-model"><span>Memory model</span></li>
 <li data-link="spirv-target-specific#combined-texture-sampler"><span>Combined texture sampler</span></li>
 <li data-link="spirv-target-specific#system-value-semantics"><span>System-Value semantics</span></li>
-<li data-link="spirv-target-specific#using-sv_instanceid-and-sv_vertexid-with-spir-v-target"><span>Using SV_InstanceID and SV_VertexID with SPIR-V target</span></li>
 <li data-link="spirv-target-specific#behavior-of-discard-after-spir-v-16"><span>Behavior of `discard` after SPIR-V 1.6</span></li>
 <li data-link="spirv-target-specific#supported-hlsl-features-when-targeting-spir-v"><span>Supported HLSL features when targeting SPIR-V</span></li>
 <li data-link="spirv-target-specific#unsupported-glsl-keywords-when-targeting-spir-v"><span>Unsupported GLSL keywords when targeting SPIR-V</span></li>
@@ -217,7 +202,7 @@
 <li data-link="spirv-target-specific#parameterblock-for-spir-v-target"><span>ParameterBlock for SPIR-V target</span></li>
 <li data-link="spirv-target-specific#push-constants"><span>Push Constants</span></li>
 <li data-link="spirv-target-specific#specialization-constants"><span>Specialization Constants</span></li>
-<li data-link="spirv-target-specific#spir-v-specific-attributes"><span>SPIR-V specific Attributes</span></li>
+<li data-link="spirv-target-specific#spir-v-specific-attributes"><span>SPIR-V specific Attributes </span></li>
 <li data-link="spirv-target-specific#multiple-entry-points-support"><span>Multiple entry points support</span></li>
 <li data-link="spirv-target-specific#global-memory-pointers"><span>Global memory pointers</span></li>
 <li data-link="spirv-target-specific#matrix-type-translation"><span>Matrix type translation</span></li>
@@ -226,33 +211,30 @@
 <li data-link="spirv-target-specific#spir-v-specific-compiler-options"><span>SPIR-V specific Compiler options</span></li>
 </ul>
 </li>
-<li data-link="metal-target-specific"><span>Metal-Specific Functionalities</span>
+<li data-link="metal-target-specific"><span>Metal-specific functionalities</span>
 <ul class="toc_list">
 <li data-link="metal-target-specific#entry-point-parameter-handling"><span>Entry Point Parameter Handling</span></li>
 <li data-link="metal-target-specific#system-value-semantics"><span>System-Value semantics</span></li>
 <li data-link="metal-target-specific#interpolation-modifiers"><span>Interpolation Modifiers</span></li>
 <li data-link="metal-target-specific#resource-types"><span>Resource Types</span></li>
-<li data-link="metal-target-specific#array-types"><span>Array Types</span></li>
-<li data-link="metal-target-specific#matrix-layout"><span>Matrix Layout</span></li>
-<li data-link="metal-target-specific#mesh-shader-support"><span>Mesh Shader Support</span></li>
 <li data-link="metal-target-specific#header-inclusions-and-namespace"><span>Header Inclusions and Namespace</span></li>
 <li data-link="metal-target-specific#parameter-blocks-and-argument-buffers"><span>Parameter blocks and Argument Buffers</span></li>
 <li data-link="metal-target-specific#struct-parameter-flattening"><span>Struct Parameter Flattening</span></li>
 <li data-link="metal-target-specific#return-value-handling"><span>Return Value Handling</span></li>
 <li data-link="metal-target-specific#value-type-conversion"><span>Value Type Conversion</span></li>
 <li data-link="metal-target-specific#conservative-rasterization"><span>Conservative Rasterization</span></li>
-<li data-link="metal-target-specific#subpassinput"><span>SubpassInput</span></li>
 <li data-link="metal-target-specific#address-space-assignment"><span>Address Space Assignment</span></li>
 <li data-link="metal-target-specific#explicit-parameter-binding"><span>Explicit Parameter Binding</span></li>
 <li data-link="metal-target-specific#specialization-constants"><span>Specialization Constants</span></li>
 </ul>
 </li>
-<li data-link="wgsl-target-specific"><span>WGSL-Specific Functionalities</span>
+<li data-link="wgsl-target-specific"><span>WGSL specific functionalities</span>
 <ul class="toc_list">
 <li data-link="wgsl-target-specific#system-value-semantics"><span>System-Value semantics</span></li>
 <li data-link="wgsl-target-specific#supported-hlsl-features-when-targeting-wgsl"><span>Supported HLSL features when targeting WGSL</span></li>
 <li data-link="wgsl-target-specific#supported-atomic-types"><span>Supported atomic types</span></li>
 <li data-link="wgsl-target-specific#constantbuffer-rwrasterizerorderedstructuredbuffer-rwrasterizerorderedbyteaddressbuffer"><span>ConstantBuffer, (RW/RasterizerOrdered)StructuredBuffer, (RW/RasterizerOrdered)ByteAddressBuffer</span></li>
+<li data-link="wgsl-target-specific#specialization-constants"><span>Specialization Constants</span></li>
 <li data-link="wgsl-target-specific#interlocked-operations"><span>Interlocked operations</span></li>
 <li data-link="wgsl-target-specific#entry-point-parameter-handling"><span>Entry Point Parameter Handling</span></li>
 <li data-link="wgsl-target-specific#parameter-blocks"><span>Parameter blocks</span></li>
@@ -264,48 +246,20 @@
 <li data-link="wgsl-target-specific#specialization-constants"><span>Specialization Constants</span></li>
 </ul>
 </li>
-<li data-link="glsl-target-specific"><span>GLSL-Specific Functionalities</span>
-<ul class="toc_list">
-<li data-link="glsl-target-specific#combined-texture-sampler"><span>Combined Texture Sampler</span></li>
-<li data-link="glsl-target-specific#system-value-semantics"><span>System-Value Semantics</span></li>
-<li data-link="glsl-target-specific#discard-statement"><span>`discard` Statement</span></li>
-<li data-link="glsl-target-specific#hlsl-features-supported-in-glsl"><span>HLSL Features Supported in GLSL</span></li>
-<li data-link="glsl-target-specific#atomic-types"><span>Atomic Types</span></li>
-<li data-link="glsl-target-specific#buffer-types"><span>Buffer Types</span></li>
-<li data-link="glsl-target-specific#matrix-layout"><span>Matrix Layout</span></li>
-<li data-link="glsl-target-specific#entry-points"><span>Entry Points</span></li>
-<li data-link="glsl-target-specific#specialization-constants"><span>Specialization Constants</span></li>
-<li data-link="glsl-target-specific#attributes-and-layout-qualifiers"><span>Attributes and Layout Qualifiers</span></li>
-<li data-link="glsl-target-specific#glsl-specific-compiler-options"><span>GLSL-Specific Compiler Options</span></li>
-</ul>
-</li>
-</ul>
-</li>
-<li data-link="a3-experimental-features"><span>Experimental Features</span>
-<ul class="toc_list">
-<li data-link="a3-01-shader-coverage"><span>Shader Execution Coverage</span>
-<ul class="toc_list">
-<li data-link="a3-01-shader-coverage#compiling-with-coverage"><span>Compiling with coverage</span></li>
-<li data-link="a3-01-shader-coverage#manifest-structure"><span>Manifest structure</span></li>
-<li data-link="a3-01-shader-coverage#dispatching-the-precompiled-kernel"><span>Dispatching the precompiled kernel</span></li>
-<li data-link="a3-01-shader-coverage#generating-a-report"><span>Generating a report</span></li>
-<li data-link="a3-01-shader-coverage#further-reading"><span>Further reading</span></li>
-</ul>
-</li>
 </ul>
 </li>
 <li data-link="reference"><span>Reference</span>
 <ul class="toc_list">
-<li data-link="a4-01-reference-capability-profiles"><span>Capability Profiles</span>
+<li data-link="a3-01-reference-capability-profiles"><span>Capability Profiles</span>
 </li>
-<li data-link="a4-02-reference-capability-atoms"><span>Capability Atoms</span>
+<li data-link="a3-02-reference-capability-atoms"><span>Capability Atoms</span>
 <ul class="toc_list">
-<li data-link="a4-02-reference-capability-atoms#targets"><span>Targets</span></li>
-<li data-link="a4-02-reference-capability-atoms#stages"><span>Stages</span></li>
-<li data-link="a4-02-reference-capability-atoms#versions"><span>Versions</span></li>
-<li data-link="a4-02-reference-capability-atoms#extensions"><span>Extensions</span></li>
-<li data-link="a4-02-reference-capability-atoms#compound-capabilities"><span>Compound Capabilities</span></li>
-<li data-link="a4-02-reference-capability-atoms#other"><span>Other</span></li>
+<li data-link="a3-02-reference-capability-atoms#targets"><span>Targets</span></li>
+<li data-link="a3-02-reference-capability-atoms#stages"><span>Stages</span></li>
+<li data-link="a3-02-reference-capability-atoms#versions"><span>Versions</span></li>
+<li data-link="a3-02-reference-capability-atoms#extensions"><span>Extensions</span></li>
+<li data-link="a3-02-reference-capability-atoms#compound-capabilities"><span>Compound Capabilities</span></li>
+<li data-link="a3-02-reference-capability-atoms#other"><span>Other</span></li>
 </ul>
 </li>
 </ul>

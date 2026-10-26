@@ -55,7 +55,10 @@ static std::string JString(const nlohmann::json& j, const char* key, const std::
 
 static Vec3 JVec3(const nlohmann::json& j, const char* key, const Vec3& def = {}) {
     auto it = j.find(key);
-    if (it != j.end() && it->is_array() && it->size() >= 3) {
+    // Element types are checked too: get<float>() on a non-number throws
+    // nlohmann::type_error, which would escape the loader on a crafted asset.
+    if (it != j.end() && it->is_array() && it->size() >= 3 &&
+        (*it)[0].is_number() && (*it)[1].is_number() && (*it)[2].is_number()) {
         return {(*it)[0].get<float>(), (*it)[1].get<float>(), (*it)[2].get<float>()};
     }
     return def;

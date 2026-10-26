@@ -4,6 +4,7 @@
 #include "engine/asset/formats/uzfx_loader.h"
 #include "engine/vfx/components/particle_emitter.h"
 #include "engine/vfx/core/particle_budget.h"
+#include "engine/vfx/modules/spawn_module.h"
 #include "mock_rhi_device.h"
 
 using namespace uz;
@@ -319,6 +320,46 @@ TEST(UzfxLoader, MeshRender_CustomAttributeWithNamePreservesMode) {
     ASSERT_NE(mesh, nullptr);
     EXPECT_EQ(mesh->GetConfig().sortMode, MeshSortMode::CustomAttribute);
     EXPECT_EQ(mesh->GetConfig().customSortAttribute, "Mass");
+
+    emitter.Shutdown(&device, budget);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Crafted assets — wrong element types must not throw out of the loader
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST(UzfxLoader, Vec3WithNonNumericElements_FallsBackToDefaultWithoutThrowing) {
+    // get<float>() on a string/null/object element throws nlohmann::type_error;
+    // the loader must treat such vectors as absent instead.
+    const char* json = R"({
+        "name": "Crafted",
+        "emitter": {"max_particles": 100},
+        "modules": {
+            "spawn": {"type": "spawn", "velocity": ["x", null, {}]},
+            "update": [
+                {"type": "update", "gravity": [true, 1, 2]},
+                {"type": "attractor", "position": [[1], [2], [3]]}
+            ]
+        }
+    })";
+
+    auto desc = UzfxLoader::Load(json);
+
+    test::MockRHIDevice device;
+    ParticleBudget budget(500'000);
+    ParticleEmitter emitter;
+    bool instantiated = false;
+    EXPECT_NO_THROW(instantiated = UzfxLoader::Instantiate(desc, emitter, &device, budget));
+    ASSERT_TRUE(instantiated);
+
+    ASSERT_EQ(emitter.moduleStack.spawnModules.size(), 1u);
+    const auto* spawn = dynamic_cast<const SpawnModule*>(
+        emitter.moduleStack.spawnModules[0].get());
+    ASSERT_NE(spawn, nullptr);
+    EXPECT_FLOAT_EQ(spawn->velocity.x, 0.0f);
+    EXPECT_FLOAT_EQ(spawn->velocity.y, 0.0f);
+    EXPECT_FLOAT_EQ(spawn->velocity.z, 200.0f); // loader default for a missing velocity
+    EXPECT_EQ(emitter.moduleStack.updateModules.size(), 2u);
 
     emitter.Shutdown(&device, budget);
 }

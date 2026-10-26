@@ -299,7 +299,14 @@ However, this difference is secondary to the readback failure.
 
 **Files**: `height_fog_component.h`
 
-**Status**: ALREADY CORRECT. `color = {0.0f, 0.0f, 0.0f}`. In modern UE5 with SkyAtmosphere, `FogInscatteringLuminance` defaults to black because all fog color comes from the sky injection. Our default matches.
+**Status**: DELIBERATELY NOT APPLIED (2026-10-23). The reference default is black because
+the sky injection supplies the fog colour there. Our injection (`height_fog_ps.hlsl:135-137`)
+scales the authored sky-light colour, and with `color = black` the `sample/demo` fog renders as
+a dark, warm haze that hides the ground (compared against the authored colour on 2026-10-23).
+The authored default `color = {0.45, 0.55, 0.65}` (with `directionalInscatteringColor =
+{1.0, 0.85, 0.5}` and `density = 0.15`) stays until the injection reproduces the sky
+luminance. Do not "correct" the default to black again without fixing the injection first;
+the 2026-10-10 revert that did so was rolled back.
 
 ### Change 6: Verify SkyAtmosphereAmbientContributionColorScale Default
 

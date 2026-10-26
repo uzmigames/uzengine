@@ -442,9 +442,11 @@ TEST(SkyAtmosphereComponent, FallbackSunAngularRadius) {
     EXPECT_NEAR(comp.sunAngularRadius, 0.00872665f, 1e-6f);
 }
 
-TEST(SkyAtmosphereComponent, FallbackSunDiskIntensityIsOne) {
+// Authored default (disk HDR ~2 with the fallback illuminance of 20); the reference
+// identity scale 1.0 was tried on 2026-10-10 and rolled back, see the header.
+TEST(SkyAtmosphereComponent, FallbackSunDiskIntensityIsAuthoredTenth) {
     SkyAtmosphereComponent comp{};
-    EXPECT_FLOAT_EQ(comp.sunDiskIntensity, 1.0f);
+    EXPECT_FLOAT_EQ(comp.sunDiskIntensity, 0.1f);
 }
 
 TEST(SkyAtmosphereComponent, EnabledByDefault) {
@@ -474,16 +476,18 @@ TEST(SkyAtmosphereComponent, DeprecatedSkyLightColorIsWhite) {
 // HeightFogComponent — standard defaults, second layer, inscattering, control
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST(HeightFogComponent, ColorDefaultIsBlack) {
+// Authored bluish haze: a deliberate deviation from the reference black default
+// until the sky-atmosphere injection reproduces the sky luminance (see the header).
+TEST(HeightFogComponent, ColorDefaultIsAuthoredBluishHaze) {
     HeightFogComponent comp{};
-    EXPECT_FLOAT_EQ(comp.color.x, 0.0f);
-    EXPECT_FLOAT_EQ(comp.color.y, 0.0f);
-    EXPECT_FLOAT_EQ(comp.color.z, 0.0f);
+    EXPECT_FLOAT_EQ(comp.color.x, 0.45f);
+    EXPECT_FLOAT_EQ(comp.color.y, 0.55f);
+    EXPECT_FLOAT_EQ(comp.color.z, 0.65f);
 }
 
-TEST(HeightFogComponent, DensityDefaultIs0_0436) {
+TEST(HeightFogComponent, DensityDefaultIs0_15) {
     HeightFogComponent comp{};
-    EXPECT_FLOAT_EQ(comp.density, 0.0436f);
+    EXPECT_FLOAT_EQ(comp.density, 0.15f);
 }
 
 TEST(HeightFogComponent, HeightFalloffDefaultIs0_2) {
@@ -526,11 +530,11 @@ TEST(HeightFogComponent, SecondFogBaseHeightDefaultIsZero) {
     EXPECT_FLOAT_EQ(comp.secondFogBaseHeight, 0.0f);
 }
 
-TEST(HeightFogComponent, DirectionalInscatteringColorDefault) {
+TEST(HeightFogComponent, DirectionalInscatteringColorDefaultIsAuthoredWarmGlow) {
     HeightFogComponent comp{};
-    EXPECT_FLOAT_EQ(comp.directionalInscatteringColor.x, 0.0f);
-    EXPECT_FLOAT_EQ(comp.directionalInscatteringColor.y, 0.0f);
-    EXPECT_FLOAT_EQ(comp.directionalInscatteringColor.z, 0.0f);
+    EXPECT_FLOAT_EQ(comp.directionalInscatteringColor.x, 1.0f);
+    EXPECT_FLOAT_EQ(comp.directionalInscatteringColor.y, 0.85f);
+    EXPECT_FLOAT_EQ(comp.directionalInscatteringColor.z, 0.5f);
 }
 
 TEST(HeightFogComponent, DirectionalInscatteringExponentDefaultIs4) {

@@ -1,9 +1,44 @@
 # Scripting — Security Sandbox
 
-> **Status**: Planned (Phase 3)
-> **Source**: `engine/scripting/lua_sandbox.h`, `lua_sandbox.cpp`
+> **Status**: Library/loader/environment isolation implemented (2026-10-22); execution limits and the memory cap below are still planned
+> **Source**: `runtime/engine/scripting/lua_sandbox.h`, `lua_sandbox.cpp`
 > **Depends on**: LuaVM (§15.2), subsystem registry (§9.4)
 > **References**: Roblox Lua sandboxing, Garry's Mod Lua restrictions
+
+## Implemented Behaviour
+
+Script paths come from scene files, so opening an untrusted project and
+entering Play Mode runs untrusted Lua. The implemented sandbox has three layers:
+
+1. **Libraries** — `LuaSandboxOpenSafeLibs` replaces `luaL_openlibs`. Only
+   `base` (with `coroutine`), `table`, `string`, `math` and `bit` are opened.
+   `package`, `debug`, `io`, `os` and `ffi` are never opened (so neither
+   `package.loadlib` nor `package.preload.ffi` exists). `jit` is opened only
+   because its opener enables the trace compiler; the `jit` global is removed
+   immediately. Removed afterwards: `load`, `loadfile`, `loadstring`, `dofile`,
+   `require`, `module`, `getfenv`, `setfenv`, `rawget`, `rawset`, `rawequal`,
+   `collectgarbage`, `newproxy`, `string.dump`. `print` writes to
+   `UZ_LOG(Scripting, Info, "[Lua] ...")`.
+2. **Loader** — `LuaSandboxLoadTextChunk` (used by `LuaVM::LoadScript`)
+   rejects any buffer starting with `0x1B` and loads with mode `"t"`. LuaJIT
+   does not verify bytecode, so a binary chunk would corrupt memory.
+3. **Environments** — each `CScript` runs in a fresh table whose `_G` is
+   itself. Unknown names read through a read-only whitelist: `assert`, `error`,
+   `getmetatable`, `setmetatable`, `ipairs`, `pairs`, `next`, `pcall`, `xpcall`,
+   `select`, `tonumber`, `tostring`, `type`, `unpack`, `print`, `_VERSION`,
+   read-only proxies of `coroutine`, `math`, `string`, `table`, `bit`, and a
+   deep read-only proxy of `uz` (nested tables such as `uz.scene` are
+   read-only too; live values such as `uz.delta_time` stay current). Globals a
+   script defines stay in its own environment, so scripts cannot see or
+   overwrite each other's globals. The string, `uz.Vec3` and `uz.Quat`
+   metatables and all proxy/environment metatables are protected
+   (`getmetatable` returns `false`).
+
+Proxies forward reads only: `pairs`, `next` and `#` see an empty table, because
+this LuaJIT build has no `__pairs` / `__len` support for tables.
+
+The sections below describe the original plan; instruction/time limits, call
+depth and memory caps are not implemented yet.
 
 ## Purpose
 

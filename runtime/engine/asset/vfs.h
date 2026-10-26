@@ -19,6 +19,13 @@
 /// the VFS root (e.g., "shaders/simple_vs.uzshader", "textures/brick.uztexture").
 /// No leading slash. No Windows backslashes.
 ///
+/// # Containment
+/// Paths reaching a VFS frequently come from untrusted data (scene files,
+/// material graphs, Lua scripts). `NormalizeVfsPath()` is the single gate
+/// that decides whether such a path stays below the VFS root; every
+/// file-backed backend applies it before touching the disk, and rejects the
+/// path (empty result / `false` / `std::nullopt`) when it would escape.
+///
 /// # Resolution Order (LayeredVFS)
 /// 1. Highest-priority mounted source that contains the path
 /// 2. Next-priority source (descending order)
@@ -37,14 +44,60 @@
 #include "engine/core/lru_cache.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <list>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
 namespace uz {
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Logical path validation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Validates an untrusted logical VFS path and returns its normalized form.
+///
+/// The check is purely lexical, so it gives the same answer on every
+/// platform and for files that do not exist yet (save targets). Backends
+/// that map onto a real directory add an on-disk check for links on top
+/// (see `LooseFileVFS::ResolvePath`).
+///
+/// # Normalization
+/// `\` separators become `/`, empty and `.` segments are dropped and a `..`
+/// that stays inside the root is collapsed (`"a/../b"` -> `"b"`).
+///
+/// # Rejected (returns `std::nullopt`)
+/// - Empty paths, and paths that normalize to the root itself (`"."`, `"a/.."`).
+/// - Embedded NUL characters: C file APIs would silently truncate the path.
+/// - Rooted paths: a leading `/` or `\` (POSIX root, Windows current-drive
+///   root, UNC `\\server\share`, device `\\?\` and `\\.\` forms).
+/// - Any `:` character: drive letters (`C:/x`), drive-relative paths (`C:x`)
+///   and NTFS alternate data streams (`file:stream`).
+/// - A `..` segment that climbs above the root (`"../x"`, `"a/../../x"`).
+/// - Segments ending in `.` or space other than `.`/`..`: Win32 strips those
+///   characters, so `".. "` would otherwise behave as `".."`.
+/// - Windows reserved device names (`CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`,
+///   `LPT1`-`LPT9`, with or without an extension, any case): they open a
+///   device instead of a file below the root. Rejected on every platform so
+///   content stays portable.
+///
+/// # Returns
+/// The normalized relative path (forward slashes, no `.`/`..`/empty
+/// segments), or `std::nullopt` when the path is not a contained logical path.
+[[nodiscard]] std::optional<std::string> NormalizeVfsPath(std::string_view path);
+
+/// Returns `true` if `name` is a single plain file name that is safe to join
+/// onto a directory: it passes `NormalizeVfsPath()` unchanged and contains no
+/// separator, so no `/`, `\`, `:`, NUL, `.`, `..` or device names.
+///
+/// Used for `.uzpak` file names read from a master index, which must name a
+/// sibling of the index file and nothing else.
+[[nodiscard]] bool IsPlainFileName(std::string_view name);
 
 /// Abstract interface for virtual file system backends.
 ///
@@ -86,18 +139,22 @@ public:
     /// Used in log messages for diagnostics (e.g., "LooseFileVFS(/path/to/assets/)").
     [[nodiscard]] virtual std::string Name() const = 0;
 
-    /// Resolves a logical VFS path to an absolute filesystem path.
+    /// Resolves a logical VFS path to a filesystem path inside the VFS root.
     ///
-    /// Only meaningful for file-backed backends (LooseFileVFS).
-    /// Returns the input path unchanged for archive-backed backends (PakVFS).
+    /// Only file-backed backends (LooseFileVFS) have a filesystem mapping.
+    /// Archive-backed and composite backends (PakVFS, LayeredVFS) return
+    /// `std::nullopt`; callers then read the asset through `Read()`.
     ///
     /// # Arguments
-    /// - `path`: Logical asset path relative to the VFS root.
+    /// - `path`: Logical asset path relative to the VFS root. May come from
+    ///   untrusted data; it is validated with `NormalizeVfsPath()`.
     ///
     /// # Returns
-    /// Absolute filesystem path string, or `path` unchanged if not resolvable.
-    [[nodiscard]] virtual std::string ResolvePath(const std::string& path) const {
-        return path;
+    /// - Filesystem path below the VFS root.
+    /// - `std::nullopt` if the backend has no filesystem mapping, or if the
+    ///   path is rejected because it would resolve outside the root.
+    [[nodiscard]] virtual std::optional<std::string> ResolvePath(const std::string& /*path*/) const {
+        return std::nullopt;
     }
 
     /// Statistics about the VFS internal asset cache.
@@ -114,6 +171,24 @@ public:
     [[nodiscard]] virtual CacheStats GetCacheStats() const { return {}; }
 };
 
+/// Filesystem path for an asset reference taken from scene/content data.
+///
+/// With a VFS bound the reference is resolved through `IVFS::ResolvePath`,
+/// so it must stay inside the VFS root (absolute paths and `..` escapes are
+/// rejected) and backends without a filesystem mapping yield `std::nullopt`.
+/// Without a VFS there is no content root to contain against: the path was
+/// supplied by the application itself and is returned unchanged.
+///
+/// # Returns
+/// The filesystem path to open, or `std::nullopt` if there is none.
+[[nodiscard]] inline std::optional<std::string> ResolveAssetFsPath(const IVFS* vfs,
+                                                                   const std::string& path) {
+    if (!vfs) {
+        return path;
+    }
+    return vfs->ResolvePath(path);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // LooseFileVFS — reads from disk (dev mode)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -123,11 +198,13 @@ public:
 /// Used in development mode for fast iteration — assets are read from
 /// their source location without any packing or preprocessing step.
 ///
-/// The root directory is set at construction time. All logical paths
-/// are resolved by simple concatenation: `rootDir + "/" + path`.
+/// The root directory is set at construction time. Logical paths are
+/// validated with `NormalizeVfsPath()` and joined onto the root; paths that
+/// would leave the root are rejected (see `ResolvePath()`).
 ///
 /// # Logging
 /// - Logs `Asset::Debug` on construction with the root directory.
+/// - Logs `Asset::Warning` when a path is rejected for leaving the root.
 /// - Logs `Asset::Error` on I/O read failures with the resolved path.
 ///
 /// # Example
@@ -148,36 +225,61 @@ public:
     /// Logs `Asset::Debug` with the normalized root path.
     explicit LooseFileVFS(const std::string& rootDir);
 
-    /// Reads a file from disk by resolving `rootDir + path`.
+    /// Reads a file from disk at `ResolvePath(path)`.
     ///
     /// Opens the file in binary mode, reads all bytes into a vector.
     ///
     /// # Returns
     /// - File contents as bytes on success.
-    /// - Empty vector if the file cannot be opened, is empty, or read fails.
+    /// - Empty vector if the path is rejected by `ResolvePath()`, or the file
+    ///   cannot be opened, is empty, or read fails.
     ///
     /// # Errors
     /// Logs `Asset::Error` with the full resolved path on I/O failure.
     [[nodiscard]] std::vector<uint8_t> Read(const std::string& path) override;
 
-    /// Checks if a regular file exists at `rootDir + path`.
+    /// Checks if a regular file exists at `ResolvePath(path)`.
     ///
     /// # Returns
-    /// `true` if the resolved path exists and is a regular file (not a directory).
+    /// `true` if the path is accepted by `ResolvePath()` and names an existing
+    /// regular file (not a directory).
     [[nodiscard]] bool Exists(const std::string& path) override;
 
     /// Returns `"LooseFileVFS(<rootDir>)"`.
     [[nodiscard]] std::string Name() const override;
 
-    /// Concatenates the root directory with the logical path.
+    /// Resolves a logical path to a filesystem path contained in the root.
+    ///
+    /// Two checks, both of which must pass:
+    /// 1. Lexical: `NormalizeVfsPath()` rejects absolute paths, drive
+    ///    letters, NUL bytes and `..` escapes before anything touches the
+    ///    disk. This alone guarantees `rootDir + normalized` is textually
+    ///    below the root, including for files that do not exist yet.
+    /// 2. On disk: the root (once, at construction) and the joined path are
+    ///    both passed through `std::filesystem::weakly_canonical`, which follows every symlink or
+    ///    junction in the part of the path that exists, and the result must
+    ///    still lie below the canonical root. This catches a link inside the
+    ///    content tree that points elsewhere. A canonicalization error fails
+    ///    closed (the path is rejected).
+    ///
+    /// The on-disk check is best effort against a concurrent attacker who can
+    /// swap a directory for a link between this call and the later open
+    /// (time-of-check/time-of-use); content trees are not expected to be
+    /// modified concurrently by an adversary while the engine runs.
     ///
     /// # Returns
-    /// Absolute filesystem path (`rootDir + path`).
-    [[nodiscard]] std::string ResolvePath(const std::string& path) const override;
+    /// - `rootDir + normalized path` (forward slashes) on success.
+    /// - `std::nullopt` if the path is rejected; logs `Asset::Warning`.
+    [[nodiscard]] std::optional<std::string> ResolvePath(const std::string& path) const override;
 
 private:
     mutable std::mutex m_mutex;  ///< Protects Read() for thread-safe VFS access from worker threads.
     std::string m_rootDir;       ///< Absolute root directory, always ends with '/'
+    /// Root with links resolved (weakly_canonical) at construction, used by
+    /// the on-disk containment check. `std::nullopt` if it could not be
+    /// resolved then; `ResolvePath()` then resolves it per call. Immutable
+    /// after construction, so concurrent readers need no lock.
+    std::optional<std::filesystem::path> m_canonicalRoot;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -264,7 +366,10 @@ public:
     ///
     /// # Returns
     /// - `unique_ptr<PakVFS>` on success.
-    /// - `nullptr` if the index file cannot be loaded.
+    /// - `nullptr` if the index file cannot be loaded, or if any pak file
+    ///   name it lists is not a plain file name (`IsPlainFileName()`): a
+    ///   name such as `"../x"` or `"C:/x"` would otherwise make the engine
+    ///   open an arbitrary file as a pak.
     ///
     /// # Errors
     /// Logs `Asset::Error` with the file path on failure.
@@ -301,8 +406,8 @@ public:
     /// Returns a human-readable name for logging.
     [[nodiscard]] std::string Name() const override;
 
-    /// Returns empty string — pak assets have no filesystem path.
-    [[nodiscard]] std::string ResolvePath(const std::string& path) const override;
+    /// Returns `std::nullopt` — pak assets have no filesystem path.
+    [[nodiscard]] std::optional<std::string> ResolvePath(const std::string& path) const override;
 
     /// Returns a const reference to the underlying PakReader (legacy mode only).
     ///
@@ -343,7 +448,16 @@ private:
 
     /// Gets or opens a PakStreamReader for the given pak filename.
     /// Promotes to MRU on hit, evicts LRU handle if pool is full.
+    /// Returns `nullptr` if the file cannot be opened or the name is rejected
+    /// by `PakFilePath()`.
     PakStreamReader* AcquireReader(const std::string& pakFilename);
+
+    /// Joins a pak file name from the master index onto `m_baseDir`.
+    ///
+    /// # Returns
+    /// `m_baseDir + "/" + pakFilename`, or `std::nullopt` (with an
+    /// `Asset::Error` log) if `pakFilename` is not a plain file name.
+    [[nodiscard]] std::optional<std::string> PakFilePath(const std::string& pakFilename) const;
 
     // ── Shared state ───────────────────────────────────────────────────
     mutable std::mutex m_mutex;  ///< Protects all mutable state (cache, handle pool, legacy reader) for thread-safe Read().
@@ -425,6 +539,10 @@ public:
     [[nodiscard]] bool Exists(const std::string& path) override;
 
     /// Returns `"LayeredVFS(<N> mounts)"` where N is the mount count.
+    ///
+    /// `ResolvePath()` is not overridden: a layered stack has no single
+    /// filesystem mapping, so it returns `std::nullopt` and callers read
+    /// through `Read()`, where each mounted backend applies its own containment.
     [[nodiscard]] std::string Name() const override;
 
 private:

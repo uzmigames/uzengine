@@ -19,7 +19,12 @@ class Host extends EventEmitter {
   version = 'test-node';
   arch = 'x64';
   send: ReturnType<typeof vi.fn> | undefined = vi.fn(
-    (_message: unknown, _handle?: unknown, _options?: unknown, callback?: (error: Error | null) => void) => {
+    (
+      _message: unknown,
+      _handle?: unknown,
+      _options?: unknown,
+      callback?: (error: Error | null) => void,
+    ) => {
       callback?.(null);
       return true;
     },
@@ -245,14 +250,19 @@ describe('runtime worker at the native addon boundary', () => {
       stats(sample);
       frame(Buffer.from([0, 0, 1, 0x65]));
     }
-    expect(host.send).toHaveBeenCalledWith({
-      type: 'stats',
-      fps: 60,
-      frameMs: 16,
-      drawCalls: 3,
-      vertices: 9,
-      triangles: 3,
-    }, undefined, undefined, expect.any(Function));
+    expect(host.send).toHaveBeenCalledWith(
+      {
+        type: 'stats',
+        fps: 60,
+        frameMs: 16,
+        drawCalls: 3,
+        vertices: 9,
+        triangles: 3,
+      },
+      undefined,
+      undefined,
+      expect.any(Function),
+    );
     expect(host.send).toHaveBeenLastCalledWith(
       { type: 'frame', data: 'AAABZQ==', key: true },
       undefined,
@@ -295,7 +305,12 @@ describe('runtime worker at the native addon boundary', () => {
       const frame = addon.startRenderLoop.mock.calls[0][2] as (buffer: Buffer) => void;
       const callbacks: Array<(error: Error | null) => void> = [];
       host.send!.mockImplementation(
-        (_message: unknown, _handle: unknown, _options: unknown, callback: (error: Error | null) => void) => {
+        (
+          _message: unknown,
+          _handle: unknown,
+          _options: unknown,
+          callback: (error: Error | null) => void,
+        ) => {
           callbacks.push(callback);
           return accepted;
         },
@@ -322,7 +337,12 @@ describe('runtime worker at the native addon boundary', () => {
       );
       callbacks.shift()!(null);
       host.send!.mockImplementation(
-        (_message: unknown, _handle: unknown, _options: unknown, callback: (error: Error | null) => void) => {
+        (
+          _message: unknown,
+          _handle: unknown,
+          _options: unknown,
+          callback: (error: Error | null) => void,
+        ) => {
           callback(null);
           return true;
         },

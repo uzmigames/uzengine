@@ -112,6 +112,18 @@ UzMeshParseResult ReadUzMesh(const std::vector<uint8_t>& data) {
 
     const auto& h = result.file.header;
 
+    // Consumers reinterpret vertex/index bytes by these strides, so a zero vertex
+    // stride or a non-2/4 index stride would make them read past the data.
+    if (h.vertexCount > 0 && h.vertexStride == 0) {
+        result.error = "Invalid vertexStride 0 for " + std::to_string(h.vertexCount) + " vertices";
+        return result;
+    }
+    if (h.indexCount > 0 && h.indexStride != 2 && h.indexStride != 4) {
+        result.error = "Invalid indexStride " + std::to_string(h.indexStride) +
+                       " (must be 2 or 4)";
+        return result;
+    }
+
     // Read LODs
     const size_t lodsStart = sizeof(UzMeshHeader);
     const size_t lodsSize = h.lodCount * sizeof(UzMeshLOD);
@@ -136,9 +148,9 @@ UzMeshParseResult ReadUzMesh(const std::vector<uint8_t>& data) {
         std::memcpy(result.file.submeshes.data(), data.data() + submeshStart, submeshSize);
     }
 
-    // Read vertex data
+    // Read vertex data (offset/size checks in wrap-safe subtraction form)
     const size_t vertexBytes = static_cast<size_t>(h.vertexCount) * h.vertexStride;
-    if (data.size() < h.vertexDataOffset + vertexBytes) {
+    if (h.vertexDataOffset > data.size() || vertexBytes > data.size() - h.vertexDataOffset) {
         result.error = "Data truncated — vertex data exceeds file size";
         return result;
     }
@@ -148,7 +160,7 @@ UzMeshParseResult ReadUzMesh(const std::vector<uint8_t>& data) {
 
     // Read index data
     const size_t indexBytes = static_cast<size_t>(h.indexCount) * h.indexStride;
-    if (data.size() < h.indexDataOffset + indexBytes) {
+    if (h.indexDataOffset > data.size() || indexBytes > data.size() - h.indexDataOffset) {
         result.error = "Data truncated — index data exceeds file size";
         return result;
     }
@@ -160,8 +172,8 @@ UzMeshParseResult ReadUzMesh(const std::vector<uint8_t>& data) {
     if (h.version >= 2 && (h.flags & kUzMeshFlag_Skinned)) {
         const uint32_t skelPathLen = h.reserved[0];
         if (skelPathLen > 0) {
-            const size_t skelPathOffset = h.indexDataOffset + indexBytes;
-            if (data.size() < skelPathOffset + skelPathLen) {
+            const size_t skelPathOffset = h.indexDataOffset + indexBytes; // <= data.size()
+            if (skelPathLen > data.size() - skelPathOffset) {
                 result.error = "Data truncated — skeleton path exceeds file size";
                 return result;
             }

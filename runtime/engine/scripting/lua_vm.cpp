@@ -1,6 +1,7 @@
 #include "lua_vm.h"
 
 #include "log.h"
+#include "lua_sandbox.h"
 #include "lua_scene_api.h"
 #include "lua_material_api.h"
 #include "lua_scene_io_api.h"
@@ -45,23 +46,6 @@ UZ_DEFINE_LOG_CATEGORY(Scripting, Info);
 namespace uz {
 
 lua_State* LuaVM::s_state = nullptr;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Sandbox — remove dangerous globals
-// ─────────────────────────────────────────────────────────────────────────────
-
-static void ApplySandbox(lua_State* L) {
-    const char* forbidden[] = {
-        "os", "io", "loadfile", "dofile", "load", "require",
-        "collectgarbage", "newproxy", "rawset", "rawget", "rawequal",
-    };
-    for (const char* name : forbidden) {
-        lua_pushnil(L);
-        lua_setglobal(L, name);
-    }
-    UZ_LOG(Scripting, Info, "Lua sandbox applied - {} globals removed",
-           sizeof(forbidden) / sizeof(forbidden[0]));
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Lua C functions — uz.log / uz.log_warn / uz.log_error / uz.quit
@@ -148,8 +132,9 @@ bool LuaVM::Init() {
         return false;
     }
 
-    luaL_openlibs(s_state);
-    ApplySandbox(s_state);
+    // Never luaL_openlibs: it opens package/debug/io/os/jit and preloads ffi,
+    // each of which lets a script load native code or escape the sandbox.
+    LuaSandboxOpenSafeLibs(s_state);
     RegisterUzTable(s_state);
 
     // Register engine sub-API tables into uz.* after the base table exists.
@@ -179,6 +164,16 @@ bool LuaVM::Init() {
     LuaRegisterReflectionProbeAPI(s_state);
     LuaRegisterPostProcessAPI(s_state);
     LuaRegisterEditorAPI(s_state);
+
+    // Per-script environments read through this whitelist. Built last so the
+    // uz proxy wraps the fully registered table; later uz.* additions are
+    // still visible because the proxy reads the live table.
+    if (!LuaSandboxBuildScriptGlobals(s_state)) {
+        UZ_LOG(Scripting, Error, "LuaVM init failed — could not build the script sandbox");
+        lua_close(s_state);
+        s_state = nullptr;
+        return false;
+    }
 
     UZ_LOG(Scripting, Info, "LuaVM initialized (LuaJIT 2.1)");
     return true;
@@ -240,7 +235,9 @@ int LuaVM::LoadScript(const std::vector<uint8_t>& scriptBytes, const std::string
         return LUA_REFNIL;
     }
 
-    int result = luaL_loadbuffer(
+    // Text only: LuaJIT does not verify bytecode, so a crafted binary chunk
+    // corrupts memory.
+    const int result = LuaSandboxLoadTextChunk(
         s_state,
         reinterpret_cast<const char*>(scriptBytes.data()),
         scriptBytes.size(),

@@ -44,11 +44,13 @@ static bool Near(float a, float b, float eps = kEps) {
 TEST(RenderingParity, HeightFogDefaults_PrimaryLayer) {
     HeightFogComponent fog;
     EXPECT_FLOAT_EQ(fog.heightFalloff,       0.2f);
-    EXPECT_FLOAT_EQ(fog.color.x,             0.0f);
-    EXPECT_FLOAT_EQ(fog.color.y,             0.0f);
-    EXPECT_FLOAT_EQ(fog.color.z,             0.0f);
+    // Authored bluish haze (deliberate deviation from the reference black; see the
+    // component header). Density pairs with the authored colour.
+    EXPECT_FLOAT_EQ(fog.color.x,             0.45f);
+    EXPECT_FLOAT_EQ(fog.color.y,             0.55f);
+    EXPECT_FLOAT_EQ(fog.color.z,             0.65f);
     EXPECT_FLOAT_EQ(fog.maxOpacity,          1.0f);
-    EXPECT_FLOAT_EQ(fog.density,             0.0436f);
+    EXPECT_FLOAT_EQ(fog.density,             0.15f);
     EXPECT_FLOAT_EQ(fog.startDistance,       0.f);
     EXPECT_FLOAT_EQ(fog.fogCutoffDistance,   0.f);
     EXPECT_FLOAT_EQ(fog.baseHeight,          -5000.f);
@@ -64,10 +66,10 @@ TEST(RenderingParity, HeightFogDefaults_SecondLayer) {
 
 TEST(RenderingParity, HeightFogDefaults_DirectionalInscattering) {
     HeightFogComponent fog;
-    // Default inscattering color is black (disabled)
-    EXPECT_FLOAT_EQ(fog.directionalInscatteringColor.x, 0.0f);
-    EXPECT_FLOAT_EQ(fog.directionalInscatteringColor.y, 0.0f);
-    EXPECT_FLOAT_EQ(fog.directionalInscatteringColor.z, 0.0f);
+    // Authored warm sun glow (the reference default is black/disabled; see header)
+    EXPECT_FLOAT_EQ(fog.directionalInscatteringColor.x, 1.0f);
+    EXPECT_FLOAT_EQ(fog.directionalInscatteringColor.y, 0.85f);
+    EXPECT_FLOAT_EQ(fog.directionalInscatteringColor.z, 0.5f);
     EXPECT_FLOAT_EQ(fog.directionalInscatteringExponent,       4.0f);
     EXPECT_FLOAT_EQ(fog.directionalInscatteringStartDistance,  10000.f);
     EXPECT_FALSE(fog.enableVolumetricFog);

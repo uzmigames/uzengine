@@ -42,6 +42,8 @@
 #include "engine/scripting/lua_vm.h"
 #include "engine/scripting/scene/vfx_lua_bindings.h"
 #include "engine/scripting/scene/decal_lua_bindings.h"
+#include "engine/scripting/scene/lua_scene_io_api.h"
+#include "engine/asset/vfs.h"
 #include "engine/vfx/vfx_system.h"
 #include "engine/vfx/components/particle_emitter.h"
 #include "engine/vfx/decals/decal_manager.h"
@@ -732,9 +734,11 @@ TEST_F(VFXLuaDecalLodCompositeTest,
     RegisterEmitterNaked(vfxSystem_, fire,  "vfx/fire.uzvfx");
     RegisterEmitterNaked(vfxSystem_, smoke, "vfx/smoke.uzvfx");
 
-    // Write a temp .uzvfx_composite file on disk.
-    const auto tmpPath = std::filesystem::temp_directory_path()
-                         / "uz_test_composite.uzvfx_composite";
+    // Write a temp .uzvfx_composite file into a directory served by a VFS:
+    // scripts may only read composites through the registered VFS.
+    const auto vfsRoot = std::filesystem::temp_directory_path() / "uz_test_composite_vfs";
+    std::filesystem::create_directories(vfsRoot);
+    const auto tmpPath = vfsRoot / "uz_test_composite.uzvfx_composite";
     {
         std::ofstream f(tmpPath);
         ASSERT_TRUE(f.is_open()) << "Could not write temp composite file";
@@ -749,18 +753,13 @@ TEST_F(VFXLuaDecalLodCompositeTest,
 })";
     }
 
-    // Lua path strings use forward slashes universally.
-    const std::string luaPath = tmpPath.string();
-    // Replace backslashes (Windows) with forward slashes.
-    std::string luaPathFwd = luaPath;
-    for (char& c : luaPathFwd) { if (c == '\\') c = '/'; }
-
+    LooseFileVFS vfs(vfsRoot.string());
     lua_State* L = LuaVM::GetState();
-    lua_pushstring(L, luaPathFwd.c_str());
-    lua_setglobal(L, "_comp_path");
+    LuaSetVFS(L, &vfs);
 
     ASSERT_TRUE(DoString(
-        "_comp_handles = uz.vfx:spawn_composite(_comp_path, {10, 20, 30})"));
+        "_comp_handles = uz.vfx:spawn_composite('uz_test_composite.uzvfx_composite', {10, 20, 30})"));
+    LuaSetVFS(L, nullptr);
 
     // Both emitters must be in the returned handles table.
     EXPECT_TRUE(EvalBool("type(_comp_handles) == 'table'"));
@@ -779,7 +778,8 @@ TEST_F(VFXLuaDecalLodCompositeTest,
     EXPECT_TRUE(fire.isEmitting);
     EXPECT_TRUE(smoke.isEmitting);
 
-    std::filesystem::remove(tmpPath);
+    std::error_code ec;
+    std::filesystem::remove_all(vfsRoot, ec);
     vfxSystem_.UnregisterEmitter(&fire);
     vfxSystem_.UnregisterEmitter(&smoke);
 }
@@ -789,8 +789,9 @@ TEST_F(VFXLuaDecalLodCompositeTest,
 TEST_F(VFXLuaDecalLodCompositeTest,
        SpawnComposite_NoMatchingEmitters_ReturnsEmptyTable) {
     // No emitters registered — all entries will be unmatched.
-    const auto tmpPath = std::filesystem::temp_directory_path()
-                         / "uz_test_composite_nomatch.uzvfx_composite";
+    const auto vfsRoot = std::filesystem::temp_directory_path() / "uz_test_composite_nomatch_vfs";
+    std::filesystem::create_directories(vfsRoot);
+    const auto tmpPath = vfsRoot / "uz_test_composite_nomatch.uzvfx_composite";
     {
         std::ofstream f(tmpPath);
         ASSERT_TRUE(f.is_open());
@@ -804,19 +805,18 @@ TEST_F(VFXLuaDecalLodCompositeTest,
 })";
     }
 
-    std::string p = tmpPath.string();
-    for (char& c : p) { if (c == '\\') c = '/'; }
-
+    LooseFileVFS vfs(vfsRoot.string());
     lua_State* L = LuaVM::GetState();
-    lua_pushstring(L, p.c_str());
-    lua_setglobal(L, "_comp_path2");
+    LuaSetVFS(L, &vfs);
 
     ASSERT_TRUE(DoString(
-        "_empty_handles = uz.vfx:spawn_composite(_comp_path2, {0,0,0})"));
+        "_empty_handles = uz.vfx:spawn_composite('uz_test_composite_nomatch.uzvfx_composite', {0,0,0})"));
+    LuaSetVFS(L, nullptr);
     EXPECT_TRUE(EvalBool("type(_empty_handles) == 'table'"));
     EXPECT_DOUBLE_EQ(EvalNumber("#_empty_handles"), 0.0);
 
-    std::filesystem::remove(tmpPath);
+    std::error_code ec;
+    std::filesystem::remove_all(vfsRoot, ec);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

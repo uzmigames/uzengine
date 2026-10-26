@@ -15,6 +15,8 @@ extern "C" {
 }
 
 #include <cstdio>
+#include <optional>
+#include <string>
 #include <vector>
 
 // Scripting log category is defined in lua_vm.cpp — only declare here.
@@ -72,7 +74,11 @@ static constexpr const char* kVfsRegistryKey = "uz_vfs";
 /// - `false` if the World or VFS is not set, the file is not found, or the
 ///   input cannot be read. Malformed JSON returns `nil, message`.
 static int SceneLoadScene(lua_State* L) {
-    const char* path = luaL_checkstring(L, 1);
+    // Keep the full Lua length so an embedded NUL reaches the VFS (which
+    // rejects it) instead of silently truncating the path.
+    size_t pathLength = 0;
+    const char* pathData = luaL_checklstring(L, 1, &pathLength);
+    const std::string path(pathData, pathLength);
 
     World* world = GetWorld(L);
     if (!world) {
@@ -121,10 +127,17 @@ static int SceneLoadScene(lua_State* L) {
 /// # Arguments
 /// * `path` (string) — VFS-relative destination path (e.g. "scenes/my_scene.uzscene").
 ///
+/// The destination is resolved with `IVFS::ResolvePath`, so it must stay
+/// inside the VFS root: absolute paths, drive letters, NUL bytes and `..`
+/// escapes are refused, as is any backend without a filesystem mapping
+/// (pak archives are read-only).
+///
 /// # Returns
 /// `true` on success, `false` on failure (error is logged).
 static int SceneSaveScene(lua_State* L) {
-    const char* path = luaL_checkstring(L, 1);
+    size_t pathLength = 0;
+    const char* pathData = luaL_checklstring(L, 1, &pathLength);
+    const std::string path(pathData, pathLength);
 
     lua_getfield(L, LUA_REGISTRYINDEX, kWorldRegistryKey);
     auto* world = static_cast<World*>(lua_touserdata(L, -1));
@@ -154,7 +167,15 @@ static int SceneSaveScene(lua_State* L) {
         return 1;
     }
 
-    const std::string resolvedPath = vfs->ResolvePath(path);
+    const std::optional<std::string> resolved = vfs->ResolvePath(path);
+    if (!resolved) {
+        UZ_LOG(Scripting, Warning,
+            "uz.scene.save_scene: destination is not a writable path inside the VFS root ({})",
+            vfs->Name());
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    const std::string& resolvedPath = *resolved;
     FILE* file = std::fopen(resolvedPath.c_str(), "wb");
     if (!file) {
         UZ_LOG(Scripting, Warning,
