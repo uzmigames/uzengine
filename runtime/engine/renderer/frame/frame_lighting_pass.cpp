@@ -333,6 +333,7 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
         lightDesc.shadowDataParams  = &ctx.shadowDataParams;
         lightDesc.cbRingAllocator   = m_cbRing.get();
 
+        lightDesc.reflectionResource = ctx.unifiedReflectionRes;
         AddLightingPass(rgBuilder, lightDesc);
 
         // ── Post-lighting debug view — overlays debug visualization on top of HDR ──

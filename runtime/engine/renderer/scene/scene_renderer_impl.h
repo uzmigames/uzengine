@@ -415,6 +415,7 @@
 
     // ── SSGI (Screen-Space Global Illumination) ─────────────────────────────
     SSGIRenderer m_ssgiRenderer;  ///< GPU SSGI subsystem (5 compute passes).
+    RealtimeDenoiser m_realtimeDenoiser; ///< Opt-in standalone reflection reconstruction.
 
     // ── SDF-based GI (Global Distance Field + Radiance Cache) ──────────────
     GlobalDistanceField m_globalDistanceField;   ///< 4-cascade clipmap GDF.

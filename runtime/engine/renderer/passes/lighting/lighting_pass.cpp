@@ -41,6 +41,7 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
         pb.Read(desc.depthGBuffer,    RHIResourceState::ShaderResource);
         pb.Read(desc.positionGBuffer, RHIResourceState::ShaderResource);
         pb.Read(desc.emissiveGBuffer, RHIResourceState::ShaderResource);
+        if (desc.reflectionResource.IsValid()) pb.Read(desc.reflectionResource, RHIResourceState::ShaderResource);
         if (desc.clusterListResource.IsValid()) {
             pb.Read(desc.clusterListResource, RHIResourceState::ShaderResource);
         }

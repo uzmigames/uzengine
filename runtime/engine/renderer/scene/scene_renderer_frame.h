@@ -157,6 +157,7 @@ struct FrameContext {
     rg::RgResourceId positionRes{};
     rg::RgResourceId emissiveRes{};
     rg::RgResourceId velocityRes{};
+    rg::RgResourceId unifiedReflectionRes{};
     rg::RgResourceId shadowAtlasRes{};
     rg::RgResourceId localShadowAtlasRes{};
     rg::RgResourceId apVolumeRes{};        ///< Aerial perspective volume (imported, Read in deferred, Write in AP compute).

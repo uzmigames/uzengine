@@ -70,6 +70,8 @@ static auto* cv_RTReflectionsIndirect = UZ_CVAR_BOOL("r.RayTracing.Reflections.I
 static auto* cv_RTReflectionsDenoise = UZ_CVAR_BOOL("r.RayTracing.Reflections.Denoise", false,
     "Hardware ray-traced reflections (stage 2): run the pass between SSR_Resolve and SSR_Temporal so "
     "the ray texels go through the SSR temporal accumulation + spatial denoise (0 = after them, raw)");
+static auto* cv_UnifiedDenoiser = UZ_CVAR_BOOL("r.Denoiser.Unified", false,
+    "Opt-in unified standalone RT reflection reconstruction (requires RT denoise; default off)");
 
 /// Selects DXR ray-traced probe update over the SDF sphere-trace path.
 /// Requires DXR 1.1 (`RayQuery<>`) and a built TLAS. When the device does not
@@ -1126,12 +1128,17 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
     // No screen trace this frame — SSR off, or its trace pass skipped (r.SSR.Trace 0): every
     // eligible texel is traced and the pass writes every texel (kRTReflectionFlagNoScreenTrace).
     const bool ownsOutput = standalone || cv_SSRTrace->value < 0.5f;
+    const bool unified = standalone && denoise && cv_UnifiedDenoiser->value && ctx.bindless
+        && m_realtimeDenoiser.Prepare(m_device, m_shaderMgr.get(), m_renderWidth, m_renderHeight);
+    if (unified) {
+        ctx.unifiedReflectionRes = rgBuilder.ImportTrackedTexture("RT_ReflectionSignal", m_ssrResolvedOutput);
+    }
     // Hit attributes: the per-mesh geometry + material table by TLAS InstanceID the path tracer
     // shades its bounce vertices with (refreshed here, as the path tracer does, only while the
     // pass is on), the global distance field for meshes without an entry.
     const uint32_t materialTableSrv = UpdateGIMaterialTable(ctx);
 
-    rgBuilder.AddPass("RT_Reflections", [&, materialTableSrv, ownsOutput](rg::RgPassBuilder& pb) {
+    rgBuilder.AddPass("RT_Reflections", [&, materialTableSrv, ownsOutput, unified](rg::RgPassBuilder& pb) {
         // The GBuffer reads order this pass after the GBuffer and, in registration order, after
         // SSR_SpatialDenoise (the last writer of the resolved buffer) and before the lighting.
         // The TLAS (built in RTManager::BeginFrame, before the graph executes) and the SSR
@@ -1140,8 +1147,9 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
         pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);
         pb.Read(ctx.normalRes, RHIResourceState::ShaderResource);
         pb.Read(ctx.velocityRes, RHIResourceState::ShaderResource);
+        if (unified) pb.Write(ctx.unifiedReflectionRes, RHIResourceState::UnorderedAccess);
 
-        pb.SetExecutionCallback([this, &ctx, materialTableSrv, ownsOutput](IRHICommandList* cmd, const rg::RgPassResources&) {
+        pb.SetExecutionCallback([this, &ctx, materialTableSrv, ownsOutput, unified](IRHICommandList* cmd, const rg::RgPassResources&) {
             UZ_PROFILE_SCOPE("RTReflections::Trace");
 
             auto rtReflectionPSO = ctx.pipelines->GetRtReflection();
@@ -1171,7 +1179,7 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
                 // The screen trace is read only with the chain (unread, sentinel index, when the
                 // pass owns the buffer).
                 if (!ownsOutput) m_rgStates->Transition(cmd, m_ssrTraceOutput, RHIResourceState::ShaderResource);
-                m_rgStates->Transition(cmd, m_ssrResolvedOutput, RHIResourceState::UnorderedAccess);
+                if (!unified) m_rgStates->Transition(cmd, m_ssrResolvedOutput, RHIResourceState::UnorderedAccess);
                 // The hit distance feeds the temporal pass's virtual-hit reprojection on the
                 // denoise route; the trace pass left it in ShaderResource.
                 if (denoiseRoute) m_rgStates->Transition(cmd, m_ssrHitDistance, RHIResourceState::UnorderedAccess);
@@ -1231,7 +1239,7 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
 
             // Back to SRV for the lighting (or, on the denoise route, the temporal pass) to read
             {
-                m_rgStates->Transition(cmd, m_ssrResolvedOutput, RHIResourceState::ShaderResource);
+                if (!unified) m_rgStates->Transition(cmd, m_ssrResolvedOutput, RHIResourceState::ShaderResource);
                 if (denoiseRoute) m_rgStates->Transition(cmd, m_ssrHitDistance, RHIResourceState::ShaderResource);
             }
             // Phase D stage 3: the deferred lighting's SDF reflections read the cells this pass
@@ -1245,7 +1253,20 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
     // Stage 3 denoise route without the SSR chain: the temporal accumulation + spatial denoise over
     // the ray texels (and their hit distances) the pass just wrote, then the lighting reads the
     // denoised buffer.
-    if (standalone && denoise) RegisterSSRDenoisePasses(rgBuilder, ctx);
+    if (unified) {
+        // Geometry motion is validated per tap; global illumination/producer edits start a new epoch.
+        auto epoch = [&ctx]() {
+            const auto* frame = static_cast<const PerFrameCB*>(ctx.perFrameAlloc.cpuPtr);
+            uint64_t hash = frame ? SurfaceCacheLightingHash(ctx, *frame) : 0ull;
+            const float modes[] = {float(cv_RTReflectionsGlossy->value), float(cv_RTReflectionsIndirect->value),
+                                   cv_RTReflectionsMaxRoughness->value, cv_SSRIntensity->value,
+                                   cv_RTReflectionsMaxDistance->value};
+            return SurfaceCacheHashBytes(modes, sizeof(modes), hash);
+        };
+        m_realtimeDenoiser.Register(rgBuilder, ctx, m_cbRing.get(), ctx.unifiedReflectionRes,
+            m_ssrResolvedOutputSrv, m_ssrResolvedOutputUav, m_gbuffer.depthSRV, m_gbuffer.normalSRV,
+            m_gbuffer.velocitySRV, epoch, RealtimeDenoiser::Policy{});
+    } else if (standalone && denoise) RegisterSSRDenoisePasses(rgBuilder, ctx);
 }
 
 // ── SSGI Previous Frame Color Copy ─────────────────────────────────────────

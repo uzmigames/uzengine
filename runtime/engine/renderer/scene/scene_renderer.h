@@ -62,6 +62,7 @@
 #include "engine/vfx/lighting/vfx_ddgi_emissive_feed.h"
 #include "engine/ecs/environment/light_probe_volume_component.h"
 #include "passes/gi/brixelizer_gi_pass.h"
+#include "passes/realtime_denoiser.h"
 #include "async_texture_decoder.h"  // TextureDecodeResult for m_deferredDecoded
 #include "async_mesh_loader.h"      // MeshLoadResultCPU for m_asyncMeshReady
 #include "gi/mesh_sdf_bake_queue.h" // MeshSdfBakeQueue (block B.3)
