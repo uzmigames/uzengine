@@ -128,12 +128,22 @@ void SceneRenderer::RegisterSSGIPasses(rg::RgBuilder& rgBuilder, FrameContext& c
                           && m_passInspector.IsPassEnabled("ssgi");
     if (!ssgiActive) return;
 
-    rgBuilder.AddPass("SSGI", [&](rg::RgPassBuilder& pb) {
+    const auto* dxrCvar = CVarRegistry::Get().Find("r.GI.FinalGather.DXR");
+    const auto* restirCvar = CVarRegistry::Get().Find("r.GI.ReSTIR");
+    const uint32_t requestedDxr = dxrCvar ? static_cast<uint32_t>(dxrCvar->value) : 0u;
+    const bool dxrReady = m_rtManager && m_rtManager->IsReady();
+    const uint32_t materialSrv = requestedDxr && dxrReady ? UpdateGIMaterialTable(ctx) : UINT32_MAX;
+    const uint32_t tlasSrv = dxrReady ? m_rtManager->GetTLASSRVIndex() : UINT32_MAX;
+    const uint32_t dxrMode = SelectFinalGatherDxrMode(requestedDxr, ctx.perFrame.sdfDiffuseSamples != 0,
+        restirCvar && restirCvar->value >= 1.0f, dxrReady,
+        dxrReady ? m_rtManager->GetTLASInstanceCount() : 0u, tlasSrv, materialSrv);
+
+    rgBuilder.AddPass("SSGI", [&, dxrMode, tlasSrv, materialSrv](rg::RgPassBuilder& pb) {
         pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);
         pb.Read(ctx.normalRes, RHIResourceState::ShaderResource);
         pb.Read(ctx.velocityRes, RHIResourceState::ShaderResource);
 
-        pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
+        pb.SetExecutionCallback([this, &ctx, dxrMode, tlasSrv, materialSrv](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
             UZ_PROFILE_SCOPE("SSGI::Execute");
 
             SSGIRenderParams ssgiParams{};
@@ -158,6 +168,9 @@ void SceneRenderer::RegisterSSGIPasses(rg::RgBuilder& rgBuilder, FrameContext& c
                                        ? static_cast<uint32_t>(ctx.perFrame.timeParams.w)
                                        : ctx.frameIndex;
             ssgiParams.worldGather = ctx.perFrame.sdfDiffuseSamples != 0;
+            ssgiParams.gatherDxrMode = dxrMode;
+            ssgiParams.gatherTlasSrv = tlasSrv;
+            ssgiParams.gatherMaterialSrv = materialSrv;
             ssgiParams.resetHistory = !ctx.temporal.matrixValid;
             ssgiParams.sceneRevision = m_globalDistanceField.GetSceneRevision();
             ssgiParams.changedRegions = &m_globalDistanceField.GetChangedRegions();   // read at execution (block B.2)

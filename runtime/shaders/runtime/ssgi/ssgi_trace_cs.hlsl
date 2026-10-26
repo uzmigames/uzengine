@@ -28,6 +28,11 @@ cbuffer RootConstants : register(b0) {
     uint g_thicknessBits;     // CVar r.SSGI.Thickness as float bits (default 0.5)
     uint g_maxRayDistBits;    // Max ray distance in UV space as float bits (default 0.5)
     uint g_surfaceCacheParamsSrv; // Phase D stage 3: StructuredBuffer<SurfaceCacheParams> SRV (0xffffffff = no cache)
+#ifdef UZ_GATHER_DXR
+    uint g_gatherTlasSrv;
+    uint g_gatherMaterialSrv;
+    uint g_gatherDxrMode;
+#endif
 };
 
 #include "ssgi_surface.hlsli"

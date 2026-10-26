@@ -27,6 +27,16 @@ class IRHICommandList;
 class CBRingAllocator;
 class PipelineLibrary;
 
+/// The optional final-gather route requires a live scene and exact material table.
+/// ReSTIR retains its existing SDF estimator; switching only its replay would bias reuse.
+[[nodiscard]] inline uint32_t SelectFinalGatherDxrMode(uint32_t requested, bool worldGather,
+                                                      bool restir, bool dxrReady,
+                                                      uint32_t instances, uint32_t tlasSrv,
+                                                      uint32_t materialSrv) noexcept {
+    return worldGather && !restir && dxrReady && instances > 0
+        && tlasSrv != UINT32_MAX && materialSrv != UINT32_MAX ? requested : 0u;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SSGISettings — runtime-tunable parameters
 // ─────────────────────────────────────────────────────────────────────────────
@@ -83,6 +93,9 @@ struct SSGIRenderParams {
     /// Phase D stage 3: the surface radiance cache's binding record (StructuredBuffer<SurfaceCacheParams>
     /// SRV) the world gather's hit shading reads; UINT32_MAX = no cache (the gather unchanged).
     uint32_t surfaceCacheParamsSrv = UINT32_MAX;
+    uint32_t gatherDxrMode = 0;
+    uint32_t gatherTlasSrv = UINT32_MAX;
+    uint32_t gatherMaterialSrv = UINT32_MAX;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -312,6 +325,7 @@ private:
     bool m_resourceStatesInitialized = false;
     uint32_t m_loggedWorldSamples = 0;
     bool m_worldGather = false;
+    uint32_t m_gatherDxrMode = 0;
     bool m_hasHistory = false;
     uint64_t m_sceneRevision = 0;
     uint32_t m_lastFrame = UINT32_MAX;

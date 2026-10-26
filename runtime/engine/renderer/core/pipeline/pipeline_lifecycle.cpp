@@ -149,6 +149,8 @@ void PipelineLibrary::Shutdown() {
     destroyPipeline(m_dofBlur);
     destroyPipeline(m_fxaa);
     destroyPipeline(m_gpuSkinningPipeline);
+    destroyPipeline(m_ssgiDxrTrace);
+    destroyPipeline(m_ssgiDxrUpsample);
 
     // Destroy cached shaders
     auto destroyShader = [this](RHIShaderHandle& h) {
@@ -197,6 +199,8 @@ void PipelineLibrary::Shutdown() {
     destroyShader(m_velocityObjectVS);
     destroyShader(m_velocityObjectPS);
     destroyShader(m_fxaaPS);
+    destroyShader(m_ssgiDxrTraceCS);
+    destroyShader(m_ssgiDxrUpsampleCS);
 
     m_psoCache.Shutdown();
     m_psoDiskCache.reset();

@@ -1,6 +1,5 @@
 /// @ref Kopf et al. 2007 "Joint Bilateral Upsampling".
 /// @ref Wright et al. 2022 "Lumen", interpolation restricted to the receiver plane.
-#include "ssgi_world_gather.hlsli"
 cbuffer RootConstants : register(b0) {
     uint g_ssgiHalfSrvIndex;
     uint g_ssgiAOHalfSrvIndex;
@@ -12,7 +11,13 @@ cbuffer RootConstants : register(b0) {
     uint g_fullHeight;
     uint g_depthSigmaBits;
     uint g_normalPowerBits;
+#ifdef UZ_GATHER_DXR
+    uint g_gatherTlasSrv;
+    uint g_gatherMaterialSrv;
+    uint g_gatherDxrMode;
+#endif
 };
+#include "ssgi_world_gather.hlsli"
 
 /// What the upsample did with the pixel, recorded because an all-zero weight vector is otherwise
 /// ambiguous. Mirrors `GATHER_UPSAMPLE` in `scripts/rendering/flicker/regiondump.py`.

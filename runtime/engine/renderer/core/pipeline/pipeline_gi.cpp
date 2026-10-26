@@ -228,6 +228,34 @@ RHIPipelineHandle PipelineLibrary::GetSsgiTrace() {
 // SSGI Spatial Denoise Compute Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 
+RHIPipelineHandle PipelineLibrary::GetSsgiDxrTrace() {
+    if (!m_initialized || !m_device->SupportsRayTracing()) return RHIPipelineHandle::Invalid();
+    if (m_ssgiDxrTrace.IsValid()) return m_ssgiDxrTrace;
+    if (!m_ssgiDxrTraceCS.IsValid())
+        m_ssgiDxrTraceCS = m_shaderMgr->CreateShaderWithDefines(
+            EngineShader::SsgiTraceCS, RHIShaderStage::Compute, "UZ_GATHER_DXR=1");
+    if (!m_ssgiDxrTraceCS.IsValid()) return RHIPipelineHandle::Invalid();
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_ssgiDxrTraceCS;
+    desc.debugName = "SSGI_DXRTrace";
+    m_ssgiDxrTrace = m_device->CreateComputePipeline(desc);
+    return m_ssgiDxrTrace;
+}
+
+RHIPipelineHandle PipelineLibrary::GetSsgiDxrUpsample() {
+    if (!m_initialized || !m_device->SupportsRayTracing()) return RHIPipelineHandle::Invalid();
+    if (m_ssgiDxrUpsample.IsValid()) return m_ssgiDxrUpsample;
+    if (!m_ssgiDxrUpsampleCS.IsValid())
+        m_ssgiDxrUpsampleCS = m_shaderMgr->CreateShaderWithDefines(
+            EngineShader::SsgiUpsampleCS, RHIShaderStage::Compute, "UZ_GATHER_DXR=1");
+    if (!m_ssgiDxrUpsampleCS.IsValid()) return RHIPipelineHandle::Invalid();
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_ssgiDxrUpsampleCS;
+    desc.debugName = "SSGI_DXRUpsample";
+    m_ssgiDxrUpsample = m_device->CreateComputePipeline(desc);
+    return m_ssgiDxrUpsample;
+}
+
 bool PipelineLibrary::EnsureSsgiSpatialDenoiseShader() {
     if (m_ssgiSpatialDenoiseCS.IsValid()) return true;
 

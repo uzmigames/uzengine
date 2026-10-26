@@ -4,6 +4,9 @@
 #define UZ_SDF_DIFFUSE_GATHER_HLSLI
 
 #include "sdf_reflections.hlsli"
+#ifdef UZ_GATHER_DXR
+#include "dxr_diffuse_gather.hlsli"
+#endif
 
 /// @constants Cosine PDF=cos(theta)/pi cancels E/pi's cosine and pi, giving mean radiance.
 /// Samples are bounded to [1,32]. The 0.999 pole threshold keeps the tangent basis nondegenerate.
@@ -96,7 +99,11 @@ float3 GatherSdfDiffuseIdentified(SdfReflectionScene scene, float3 position, flo
         float3 direction = tangent * sampleDirection.x + bitangent * sampleDirection.y + normal * sampleDirection.z;
         if (i == 0u) firstDirection = direction;
         float hitT;
+#ifdef UZ_GATHER_DXR
+        float3 contribution = TraceDxrGatherRadiance(scene, origin, direction, geometricNormal, hitT);
+#else
         float3 contribution = TraceSdfSurfaceRadianceIdentified(scene, origin, direction, 0u, geometricNormal, hitT);
+#endif
         irradianceOverPi += contribution;
         if (hitT >= 0.0) {
             const float3 hitPos = origin + direction * hitT;

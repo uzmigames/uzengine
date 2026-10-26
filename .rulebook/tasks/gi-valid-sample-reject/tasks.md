@@ -1,5 +1,18 @@
 # Diffuse gather sample validity (2026-10-22)
 
+## DXR final gather (2026-10-26, default OFF)
+
+- [x] Add r.GI.FinalGather.DXR: 0 retains SDF, 1 traces gather and sun
+  visibility against the existing TLAS, 2 isolates sun visibility.
+- [x] Reuse exact triangle material and emission plus existing radiance-cache
+  irradiance. Apply the same route to unsupported upsample receivers.
+- [x] Keep DXR in lazy shader permutations; missing DXR, empty TLAS, missing
+  material table, and ReSTIR use the existing SDF path. Reset history on
+  visibility mode changes.
+- [x] Test the CPU capability and resource-validity gate.
+- [ ] Record fresh-baseline OFF identity, ON/PT comparisons, second scene,
+  GPU timing, and build/layout/gtest evidence before enabling by default.
+
 - [x] Preserve explicit origin availability in trace alpha, independent of radiance.
 - [x] Exclude unavailable taps from spatial, temporal and full-resolution reconstruction.
 - [x] Retry failed two-pixel normals with receiver-plane-checked one-pixel triangles.

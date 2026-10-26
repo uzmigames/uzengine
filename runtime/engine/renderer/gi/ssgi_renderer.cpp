@@ -395,6 +395,15 @@ void SSGIRenderer::Render(IRHICommandList* cmdList, const SSGIRenderParams& para
 
     // Skip if no previous frame color is available yet (first frame).
     if (!params.worldGather && !m_hasPrevColor) return;
+    const uint32_t dxrMode = params.gatherDxrMode
+        && params.pipelines->GetSsgiDxrTrace().IsValid()
+        && params.pipelines->GetSsgiDxrUpsample().IsValid() ? params.gatherDxrMode : 0u;
+    if (m_gatherDxrMode != dxrMode) {
+        m_hasHistory = false;
+        m_restirHistoryValid = false;
+        m_gatherDxrMode = dxrMode;
+        UZ_LOG(Renderer, Info, "Final gather DXR mode={} (0=SDF, 1=full, 2=shadow only)", dxrMode);
+    }
 
     if (!m_resourceStatesInitialized) {
         const RHITextureHandle textures[] = {
@@ -581,7 +590,7 @@ void SSGIRenderer::DispatchPrevColorReduce(IRHICommandList* cmdList, const SSGIR
 void SSGIRenderer::DispatchTrace(IRHICommandList* cmdList, const SSGIRenderParams& params) {
     UZ_PROFILE_SCOPE("SSGI::Trace");
 
-    auto pso = params.pipelines->GetSsgiTrace();
+    auto pso = m_gatherDxrMode ? params.pipelines->GetSsgiDxrTrace() : params.pipelines->GetSsgiTrace();
     if (!pso.IsValid()) return;
 
     // Transition trace outputs to UAV
@@ -614,8 +623,11 @@ void SSGIRenderer::DispatchTrace(IRHICommandList* cmdList, const SSGIRenderParam
         uint32_t thicknessBits;    // float as uint bits
         uint32_t maxRayDistBits;   // float as uint bits (0.5 default)
         uint32_t surfaceCacheParamsSrv; // Phase D stage 3: StructuredBuffer<SurfaceCacheParams> SRV (UINT32_MAX = no cache)
+        uint32_t gatherTlasSrv;
+        uint32_t gatherMaterialSrv;
+        uint32_t gatherDxrMode;
     };
-    static_assert(sizeof(SSGITraceRC) == 56, "Must be 14 DWORDs");
+    static_assert(sizeof(SSGITraceRC) == 68, "14 legacy + 3 DXR DWORDs");
 
     SSGITraceRC rc{};
     rc.depthSrvIndex     = params.depthSrvIndex;
@@ -635,8 +647,11 @@ void SSGIRenderer::DispatchTrace(IRHICommandList* cmdList, const SSGIRenderParam
     std::memcpy(&rc.thicknessBits, &thickness, 4);
     std::memcpy(&rc.maxRayDistBits, &maxRayDist, 4);
     rc.surfaceCacheParamsSrv = params.surfaceCacheParamsSrv;
+    rc.gatherTlasSrv = params.gatherTlasSrv;
+    rc.gatherMaterialSrv = params.gatherMaterialSrv;
+    rc.gatherDxrMode = m_gatherDxrMode;
 
-    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 14);
+    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), m_gatherDxrMode ? 17 : 14);
 
     // PerFrameCB at b1
     cmdList->SetRootCBV(kSlotPerFrame, params.perFrameBuffer,
@@ -1052,7 +1067,8 @@ void SSGIRenderer::DispatchTemporalAccum(IRHICommandList* cmdList, const SSGIRen
 void SSGIRenderer::DispatchUpsample(IRHICommandList* cmdList, const SSGIRenderParams& params) {
     UZ_PROFILE_SCOPE("SSGI::BilateralUpsample");
 
-    auto pso = params.pipelines->GetSsgiBilateralUpsample();
+    auto pso = m_gatherDxrMode ? params.pipelines->GetSsgiDxrUpsample()
+                             : params.pipelines->GetSsgiBilateralUpsample();
     if (!pso.IsValid()) return;
 
     const int readIdx = m_historyIndex; // Just written by temporal pass
@@ -1083,8 +1099,11 @@ void SSGIRenderer::DispatchUpsample(IRHICommandList* cmdList, const SSGIRenderPa
         uint32_t fullHeight;
         uint32_t depthSigmaBits;
         uint32_t normalPowerBits;
+        uint32_t gatherTlasSrv;
+        uint32_t gatherMaterialSrv;
+        uint32_t gatherDxrMode;
     };
-    static_assert(sizeof(UpsampleRC) == 40, "Must be 10 DWORDs");
+    static_assert(sizeof(UpsampleRC) == 52, "10 legacy + 3 DXR DWORDs");
 
     static auto* cv_UpsDepthSigma = UZ_CVAR_FLOAT("r.SSGI.UpsampleDepthSigma", 0.5f, "Upsample depth weight sigma", 0.1f, 2.0f);
     static auto* cv_UpsNormalPow  = UZ_CVAR_FLOAT("r.SSGI.UpsampleNormalSigma", 32.0f, "Upsample normal cosine power", 4.0f, 128.0f);
@@ -1101,8 +1120,11 @@ void SSGIRenderer::DispatchUpsample(IRHICommandList* cmdList, const SSGIRenderPa
     float ds = cv_UpsDepthSigma->value, np = cv_UpsNormalPow->value;
     std::memcpy(&rc.depthSigmaBits, &ds, 4);
     std::memcpy(&rc.normalPowerBits, &np, 4);
+    rc.gatherTlasSrv = params.gatherTlasSrv;
+    rc.gatherMaterialSrv = params.gatherMaterialSrv;
+    rc.gatherDxrMode = m_gatherDxrMode;
 
-    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 10);
+    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), m_gatherDxrMode ? 13 : 10);
 
     cmdList->SetRootCBV(kSlotPerFrame, params.perFrameBuffer,
                         params.perFrameOffset, params.perFrameCpuPtr,

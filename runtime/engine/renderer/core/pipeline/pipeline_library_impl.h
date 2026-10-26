@@ -160,6 +160,8 @@
     RHIShaderHandle m_casSharpenPS             = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssgiPrevColorReduceCS    = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssgiTraceCS              = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_ssgiDxrTraceCS           = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_ssgiDxrUpsampleCS        = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssgiSpatialDenoiseCS     = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssgiTemporalAccumCS      = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssgiBilateralUpsampleCS  = RHIShaderHandle::Invalid();
@@ -248,6 +250,8 @@
     RHIPipelineHandle m_casSharpen            = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssgiPrevColorReduce   = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssgiTrace             = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_ssgiDxrTrace          = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_ssgiDxrUpsample       = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssgiSpatialDenoise    = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssgiTemporalAccum     = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssgiBilateralUpsample = RHIPipelineHandle::Invalid();

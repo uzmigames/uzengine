@@ -50,6 +50,9 @@ static auto* cv_RTAO          = UZ_CVAR_BOOL("r.RayTracing.AO", false,
 /// RT global illumination enable toggle.
 static auto* cv_RTGI          = UZ_CVAR_BOOL("r.RayTracing.GI", false,
     "Enable ray-traced global illumination");
+static auto* cv_FinalGatherDxr = UZ_CVAR_INT("r.GI.FinalGather.DXR", 0,
+    "Final gather visibility: 0=SDF, 1=DXR gather and sun, 2=SDF gather with DXR sun (diagnostic); "
+    "requires plain world gather, falls back to SDF without DXR", 0, 2);
 
 static auto* cv_AreaLightShadows = UZ_CVAR_BOOL("r.Lighting.AreaLightShadows", true,
     "DXR soft shadows for LTC rectangle, disk and tube lights (requires a non-empty TLAS; "
@@ -114,7 +117,8 @@ bool RTManager::IsEnabled() const {
 
 bool RTManager::NeedsTLAS(bool hasAreaLights) const {
     return RTFrameNeedsTLAS(m_initialized, cv_RTEnabled->value >= 0.5f,
-                           cv_RTReflections->value >= 0.5f, hasAreaLights && cv_AreaLightShadows->value >= 0.5f);
+                           cv_RTReflections->value >= 0.5f || cv_FinalGatherDxr->value >= 1.0f,
+                           hasAreaLights && cv_AreaLightShadows->value >= 0.5f);
 }
 
 bool RTManager::AreaLightShadowsAvailable() const {

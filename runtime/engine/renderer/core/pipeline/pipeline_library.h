@@ -620,6 +620,9 @@ public:
     /// depth buffer. On hit, samples reduced prev-frame color with Karis weighting.
     ///
     [[nodiscard]] RHIPipelineHandle GetSsgiTrace();
+    /// Lazy DXR permutations; the original pipelines remain the non-DXR fallback.
+    [[nodiscard]] RHIPipelineHandle GetSsgiDxrTrace();
+    [[nodiscard]] RHIPipelineHandle GetSsgiDxrUpsample();
 
     /// Returns the SSGI spatial denoise compute pipeline.
     ///
