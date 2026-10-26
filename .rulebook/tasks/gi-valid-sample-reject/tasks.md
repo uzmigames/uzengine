@@ -5,6 +5,16 @@
 - [x] Retry failed two-pixel normals with receiver-plane-checked one-pixel triangles.
 - [x] Gate with r.GI.ValidSampleReject; OFF preserves the original arithmetic.
 - [x] Share the tap-weight function with a black-invalid versus valid-unlit gtest.
+- [x] Default ON (2026-10-26), after the corrected path-tracer oracle made the GI lift measurable.
+
+## Default ON (2026-10-26)
+
+Sponza frame 300 vs path tracer frame 511, fixed exposure, mean ROI
+luminance: vault +13%, arcade +21%, arch-ceiling indirect +16%, all still
+below the path tracer; left wall and floor unchanged. GPU cost: SSGI
++0.8 ms. With r.GI.ValidSampleReject 0, reflection-reference frame 95 is
+byte-identical to a fresh 9fb59b63 build. Evidence:
+E:/UzmiEngine/_evidence/gi/valid-sample-default-on.
 
 The existing sdfSampleRotation DWORD carries rotation in its low 31 bits and
 the validity flag in bit 31; constant-buffer size and offsets do not change.
