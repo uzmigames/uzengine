@@ -986,12 +986,11 @@ LightingOutput main(FSInput input) {
     // IBL (indirect lighting) is NOT attenuated by directional shadow.
     // @ref UE5 DeferredLightingCommon.ush — IndirectLighting is independent of shadow.
     // Only AO affects indirect; shadows only affect direct lights.
-    // Split tint vs intensity: SH diffuse is already pre-scaled by
-    // indirectLightingIntensity on the CPU (frame_constants.cpp:269), so diffuse
-    // only gets the color tint. Specular IBL reads the prefiltered cubemap which
-    // is NOT pre-scaled, so it needs the full intensity multiplier.
+    // SH diffuse is pre-scaled only by indirectLightingIntensity on the CPU.
+    // Apply the main SkyLight intensity once to both sky IBL components here.
+    // GI sources below neutralise the tint because they already carry it.
     float3 skyColor = float3(skyLightColorR, skyLightColorG, skyLightColorB);
-    float3 skyTintDiffuse  = skyColor;
+    float3 skyTintDiffuse  = skyColor * skyLightIntensity;
     float3 skyTintSpecular = skyColor * skyLightIntensity;
     float3 ambient = float3(0, 0, 0);
 

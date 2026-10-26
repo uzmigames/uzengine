@@ -1,5 +1,13 @@
 # Task 3.51.0 — Fix SkyLight Ambient + Fog Color Injection
 
+## SkyLight intensity control correction (2026-10-26)
+
+- [x] Apply SkyLight intensity to the deferred sky-SH diffuse fallback tint, matching the existing single specular multiplier. CPU SH upload continues to apply only indirectLightingIntensity; GI sources that already include sky intensity retain their neutral tint.
+- [x] Add a CPU contract test against the embedded deferred shader for both single-scale tint expressions and the GI bypass.
+- [x] GPU control sweep at fixed exposure 1, frame 120: halving the authored Sponza SkyLight intensity reduces interior diffuse indirect from 0.502439 to 0.251219 and specular indirect from 0.0454705 to 0.0227353 (linear RGB mean, sky-SH fallback diagnostic).
+- [x] Pinned Zig 0.15.2 ReleaseFast build: 47/47 steps, 165 shaders verified. Layout gate passes. Filtered engine suite: 8158 tests, only the three pre-existing VfxEditorSlate failures; new SkyLightIntensity contract passes. DX12DeviceTest recheck: 20/20 pass.
+- The authored Sponza project enables final gather and radiance cache. These paths already carry SkyLight intensity and bypass the fallback tint; do not infer a default-project brightness increase from the sky-SH diagnostic.
+
 ## Diagnosis (must be done FIRST)
 
 - [x] 1.1 Run pbr_test demo, capture log output at frame 100+ — SH L0: R=0.8422, G=0.8722, B=0.9177. Values are STRONG and correct for Earth-like sky.
