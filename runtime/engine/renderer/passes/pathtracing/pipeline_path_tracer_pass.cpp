@@ -44,6 +44,8 @@ static auto* cv_GIRestirSpatial = UZ_CVAR_BOOL("r.PathTracer.GIReSTIR.Spatial", 
     "Reuse four spatial one-bounce neighbors with source-target MIS correction (the accumulated-variance win)");
 static auto* cv_NeeSamples = UZ_CVAR_INT("r.PathTracer.NEESamples", 4,
     "Directional visibility samples per vertex (1 for equal-ray ReSTIR comparison)", 1, 32);
+static auto* cv_FrostbiteDiffuse = UZ_CVAR_BOOL("r.PathTracer.FrostbiteDiffuse", false,
+    "Opt-in raster-matched diffuse lobe (EvalFrostbiteDiffuse) instead of the energy-compensated Lambert, read at path-tracer init, so the reference differs from raster in transport only");
 static auto* cv_Nrd = UZ_CVAR_BOOL("r.NRD", false,
     "Opt-in diffuse/specular temporal/a-trous denoiser for the DXR path tracer");
 static auto* cv_HairMultiScatter = UZ_CVAR_BOOL("r.Hair.MultiScatter", false,
@@ -137,6 +139,7 @@ struct PipelinePathTracerPass::Impl {
     bool ready = false;
     bool logged = false;
     bool giCompiled = false; // r.PathTracer.GIReSTIR at Init: the DXR libraries carry the GI code.
+    bool frostbiteDiffuse = false; // r.PathTracer.FrostbiteDiffuse at Init: every PT shader uses the raster diffuse lobe.
     RHITextureHandle accumulation, compensation;
     uint32_t width = 0, height = 0, samples = 0, lastFrame = UINT32_MAX;
     uint32_t resetGeneration = 0;
@@ -242,6 +245,11 @@ bool PipelinePathTracerPass::Init(IRHIDevice* device) {
 
     ShaderCompiler compiler;
     if (!compiler.Init()) return false;
+    // Like the GI code below: OFF preprocesses the committed text unchanged, so the
+    // default transport is byte-identical; ON swaps EvaluatePBR's diffuse lobe everywhere.
+    p.frostbiteDiffuse = cv_FrostbiteDiffuse->value >= 0.5f;
+    if (p.frostbiteDiffuse)
+        UZ_LOG(Renderer, Info, "PipelinePathTracer: r.PathTracer.FrostbiteDiffuse on: raster-matched Frostbite diffuse lobe");
     const EngineShader restirShaders[] = {
         EngineShader::RestirInitialCS, EngineShader::RestirTemporalCS, EngineShader::RestirSpatialCS};
     for (uint32_t i = 0; i < 3; ++i) {
@@ -250,6 +258,7 @@ bool PipelinePathTracerPass::Init(IRHIDevice* device) {
         desc.sourceName = EngineShaders::GetName(restirShaders[i]);
         desc.stage = ShaderStageCompile::Compute;
         desc.model = ShaderModelCompile::SM6_6;
+        if (p.frostbiteDiffuse) desc.defines.push_back("UZ_PT_FROSTBITE_DIFFUSE=1");
         auto result = compiler.Compile(desc);
         if (!result.success) {
             UZ_LOG(Renderer, Error, "ReSTIR DI: compile failed for '{}': {}", desc.sourceName, result.errors);
@@ -275,6 +284,7 @@ bool PipelinePathTracerPass::Init(IRHIDevice* device) {
         desc.sourceName = EngineShaders::GetName(giShaders[i]);
         desc.stage = ShaderStageCompile::Compute;
         desc.model = ShaderModelCompile::SM6_6;
+        if (p.frostbiteDiffuse) desc.defines.push_back("UZ_PT_FROSTBITE_DIFFUSE=1");
         auto result = compiler.Compile(desc);
         if (!result.success) {
             UZ_LOG(Renderer, Error, "GI-ReSTIR: compile failed for '{}': {}", desc.sourceName, result.errors);
@@ -300,6 +310,7 @@ bool PipelinePathTracerPass::Init(IRHIDevice* device) {
         desc.stage = ShaderStageCompile::Library;
         desc.model = ShaderModelCompile::SM6_6;
         if (p.giCompiled) desc.defines.push_back("UZ_GI_RESTIR=1");
+        if (p.frostbiteDiffuse) desc.defines.push_back("UZ_PT_FROSTBITE_DIFFUSE=1");
         auto result = compiler.Compile(desc);
         if (!result.success) {
             UZ_LOG(Renderer, Error, "PipelinePathTracer: compile failed for '{}': {}",

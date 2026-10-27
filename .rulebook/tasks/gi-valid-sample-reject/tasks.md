@@ -60,3 +60,28 @@ The final default-OFF frame-95 smoke also has max code delta 0 versus
 the fresh baseline. The baseline worktree was removed with git worktree
 remove; Git's residual junctions were unlinked without recursive deletion.
 No engine, test_runtime or zig processes remain. Nothing was committed.
+
+## Path-tracer Frostbite diffuse oracle (2026-10-27, default OFF)
+
+- [x] Add r.PathTracer.FrostbiteDiffuse (read at path-tracer init): every PT
+  shader is compiled with UZ_PT_FROSTBITE_DIFFUSE, and EvaluatePBR then uses
+  the raster EvalFrostbiteDiffuse(albedo * (1 - metallic), ...) lobe instead
+  of the energy-compensated Lambert. The layered coat/stack, ReSTIR DI/GI and
+  NEE all call EvaluatePBR; every sampler divides it by its actual mixture
+  PDF, so the estimator stays unbiased with the cosine/GGX sampling unchanged.
+- [x] OFF is byte-identical to a fresh ad2659b0 build: Sponza --path-trace,
+  surface-cache-locallight and Cornell (cb-pt4) frames 255 and 511 have max
+  code delta 0, and the Sponza linear taa_raw dump is identical. A runtime
+  root-constant flag was tried first and moved 407 Sponza values (DXC codegen),
+  hence the init-time define, as for r.PathTracer.GIReSTIR.
+- [x] ON, direct only (PT MaxBounces 1 with sky light 0 versus raster
+  direct_light at shadow visibility 1, linear HDR, Sponza 960x540): raster/PT
+  floor 1.080 -> 1.004, walls 0.678 -> 0.799 (mode 0.75 -> 0.95, least
+  decal-darkened quarter 0.87 -> 1.02), all sunlit 0.707 -> 0.818. The wall
+  residual is the dirt decals, which the PT lacks.
+- [x] ON MaxBounces 4: frames 255 and 511 agree to 1e-6 in the mean, no
+  non-finite values; 16-px block residual is lower than OFF.
+- NRD's demodulation guide (nrd_signal.hlsli) still assumes Lambert; with
+  r.NRD on, the ON diffuse/specular split fed to the denoiser is approximate.
+
+Evidence: E:/UzmiEngine/_evidence/path-tracer/frostbite-diffuse-oracle.

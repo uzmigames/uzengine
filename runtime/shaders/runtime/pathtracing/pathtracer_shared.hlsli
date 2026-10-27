@@ -2,6 +2,9 @@
 #define UZ_PIPELINE_PATHTRACER_SHARED
 
 #include "../material/brdf.hlsli"
+#ifdef UZ_PT_FROSTBITE_DIFFUSE
+#include "../material/diffuse.hlsli"
+#endif
 #include "../common/sampling.hlsli"
 #include "pathtracer_math.hlsli"
 #include "pathtracer_volume.hlsli"
@@ -149,6 +152,14 @@ float3 EvaluatePBR(float3 N, float3 V, float3 L, float3 albedo,
     float alpha = RoughnessToAlpha(roughness);
     float3 specular = D_GGX(alpha, saturate(dot(N, H)))
                     * V_SmithGGXCorrelated(alpha, NoV, NoL) * F;
+#ifdef UZ_PT_FROSTBITE_DIFFUSE
+    // r.PathTracer.FrostbiteDiffuse: the raster deferred path's diffuse lobe
+    // (deferred_lighting_ps.hlsl, diffColor = albedo * (1 - metallic)), so the
+    // reference differs from raster in transport only. Every sampler divides
+    // this value by its actual mixture PDF, so the estimators stay unbiased.
+    return (EvalFrostbiteDiffuse((1.0 - metallic) * albedo, roughness, NoV, NoL,
+                                 saturate(dot(V, H))) + specular) * NoL;
+#else
     // Reuse the IBL LUT: its F0*A+B integrates this same correlated GGX lobe.
     // Clamp to texel centers because the existing material sampler wraps.
     Texture2D<float2> brdfLut = ResourceDescriptorHeap[brdfLutSrvIndex];
@@ -161,6 +172,7 @@ float3 EvaluatePBR(float3 N, float3 V, float3 L, float3 albedo,
     float3 diffuseEnergy = float3(PathDiffuseEnergy(specularAlbedo.r, NoV),
         PathDiffuseEnergy(specularAlbedo.g, NoV), PathDiffuseEnergy(specularAlbedo.b, NoV));
     return (diffuseEnergy * (1.0 - metallic) * albedo / PI + specular) * NoL;
+#endif
 }
 
 // Adapter to the engine's SampleGGX_VNDF (common/sampling.hlsli); the PDF
