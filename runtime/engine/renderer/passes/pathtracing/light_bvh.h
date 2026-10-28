@@ -12,6 +12,8 @@ struct DrawCommand;
 struct GPUMesh;
 class World;
 
+Vec3 PathMaterialEmission(const DrawCommand& draw);
+
 // Source positions/UVs are retained only when r.LightBVH is enabled before
 // mesh upload. They share the uploaded mesh's lifetime and LOD0 topology.
 struct LightBVHGeometry {

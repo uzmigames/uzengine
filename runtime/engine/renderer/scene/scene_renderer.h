@@ -56,11 +56,13 @@
 #include "gi/ssgi_renderer.h"
 #include "gi/global_distance_field.h"
 #include "gi/radiance_cache.h"
+#include "gi/surface_radiance_cache.h"
 #include "gi/irradiance_probe_grid.h"
 #include "gi/ddgi_system.h"
 #include "engine/vfx/lighting/vfx_ddgi_emissive_feed.h"
 #include "engine/ecs/environment/light_probe_volume_component.h"
 #include "passes/gi/brixelizer_gi_pass.h"
+#include "passes/realtime_denoiser.h"
 #include "async_texture_decoder.h"  // TextureDecodeResult for m_deferredDecoded
 #include "async_mesh_loader.h"      // MeshLoadResultCPU for m_asyncMeshReady
 #include "gi/mesh_sdf_bake_queue.h" // MeshSdfBakeQueue (block B.3)
@@ -74,6 +76,7 @@
 #include "cb_ring_allocator.h"
 #include "instance_batcher.h"
 #include "light_renderer.h"        // LightFrameData
+#include "ltc_lut.h"               // LtcLut (rect area lights, phase3a 3.33.0)
 #include "shadow_renderer.h"      // ShadowFrameData
 #include "render_graph_types.h"   // rg::RgResourceId
 

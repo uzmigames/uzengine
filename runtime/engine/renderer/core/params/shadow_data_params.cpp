@@ -38,6 +38,12 @@ const ShaderParameterMetadata& ShadowDataParams::GetMetadata()
         {"dfsOutputSrvIndex",     ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(ShadowDataParams, dfsOutputSrvIndex)),     sizeof(uint32_t),   0},
         {"localShadowAtlasIndex", ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(ShadowDataParams, localShadowAtlasIndex)), sizeof(uint32_t), 0},
         {"localShadowCount",      ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(ShadowDataParams, localShadowCount)),      sizeof(uint32_t),   0},
+        {"softPCSS",              ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(ShadowDataParams, softPCSS)),              sizeof(uint32_t),   0},
+        {"pcssMinPenumbraTexels", ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(ShadowDataParams, pcssMinPenumbraTexels)), sizeof(float),      0},
+        {"pcssMaxPenumbraTexels", ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(ShadowDataParams, pcssMaxPenumbraTexels)), sizeof(float),      0},
+        {"cascadePcssDepthToTexels", ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(ShadowDataParams, cascadePcssDepthToTexels)), sizeof(float) * 8, 0},
+        {"localSoftPCSS",          ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(ShadowDataParams, localSoftPCSS)),          sizeof(uint32_t), 0},
+        {"localPcssSourceRadius", ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(ShadowDataParams, localPcssSourceRadius)), sizeof(float), 0},
 
         // ── Resource members (drive texture binding on SM5) ──
         // Only shadowAtlas (t3) and localShadowAtlas (t11) are bound as SM5

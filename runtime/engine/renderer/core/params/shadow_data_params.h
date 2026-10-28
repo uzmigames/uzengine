@@ -68,7 +68,16 @@ namespace uz {
 /// 684      4      useShadowCache
 /// 688      4      dfsEnabled
 /// 692      4      dfsOutputSrvIndex
-/// 696      72     _pad2[18]
+/// 696      4      localShadowAtlasIndex
+/// 700      4      localShadowCount
+/// 704      4      localShadowNormalOffset
+/// 708      4      softPCSS
+/// 712      4      pcssMinPenumbraTexels
+/// 716      4      pcssMaxPenumbraTexels
+/// 720      32     cascadePcssDepthToTexels[8]
+/// 752      4      localSoftPCSS
+/// 756      4      localPcssSourceRadius
+/// 760      8      _pad2[2]
 /// ─── 768 bytes (CB boundary) ───
 /// 768      8      shadowAtlas (RHITextureHandle, NOT in CB)
 /// 776      8      staticShadowAtlas (RHITextureHandle, NOT in CB)
@@ -100,7 +109,13 @@ struct ShadowDataParams {
     uint32_t localShadowAtlasIndex = UINT32_MAX;          ///< SRV index for local light shadow atlas.
     uint32_t localShadowCount      = 0;                   ///< Number of active local light shadows.
     float    localShadowNormalOffset = 0.005f;            ///< r.Shadow.Local.NormalOffset (block A.1).
-    float    _pad2[15]             = {};                  ///< Pad CSM section to 768 bytes.
+    uint32_t softPCSS              = 0;                   ///< r.Shadows.SoftPCSS (1 = PCSS on the CSM).
+    float    pcssMinPenumbraTexels = 0.5f;                ///< r.Shadow.PCSSMinPenumbra (texels).
+    float    pcssMaxPenumbraTexels = 16.0f;               ///< r.Shadow.PCSSMaxPenumbra (texels).
+    float    cascadePcssDepthToTexels[8] = {};            ///< Per-cascade penumbra texels per unit depth gap.
+    uint32_t localSoftPCSS         = 0;                   ///< r.Shadows.SoftPCSS.Local.
+    float    localPcssSourceRadius = 5.0f;                 ///< Local emitter radius in cm.
+    float    _pad2[2]              = {};                  ///< Pad CSM section to 768 bytes.
 
     // ── Local Light Shadow Data ──────────────────────────────────────────
     LocalLightShadowData localShadows[kMaxLocalLightShadows] = {}; ///< Per-light shadow data (16 * 96 = 1536B).

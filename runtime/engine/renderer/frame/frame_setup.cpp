@@ -77,8 +77,12 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     // ── Pass Inspector: reset per-frame target registrations ─────────────
     m_passInspector.BeginFrame();
 
+    // Rect area lights (phase3a 3.33.0): the LTC tables are created on the first frame that has a
+    // rect light and never for other scenes, so those keep their resource layout exactly as before.
+    const bool needsLtcLut = !m_ltcLut.IsReady() && !m_ltcLutFailed && WorldHasRectLights(ctx.world);
+
     // ── Deferred StatsOverlay + fallback texture init (first frame only) ─
-    if ((!m_statsOverlayInitialized && m_statsOverlay) || !m_fallbackTexturesInitialized) {
+    if ((!m_statsOverlayInitialized && m_statsOverlay) || !m_fallbackTexturesInitialized || needsLtcLut) {
         UploadContext upload(m_device);
         if (!m_statsOverlayInitialized && m_statsOverlay) {
             if (m_statsOverlay->Init(m_device, ctx.cmdList, upload,
@@ -109,6 +113,22 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
             m_rgStates->Transition(ctx.cmdList, m_fallbackBlack, RHIResourceState::ShaderResource);
             m_rgStates->Transition(ctx.cmdList, m_fallbackNormal, RHIResourceState::ShaderResource);
             m_fallbackTexturesInitialized = true;
+        }
+
+        // LTC tables of the rect area lights: same upload + flush as the fallbacks, on demand.
+        if (needsLtcLut) {
+            if (CreateLtcLut(m_device, m_ltcLut) && UploadLtcLut(ctx.cmdList, upload, m_ltcLut)) {
+                m_rgStates->Set(m_ltcLut.matrix, RHIResourceState::CopyDst);
+                m_rgStates->Set(m_ltcLut.magnitude, RHIResourceState::CopyDst);
+                m_rgStates->Transition(ctx.cmdList, m_ltcLut.matrix, RHIResourceState::ShaderResource);
+                m_rgStates->Transition(ctx.cmdList, m_ltcLut.magnitude, RHIResourceState::ShaderResource);
+                UZ_LOG(Renderer, Info, "SceneRenderer: LTC LUTs created for the rect area lights (matrix SRV={}, magnitude SRV={})",
+                       m_ltcLut.matrixSrv, m_ltcLut.magnitudeSrv);
+            } else {
+                // Do not retry every frame; the rect lights stay off (the pass keeps the stock pipeline).
+                DestroyLtcLut(m_device, m_ltcLut);
+                m_ltcLutFailed = true;
+            }
         }
 
         // Flush the upload commands

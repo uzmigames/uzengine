@@ -1,6 +1,8 @@
 #include "../../../shaders/runtime/reflections/rt_reflection_contract.hlsli"
 #include "passes/raytracing/rt_reflection_pass.h"
+#include "raytracing/rt_manager.h"   // RTFrameNeedsTLAS / RTReflectionsAvailable (the Phase B capability gate)
 #include "lighting/brdf_math.h"   // uz::brdf::D_GGX / SampleGGX_VNDF: the CPU mirrors of the shader's
+#include "core/cvar.h"
 
 #include <gtest/gtest.h>
 #include <algorithm>
@@ -136,9 +138,11 @@ TEST(RTReflectionStage2, FlagsAndRoughnessCutoffMatchTheContract) {
     EXPECT_FLOAT_EQ(ReflectionMaxRoughness(0.8f, 0.35f), 0.8f);
 }
 
+// Stage 2 grew the block to 16 DWORDs; Phase D stage 1 appends the surface-cache DWORD (17), the
+// stage 2 fields keep their offsets.
 TEST(RTReflectionStage2, RootConstantsGrowToSixteenDwordsWithinTheBudget) {
-    EXPECT_EQ(sizeof(RTReflectionRootConstants), 64u);
-    EXPECT_EQ(kRTReflectionRootDwords, 16u);
+    EXPECT_EQ(sizeof(RTReflectionRootConstants), 68u);
+    EXPECT_EQ(kRTReflectionRootDwords, 17u);
     EXPECT_LE(kRTReflectionRootDwords, 20u);
     EXPECT_EQ(offsetof(RTReflectionRootConstants, probeShSrv), 52u);
     EXPECT_EQ(offsetof(RTReflectionRootConstants, hitDistUavIdx), 56u);
@@ -383,8 +387,19 @@ TEST(RTReflectionStage3, NoScreenTraceFlagMatchesTheContractAndOverlapsNoOtherBi
     const RTReflectionRootConstants rc{};
     EXPECT_FALSE(ReflectionOwnsOutput(rc.flags));
     EXPECT_EQ(rc.ssrTraceSrvIdx, UINT32_MAX);
-    EXPECT_EQ(sizeof(RTReflectionRootConstants), 64u);
-    EXPECT_EQ(kRTReflectionRootDwords, 16u);
+    // Phase D stage 1: the surface-cache bit matches the contract, overlaps no other bit, and a
+    // default root block binds no cache (DWORD 16 at the sentinel, the flag clear).
+    EXPECT_EQ(kRTReflectionFlagSurfaceCache, kReflectionFlagSurfaceCache);
+    EXPECT_EQ(kReflectionFlagSurfaceCache
+                  & (kReflectionFlagGlossy | kReflectionFlagIndirect | kReflectionFlagHitDistance
+                     | kReflectionFlagNoScreenTrace), 0u);
+    EXPECT_EQ(rc.surfaceCacheParamsSrv, UINT32_MAX);
+    EXPECT_EQ(rc.flags & kReflectionFlagSurfaceCache, 0u);
+    EXPECT_FALSE(ReflectionOwnsOutput(kReflectionFlagSurfaceCache));
+    EXPECT_TRUE(ReflectionOwnsOutput(kReflectionFlagNoScreenTrace | kReflectionFlagSurfaceCache));
+    EXPECT_EQ(offsetof(RTReflectionRootConstants, surfaceCacheParamsSrv), 64u);
+    EXPECT_EQ(sizeof(RTReflectionRootConstants), 68u);
+    EXPECT_EQ(kRTReflectionRootDwords, 17u);
     EXPECT_LE(kRTReflectionRootDwords, 20u);
 }
 
@@ -408,4 +423,81 @@ TEST(RTReflectionStage3, ZeroScreenConfidenceTracesExactlyTheEligibleTexels) {
     // The same texel with a confident screen hit stays with the screen trace (stages 1 and 2).
     EXPECT_FALSE(ReflectionNeedsRT(0.5f, 0.02f, maxRoughness, 1.0f));
     EXPECT_TRUE(ReflectionNeedsRT(0.5f, 0.02f, maxRoughness, 0.0f));
+}
+
+// ── Phase B: the ray-traced reflections as the real-time default ────────────────────────
+
+namespace {
+
+float RegisteredDefault(const char* name) {
+    const CVar* cvar = CVarRegistry::Get().Find(name);
+    EXPECT_NE(cvar, nullptr) << name << " is not registered";
+    return cvar ? cvar->defaultValue : -1.0f;
+}
+
+} // namespace
+
+// The registered defaults: the reflections (and their probe term, the hit shading of the SDF
+// reflections they replace) are on; every other ray-traced feature, the master switch and the
+// stage 2 opt-ins that cost passes stay off, and the DXR-unavailable simulation is off.
+TEST(RTReflectionPhaseB, ReflectionsDefaultOnEveryOtherRayTracedFeatureDefaultOff) {
+    EXPECT_FLOAT_EQ(RegisteredDefault("r.RayTracing.Reflections"), 1.0f);
+    EXPECT_FLOAT_EQ(RegisteredDefault("r.RayTracing.Reflections.Indirect"), 1.0f);
+    EXPECT_FLOAT_EQ(RegisteredDefault("r.RayTracing"), 0.0f);
+    EXPECT_FLOAT_EQ(RegisteredDefault("r.RayTracing.GI"), 0.0f);
+    EXPECT_FLOAT_EQ(RegisteredDefault("r.RayTracing.Shadows"), 0.0f);
+    EXPECT_FLOAT_EQ(RegisteredDefault("r.RayTracing.AO"), 0.0f);
+    EXPECT_FLOAT_EQ(RegisteredDefault("r.RayTracing.TestPass"), 0.0f);
+    EXPECT_FLOAT_EQ(RegisteredDefault("r.RayTracing.Reflections.Glossy"), 0.0f);
+    EXPECT_FLOAT_EQ(RegisteredDefault("r.RayTracing.Reflections.Denoise"), 0.0f);
+    EXPECT_FLOAT_EQ(RegisteredDefault("r.RayTracing.SimulateUnsupported"), 0.0f);
+}
+
+// The TLAS is built for the reflections alone (the default: master switch off), for the master
+// switch alone (DDGI / the path tracer), and never without DXR or with both switches off (the
+// pre-Phase-B frame: no build, an empty TLAS).
+TEST(RTReflectionPhaseB, TlasIsBuiltForTheReflectionsAloneAndNeverWithoutDxr) {
+    EXPECT_TRUE(RTFrameNeedsTLAS(true, false, true));     // the default
+    EXPECT_TRUE(RTFrameNeedsTLAS(true, true, false));     // master switch alone
+    EXPECT_TRUE(RTFrameNeedsTLAS(true, true, true));
+    EXPECT_FALSE(RTFrameNeedsTLAS(true, false, false));   // r.RayTracing.Reflections 0: the old frame
+    EXPECT_FALSE(RTFrameNeedsTLAS(false, true, true));    // no DXR: nothing, whatever the switches
+    EXPECT_FALSE(RTFrameNeedsTLAS(false, false, true));
+    EXPECT_TRUE(RTFrameNeedsTLAS(true, false, false, true));
+    EXPECT_FALSE(RTFrameNeedsTLAS(false, false, false, true));
+}
+
+// The pass runs only with DXR, the switch and a non-empty TLAS; each missing fact is the fallback.
+TEST(RTReflectionPhaseB, PassAvailableOnlyWithDxrTheSwitchAndANonEmptyTlas) {
+    EXPECT_TRUE(RTReflectionsAvailable(true, true, 1u));
+    EXPECT_TRUE(RTReflectionsAvailable(true, true, 4096u));
+    EXPECT_FALSE(RTReflectionsAvailable(false, true, 1u));   // no DXR (RTManager not initialised)
+    EXPECT_FALSE(RTReflectionsAvailable(true, false, 1u));   // switch off
+    EXPECT_FALSE(RTReflectionsAvailable(true, true, 0u));    // TLAS not built / nothing to trace
+    EXPECT_FALSE(RTReflectionsAvailable(false, false, 0u));
+}
+
+// The route selection: with the rays available the screen trace keeps its holes filled and SSR
+// off hands the buffer to the rays (the default route, r.SSR defaulting off); without them every
+// combination is the route of the frame before Phase B — the screen trace alone, or no
+// reflection layer — and a warming-up SSR (on, no trace yet, not switched off) registers nothing
+// in either case.
+TEST(RTReflectionPhaseB, FallbackRouteIsTheFrameBeforePhaseB) {
+    using Route = RTReflectionRoute;
+    // Rays available.
+    EXPECT_EQ(SelectRTReflectionRoute(true, false, true), Route::ScreenTraceAndRays);
+    EXPECT_EQ(SelectRTReflectionRoute(false, true, true), Route::RaysOnly);
+    EXPECT_EQ(SelectRTReflectionRoute(false, false, true), Route::None);   // SSR warming up
+    // Rays unavailable (no DXR, switch off, empty TLAS): never a rays route.
+    EXPECT_EQ(SelectRTReflectionRoute(true, false, false), Route::ScreenTraceOnly);
+    EXPECT_EQ(SelectRTReflectionRoute(false, true, false), Route::None);
+    EXPECT_EQ(SelectRTReflectionRoute(false, false, false), Route::None);
+    for (const bool screenTrace : {false, true}) {
+        for (const bool ssrOff : {false, true}) {
+            const Route route = SelectRTReflectionRoute(screenTrace, ssrOff, false);
+            EXPECT_NE(route, Route::RaysOnly);
+            EXPECT_NE(route, Route::ScreenTraceAndRays);
+            EXPECT_EQ(route == Route::ScreenTraceOnly, screenTrace);
+        }
+    }
 }

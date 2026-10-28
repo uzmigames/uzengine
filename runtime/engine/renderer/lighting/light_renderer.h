@@ -91,7 +91,22 @@ struct LightFrameData {
     /// Excess lights beyond the tile budget are left unshadowed.
     PointLightShadowInfo pointShadows[kMaxLocalLightShadows / kPointLightShadowFaces];
     uint32_t pointShadowCount = 0;
+
+    /// Rect area lights of the frame (phase3a 3.33.0), uploaded by PopulatePerFrameConstants into
+    /// the per-frame StructuredBuffer the UZ_RECT_LIGHTS lighting permutation reads. Empty (count 0)
+    /// unless the world has a RectLightComponent and r.Lights.AreaLTC is on.
+    RectLightData rectLights[kMaxRectLights];
+    uint32_t rectLightCount = 0;
+
+    /// Deferred-only disk/capsule lights. Keep these separate until the LTC upload:
+    /// rectangle-only consumers (including the surface cache) must not read them as quads.
+    RectLightData shapedLights[kMaxRectLights];
+    uint32_t shapedLightCount = 0;
 };
+
+/// True when the world has at least one RectLightComponent and r.Lights.AreaLTC is on: the frame
+/// setup then creates the LTC tables on demand (nothing is created for other scenes).
+[[nodiscard]] bool WorldHasRectLights(World* world);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ExtractLightingFromECS

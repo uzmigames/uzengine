@@ -9,6 +9,12 @@
 #include "../material/brdf.hlsli"
 #include "../material/diffuse.hlsli"
 #include "light_types.hlsli"
+#ifdef UZ_RECT_LIGHTS
+#include "ltc.hlsli"
+#ifdef UZ_AREA_LIGHT_SHADOWS
+#include "area_light_shadows.hlsli"
+#endif
+#endif
 #include "ibl.hlsli"
 #include "../gi/rc_probe_guard.hlsli"
 
@@ -331,6 +337,122 @@ float SampleLocalShadow(uint entry, float3 worldPos, float3 geometricNormal) {
 #endif
 }
 
+/// Fernando 2005 "Percentage-Closer Soft Shadows": local perspective-light penumbra in cm.
+/// @ref Fernando 2005 "Percentage-Closer Soft Shadows"
+/// @constants 1e-3 cm is the same finite-distance floor used by the hard local sampler.
+float PcssLocalPenumbraRadius(float receiverDistance, float blockerDistance, float sourceRadius) {
+    return max(receiverDistance - blockerDistance, 0.0) * max(sourceRadius, 0.0) / max(blockerDistance, 1e-3);
+}
+
+/// Project a kernel ray to its atlas tile, crossing point-light cube faces instead of reading
+/// another light's tile or repeating the current face's edge. No texture access in face selection.
+/// @ref Fernando 2005 "Percentage-Closer Soft Shadows" -- perspective shadow-map filtering
+/// @constants Point face order matches frame_constants.cpp: +X, -X, +Y, -Y, +Z, -Z.
+float2 LocalShadowTapUV(float3 ray, uint entry, uint cubeBase, float2 atlasDims) {
+    if (cubeBase != 0xFFFFFFFFu) {
+        float3 a = abs(ray);
+        uint face = (a.x >= a.y && a.x >= a.z) ? (ray.x > 0.0 ? 0u : 1u)
+                  : (a.y >= a.z) ? (ray.y > 0.0 ? 2u : 3u) : (ray.z > 0.0 ? 4u : 5u);
+        entry = cubeBase + face;
+    }
+    uint base = entry * 6u;
+    float4x4 vp = float4x4(localShadowRaw[base], localShadowRaw[base + 1],
+                           localShadowRaw[base + 2], localShadowRaw[base + 3]);
+    float4 tile = localShadowRaw[base + 4];
+    float4 p = mul(float4(ray, 0.0), vp);
+    float2 uv = (p.xy / p.w) * float2(0.5, -0.5) + 0.5;
+    float2 halfTexel = 0.5 / atlasDims;
+    return clamp(tile.xy + uv * tile.z, tile.xy + halfTexel, tile.xy + tile.z - halfTexel);
+}
+
+/// Blocker search + variable-radius PCF on the local linear-distance atlas. The normal offset and
+/// centre comparison match SampleLocalShadow. Intersect each tap ray with the receiver plane:
+/// radial depth is not affine in perspective UV, so a centre-depth comparison creates acne on
+/// wide kernels. Rays that do not meet the receiver's front hemisphere contribute visibility.
+/// @ref Fernando 2005 "Percentage-Closer Soft Shadows"; Isidoro 2006 "Shadow Mapping: GPU-based Tips and Techniques"
+/// @constants 16 taps and the Poisson disk, radius clamp and spatial IGN are shared with CSM PCSS.
+/// 1e-6 protects degenerate ray/plane intersections, 1e-3 is the local range/distance floor.
+float SampleLocalShadowSoft(uint entry, uint cubeBase, float3 worldPos, float3 N, float sourceRadius) {
+#ifdef UZ_BINDLESS
+    if (localShadowAtlasIndex == kSentinelSrvIndex) return 1.0;
+    Texture2D<float> atlas = ResourceDescriptorHeap[localShadowAtlasIndex];
+    uint base = entry * 6u;
+    float4x4 vp = float4x4(localShadowRaw[base], localShadowRaw[base + 1],
+                           localShadowRaw[base + 2], localShadowRaw[base + 3]);
+    float4 tile = localShadowRaw[base + 4];
+    float4 light = localShadowRaw[base + 5];
+    float3 receiver = worldPos + N * (length(light.xyz - worldPos) * localShadowNormalOffset);
+    float3 delta = receiver - light.xyz;
+    float4 p = mul(float4(receiver, 1.0), vp);
+    if (p.w <= 0.0 || any(abs(p.xy / p.w) > 1.0)) return 1.0;
+    float2 ndc = p.xy / p.w;
+    float distance = length(delta);
+    float range = max(light.w, 1e-3);
+    float2 dims;
+    atlas.GetDimensions(dims.x, dims.y);
+
+    // Invert the perspective direction analytically (translation cancels): the VP X/Y columns
+    // are scaled right/up axes and its W column is the unit forward axis.
+    float3 cx = float3(vp._11, vp._21, vp._31);
+    float3 cy = float3(vp._12, vp._22, vp._32);
+    float3 forward = float3(vp._14, vp._24, vp._34);
+    float3 right = cx / max(dot(cx, cx), 1e-6);
+    float3 up = cy / max(dot(cy, cy), 1e-6);
+    float2 texelsPerCm = 0.5 * float2(length(cx), length(cy)) * tile.z * dims / max(p.w, 1e-3);
+    float2 ndcPerTexel = float2(2.0, -2.0) / (tile.z * dims);
+    float2 centreUV = (ndc * float2(0.5, -0.5) + 0.5) * tile.z + tile.xy;
+    float angle = ShadowKernelRotationNoise(centreUV * dims) * 6.28318530718;
+    float2 rot = float2(cos(angle), sin(angle));
+    // A near-light blocker can produce arbitrarily large perspective penumbrae. Search the
+    // entire clamped filter support, including its centre, rather than using the sun's dz bound.
+    float searchRadius = PcssClampRadiusTexels(pcssMaxPenumbraTexels);
+    float plane = dot(delta, N);
+    float blockerSum = 0.0;
+    uint blockerCount = 0u;
+    [unroll] for (uint i = 0; i < 16; ++i) {
+        float2 tap = (i == 0u) ? float2(0.0, 0.0) : RotateShadowTap(kPoissonDisk[i], rot);
+        float2 q = ndc + tap * searchRadius * ndcPerTexel;
+        float3 ray = normalize(forward + q.x * right + q.y * up);
+        float denominator = dot(ray, N);
+        float t = (abs(denominator) > 1e-6) ? plane / denominator : -1.0;
+        float2 uv = LocalShadowTapUV(ray, entry, cubeBase, dims);
+        float stored = atlas.Load(int3(int2(uv * dims), 0)) * range;
+        if (t > 0.0 && stored < t - tile.w) {
+            // Express this blocker on the centre ray before the similar-triangles estimate.
+            blockerSum += stored * dot(ray, normalize(delta));
+            blockerCount += 1u;
+        }
+    }
+    float average = blockerSum / float(max(blockerCount, 1u));
+    float penumbra = PcssLocalPenumbraRadius(distance - tile.w, average, sourceRadius);
+    float2 filterRadius = float2(PcssClampRadiusTexels(penumbra * texelsPerCm.x),
+                                PcssClampRadiusTexels(penumbra * texelsPerCm.y));
+    float visibility = 1.0;
+    [branch] if (blockerCount != 0u) {
+        float lit = 0.0;
+        [unroll] for (uint j = 0; j < 16; ++j) {
+            float2 q = ndc + RotateShadowTap(kPoissonDisk[j], rot) * filterRadius * ndcPerTexel;
+            float3 ray = normalize(forward + q.x * right + q.y * up);
+            float denominator = dot(ray, N);
+            float t = (abs(denominator) > 1e-6) ? plane / denominator : -1.0;
+            float2 uv = LocalShadowTapUV(ray, entry, cubeBase, dims);
+            float cmp = saturate((t - tile.w) / range);
+            lit += t > 0.0 ? atlas.SampleCmpLevelZero(shadowSampler, uv, cmp) : 1.0;
+        }
+        visibility = lit / 16.0;
+    }
+    return visibility;
+#else
+    return 1.0;
+#endif
+}
+
+float LocalShadow(uint entry, uint cubeBase, float3 worldPos, float3 N, float sourceRadius) {
+    [branch] if (softPCSS != 0u && localSoftPCSS != 0u && sourceRadius > 0.0)
+        return SampleLocalShadowSoft(entry, cubeBase, worldPos, N, sourceRadius);
+    return SampleLocalShadow(entry, worldPos, N);
+}
+
 // ─── Local lights (block B.7) ─────────────────────────────────────────────
 //
 // The point and spot loop bodies of the deferred pass, as functions shared by the per-pixel loop and
@@ -375,7 +497,8 @@ float3 ShadePointLight(PointLightData pl, float3 worldPos, float3 N, float3 geom
         const uint face = (a.x >= a.y && a.x >= a.z) ? (d.x > 0.0 ? 0u : 1u)
                         : (a.y >= a.z)               ? (d.y > 0.0 ? 2u : 3u)
                                                      : (d.z > 0.0 ? 4u : 5u);
-        atten *= SampleLocalShadow(pl.shadowIndex + face, worldPos, geometricNormal);
+        atten *= LocalShadow(pl.shadowIndex + face, pl.shadowIndex, worldPos, geometricNormal,
+                             pl.sourceRadius > 0.0 ? pl.sourceRadius : localPcssSourceRadius);
     }
 
     float3 Hp   = normalize(V + Lp);
@@ -431,7 +554,7 @@ float3 ShadeSpotLight(SpotLightData sl, float3 worldPos, float3 N, float3 geomet
     // ── Spot shadow map sampling ─────────────────────────────────
     // Linear-distance tile, sampled by SampleLocalShadow above (block A.1).
     float spotShadow = (sl.shadowIndex != 0xFFFFFFFFu && sl.shadowIndex < localShadowCount)
-                     ? SampleLocalShadow(sl.shadowIndex, worldPos, geometricNormal) : 1.0;
+                     ? LocalShadow(sl.shadowIndex, 0xFFFFFFFFu, worldPos, geometricNormal, localPcssSourceRadius) : 1.0;
 
     float3 Hs   = normalize(V + Ls);
     float  NoHs = saturate(dot(N, Hs));
@@ -445,6 +568,111 @@ float3 ShadeSpotLight(SpotLightData sl, float3 worldPos, float3 N, float3 geomet
 
     return (diffs + specs) * sl.color * NoLs * atten * spotShadow;
 }
+
+#if defined(UZ_BINDLESS) && defined(UZ_RECT_LIGHTS)
+// Rectangular area light (phase3a 3.33.0 stage 1): Linearly Transformed Cosines (ltc.hlsli). The
+// rect's radiance times the LTC integrals of the GGX lobe (specular, with the Schlick Fresnel of the
+// whole lobe from the magnitude table) and of the clamped cosine (diffuse, Lambert). The 1/d^2
+// falloff is inside the integral; `range` only windows the light out like a point light's radius.
+// Unshadowed in stage 1 (shadowIndex reserved). Bindless only, like the clustered lists: the LUTs are
+// reached through the SRV indices in LightingCB.
+// UZ_RECT_LIGHTS is a PSO permutation (frame_lighting_pass.cpp) used only for frames that carry a
+// rect light: the stock pipeline's DXIL stays byte-identical, so every other scene renders exactly
+// as before (an untaken uniform branch in the same shader already moved 55 pixels by 1 LSB).
+// @ref Heitz, Dupuy, Hill, Neubelt 2016 "Real-Time Polygonal-Light Shading with Linearly Transformed Cosines"
+float3 ShadeRectLight(RectLightData rl, float3 worldPos, float3 N, float3 V, float NoV,
+                      float roughness, float3 F0, float3 F90, float3 diffColor
+#ifdef UZ_AREA_LIGHT_SHADOWS
+                      , float3 geometricNormal, float2 areaShadowShift
+#endif
+                      )
+{
+    const float3 toCenter = rl.position - worldPos;
+    const float  distSq   = dot(toCenter, toCenter);
+    const float  f        = distSq / max(rl.range * rl.range, 1e-4);
+    const float  window   = saturate(1.0 - f * f);
+    if (window <= 0.0) return float3(0.0, 0.0, 0.0);
+
+    const bool twoSided = (rl.flags & kRectLightFlag_TwoSided) != 0u;
+    // One-sided: pixels behind the emitting face (along cross(right, up)) receive nothing.
+    if (!twoSided && dot(cross(rl.right, rl.up), -toCenter) <= 0.0) return float3(0.0, 0.0, 0.0);
+
+    const float3 ex = rl.right * rl.halfWidth;
+    const float3 ey = rl.up * rl.halfHeight;
+    const float3 p0 = rl.position - ex - ey;
+    const float3 p1 = rl.position + ex - ey;
+    const float3 p2 = rl.position + ex + ey;
+    const float3 p3 = rl.position - ex + ey;
+
+    Texture2D<float4> ltcMatrix    = ResourceDescriptorHeap[ltcMatrixSrv];
+    Texture2D<float2> ltcMagnitude = ResourceDescriptorHeap[ltcMagnitudeSrv];
+    const float2 uv = LtcLutUV(roughness, NoV);
+    const float4 t1 = ltcMatrix.SampleLevel(clampSampler, uv, 0.0);
+    const float2 t2 = ltcMagnitude.SampleLevel(clampSampler, uv, 0.0);
+
+    const float specForm = LtcEvaluate(N, V, worldPos, LtcInverseMatrix(t1), p0, p1, p2, p3, twoSided);
+    const float3x3 identity = float3x3(1.0, 0.0, 0.0,  0.0, 1.0, 0.0,  0.0, 0.0, 1.0);
+    const float diffForm = LtcEvaluate(N, V, worldPos, identity, p0, p1, p2, p3, twoSided);
+
+    const float3 spec = specForm * (F0 * t2.x + (F90 - F0) * t2.y) * rl.specularScale;
+    const float3 diff = diffForm * diffColor * rl.diffuseScale;
+#ifdef UZ_AREA_LIGHT_SHADOWS
+    if (!any(diff + spec > 0.0)) return 0.0;
+    const float2 visibility = AreaShadowVisibility(rl, worldPos, geometricNormal, N, V, LtcInverseMatrix(t1),
+                                                   areaShadowShift);
+    return (diff * visibility.x + spec * visibility.y) * rl.color * (window * window);
+#else
+    return (diff + spec) * rl.color * (window * window);
+#endif
+}
+#ifdef UZ_SHAPED_LIGHTS
+float3 ShadeShapedLight(RectLightData rl, float3 worldPos, float3 N, float3 V, float NoV,
+                        float roughness, float3 F0, float3 F90, float3 diffColor
+#ifdef UZ_AREA_LIGHT_SHADOWS
+                        , float3 geometricNormal, float2 areaShadowShift
+#endif
+                        )
+{
+    const float3 toCenter = rl.position - worldPos;
+    const float f = dot(toCenter, toCenter) / max(rl.range * rl.range, 1e-4);
+    const float window = saturate(1.0 - f * f);
+    if (window <= 0.0) return 0.0;
+    const bool tube = (rl.flags & kRectLightFlag_Tube) != 0u;
+    const bool twoSided = tube || (rl.flags & kRectLightFlag_TwoSided) != 0u;
+    if (!twoSided && dot(cross(rl.right, rl.up), -toCenter) <= 0.0) return 0.0;
+    float3 vertices[66];
+    uint count;
+    if (tube) {
+        count = LtcCapsuleVertices(rl.position, rl.right, rl.halfWidth, rl.halfHeight,
+                                   worldPos, vertices);
+    } else {
+        if (rl.halfWidth <= 0.0 || rl.halfHeight <= 0.0) return 0.0;
+        count = LtcDiskVertices(rl.position, rl.right * rl.halfWidth,
+                                rl.up * rl.halfHeight, vertices);
+    }
+    Texture2D<float4> ltcMatrix = ResourceDescriptorHeap[ltcMatrixSrv];
+    Texture2D<float2> ltcMagnitude = ResourceDescriptorHeap[ltcMagnitudeSrv];
+    const float2 uv = LtcLutUV(roughness, NoV);
+    const float4 t1 = ltcMatrix.SampleLevel(clampSampler, uv, 0.0);
+    const float2 t2 = ltcMagnitude.SampleLevel(clampSampler, uv, 0.0);
+    const float specForm = LtcEvaluatePolygon(N, V, worldPos, LtcInverseMatrix(t1), vertices, count, twoSided);
+    const float3x3 identity = float3x3(1, 0, 0, 0, 1, 0, 0, 0, 1);
+    const float diffForm = LtcEvaluatePolygon(N, V, worldPos, identity, vertices, count, twoSided);
+#ifdef UZ_AREA_LIGHT_SHADOWS
+    if (diffForm <= 0.0 && specForm <= 0.0) return 0.0;
+    const float2 visibility = AreaShadowVisibility(rl, worldPos, geometricNormal, N, V, LtcInverseMatrix(t1),
+                                                   areaShadowShift);
+    return (diffForm * diffColor * rl.diffuseScale * visibility.x
+          + specForm * (F0 * t2.x + (F90 - F0) * t2.y) * rl.specularScale * visibility.y)
+          * rl.color * (window * window);
+#else
+    return (diffForm * diffColor * rl.diffuseScale
+          + specForm * (F0 * t2.x + (F90 - F0) * t2.y) * rl.specularScale)
+          * rl.color * (window * window);
+#endif
+}
+#endif
+#endif
 
 LightingOutput main(FSInput input) {
     int2 px = int2(input.positionCS.xy);
@@ -602,7 +830,12 @@ LightingOutput main(FSInput input) {
     // self-shadowed regardless of CSM result, so skip the expensive PCF/PCSS
     // filtering entirely. Saves 16-tap PCF work on every back-facing fragment
     // in enclosed interiors. @ref UE5 ShadowProjectionPixelShader — N·L cull.
-    float  shadow = (sunNoL > 0.0) ? CascadeShadow(worldPos, viewDepth, N, sunNoL) : 0.0;
+    // r.Shadows.SoftPCSS (ShadowDataCB.softPCSS, uniform): PCSS variable penumbra, or the fixed-radius
+    // PCF it replaced. The pixel position seeds the soft kernel's spatially stable rotation.
+    float  shadow = (sunNoL > 0.0)
+        ? ((softPCSS != 0u) ? CascadeShadowSoft(worldPos, viewDepth, N, sunNoL, float2(px))
+                            : CascadeShadow(worldPos, viewDepth, N, sunNoL))
+        : 0.0;
 #if defined(UZ_BINDLESS) && defined(UZ_CLOUD_GROUND_SHADOWS)
     if (gBufIndices.cloudShadowCascadeCount != 0 && gBufIndices.cloudShadowBufferSrv != 0xFFFFFFFF)
         shadow *= SampleCloudShadow(worldPos * 0.00001f, sunL,
@@ -716,6 +949,36 @@ LightingOutput main(FSInput input) {
         }
     }
 
+    // ── Rectangular area lights (phase3a 3.33.0): LTC, outside the cluster lists ───────────────
+    // Only compiled into the UZ_RECT_LIGHTS permutation, which the CPU selects when rectLightCount > 0;
+    // the stock pipeline (every scene without a rect light, and r.Lights.AreaLTC 0) is untouched.
+#if defined(UZ_BINDLESS) && defined(UZ_RECT_LIGHTS)
+    if (rectLightCount > 0u && rectLightsSrv != kSentinelSrvIndex
+        && ltcMatrixSrv != kSentinelSrvIndex && ltcMagnitudeSrv != kSentinelSrvIndex) {
+        StructuredBuffer<RectLightData> rectLights = ResourceDescriptorHeap[rectLightsSrv];
+#ifdef UZ_AREA_LIGHT_SHADOWS
+        const float2 areaShadowShift = AreaShadowShift(input.positionCS.xy, uint(timeParams.z));
+#endif
+        [loop]
+        for (uint ri = 0u; ri < rectLightCount; ++ri) {
+#ifdef UZ_SHAPED_LIGHTS
+            if ((rectLights[ri].flags & (kRectLightFlag_Disk | kRectLightFlag_Tube)) != 0u) {
+                Lo += ShadeShapedLight(rectLights[ri], worldPos, N, V, NoV, roughness, F0, F90, diffColor
+#ifdef UZ_AREA_LIGHT_SHADOWS
+                                       , geometricNormal, areaShadowShift
+#endif
+                                       );
+            } else
+#endif
+            Lo += ShadeRectLight(rectLights[ri], worldPos, N, V, NoV, roughness, F0, F90, diffColor
+#ifdef UZ_AREA_LIGHT_SHADOWS
+                                 , geometricNormal, areaShadowShift
+#endif
+                                 );
+        }
+    }
+#endif
+
     // ── IBL ambient (Falcor split-sum pattern) ──────────────────────────
     // @ref Karis 2013 "Real Shading in Unreal Engine 4" — split-sum IBL
     // @ref Falcor StandardBSDF — F_SchlickRoughness for env Fresnel
@@ -723,12 +986,11 @@ LightingOutput main(FSInput input) {
     // IBL (indirect lighting) is NOT attenuated by directional shadow.
     // @ref UE5 DeferredLightingCommon.ush — IndirectLighting is independent of shadow.
     // Only AO affects indirect; shadows only affect direct lights.
-    // Split tint vs intensity: SH diffuse is already pre-scaled by
-    // indirectLightingIntensity on the CPU (frame_constants.cpp:269), so diffuse
-    // only gets the color tint. Specular IBL reads the prefiltered cubemap which
-    // is NOT pre-scaled, so it needs the full intensity multiplier.
+    // SH diffuse is pre-scaled only by indirectLightingIntensity on the CPU.
+    // Apply the main SkyLight intensity once to both sky IBL components here.
+    // GI sources below neutralise the tint because they already carry it.
     float3 skyColor = float3(skyLightColorR, skyLightColorG, skyLightColorB);
-    float3 skyTintDiffuse  = skyColor;
+    float3 skyTintDiffuse  = skyColor * skyLightIntensity;
     float3 skyTintSpecular = skyColor * skyLightIntensity;
     float3 ambient = float3(0, 0, 0);
 
@@ -1172,6 +1434,9 @@ LightingOutput main(FSInput input) {
             scene.sunColor = lightColor.xyz;
             scene.skyMultiplier = skyTintSpecular;
             scene.plainMean = _sdfReflectionPlainMean;
+            // Phase D stage 3: the surface radiance cache at the SDF reflections' hits (LightingCB's
+            // former pad; the sentinel = no cache, the hit shading unchanged).
+            scene.surfaceCacheParamsSrv = surfaceCacheParamsSrv;
             if (_sdfDiffuseSamples != 0) {
                 Texture2D<float4> gatheredDiffuse = ResourceDescriptorHeap[ssgiSrvIndex];
                 cosineIrradiance = gatheredDiffuse.Load(int3(px, 0)).rgb;

@@ -181,6 +181,7 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     }
     m_ddgiSystem.SetStateRegistry(m_rgStates.get());
     m_radianceCache.SetStateRegistry(m_rgStates.get());
+    m_surfaceCache.SetStateRegistry(m_rgStates.get());
 
     // ── Camera ──────────────────────────────────────────────────────────
     m_cameraManager = std::make_unique<CameraManager>();
@@ -368,6 +369,7 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         fbDesc.debugName = "FallbackNormal";
         m_fallbackNormal = m_device->CreateTexture(fbDesc);
     }
+
 
     // ── Transmittance LUT texture (256x64 RGBA16F) ──────────────────────────
     // Created here; filled by the compute pass on first frame with sky atmosphere.
@@ -1453,6 +1455,20 @@ void SceneRenderer::Shutdown() {
         m_device->DestroyTexture(m_fallbackNormal);
         m_fallbackNormal = RHITextureHandle{};
     }
+    DestroyLtcLut(m_device, m_ltcLut);
+    DestroyRectLightBuffer(m_device, m_rectLightBuffer);
+    for (auto& pipeline : m_rectLightLightingPipeline) {
+        if (pipeline.IsValid()) m_device->DestroyPipeline(pipeline);
+        pipeline = {};
+    }
+    for (auto& shader : m_rectLightLightingPS) {
+        if (shader.IsValid()) m_device->DestroyShader(shader);
+        shader = {};
+    }
+    if (m_rectLightFullscreenVS.IsValid()) {
+        m_device->DestroyShader(m_rectLightFullscreenVS);
+        m_rectLightFullscreenVS = {};
+    }
 
     if (m_gbuffer.IsValid()) {
         m_gbuffer.Destroy(m_device);
@@ -1598,8 +1614,10 @@ void SceneRenderer::Shutdown() {
 
     // ── SSGI cleanup ──────────────────────────────────────────────────
     m_ssgiRenderer.DestroyResources();
+    m_realtimeDenoiser.DestroyResources();
 
     // ── SDF GI cleanup ───────────────────────────────────────────────
+    m_surfaceCache.DestroyResources();
     m_radianceCache.DestroyResources();
     m_globalDistanceField.DestroyResources();
 

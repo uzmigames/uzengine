@@ -5,6 +5,7 @@
 /// cache/fetch optimizations, and writes .uzmesh format.
 
 #include "fbx_importer.h"
+#include "fbx_import_geometry.h"
 #include "animation_clip.h"
 #include "animation_io.h"
 #include "log.h"
@@ -1417,21 +1418,6 @@ AssetImportResult FbxImporter::Import(
                 face);
             const uint32_t numTriangulated = numTriangles * 3;
 
-            // Reverse triangle winding for source conventions whose triangles
-            // are authored CCW-outward in a right-handed frame. The per-file
-            // axis remap (MayaYupRH cyclic, MaxZupRH swap) is det=+1 so it
-            // preserves CCW in the new basis, but the engine renders in a
-            // left-handed convention where CCW is treated as back-facing.
-            // Swap indices [1]↔[2] of every triangle to flip winding to CW,
-            // which LH rendering interprets as front-facing outward. Required
-            // for meshes exported from Maya (Y-up RH) and for UE5-retargeted
-            // animation FBXs whose meshes are encoded with the same handedness.
-            if (g_fbxSrcConv != FbxSrcConvention::Identity) {
-                for (uint32_t t = 0; t < numTriangles; ++t) {
-                    std::swap(triIndices[t * 3 + 1], triIndices[t * 3 + 2]);
-                }
-            }
-
             // Record per-triangle smoothing flag from FBX face_smoothing
             {
                 bool faceSmooth = true; // default: smooth
@@ -1501,21 +1487,6 @@ AssetImportResult FbxImporter::Import(
             continue;
         }
 
-        // Triangle winding: ufbx delivers FBX-native winding (CCW for typical
-        // RH Maya/Max sources). Our per-source axis remaps (Maya cyclic and
-        // Max (-y,x,z)) both have det=+1, preserving winding. UzEngine's
-        // rasterizer uses frontCounterClockwise = true (CCW = front), so the
-        // FBX-native CCW already matches; NO flip is needed. Flipping here
-        // would invert all faces and the mesh would render as back-faces
-        // (hollow / inside-out look). Kept as a comment because previous
-        // versions of this importer used `UFBX_SPACE_CONVERSION_MODIFY_GEOMETRY`
-        // with `target_axes=LH-Z-up`, which DID flip handedness and required
-        // the swap below; if that policy is restored, re-enable this loop.
-        //
-        // for (size_t t = 0; t + 2 < groupIndices.size(); t += 3) {
-        //     std::swap(groupIndices[t + 1], groupIndices[t + 2]);
-        // }
-
         // Compute smooth normals based on import mode.
         // Priority: .uzimport per-asset options > CVar globals.
         int normalMode = static_cast<int>(cv_MeshNormalMode->value);
@@ -1536,9 +1507,12 @@ AssetImportResult FbxImporter::Import(
                 }
             }
         }
-        if (normalMode == 1 || (normalMode == 2 && !hasNormals)) {
-            ComputeSmoothNormals(groupVertices, groupIndices, smoothAngle, groupSmoothFlags);
-        }
+        // Compute normals from FBX-native winding BEFORE converting RH sources
+        // to the engine's CW-front render indices. Reversing before smoothing
+        // would generate inward normals. Imported normals remain unchanged.
+        PrepareFbxGeometry(groupVertices, groupIndices,
+            normalMode == 1 || (normalMode == 2 && !hasNormals),
+            smoothAngle, groupSmoothFlags, g_fbxSrcConv != FbxSrcConvention::Identity);
 
         // Append to global arrays
         for (const uint32_t idx : groupIndices) {
@@ -1576,7 +1550,8 @@ AssetImportResult FbxImporter::Import(
     std::vector<float> allTangents;
     const int tangentMode = static_cast<int>(cv_MeshTangentMode->value);
     if (tangentMode == 0) {
-        ComputeMikkTSpaceTangents(allVertices, allIndices, allTangents);
+        ComputeFbxMikkTSpaceTangents(allVertices, allIndices, allTangents,
+            g_fbxSrcConv != FbxSrcConvention::Identity);
     } else if (tangentMode == 1) {
         GenerateTangentsForPosNormUV(allVertices, allIndices, allTangents);
     } else {

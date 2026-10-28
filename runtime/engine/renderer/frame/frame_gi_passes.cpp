@@ -19,6 +19,7 @@
 #include "gi/mesh_sdf_baker.h"
 #include "raytracing/rt_manager.h"
 #include "passes/raytracing/rt_reflection_pass.h"
+#include "../../../shaders/runtime/gi/surface_cache_contract.hlsli"
 #include "gpu_mesh.h"
 #include "world.h"
 #include "render_graph_builder.h"
@@ -48,8 +49,8 @@ static auto* cv_SSRNumSteps        = UZ_CVAR_INT("r.SSR.NumSteps", 16, "SSR ray 
 static auto* cv_SSRStartMip        = UZ_CVAR_FLOAT("r.SSR.StartMipLevel", 1.0f, "SSR initial HZB mip level", 0.f, 3.f);
 static auto* cv_SSRSlopeTolerance  = UZ_CVAR_FLOAT("r.SSR.SlopeToleranceScale", 4.0f, "SSR slope tolerance scale", 1.f, 16.f);
 // Hardware ray-traced reflections, stage 1. The on/off switch `r.RayTracing.Reflections` is
-// registered in rt_manager.cpp and read through RTManager::IsReflectionsEnabled(); the ray's
-// reach is the pass's only parameter of its own.
+// registered in rt_manager.cpp (Phase B: default on where DXR is supported) and read through
+// RTManager::ReflectionsAvailable(); the ray's reach is the pass's only parameter of its own.
 static auto* cv_RTReflectionsMaxDistance = UZ_CVAR_FLOAT("r.RayTracing.Reflections.MaxDistance", 100000.0f,
     "Hardware ray-traced reflections (stage 1): mirror-ray TMax in cm", 100.0f, 1000000.0f);
 // Stage 2, each opt-in; at the defaults the pass is the stage 1 pass (mirror rays, sun + sky at the
@@ -60,12 +61,21 @@ static auto* cv_RTReflectionsMaxRoughness = UZ_CVAR_FLOAT("r.RayTracing.Reflecti
 static auto* cv_RTReflectionsGlossy = UZ_CVAR_BOOL("r.RayTracing.Reflections.Glossy", false,
     "Hardware ray-traced reflections (stage 2): GGX-VNDF sampled glossy ray for roughness above the "
     "mirror threshold (0.04) instead of the mirror vector");
-static auto* cv_RTReflectionsIndirect = UZ_CVAR_BOOL("r.RayTracing.Reflections.Indirect", false,
+// Phase B: on by default — the hit is then shaded as the SDF reflections shade theirs
+// (ShadeSdfReflectionHit: sun + the probe irradiance), so the ray texels replacing them on the
+// default render keep the probe term; without a radiance cache the term is zero either way.
+static auto* cv_RTReflectionsIndirect = UZ_CVAR_BOOL("r.RayTracing.Reflections.Indirect", true,
     "Hardware ray-traced reflections (stage 2): add the radiance-cache probe irradiance at the hit "
-    "(the diffuse bounce the reflected surface receives)");
+    "(the diffuse bounce the reflected surface receives); default on since Phase B");
 static auto* cv_RTReflectionsDenoise = UZ_CVAR_BOOL("r.RayTracing.Reflections.Denoise", false,
     "Hardware ray-traced reflections (stage 2): run the pass between SSR_Resolve and SSR_Temporal so "
     "the ray texels go through the SSR temporal accumulation + spatial denoise (0 = after them, raw)");
+static auto* cv_RTReflectionsRough = UZ_CVAR_BOOL("r.RayTracing.Reflections.Rough", false,
+    "Rough reflections stage 1: ray-traced glossy reflections at every roughness (cutoff 1, the "
+    "glossy lobe, no roughness fade), each sample weighted by its VNDF throughput over the lighting's "
+    "split-sum so rough surfaces receive the path tracer's specular energy; default off");
+static auto* cv_UnifiedDenoiser = UZ_CVAR_BOOL("r.Denoiser.Unified", false,
+    "Opt-in unified standalone RT reflection reconstruction (requires RT denoise; default off)");
 
 /// Selects DXR ray-traced probe update over the SDF sphere-trace path.
 /// Requires DXR 1.1 (`RayQuery<>`) and a built TLAS. When the device does not
@@ -78,6 +88,7 @@ static const uz::CVar* RayTracingGICVar() {
     return cvar;
 }
 
+#include <algorithm>
 #include <cstring>
 
 static auto* cv_RCFreezeAfter = UZ_CVAR_INT("r.GI.RadianceCache.FreezeAfterFrame", -1,
@@ -121,12 +132,22 @@ void SceneRenderer::RegisterSSGIPasses(rg::RgBuilder& rgBuilder, FrameContext& c
                           && m_passInspector.IsPassEnabled("ssgi");
     if (!ssgiActive) return;
 
-    rgBuilder.AddPass("SSGI", [&](rg::RgPassBuilder& pb) {
+    const auto* dxrCvar = CVarRegistry::Get().Find("r.GI.FinalGather.DXR");
+    const auto* restirCvar = CVarRegistry::Get().Find("r.GI.ReSTIR");
+    const uint32_t requestedDxr = dxrCvar ? static_cast<uint32_t>(dxrCvar->value) : 0u;
+    const bool dxrReady = m_rtManager && m_rtManager->IsReady();
+    const uint32_t materialSrv = requestedDxr && dxrReady ? UpdateGIMaterialTable(ctx) : UINT32_MAX;
+    const uint32_t tlasSrv = dxrReady ? m_rtManager->GetTLASSRVIndex() : UINT32_MAX;
+    const uint32_t dxrMode = SelectFinalGatherDxrMode(requestedDxr, ctx.perFrame.sdfDiffuseSamples != 0,
+        restirCvar && restirCvar->value >= 1.0f, dxrReady,
+        dxrReady ? m_rtManager->GetTLASInstanceCount() : 0u, tlasSrv, materialSrv);
+
+    rgBuilder.AddPass("SSGI", [&, dxrMode, tlasSrv, materialSrv](rg::RgPassBuilder& pb) {
         pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);
         pb.Read(ctx.normalRes, RHIResourceState::ShaderResource);
         pb.Read(ctx.velocityRes, RHIResourceState::ShaderResource);
 
-        pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
+        pb.SetExecutionCallback([this, &ctx, dxrMode, tlasSrv, materialSrv](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
             UZ_PROFILE_SCOPE("SSGI::Execute");
 
             SSGIRenderParams ssgiParams{};
@@ -151,11 +172,20 @@ void SceneRenderer::RegisterSSGIPasses(rg::RgBuilder& rgBuilder, FrameContext& c
                                        ? static_cast<uint32_t>(ctx.perFrame.timeParams.w)
                                        : ctx.frameIndex;
             ssgiParams.worldGather = ctx.perFrame.sdfDiffuseSamples != 0;
+            ssgiParams.gatherDxrMode = dxrMode;
+            ssgiParams.gatherTlasSrv = tlasSrv;
+            ssgiParams.gatherMaterialSrv = materialSrv;
             ssgiParams.resetHistory = !ctx.temporal.matrixValid;
             ssgiParams.sceneRevision = m_globalDistanceField.GetSceneRevision();
             ssgiParams.changedRegions = &m_globalDistanceField.GetChangedRegions();   // read at execution (block B.2)
             ssgiParams.renderWidth     = static_cast<uint32_t>(ctx.renderWidth);
             ssgiParams.renderHeight    = static_cast<uint32_t>(ctx.renderHeight);
+            // Phase D stage 3: the surface radiance cache at the world gather's hits (the plain
+            // gather and the ReSTIR GI passes alike), bound only when its resolve ran this frame and
+            // an SDF consumer switch is on; the barriers order the resolve's and the feed's writes.
+            ssgiParams.surfaceCacheParamsSrv = SurfaceRadianceCache::SdfConsumersBound()
+                ? m_surfaceCache.GetParamsSrv(ctx.frameIndex) : UINT32_MAX;
+            if (ssgiParams.surfaceCacheParamsSrv != UINT32_MAX) m_surfaceCache.PrepareConsumer(cmd);
 
             m_ssgiRenderer.Render(cmd, ssgiParams);
         });
@@ -272,6 +302,8 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
                 ctx.perFrameAlloc.offsetBytes,
                 ctx.perFrameAlloc.cpuPtr,
                 sizeof(PerFrameCB));
+            // (Phase D stage 3: the surface cache resolve is registered right after this pass, so
+            // the change boxes above reach it before the probe writers read the cells.)
             if (m_globalDistanceField.GetSceneRevision() != previousRevision) {
                 m_radianceCache.InvalidateHistory();      // whole windows rewritten: the history is gone
             } else if (!m_globalDistanceField.GetChangedRegions().empty()) {
@@ -303,12 +335,25 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
     const bool visibleSeeds = RadianceCache::ClassificationMode() == 3
         && CVarRegistry::Get().GetBool("r.GI.RadianceCache.ReachVisibleSeeds", false)
         && !m_meshes.empty();
-    rgBuilder.AddPass("RadianceCache_Trace", [&](rg::RgPassBuilder& pb) {
+    // Phase D stage 3: the surface cache resolve between the composite (its change boxes) and the
+    // probe writers (the SH writer reads the cells, the DDGI trace reads and writes them); the
+    // exact-material table for the DDGI trace and the feed, refreshed while the cache is on.
+    RegisterSurfaceCacheResolvePass(rgBuilder, ctx);
+    const bool surfaceCacheFrame = m_surfaceCacheResolveFrame == ctx.frameIndex;
+    const uint32_t surfaceCacheMaterialTableSrv = surfaceCacheFrame ? UpdateGIMaterialTable(ctx) : UINT32_MAX;
+    rgBuilder.AddPass("RadianceCache_Trace", [&, surfaceCacheFrame, surfaceCacheMaterialTableSrv](rg::RgPassBuilder& pb) {
         // Mode 3's visible-surface seeds read the G-buffer world position (r.GI.RadianceCache.ReachVisibleSeeds).
         // Do not bind stale/unwritten positions when the G-buffer pass has no geometry.
         if (visibleSeeds) pb.Read(ctx.positionRes, RHIResourceState::ShaderResource);
-        pb.SetExecutionCallback([this, &ctx, visibleSeeds](IRHICommandList* cmd, const rg::RgPassResources& res) {
+        pb.SetExecutionCallback([this, &ctx, visibleSeeds, surfaceCacheFrame, surfaceCacheMaterialTableSrv](IRHICommandList* cmd, const rg::RgPassResources& res) {
             UZ_PROFILE_SCOPE("RadianceCache::Trace");
+            // Phase D stage 3: the record the resolve published this frame (sentinel: no cache, or
+            // the stage-3 switches off), with the barriers that order its writes before these reads.
+            const uint32_t probeCacheSrv = (surfaceCacheFrame && SurfaceRadianceCache::SdfConsumersBound())
+                ? m_surfaceCache.GetParamsSrv(ctx.frameIndex) : UINT32_MAX;
+            const uint32_t ddgiCacheSrv = (surfaceCacheFrame && SurfaceRadianceCache::DdgiEnabled())
+                ? m_surfaceCache.GetParamsSrv(ctx.frameIndex) : UINT32_MAX;
+            if (probeCacheSrv != UINT32_MAX || ddgiCacheSrv != UINT32_MAX) m_surfaceCache.PrepareConsumer(cmd);
 
             // Always run the SDF SH path so the existing deferred lighting
             // SH sample stays populated regardless of DXR availability.
@@ -350,7 +395,8 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
                     ctx.perFrameAlloc.cpuPtr,
                     sizeof(PerFrameCB),
                     ctx.frameIndex,
-                    sidePipeline);
+                    sidePipeline,
+                    probeCacheSrv);
             }
 
             // DDGI atlas writer — only when DXR is ON (master switch `r.RayTracing`
@@ -394,15 +440,20 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
                             ? m_vfxDDGIEmissiveFeed.GetSampleCount()
                             : 0u;
 
+                    if (ddgiCacheSrv != UINT32_MAX) m_surfaceCache.PrepareConsumer(cmd);   // after the SH writer's reads
                     m_ddgiSystem.DispatchUpdate(
                         cmd, ddgiPipeline, tracePipeline, borderPipeline, tlasSrv,
                         m_cbRing.get(), ctx.frameIndex,
                         &m_globalDistanceField, ctx.perFrameAlloc.cpuPtr,
-                        vfxSrv, vfxCount);
+                        vfxSrv, vfxCount,
+                        ddgiCacheSrv, surfaceCacheMaterialTableSrv);
                 }
             }
         });
     });
+    // Phase D stage 3: the feed trace fills the SDF consumers' cells from the probe grid the SH
+    // writer just traced (its completed buffer is the hit's indirect term).
+    RegisterSurfaceCacheFeedPass(rgBuilder, ctx, surfaceCacheMaterialTableSrv);
 }
 
 // ── Brixelizer GI (AMD FidelityFX sparse SDF voxel GI) ─────────────────────
@@ -846,49 +897,270 @@ void SceneRenderer::RegisterSSRDenoisePasses(rg::RgBuilder& rgBuilder, FrameCont
 // and a denoiser are stage 2; stage 3 runs the pass with SSR off (RTReflectionsStandalone: the
 // pass owns the resolved buffer, every eligible texel traced). @ref docs/specs/rendering/rt-reflections.md
 
-bool SceneRenderer::RTReflectionsStandalone() const {
-    // SSR switched off (`r.SSR` 0, or the show flag) — not SSR warming up: on an SSR run the ray
-    // pass waits for the chain (its first frame has no previous colour) as in stages 1 and 2, so
-    // SSR-on frames are unchanged. The resolved buffer is created with the other SSR resources
-    // whether or not SSR is on, and is the texture PerFrameCB::ssrSrvIndex publishes.
-    const bool ssrOff = !m_ssrEnabled || !m_showFlags.Get(ShowFlag::SSR);
-    return ssrOff && m_rtManager && m_rtManager->IsReflectionsEnabled() && m_rtManager->IsReady()
-        && m_rtManager->GetTLASInstanceCount() > 0u
+bool SceneRenderer::RTReflectionRaysAvailable() const {
+    // Phase B capability gate: DXR initialised, `r.RayTracing.Reflections` on and a built,
+    // non-empty TLAS (RTManager::ReflectionsAvailable — with no TLAS every ray would miss, the DDGI
+    // writer's lesson, followup-08), plus the buffer the pass writes. False on a device without
+    // DXR (m_rtManager is null then), with the switch off, or with nothing in the TLAS: the pass
+    // is not registered at all — nothing compiled, bound or dispatched — and the frame renders
+    // the screen-space / probe reflections it rendered before Phase B. The resolved buffer is
+    // created with the other SSR resources whether or not SSR is on, and is the texture
+    // PerFrameCB::ssrSrvIndex publishes.
+    return m_rtManager && m_rtManager->ReflectionsAvailable()
         && m_ssrResolvedOutput.IsValid() && m_ssrResolvedOutputSrv != UINT32_MAX
         && m_ssrResolvedOutputUav != UINT32_MAX;
 }
 
+bool SceneRenderer::RTReflectionsStandalone() const {
+    // SSR switched off (`r.SSR` 0, or the show flag) — not SSR warming up: on an SSR run the ray
+    // pass waits for the chain (its first frame has no previous colour) as in stages 1 and 2, so
+    // SSR-on frames are unchanged.
+    const bool ssrOff = !m_ssrEnabled || !m_showFlags.Get(ShowFlag::SSR);
+    return SelectRTReflectionRoute(/*screenTraceThisFrame=*/false, ssrOff, RTReflectionRaysAvailable())
+        == RTReflectionRoute::RaysOnly;
+}
+
+// ── Surface radiance cache resolve (Phase D stage 1, r.GI.SurfaceCache) ────────────────────
+// Registered right after the GDF composite (RegisterSDFGIPasses) and before every GI consumer;
+// in stage 1 the only consumer is the ray-traced reflection pass, so without it nothing is
+// registered and nothing allocated. The cache buffers are not graph resources: the cache
+// transitions them through m_rgStates like the SSR textures, and registration order is the
+// execution order (the pass has no graph accesses, as the GDF composite).
+
+// FNV-1a of the frame's GI-occluder instances (mesh + transform): the TLAS content the cells were
+// filled against. A change with no distance-field change box clears the cache (spec 2.6).
+static uint64_t SurfaceCacheGeometryHash(const FrameContext& ctx) {
+    uint64_t hash = 14695981039346656037ull;
+    for (const auto& draw : ctx.drawList.GetCommands()) {
+        if (!IsGIOccluder(draw)) continue;
+        hash = SurfaceCacheHashBytes(&draw.meshId, sizeof(draw.meshId), hash);
+        hash = SurfaceCacheHashBytes(&draw.worldMatrix, sizeof(draw.worldMatrix), hash);
+    }
+    return hash;
+}
+
+// FNV-1a of the frame's lights: the sun and skylight of the PerFrameCB and the point / spot / rect
+// lights of the frame. The cells hold lit radiance, so a lighting change clears them (stages 1-3).
+static uint64_t SurfaceCacheLightingHash(const FrameContext& ctx, const PerFrameCB& perFrame) {
+    uint64_t hash = 14695981039346656037ull;
+    hash = SurfaceCacheHashBytes(&perFrame.lightDir, sizeof(perFrame.lightDir), hash);
+    hash = SurfaceCacheHashBytes(&perFrame.lightColor, sizeof(perFrame.lightColor), hash);
+    const float sky[4] = {perFrame.skyLightColorR, perFrame.skyLightColorG, perFrame.skyLightColorB, perFrame.skyLightIntensity};
+    hash = SurfaceCacheHashBytes(sky, sizeof(sky), hash);
+    if (const auto* lighting = static_cast<const LightingCB*>(ctx.lightingAlloc.cpuPtr)) {
+        const uint32_t points = std::min(lighting->pointLightCount, kMaxPointLights);
+        const uint32_t spots  = std::min(lighting->spotLightCount, kMaxSpotLights);
+        hash = SurfaceCacheHashBytes(&points, sizeof(points), hash);
+        hash = SurfaceCacheHashBytes(lighting->pointLights, points * sizeof(PointLightData), hash);
+        hash = SurfaceCacheHashBytes(&spots, sizeof(spots), hash);
+        hash = SurfaceCacheHashBytes(lighting->spotLights, spots * sizeof(SpotLightData), hash);
+    }
+    const uint32_t rects = std::min(ctx.lightData.rectLightCount, kMaxRectLights);
+    hash = SurfaceCacheHashBytes(&rects, sizeof(rects), hash);
+    hash = SurfaceCacheHashBytes(ctx.lightData.rectLights, rects * sizeof(RectLightData), hash);
+    return hash;
+}
+
+void SceneRenderer::RegisterSurfaceCacheResolvePass(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
+    if (!SurfaceRadianceCache::Enabled() || !m_device || !m_device->IsBindless() || !RTReflectionRaysAvailable()) return;
+    // Once per frame: RegisterSDFGIPasses registers it between the GDF composite and the probe
+    // writers (stage 3: the SH writer and the DDGI trace read the record the resolve publishes);
+    // RegisterLightingPasses' call after the SDF GI chain covers the frames without that chain.
+    if (m_surfaceCacheResolveFrame == ctx.frameIndex) return;
+    m_surfaceCacheResolveFrame = ctx.frameIndex;
+    // The SDF GI gate of RegisterSDFGIPasses: only then do this frame's change boxes and revision
+    // belong to a composite that ran; otherwise the geometry hash stands in.
+    const bool gdfActive = m_sdfGiEnabled
+                        && m_globalDistanceField.IsInitialized()
+                        && m_radianceCache.IsInitialized()
+                        && m_device->IsBindless()
+                        && m_passInspector.IsPassEnabled("sdf_gi");
+
+    rgBuilder.AddPass("SurfaceCache_Resolve", [&, gdfActive](rg::RgPassBuilder& pb) {
+        pb.SetExecutionCallback([this, &ctx, gdfActive](IRHICommandList* cmd, const rg::RgPassResources&) {
+            UZ_PROFILE_SCOPE("SurfaceCache::Resolve");
+            // The PerFrameCB is populated by execution time, not at registration (the path tracer's rule).
+            const auto* perFrame = static_cast<const PerFrameCB*>(ctx.perFrameAlloc.cpuPtr);
+            if (perFrame == nullptr) return;
+            SurfaceRadianceCache::FrameInputs in{};
+            in.device         = m_device;
+            in.cbRing         = m_cbRing.get();
+            in.pipelines      = ctx.pipelines;
+            in.frameIndex     = ctx.frameIndex;
+            in.changedRegions = gdfActive ? &m_globalDistanceField.GetChangedRegions() : nullptr;
+            in.sceneRevision  = gdfActive ? m_globalDistanceField.GetSceneRevision() : 0ull;
+            in.geometryHash   = SurfaceCacheGeometryHash(ctx);
+            in.lightingHash   = SurfaceCacheLightingHash(ctx, *perFrame);
+            // Stage 2: the frame's local lights (the same sources the lighting hash covers).
+            in.lighting       = static_cast<const LightingCB*>(ctx.lightingAlloc.cpuPtr);
+            in.rectLights     = ctx.lightData.rectLights;
+            in.rectLightCount = ctx.lightData.rectLightCount;
+            // Stage 3: the camera of the level rule (D3) for the consumers that bind no PerFrameCB.
+            in.cameraPos      = perFrame->cameraPos.xyz();
+            const bool resolved = m_surfaceCache.Resolve(cmd, in);
+            // Stage 3: the deferred lighting's SDF reflections read the cache through the LightingCB
+            // (its former pad). The allocation is persistently mapped and read by the GPU at the
+            // lighting draw, after this list is submitted; the sentinel leaves the hit shading as it
+            // was.
+            if (auto* lightingCB = static_cast<LightingCB*>(ctx.lightingAlloc.cpuPtr)) {
+                lightingCB->surfaceCacheParamsSrv = (resolved && SurfaceRadianceCache::SdfConsumersBound())
+                    ? m_surfaceCache.GetParamsSrv(ctx.frameIndex) : UINT32_MAX;
+            }
+        });
+    });
+    // Stage 4 must run here, before ANY probe/feed/reflection consumer. Between resolve and
+    // finish the drained accumulator is scratch storage, not a writable sample accumulator.
+    if (!SurfaceRadianceCache::SurfaceRecordActive()) return;
+    const uint32_t materialTableSrv = UpdateGIMaterialTable(ctx);
+    for (const bool indirect : {false, true}) {
+        if (indirect ? !SurfaceRadianceCache::IndirectActive() : !SurfaceRadianceCache::RelightEnabled()) continue;
+        rgBuilder.AddPass(indirect ? "SurfaceCache_Indirect" : "SurfaceCache_Relight",
+            [&, indirect, materialTableSrv](rg::RgPassBuilder& pb) {
+            pb.SetExecutionCallback([this, &ctx, indirect, materialTableSrv](IRHICommandList* cmd, const rg::RgPassResources&) {
+                const uint32_t paramsSrv = m_surfaceCache.GetParamsSrv(ctx.frameIndex);
+                if (paramsSrv == UINT32_MAX || !m_rtManager || !m_rtManager->IsReady()) return;
+                const auto* perFrame = static_cast<const PerFrameCB*>(ctx.perFrameAlloc.cpuPtr);
+                if (!perFrame) return;
+                const auto pso = indirect ? ctx.pipelines->GetSurfaceCacheIndirect() : ctx.pipelines->GetSurfaceCacheRelight();
+                if (!pso.IsValid()) return;
+                RadianceCacheTraceConstants trace{};
+                FillRTReflectionTraceConstants(trace, m_globalDistanceField, *perFrame, ctx.frameIndex);
+                trace.maxTraceDistance = cv_RTReflectionsMaxDistance->value;
+                auto alloc = m_cbRing->Allocate(sizeof(trace));
+                if (!alloc.cpuPtr) return;
+                std::memcpy(alloc.cpuPtr, &trace, sizeof(trace));
+                const auto slice = m_surfaceCache.GetRelightSlice(ctx.frameIndex);
+                SurfaceCacheRelightRootConstants rc{};
+                rc.tlasSrv = m_rtManager->GetTLASSRVIndex();
+                rc.materialTableSrv = materialTableSrv;
+                rc.surfaceCacheParamsSrv = paramsSrv;
+                rc.resolvedUav = m_surfaceCache.GetResolvedUav(ctx.frameIndex);
+                rc.sliceIndex = slice.index;
+                rc.sliceCount = slice.count;
+                rc.indirectRays = indirect ? SurfaceRadianceCache::IndirectRays() : 0u;
+                rc.skyCubemapSrv = m_hdriActive ? m_hdriCubemapSrv
+                    : (m_skyCubemapFilled ? m_skyCubemapSrv : UINT32_MAX);
+                rc.bounces = SurfaceRadianceCache::Bounces();
+                cmd->SetPipeline(pso);
+                cmd->SetRootCBV(kSlotPerFrame, ctx.perFrameAlloc.bufferHandle, ctx.perFrameAlloc.offsetBytes,
+                    ctx.perFrameAlloc.cpuPtr, sizeof(PerFrameCB));
+                cmd->SetRootCBV(kSlotPerObject, alloc.bufferHandle, alloc.offsetBytes, alloc.cpuPtr, sizeof(trace));
+                const auto dispatch = [&](uint32_t mode, uint32_t groups) {
+                    m_surfaceCache.PrepareRelight(cmd);
+                    rc.transportMode = mode;
+                    cmd->SetRootConstants(kSlotRootConstants, reinterpret_cast<const uint32_t*>(&rc), kSurfaceCacheRelightRootDwords);
+                    cmd->Dispatch(groups, 1, 1);
+                };
+                if (!indirect) {
+                    dispatch(surfacecache::kSurfaceCacheTransportBase, slice.groups);
+                } else {
+                    // A finite-depth Jacobi solve needs the whole previous iterate. Updating only
+                    // a slice per bounce would give neighbours different, undefined path depths.
+                    const uint32_t groups = (1u << m_surfaceCache.GetEntriesLog2()) / 64u;
+                    dispatch(surfacecache::kSurfaceCacheTransportBase, groups);
+                    for (uint32_t bounce = 1u; bounce < rc.bounces; ++bounce) {
+                        rc.bounceIndex = bounce;
+                        dispatch(surfacecache::kSurfaceCacheTransportGather, groups);
+                        if (bounce + 1u < rc.bounces) dispatch(surfacecache::kSurfaceCacheTransportSnapshot, groups);
+                    }
+                    dispatch(surfacecache::kSurfaceCacheTransportFinish, groups);
+                }
+                m_surfaceCache.PrepareConsumer(cmd);
+            });
+        });
+    }
+}
+
+void SceneRenderer::RegisterSurfaceCacheFeedPass(rg::RgBuilder& rgBuilder, FrameContext& ctx, uint32_t materialTableSrv) {
+    if (!SurfaceRadianceCache::Enabled() || SurfaceRadianceCache::FeedRays() == 0u) return;
+    if (m_surfaceCacheResolveFrame != ctx.frameIndex || !RTReflectionRaysAvailable()) return;
+    if (!m_sdfGiEnabled || !m_radianceCache.IsInitialized()) return;   // the probe grid the feed shoots from
+
+    rgBuilder.AddPass("SurfaceCache_Feed", [&, materialTableSrv](rg::RgPassBuilder& pb) {
+        // No graph resources: registration order (after RadianceCache_Trace, before the SSGI
+        // gather) is the execution order, as for the resolve.
+        pb.SetExecutionCallback([this, &ctx, materialTableSrv](IRHICommandList* cmd, const rg::RgPassResources&) {
+            UZ_PROFILE_SCOPE("SurfaceCache::Feed");
+            const uint32_t paramsSrv = m_surfaceCache.GetParamsSrv(ctx.frameIndex);
+            if (paramsSrv == UINT32_MAX) return;
+            const uint32_t rays = SurfaceRadianceCache::FeedRays();
+            if (rays == 0u || !m_rtManager || !m_rtManager->IsReady() || m_rtManager->GetTLASInstanceCount() == 0u) return;
+            const RHIPipelineHandle pso = ctx.pipelines->GetSurfaceCacheFeed();
+            if (!pso.IsValid()) return;
+            const auto* perFrame = static_cast<const PerFrameCB*>(ctx.perFrameAlloc.cpuPtr);
+            if (perFrame == nullptr) return;
+
+            // The shared b2 trace constants: the GDF clipmaps, the sun and the skylight as the
+            // reflection pass binds them, plus the probe grid of the completed SH buffer (the
+            // hit's indirect term) and the radiance cache's trace range.
+            RadianceCacheTraceConstants traceConstants{};
+            FillRTReflectionTraceConstants(traceConstants, m_globalDistanceField, *perFrame, ctx.frameIndex);
+            const bool probes = m_radianceCache.HasProducedResult();
+            SetRTReflectionProbeGrid(traceConstants, m_radianceCache.GetCompletedGridOrigin(),
+                                     m_radianceCache.GetProbeSpacing(), RadianceCache::kProbesPerAxis);
+            traceConstants.maxTraceDistance = m_radianceCache.GetGridExtent() * 2.0f;
+            auto traceAlloc = m_cbRing->Allocate(sizeof(traceConstants));
+            if (!traceAlloc.cpuPtr) return;
+            std::memcpy(traceAlloc.cpuPtr, &traceConstants, sizeof(traceConstants));
+
+            m_surfaceCache.PrepareConsumer(cmd);
+            cmd->SetPipeline(pso);
+            SurfaceCacheFeedRootConstants rc{};
+            rc.tlasSrv               = m_rtManager->GetTLASSRVIndex();
+            rc.materialTableSrv      = materialTableSrv;
+            rc.probeShSrv            = probes ? m_radianceCache.GetProbeSHBufferSrv() : UINT32_MAX;
+            rc.surfaceCacheParamsSrv = paramsSrv;
+            rc.feedRays              = rays;
+            cmd->SetRootConstants(kSlotRootConstants, reinterpret_cast<const uint32_t*>(&rc), kSurfaceCacheFeedRootDwords);
+            cmd->SetRootCBV(kSlotPerFrame, ctx.perFrameAlloc.bufferHandle, ctx.perFrameAlloc.offsetBytes,
+                            ctx.perFrameAlloc.cpuPtr, sizeof(PerFrameCB));
+            cmd->SetRootCBV(kSlotPerObject, traceAlloc.bufferHandle, traceAlloc.offsetBytes,
+                            traceAlloc.cpuPtr, sizeof(traceConstants));
+            const uint32_t threads = RadianceCache::kTotalProbes * rays;
+            cmd->Dispatch((threads + 63u) / 64u, 1, 1);
+        });
+    });
+}
+
 void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameContext& ctx, bool beforeDenoise) {
-    // Opt-in (`r.RayTracing.Reflections`, default off) on top of the `r.RayTracing` master
-    // switch, with a built, non-empty TLAS: with the master switch off RTManager::BeginFrame never
-    // rebuilds it and every ray would miss (the DDGI writer's lesson, followup-08). Off = the pass
-    // is not registered at all: nothing is compiled, bound or dispatched and the frame is the
-    // frame without it.
-    if (!m_rtManager || !m_rtManager->IsReflectionsEnabled() || !m_rtManager->IsReady()
-        || m_rtManager->GetTLASInstanceCount() == 0u) return;
+    // The fallback (no DXR, switch off, empty TLAS): nothing registered, the frame without the pass.
+    if (!RTReflectionRaysAvailable()) return;
     // Placement (stage 2): called once from RegisterSSRPasses after SSR_Resolve and once from
     // RegisterLightingPasses after the SSR chain; the denoise CVar selects which call registers.
     // The render graph chains every access to a resource in registration order (depth is read by
     // every SSR pass), so the registration point is the execution point.
-    const bool denoise = cv_RTReflectionsDenoise->value;
+    const bool rough = cv_RTReflectionsRough->value;
     // With the SSR chain (RegisterSSRPasses' gate) the pass fills the holes of this frame's screen
     // trace in the resolved buffer the lighting reads this frame (PerFrameCB::ssrSrvIndex). Stage 3:
     // with SSR off the pass runs on its own from the RegisterLightingPasses call, owning that
     // buffer (the lighting reads it under the same RTReflectionsStandalone test), the SSR denoiser
     // chained behind it on the denoise route. SSR on but not yet running (its first frame, no
     // previous colour) registers nothing, as before.
-    const bool ssrChain   = m_showFlags.Get(ShowFlag::SSR) && ctx.ssrActive && m_ssrHasPrevColor;
-    const bool standalone = !ssrChain && RTReflectionsStandalone();
-    if (ssrChain ? (denoise != beforeDenoise) : (!standalone || beforeDenoise)) return;
+    const bool ssrChain = m_showFlags.Get(ShowFlag::SSR) && ctx.ssrActive && m_ssrHasPrevColor;
+    const bool ssrOff   = !m_ssrEnabled || !m_showFlags.Get(ShowFlag::SSR);
+    const RTReflectionRoute route = SelectRTReflectionRoute(ssrChain, ssrOff, /*raysAvailable=*/true);
+    const bool standalone = route == RTReflectionRoute::RaysOnly;
+    // Rough reflections stage 1: one glossy sample per texel is too noisy for the TAA, whose HDR
+    // weights pull a noisy signal's mean down (-60 % of the floor's specular on Sponza), and the SSR
+    // temporal + spatial denoise loses energy on it too, so rough mode on the rays-only route takes
+    // the unified reconstruction. On the SSR chain the denoise CVar stays in charge.
+    const bool denoise = cv_RTReflectionsDenoise->value || (rough && standalone);
+    if (route == RTReflectionRoute::ScreenTraceAndRays ? (denoise != beforeDenoise)
+                                                       : (!standalone || beforeDenoise)) return;
     // No screen trace this frame — SSR off, or its trace pass skipped (r.SSR.Trace 0): every
     // eligible texel is traced and the pass writes every texel (kRTReflectionFlagNoScreenTrace).
     const bool ownsOutput = standalone || cv_SSRTrace->value < 0.5f;
+    const bool unified = standalone && denoise && (cv_UnifiedDenoiser->value || rough) && ctx.bindless
+        && m_realtimeDenoiser.Prepare(m_device, m_shaderMgr.get(), m_renderWidth, m_renderHeight);
+    if (unified) {
+        ctx.unifiedReflectionRes = rgBuilder.ImportTrackedTexture("RT_ReflectionSignal", m_ssrResolvedOutput);
+    }
     // Hit attributes: the per-mesh geometry + material table by TLAS InstanceID the path tracer
     // shades its bounce vertices with (refreshed here, as the path tracer does, only while the
     // pass is on), the global distance field for meshes without an entry.
     const uint32_t materialTableSrv = UpdateGIMaterialTable(ctx);
 
-    rgBuilder.AddPass("RT_Reflections", [&, materialTableSrv, ownsOutput](rg::RgPassBuilder& pb) {
+    rgBuilder.AddPass("RT_Reflections", [&, materialTableSrv, ownsOutput, unified, denoise, rough](rg::RgPassBuilder& pb) {
         // The GBuffer reads order this pass after the GBuffer and, in registration order, after
         // SSR_SpatialDenoise (the last writer of the resolved buffer) and before the lighting.
         // The TLAS (built in RTManager::BeginFrame, before the graph executes) and the SSR
@@ -897,8 +1169,9 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
         pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);
         pb.Read(ctx.normalRes, RHIResourceState::ShaderResource);
         pb.Read(ctx.velocityRes, RHIResourceState::ShaderResource);
+        if (unified) pb.Write(ctx.unifiedReflectionRes, RHIResourceState::UnorderedAccess);
 
-        pb.SetExecutionCallback([this, &ctx, materialTableSrv, ownsOutput](IRHICommandList* cmd, const rg::RgPassResources&) {
+        pb.SetExecutionCallback([this, &ctx, materialTableSrv, ownsOutput, unified, denoise, rough](IRHICommandList* cmd, const rg::RgPassResources&) {
             UZ_PROFILE_SCOPE("RTReflections::Trace");
 
             auto rtReflectionPSO = ctx.pipelines->GetRtReflection();
@@ -923,12 +1196,12 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
             if (!traceAlloc.cpuPtr) return;
             std::memcpy(traceAlloc.cpuPtr, &traceConstants, sizeof(traceConstants));
 
-            const bool denoiseRoute = cv_RTReflectionsDenoise->value;
+            const bool denoiseRoute = denoise;
             {
                 // The screen trace is read only with the chain (unread, sentinel index, when the
                 // pass owns the buffer).
                 if (!ownsOutput) m_rgStates->Transition(cmd, m_ssrTraceOutput, RHIResourceState::ShaderResource);
-                m_rgStates->Transition(cmd, m_ssrResolvedOutput, RHIResourceState::UnorderedAccess);
+                if (!unified) m_rgStates->Transition(cmd, m_ssrResolvedOutput, RHIResourceState::UnorderedAccess);
                 // The hit distance feeds the temporal pass's virtual-hit reprojection on the
                 // denoise route; the trace pass left it in ShaderResource.
                 if (denoiseRoute) m_rgStates->Transition(cmd, m_ssrHitDistance, RHIResourceState::UnorderedAccess);
@@ -939,8 +1212,10 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
             const float ssrMaxRoughness = std::max(0.05f, cv_SSRMaxRoughness->value);
             // Stage 2: the ray-traced cutoff may exceed the screen trace's; unset = the SSR cutoff,
             // which keeps the stage 1 range and blend weights.
-            const float rtMaxRoughness  = RTReflectionMaxRoughness(cv_RTReflectionsMaxRoughness->value,
-                                                                   ssrMaxRoughness);
+            // Rough reflections stage 1: every roughness is eligible.
+            const float rtMaxRoughness  = rough ? 1.0f
+                                                : RTReflectionMaxRoughness(cv_RTReflectionsMaxRoughness->value,
+                                                                           ssrMaxRoughness);
 
             RTReflectionRootConstants rc{};
             rc.depthSrvIdx        = m_gbuffer.depthSRV;
@@ -964,7 +1239,16 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
             rc.flags              = (cv_RTReflectionsGlossy->value ? kRTReflectionFlagGlossy : 0u)
                                   | (indirect ? kRTReflectionFlagIndirect : 0u)
                                   | (denoiseRoute ? kRTReflectionFlagHitDistance : 0u)
-                                  | (ownsOutput ? kRTReflectionFlagNoScreenTrace : 0u);
+                                  | (ownsOutput ? kRTReflectionFlagNoScreenTrace : 0u)
+                                  | (rough ? kRTReflectionFlagRough : 0u);
+            // Phase D stage 1: the surface radiance cache, bound only when its resolve ran this
+            // frame (r.GI.SurfaceCache on, table created); its buffers stay in the UAV / SRV states
+            // the resolve left them in, ordered by the barriers PrepareConsumer emits.
+            rc.surfaceCacheParamsSrv = m_surfaceCache.GetParamsSrv(ctx.frameIndex);
+            if (rc.surfaceCacheParamsSrv != UINT32_MAX) {
+                m_surfaceCache.PrepareConsumer(cmd);
+                rc.flags |= kRTReflectionFlagSurfaceCache;
+            }
 
             cmd->SetRootConstants(kSlotRootConstants, reinterpret_cast<const uint32_t*>(&rc),
                                   kRTReflectionRootDwords);
@@ -980,8 +1264,13 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
 
             // Back to SRV for the lighting (or, on the denoise route, the temporal pass) to read
             {
-                m_rgStates->Transition(cmd, m_ssrResolvedOutput, RHIResourceState::ShaderResource);
+                if (!unified) m_rgStates->Transition(cmd, m_ssrResolvedOutput, RHIResourceState::ShaderResource);
                 if (denoiseRoute) m_rgStates->Transition(cmd, m_ssrHitDistance, RHIResourceState::ShaderResource);
+            }
+            // Phase D stage 3: the deferred lighting's SDF reflections read the cells this pass
+            // wrote (through the LightingCB); the barriers order those writes before its draw.
+            if (rc.surfaceCacheParamsSrv != UINT32_MAX && SurfaceRadianceCache::SdfConsumersBound()) {
+                m_surfaceCache.PrepareConsumer(cmd);
             }
         });
     });
@@ -989,7 +1278,20 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
     // Stage 3 denoise route without the SSR chain: the temporal accumulation + spatial denoise over
     // the ray texels (and their hit distances) the pass just wrote, then the lighting reads the
     // denoised buffer.
-    if (standalone && denoise) RegisterSSRDenoisePasses(rgBuilder, ctx);
+    if (unified) {
+        // Geometry motion is validated per tap; global illumination/producer edits start a new epoch.
+        auto epoch = [&ctx]() {
+            const auto* frame = static_cast<const PerFrameCB*>(ctx.perFrameAlloc.cpuPtr);
+            uint64_t hash = frame ? SurfaceCacheLightingHash(ctx, *frame) : 0ull;
+            const float modes[] = {float(cv_RTReflectionsGlossy->value), float(cv_RTReflectionsIndirect->value),
+                                   cv_RTReflectionsMaxRoughness->value, cv_SSRIntensity->value,
+                                   cv_RTReflectionsMaxDistance->value, float(cv_RTReflectionsRough->value)};
+            return SurfaceCacheHashBytes(modes, sizeof(modes), hash);
+        };
+        m_realtimeDenoiser.Register(rgBuilder, ctx, m_cbRing.get(), ctx.unifiedReflectionRes,
+            m_ssrResolvedOutputSrv, m_ssrResolvedOutputUav, m_gbuffer.depthSRV, m_gbuffer.normalSRV,
+            m_gbuffer.velocitySRV, epoch, RealtimeDenoiser::Policy{});
+    } else if (standalone && denoise) RegisterSSRDenoisePasses(rgBuilder, ctx);
 }
 
 // ── SSGI Previous Frame Color Copy ─────────────────────────────────────────

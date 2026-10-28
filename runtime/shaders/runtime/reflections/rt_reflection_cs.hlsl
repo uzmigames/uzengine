@@ -45,7 +45,27 @@
 /// did not run. The lighting reads the buffer through the same `PerFrameCB::ssrSrvIndex`, so with
 /// SSR off the ladder is ray -> probe / sky. With the flag clear nothing here changes.
 ///
-/// Bindings: root constants at b0 (`uz::RTReflectionRootConstants`, 16 DWORDs), PerFrameCB at b1,
+/// Phase D stage 1 (`kReflectionFlagSurfaceCache`, `r.GI.SurfaceCache`): the surface radiance cache
+/// (gi/surface_cache.hlsli) at the hit. A readable cell replaces the WHOLE hit radiance — its
+/// `sun` + `other` layers (`DirectMode 0`), or the inline sun with the shadow ray plus the cell's
+/// `other` layer (`DirectMode 1`) — so the texel carries the cell's cell-and-time average of the
+/// very estimator below; a miss shades inline exactly as before and feeds the two terms
+/// (`albedo * sunRad / pi`, `albedo * E / pi`) into the cell. With the flag clear nothing changes.
+///
+/// Phase D stage 2 (lighting completeness at the hit, same flag): a shaded hit also adds the K
+/// strongest point / spot / rect lights of the frame, each with a shadow ray, to the `sun` layer
+/// (gi/surface_cache_lights.hlsli; `r.GI.SurfaceCache.LocalLights`) and the mesh's emission from the
+/// material table to the `other` layer (`GITrace_HitEmissive`; `r.GI.SurfaceCache.Emissive`), so a
+/// cell holds the lamp and the emitter the reference path tracer sees and stage 1 left black.
+///
+/// Rough reflections stage 1 (`kReflectionFlagRough`, `r.RayTracing.Reflections.Rough`): every
+/// roughness is eligible (cutoff 1), the glossy lobe is sampled once per texel, the texel carries the
+/// full blend weight instead of the screen trace's roughness fade, and its radiance is scaled by
+/// `ReflectionRoughSampleWeight` (the sample's F G2/G1 over the split-sum the lighting applies), so
+/// the lighting evaluates the path tracer's estimator; a sample below the horizon weighs zero. With
+/// the flag clear nothing changes.
+///
+/// Bindings: root constants at b0 (`uz::RTReflectionRootConstants`, 17 DWORDs), PerFrameCB at b1,
 /// the shared trace constants at b2 (`uz::RadianceCacheTraceConstants`, rows 1-11 as the DDGI
 /// writer and the path tracer bind them; rows 1-2 carry the probe grid + frame index here).
 /// Dispatch ceil(w/8) x ceil(h/8).
@@ -83,6 +103,7 @@ cbuffer RTReflectionRootCB : register(b0) {
     uint  probeShSrv;          // 13 Radiance-cache probe SH buffer (sentinel = no indirect term)
     uint  hitDistUavIdx;       // 14 SSR hit-distance texture (written with kReflectionFlagHitDistance)
     uint  flags;               // 15 kReflectionFlag* bits
+    uint  surfaceCacheParamsSrv; // 16 Phase D: StructuredBuffer<SurfaceCacheParams> (1 element); sentinel = no cache
 };
 
 // ─── PerFrameCB at b1 (the prefix the SSR passes declare; invViewProj + cameraPos are read) ──
@@ -110,6 +131,8 @@ float3 ReconstructWorldPos(float2 uv, float deviceZ) {
 // The helpers below read its grid rows (gridOrigin*, probeSpacing, probesPerAxis, frameIndex). ──
 
 #include "../gi/gi_trace_common.hlsli"
+#include "../gi/surface_cache.hlsli"      // Phase D: SurfaceCacheQuery / SurfaceCacheUpdate at the hit
+#include "../gi/surface_cache_lights.hlsli" // Phase D stage 2: the frame's local lights at the hit
 
 // ─── Glossy sample seeds: the screen trace's interleaved gradient noise with its temporal
 // rotation (ssr_trace_cs.hlsl), so the ray texels carry the noise pattern the SSR temporal and
@@ -214,6 +237,11 @@ void main(uint3 DTid : SV_DispatchThreadID)
     const float3 N        = OctDecode(normalData.rg);
     const float3 incident = normalize(worldPos - cameraPos.xyz);
     float3 R = ReflectionDirection(incident, N);
+    // Rough mode: the sample's VNDF throughput over the lighting's split-sum (1 = the stage 1-3
+    // unweighted texel); a sample below the horizon is drawn once and weighs zero, as the path
+    // tracer drops it, instead of being redrawn (a redraw biases toward the bright upper lobe).
+    const bool rough = ReflectionRoughMode(flags);
+    float sampleWeight = 1.0;
     if (ReflectionUsesGlossyLobe(flags, roughness)) {
         // A visible microfacet normal from the view direction (tangent space, Z along N), the ray
         // reflected about it — path_tracer_ps.hlsl's specular lobe on the same sampler and alpha.
@@ -222,12 +250,29 @@ void main(uint3 DTid : SV_DispatchThreadID)
         float3 T, B;
         BuildOrthonormalBasis(N, T, B);
         const float3 Vt = float3(dot(V, T), dot(V, B), dot(V, N));
-        [loop]
-        for (uint attempt = 0u; attempt < kReflectionGlossyAttempts; ++attempt) {
-            const float3 Ht = SampleGGX_VNDF(alpha, Vt, ReflectionSample2D(DTid.xy, frameIndex, attempt));
+        if (rough) {
+            const float3 Ht = SampleGGX_VNDF(alpha, Vt, ReflectionSample2D(DTid.xy, frameIndex, 0u));
             const float3 H  = normalize(T * Ht.x + B * Ht.y + N * Ht.z);
-            const float3 L  = ReflectionDirection(incident, H);
-            if (dot(L, N) > 0.0) { R = L; break; }
+            R = ReflectionDirection(incident, H);
+            const float  NdotV = dot(N, V);
+            const float2 envBRDF = EnvironmentBRDFApprox(roughness, max(NdotV, 1e-4));
+            sampleWeight = ReflectionRoughSampleWeight(alpha, NdotV, dot(N, R), dot(V, H),
+                                                       ReflectionRoughF0(normalData.b), envBRDF.x, envBRDF.y);
+            if (dot(R, N) <= 0.0 && NdotV > 0.0) {
+                // Zero throughput: the texel owns the layer and contributes nothing this frame.
+                RWTexture2D<float4> zeroOutput = ResourceDescriptorHeap[outputUavIdx];
+                zeroOutput[DTid.xy] = float4(0.0, 0.0, 0.0, ReflectionBlendWeight(flags, roughness, roughnessMaskScale, intensity));
+                WriteHitDistance(DTid.xy, 0.0);
+                return;
+            }
+        } else {
+            [loop]
+            for (uint attempt = 0u; attempt < kReflectionGlossyAttempts; ++attempt) {
+                const float3 Ht = SampleGGX_VNDF(alpha, Vt, ReflectionSample2D(DTid.xy, frameIndex, attempt));
+                const float3 H  = normalize(T * Ht.x + B * Ht.y + N * Ht.z);
+                const float3 L  = ReflectionDirection(incident, H);
+                if (dot(L, N) > 0.0) { R = L; break; }
+            }
         }
     }
     // A shading normal facing away from the camera reflects the ray into the surface; skip it
@@ -251,13 +296,15 @@ void main(uint3 DTid : SV_DispatchThreadID)
 
     // Same blend weight the screen trace would have carried for this surface (its roughness fade
     // times r.SSR.Intensity), so SSR and ray texels are weighted alike by the lighting.
-    const float weight = saturate(roughness * roughnessMaskScale + 2.0) * intensity;
+    const float weight = ReflectionBlendWeight(flags, roughness, roughnessMaskScale, intensity);
     RWTexture2D<float4> output = ResourceDescriptorHeap[outputUavIdx];
 
     if (q.CommittedStatus() != COMMITTED_TRIANGLE_HIT) {
         // Escaped the scene: the sky the reference path tracer and the probe writers return for
         // a miss (the atmosphere capture / HDRI scaled by the skylight colour x intensity).
-        output[DTid.xy] = float4(GITrace_SkyRadiance(R, skyCubemapSrv), weight);
+        float3 skyRadiance = GITrace_SkyRadiance(R, skyCubemapSrv);
+        if (rough) skyRadiance *= sampleWeight;
+        output[DTid.xy] = float4(skyRadiance, weight);
         WriteHitDistance(DTid.xy, 0.0);   // the SSR convention: 0 = no hit, surface reprojection
         return;
     }
@@ -299,11 +346,33 @@ void main(uint3 DTid : SV_DispatchThreadID)
         return;
     }
 
+    // ── Phase D stage 1: the surface radiance cache at the hit ────────────────────────
+    // The cell of the biased hit point (the point the probe term is read at) and the hit normal,
+    // at the level of the CAMERA distance (D3). A readable cell replaces the whole hit radiance
+    // (section 2.5's energy rule); a miss shades inline below and feeds the cell.
+    const bool   cacheBound = (flags & kReflectionFlagSurfaceCache) != 0u
+                           && surfaceCacheParamsSrv != kGITraceSentinelSrv;
+    const float3 cachePos   = hitP + hitN * kReflectionSurfaceBias;
+    SurfaceCacheParams cache = (SurfaceCacheParams)0;
+    float3 cacheSun = 0.0, cacheOther = 0.0;
+    uint   cacheSamples = 0u;
+    bool   cacheHit = false;
+    if (cacheBound) {
+        StructuredBuffer<SurfaceCacheParams> cacheParams = ResourceDescriptorHeap[surfaceCacheParamsSrv];
+        cache    = cacheParams[0];
+        cacheHit = SurfaceCacheQuery(cache, cachePos, hitN, cameraPos.xyz, 0u, cacheSun, cacheOther, cacheSamples);
+    }
+    // One hit in Refresh rays shades inline as a miss does and feeds the cell (the output stays the
+    // cell's), so readable cells keep converging; DirectMode 1 keeps the inline sun (sharp shadows)
+    // and takes only `other` from the cell.
+    const bool cacheRefresh = cacheHit && SurfaceCacheRefresh(DTid.x | (DTid.y << 16), frameIndex, cache.refreshRate);
+    const bool inlineSun = !cacheHit || cacheRefresh || (cache.flags & kSurfaceCacheFlagDirectInline) != 0u;
+
     // ── Direct sun with a shadow ray (the DDGI writer's / path tracer's NEE) ─────────────
     const float3 L   = normalize(float3(lightDirX, lightDirY, lightDirZ));
     const float  NdL = max(dot(hitN, L), 0.0);
     float visibility = 0.0;
-    if (NdL > 0.0) {
+    if (inlineSun && NdL > 0.0) {
         RayDesc shadowRay;
         shadowRay.Origin    = hitP + hitN * kReflectionSurfaceBias;
         shadowRay.Direction = L;
@@ -317,14 +386,53 @@ void main(uint3 DTid : SV_DispatchThreadID)
     }
     const float3 sunRad = float3(lightColorR, lightColorG, lightColorB) * lightIntensity * NdL * visibility;
     float3 radiance = albedo * (sunRad / PI);          // Lambert: the radiance the mirror sees
-    if ((flags & kReflectionFlagIndirect) != 0u) {
+    float3 sunTerm = radiance;                         // the cell's `sun` layer (direct lighting)
+    float3 otherTerm = 0.0;                            // the cell's `other` layer (the probe bounce)
+    // Phase D stage 2: the frame's local lights join the direct layer wherever the sun is shaded
+    // inline (a miss, a refresh, DirectMode 1), each of the K strongest with a shadow ray; the
+    // rect light's area sample rotates with the glossy sequence (one draw per hit and frame).
+    float3 localTerm = 0.0;
+    if (cacheBound && inlineSun) {
+        localTerm = SurfaceCacheLocalLightRadiance(cache, cachePos, hitN, albedo, tlas, kReflectionRayTMin,
+                                                   kReflectionSurfaceBias,
+                                                   ReflectionSample2D(DTid.xy, frameIndex, kReflectionGlossyAttempts));
+        sunTerm += localTerm;
+    }
+    if ((!cacheHit || cacheRefresh) && (flags & kReflectionFlagIndirect) != 0u) {
         // The diffuse bounce the reflected surface receives (the radiance cache's E / pi at the
         // hit, read from the biased hit point as the SDF reflections do): the term the path
         // tracer's multi-bounce carries and stage 1 left out.
-        radiance = ReflectionHitRadiance(albedo, sunRad,
-            ReflectionProbeIrradianceOverPi(hitP + hitN * kReflectionSurfaceBias, hitN));
+        const float3 probeIrradianceOverPi = ReflectionProbeIrradianceOverPi(cachePos, hitN);
+        radiance  = ReflectionHitRadiance(albedo, sunRad, probeIrradianceOverPi);
+        otherTerm = albedo * probeIrradianceOverPi;
+    }
+    if (cacheBound && (!cacheHit || cacheRefresh)) {
+        // Stage 2: the mesh's emission (the table's emissive colour x intensity and texture) is
+        // part of what leaves the hit; it lives in the `other` layer beside the bounce.
+        float3 emissiveTerm = 0.0;
+        if ((cache.flags & kSurfaceCacheFlagEmissive) != 0u) {
+            emissiveTerm = GITrace_HitEmissive(meshId, q.CommittedPrimitiveIndex(), q.CommittedTriangleBarycentrics(),
+                                               materialTableSrv);
+            otherTerm += emissiveTerm;
+        }
+        // The inline radiance gains the stage 2 terms and nothing else (added to the stage 1 value,
+        // so `.LocalLights 0` + `.Emissive 0` reproduces the stage 1 texel bit for bit). Stage 4:
+        // the hit is also recorded in the cell's surface record (the relight / cell-indirect
+        // passes' point; nothing more than the update while the record is unbound).
+        radiance += localTerm + emissiveTerm;
+        SurfaceCacheUpdateSurface(cache, cachePos, hitN, cameraPos.xyz, 0u, sunTerm, otherTerm,
+                                  kSurfaceCacheWriterReflections, albedo, emissiveTerm);
+    }
+    if (cacheHit) {
+        // The cell replaces the hit radiance: both layers, or the inline sun with the cell's other.
+        const bool cellSun = (cache.flags & kSurfaceCacheFlagDirectInline) == 0u;
+        radiance = (cellSun ? cacheSun : sunTerm) + cacheOther;
+    }
+    if (cacheBound && SurfaceCacheDebugMode(cache) != 0u) {
+        radiance = SurfaceCacheDebugColor(cache, cachePos, hitN, cameraPos.xyz, 0u, cacheHit, cacheSamples);
     }
 
+    if (rough && !(cacheBound && SurfaceCacheDebugMode(cache) != 0u)) radiance *= sampleWeight;
     output[DTid.xy] = float4(radiance, weight);
     WriteHitDistance(DTid.xy, q.CommittedRayT());
 }

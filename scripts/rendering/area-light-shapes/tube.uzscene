@@ -1,0 +1,31 @@
+{
+  "name": "Capsule diffuse pool: center segment 120 cm, diameter 30 cm, height 200 cm, radiance 6",
+  "version": "1.0",
+  "entities": [
+    {"name": "Camera", "components": {
+      "transform": {"position": [0, -60, 150]},
+      "camera": {"fov": 70, "near": 1, "far": 5000, "active": true, "look_at": [0, 0, 0]}
+    }},
+    {"name": "Black environment", "components": {
+      "sky_light": {"intensity": 0, "light_color": [0, 0, 0]}
+    }},
+    {"name": "Analytic emitter", "components": {
+      "transform": {"position": [0, 0, 200], "rotation": [90, 0, 0]},
+      "light": {"type": "tube", "color": [1, 1, 1], "intensity": 6, "width": 120, "height": 30,
+                "range": 5000, "specularScale": 0, "diffuseScale": 1}
+    }},
+    {"name": "PT emitter", "components": {
+      "transform": {"position": [0, 0, 0]},
+      "mesh": {"asset": "meshes/tube.uzmesh"},
+      "material": {"baseColorR": 0, "baseColorG": 0, "baseColorB": 0,
+                   "roughnessMultiplier": 1, "metallicMultiplier": 0,
+                   "emissiveColorR": 1, "emissiveColorG": 1, "emissiveColorB": 1, "emissiveIntensity": 6}
+    }},
+    {"name": "Diffuse floor", "components": {
+      "transform": {"position": [0, 0, -20], "scale": [700, 700, 10]},
+      "mesh": {"asset": "sample/content/meshes/cube.uzmesh"},
+      "material": {"baseColorR": 0.6, "baseColorG": 0.6, "baseColorB": 0.6,
+                   "roughnessMultiplier": 1, "metallicMultiplier": 0}
+    }}
+  ]
+}

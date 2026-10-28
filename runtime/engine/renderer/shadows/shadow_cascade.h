@@ -89,6 +89,12 @@ struct ShadowCascade {
     /// coverage area, so bias is consistent across all cascades.
     float texelSize = 0.0f;
 
+    /// World-space depth range of the orthographic projection (orthoFar - orthoNear): a normalised
+    /// shadow-map depth difference of dz spans dz * depthRange world units along the light direction.
+    /// The PCSS penumbra estimate converts receiver/blocker depth gaps to world units with it
+    /// (shadow_pcss.h).
+    float depthRange = 0.0f;
+
     /// Per-cascade depth bias, computed from global bias scaled by
     /// cascade bias distribution and world texel size.
     /// Source: ShadowSetup.cpp:1844-1846.

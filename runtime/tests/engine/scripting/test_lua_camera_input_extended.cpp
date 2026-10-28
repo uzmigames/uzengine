@@ -556,13 +556,13 @@ TEST_F(LuaCameraExtendedTest, GetProjectionMatrix_AllElementsAreNumbers) {
         << "Every element returned by get_projection_matrix must be a number";
 }
 
-TEST_F(LuaCameraExtendedTest, GetProjectionMatrix_BottomRightIs1_ForPerspective) {
+TEST_F(LuaCameraExtendedTest, GetProjectionMatrix_BottomRightIs0_ForPerspective) {
     // For UzEngine Mat4::Perspective (row-major XMFLOAT4X4 layout):
-    //   Mat4{} initializes from identity, so _44 = 1.0 (not 0).
+    //   Mat4::Perspective clears _44 to 0 so clip w = view z (reversed-Z), see mat4.cpp.
     //   Elements are stored as: _11 _12 _13 _14 _21 _22 _23 _24 _31 _32 _33 _34 _41 _42 _43 _44
     //   Lua 1-based indices:      1   2   3   4   5   6   7   8   9  10  11  12  13  14  15  16
     //   m34 (_34) = 1  → 0-based index 11 → Lua _pm[12]
-    //   m44 (_44) = 1  → 0-based index 15 → Lua _pm[16] (from identity init)
+    //   m44 (_44) = 0  → 0-based index 15 → Lua _pm[16] (cleared by Perspective)
     CreateActiveCamera();
 
     EXPECT_TRUE(DoString(
@@ -572,9 +572,9 @@ TEST_F(LuaCameraExtendedTest, GetProjectionMatrix_BottomRightIs1_ForPerspective)
         "end\n"
     ));
 
-    // m44 (_44, Lua index 16) is 1 because Mat4{} initializes from identity
-    EXPECT_NEAR(EvalNumber("_pm[16]"), 1.0, 1e-4)
-        << "Perspective projection m44 is 1 (identity-initialized Mat4)";
+    // m44 (_44, Lua index 16) is 0: Mat4::Perspective clears it so clip w = view z
+    EXPECT_NEAR(EvalNumber("_pm[16]"), 0.0, 1e-4)
+        << "Perspective projection m44 is 0 (cleared so clip w = view z)";
     // m34 (_34, Lua index 12) must be 1 for perspective projection (w-from-z factor)
     EXPECT_NEAR(EvalNumber("_pm[12]"), 1.0, 1e-4)
         << "Perspective projection m34 must be 1";

@@ -228,6 +228,34 @@ RHIPipelineHandle PipelineLibrary::GetSsgiTrace() {
 // SSGI Spatial Denoise Compute Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 
+RHIPipelineHandle PipelineLibrary::GetSsgiDxrTrace() {
+    if (!m_initialized || !m_device->SupportsRayTracing()) return RHIPipelineHandle::Invalid();
+    if (m_ssgiDxrTrace.IsValid()) return m_ssgiDxrTrace;
+    if (!m_ssgiDxrTraceCS.IsValid())
+        m_ssgiDxrTraceCS = m_shaderMgr->CreateShaderWithDefines(
+            EngineShader::SsgiTraceCS, RHIShaderStage::Compute, "UZ_GATHER_DXR=1");
+    if (!m_ssgiDxrTraceCS.IsValid()) return RHIPipelineHandle::Invalid();
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_ssgiDxrTraceCS;
+    desc.debugName = "SSGI_DXRTrace";
+    m_ssgiDxrTrace = m_device->CreateComputePipeline(desc);
+    return m_ssgiDxrTrace;
+}
+
+RHIPipelineHandle PipelineLibrary::GetSsgiDxrUpsample() {
+    if (!m_initialized || !m_device->SupportsRayTracing()) return RHIPipelineHandle::Invalid();
+    if (m_ssgiDxrUpsample.IsValid()) return m_ssgiDxrUpsample;
+    if (!m_ssgiDxrUpsampleCS.IsValid())
+        m_ssgiDxrUpsampleCS = m_shaderMgr->CreateShaderWithDefines(
+            EngineShader::SsgiUpsampleCS, RHIShaderStage::Compute, "UZ_GATHER_DXR=1");
+    if (!m_ssgiDxrUpsampleCS.IsValid()) return RHIPipelineHandle::Invalid();
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_ssgiDxrUpsampleCS;
+    desc.debugName = "SSGI_DXRUpsample";
+    m_ssgiDxrUpsample = m_device->CreateComputePipeline(desc);
+    return m_ssgiDxrUpsample;
+}
+
 bool PipelineLibrary::EnsureSsgiSpatialDenoiseShader() {
     if (m_ssgiSpatialDenoiseCS.IsValid()) return true;
 
@@ -369,6 +397,64 @@ RHIPipelineHandle PipelineLibrary::GetSsgiBilateralUpsample() {
         UZ_LOG(Renderer, Info, "PipelineLibrary: created SSGI_BilateralUpsample pipeline");
     }
     return m_ssgiBilateralUpsample;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Screen-space ReSTIR GI Compute Pipelines (phase C, r.GI.ReSTIR)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Shader + pipeline of one ReSTIR GI pass, the SSGI pattern above with the two handles passed in.
+static RHIPipelineHandle CreateSsgiRestirPipeline(IRHIDevice* device, ShaderManager* shaderMgr, bool initialized,
+                                                  EngineShader shader, const char* shaderName, const char* pipelineName,
+                                                  RHIShaderHandle& shaderHandle, RHIPipelineHandle& pipeline) {
+    if (!initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetSsgiRestir* called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+    if (pipeline.IsValid()) return pipeline;
+    if (!shaderHandle.IsValid()) {
+        auto bytecode = shaderMgr->GetBytecode(shader);
+        if (bytecode.empty()) {
+            UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile {}", shaderName);
+            return RHIPipelineHandle::Invalid();
+        }
+        RHIShaderDesc shaderDesc{};
+        shaderDesc.bytecode     = bytecode.data();
+        shaderDesc.bytecodeSize = bytecode.size();
+        shaderDesc.stage        = RHIShaderStage::Compute;
+        shaderDesc.entryPoint   = "main";
+        shaderDesc.debugName    = shaderName;
+        shaderHandle = device->CreateShader(shaderDesc);
+        if (!shaderHandle.IsValid()) {
+            UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create {} shader", shaderName);
+            return RHIPipelineHandle::Invalid();
+        }
+    }
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = shaderHandle;
+    desc.debugName     = pipelineName;
+    pipeline = device->CreateComputePipeline(desc);
+    if (!pipeline.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create {} pipeline", pipelineName);
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created {} pipeline", pipelineName);
+    }
+    return pipeline;
+}
+
+RHIPipelineHandle PipelineLibrary::GetSsgiRestirInitial() {
+    return CreateSsgiRestirPipeline(m_device, m_shaderMgr, m_initialized, EngineShader::SsgiRestirInitialCS,
+                                    "ssgi_restir_initial_cs", "SSGI_RestirInitial", m_ssgiRestirInitialCS, m_ssgiRestirInitial);
+}
+
+RHIPipelineHandle PipelineLibrary::GetSsgiRestirTemporal() {
+    return CreateSsgiRestirPipeline(m_device, m_shaderMgr, m_initialized, EngineShader::SsgiRestirTemporalCS,
+                                    "ssgi_restir_temporal_cs", "SSGI_RestirTemporal", m_ssgiRestirTemporalCS, m_ssgiRestirTemporal);
+}
+
+RHIPipelineHandle PipelineLibrary::GetSsgiRestirSpatial() {
+    return CreateSsgiRestirPipeline(m_device, m_shaderMgr, m_initialized, EngineShader::SsgiRestirSpatialCS,
+                                    "ssgi_restir_spatial_cs", "SSGI_RestirSpatial", m_ssgiRestirSpatialCS, m_ssgiRestirSpatial);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -798,6 +884,190 @@ RHIPipelineHandle PipelineLibrary::GetRtReflection() {
         UZ_LOG(Renderer, Info, "PipelineLibrary: created RT_Reflections pipeline");
     }
     return m_rtReflection;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Surface Radiance Cache Resolve Compute Pipeline (Phase D stage 1, opt-in)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// `surface_cache_resolve_cs.hlsl`: one thread per hash entry, folds the frame's fixed-point
+// accumulators into the per-frame EMA of the resolved record, ages and evicts cells (stale, or
+// inside a distance-field change box), or clears the table. Created lazily by the resolve pass, so
+// with `r.GI.SurfaceCache` off the shader is never compiled.
+
+bool PipelineLibrary::EnsureSurfaceCacheResolveShader() {
+    if (m_surfaceCacheResolveCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::SurfaceCacheResolveCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile SurfaceCacheResolveCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "surface_cache_resolve_cs";
+
+    m_surfaceCacheResolveCS = m_device->CreateShader(shaderDesc);
+    if (!m_surfaceCacheResolveCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SurfaceCacheResolveCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetSurfaceCacheResolve() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetSurfaceCacheResolve called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_surfaceCacheResolve.IsValid()) {
+        return m_surfaceCacheResolve;
+    }
+
+    if (!EnsureSurfaceCacheResolveShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_surfaceCacheResolveCS;
+    desc.debugName     = "SurfaceCache_Resolve";
+
+    m_surfaceCacheResolve = m_device->CreateComputePipeline(desc);
+    if (!m_surfaceCacheResolve.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SurfaceCache_Resolve pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created SurfaceCache_Resolve pipeline");
+    }
+    return m_surfaceCacheResolve;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Surface Radiance Cache Feed Compute Pipeline (Phase D stage 3, opt-in)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// `surface_cache_feed_cs.hlsl`: one thread per radiance-cache probe ray, an inline RayQuery on the
+// scene TLAS whose hit is shaded with the exact material (the reflection pass's sources) and
+// accumulated into the SDF consumers' cells. Created lazily by the feed pass, so with
+// `r.GI.SurfaceCache` off (or `.FeedRays` 0) the shader is never compiled.
+
+bool PipelineLibrary::EnsureSurfaceCacheFeedShader() {
+    if (m_surfaceCacheFeedCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::SurfaceCacheFeedCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile SurfaceCacheFeedCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "surface_cache_feed_cs";
+
+    m_surfaceCacheFeedCS = m_device->CreateShader(shaderDesc);
+    if (!m_surfaceCacheFeedCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SurfaceCacheFeedCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetSurfaceCacheFeed() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetSurfaceCacheFeed called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_surfaceCacheFeed.IsValid()) {
+        return m_surfaceCacheFeed;
+    }
+
+    if (!EnsureSurfaceCacheFeedShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_surfaceCacheFeedCS;
+    desc.debugName     = "SurfaceCache_Feed";
+
+    m_surfaceCacheFeed = m_device->CreateComputePipeline(desc);
+    if (!m_surfaceCacheFeed.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SurfaceCache_Feed pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created SurfaceCache_Feed pipeline");
+    }
+    return m_surfaceCacheFeed;
+}
+
+bool PipelineLibrary::EnsureSurfaceCacheRelightShader() {
+    if (m_surfaceCacheRelightCS.IsValid()) return true;
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::SurfaceCacheRelightCS);
+    if (bytecode.empty()) return false;
+    RHIShaderDesc desc{};
+    desc.bytecode = bytecode.data();
+    desc.bytecodeSize = bytecode.size();
+    desc.stage = RHIShaderStage::Compute;
+    desc.entryPoint = "main";
+    desc.debugName = "surface_cache_relight_cs";
+    m_surfaceCacheRelightCS = m_device->CreateShader(desc);
+    return m_surfaceCacheRelightCS.IsValid();
+}
+
+RHIPipelineHandle PipelineLibrary::GetSurfaceCacheRelight() {
+    if (!m_initialized) return RHIPipelineHandle::Invalid();
+    if (m_surfaceCacheRelight.IsValid()) return m_surfaceCacheRelight;
+    if (!EnsureSurfaceCacheRelightShader()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SurfaceCacheRelightCS");
+        return RHIPipelineHandle::Invalid();
+    }
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_surfaceCacheRelightCS;
+    desc.debugName = "SurfaceCache_Relight";
+    m_surfaceCacheRelight = m_device->CreateComputePipeline(desc);
+    if (!m_surfaceCacheRelight.IsValid())
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SurfaceCache_Relight pipeline");
+    return m_surfaceCacheRelight;
+}
+
+bool PipelineLibrary::EnsureSurfaceCacheIndirectShader() {
+    if (m_surfaceCacheIndirectCS.IsValid()) return true;
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::SurfaceCacheIndirectCS);
+    if (bytecode.empty()) return false;
+    RHIShaderDesc desc{};
+    desc.bytecode = bytecode.data();
+    desc.bytecodeSize = bytecode.size();
+    desc.stage = RHIShaderStage::Compute;
+    desc.entryPoint = "main";
+    desc.debugName = "surface_cache_indirect_cs";
+    m_surfaceCacheIndirectCS = m_device->CreateShader(desc);
+    return m_surfaceCacheIndirectCS.IsValid();
+}
+
+RHIPipelineHandle PipelineLibrary::GetSurfaceCacheIndirect() {
+    if (!m_initialized) return RHIPipelineHandle::Invalid();
+    if (m_surfaceCacheIndirect.IsValid()) return m_surfaceCacheIndirect;
+    if (!EnsureSurfaceCacheIndirectShader()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SurfaceCacheIndirectCS");
+        return RHIPipelineHandle::Invalid();
+    }
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_surfaceCacheIndirectCS;
+    desc.debugName = "SurfaceCache_Indirect";
+    m_surfaceCacheIndirect = m_device->CreateComputePipeline(desc);
+    if (!m_surfaceCacheIndirect.IsValid())
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SurfaceCache_Indirect pipeline");
+    return m_surfaceCacheIndirect;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

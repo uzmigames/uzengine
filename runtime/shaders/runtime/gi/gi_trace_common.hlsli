@@ -71,26 +71,18 @@ cbuffer TraceConstants : register(b2) {
     float groundAlbedo;         ///< Albedo for a hit outside every GDF cascade.
 };
 
-/// Mirrors GIMeshMaterialGPU (path_tracer_pass.h, 48 bytes).
-struct GIMeshMaterial {
-    float3 tint;                ///< BaseColor tint factor (linear).
-    uint   albedoSrv;           ///< Albedo texture SRV (sentinel = tint only).
-    uint   vbSrv;               ///< Raw vertex buffer SRV.
-    uint   ibSrv;               ///< Raw index buffer SRV.
-    uint   vertexStride;        ///< Byte distance between vertices.
-    uint   uvOffset;            ///< Float2 UV byte offset.
-    uint   normalOffset;        ///< Normal byte offset.
-    uint   indexFormat;         ///< Index element size in bytes (2 or 4).
-    uint   normalFormat;        ///< 0 = float3, 1 = signed packed int8 xyz.
-    uint   padding;
-};
-
 // ─── GDF surface sampling ──────────────────────────────────────────────────
 
 /// Static bilinear-clamp sampler of the shared root signature (s2); also the
 /// sampler `gdf_surface.hlsli` expects under this name.
 SamplerState linearClamp : register(s2);
 /// Material sampling uses the raster path's anisotropic-wrap static sampler.
+
+/// The per-mesh material table (`GIMeshMaterial`, mirrors GIMeshMaterialGPU) and the exact
+/// hit attributes read from it (`GITrace_HitSurface`, `GITrace_HitUV`, `GITrace_HitEmissive`):
+/// split into their own header (Phase D stage 3) so the DDGI writer, which declares its own
+/// b2 block, shades its hits with the same material. The functions are unchanged.
+#include "gi_hit_material.hlsli"
 
 /// Central-difference offset of the GDF normal, in cm — the hit tolerance
 /// the DDGI writer uses (ddgi_probe_common.hlsli).
@@ -147,59 +139,6 @@ float3 GITrace_HitAlbedo(uint meshId, float3 hitPos, uint materialTableSrv) {
     const float4 surface = SampleGdfSurface(hitPos);
     return surface.x < 1e8 ? saturate(surface.gba)
                            : float3(groundAlbedo, groundAlbedo, groundAlbedo);
-}
-
-/// Recovers triangle UVs and an object-space interpolated vertex normal.
-/// The caller applies the committed instance's inverse-transpose transform.
-/// Missing geometry returns false so legacy meshes retain their GDF fallback.
-bool GITrace_HitSurface(uint meshId, uint primIndex, float2 bary,
-                       uint materialTableSrv, out float3 albedo, out float3 geomNormal) {
-    albedo = 0.0;
-    geomNormal = 0.0;
-    if (materialTableSrv == kGITraceSentinelSrv) return false;
-    StructuredBuffer<GIMeshMaterial> table = ResourceDescriptorHeap[materialTableSrv];
-    GIMeshMaterial mat = table[meshId];
-    if (mat.vbSrv == kGITraceSentinelSrv || mat.ibSrv == kGITraceSentinelSrv)
-        return false;
-
-    ByteAddressBuffer vertices = ResourceDescriptorHeap[NonUniformResourceIndex(mat.vbSrv)];
-    ByteAddressBuffer indices = ResourceDescriptorHeap[NonUniformResourceIndex(mat.ibSrv)];
-    float3 weights = float3(1.0 - bary.x - bary.y, bary.x, bary.y);
-    float2 uv = 0.0;
-    [unroll]
-    for (uint corner = 0; corner < 3; ++corner) {
-        uint indexAddress = (primIndex * 3u + corner) * mat.indexFormat;
-        uint vertexIndex = indices.Load(indexAddress & ~3u);
-        if (mat.indexFormat == 2u)
-            vertexIndex = (vertexIndex >> ((indexAddress & 2u) * 8u)) & 0xFFFFu;
-        uint vertexAddress = vertexIndex * mat.vertexStride;
-        uv += weights[corner] * asfloat(vertices.Load2(vertexAddress + mat.uvOffset));
-        float3 normal;
-        if (mat.normalFormat == 1u) {
-            uint packed = vertices.Load(vertexAddress + mat.normalOffset);
-            normal = float3(asint(packed << 24u) >> 24,
-                            asint(packed << 16u) >> 24,
-                            asint(packed << 8u) >> 24) / 127.0;
-        } else {
-            normal = asfloat(vertices.Load3(vertexAddress + mat.normalOffset));
-        }
-        geomNormal += weights[corner] * normal;
-    }
-
-    albedo = mat.tint;
-    if (mat.albedoSrv != kGITraceSentinelSrv) {
-        // Guard the UV: an unexpected vertex layout can make the raw-buffer read
-        // produce a non-finite UV. Sampling at NaN returns NaN, and with the
-        // firefly clamp off the concave helmet (whose bounce rays strike itself
-        // every frame) would accumulate that NaN into a permanently black pixel.
-        float2 safeUv = (isfinite(uv.x) && isfinite(uv.y)) ? uv : float2(0.0, 0.0);
-        Texture2D<float4> albedoTex = ResourceDescriptorHeap[NonUniformResourceIndex(mat.albedoSrv)];
-        albedo *= albedoTex.SampleLevel(linearClamp, safeUv, 0.0).rgb;
-    }
-    // Firewall: a bad read may darken this hit but must never NaN-poison the path.
-    if (!all(isfinite(albedo)))     albedo = max(mat.tint, 0.0);
-    if (!all(isfinite(geomNormal))) { geomNormal = 0.0; return false; }
-    return true;
 }
 
 #endif // GI_TRACE_COMMON_HLSLI

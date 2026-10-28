@@ -30,6 +30,7 @@ namespace uz {
 /// - `DirectionalLightComponent` — infinite directional light
 /// - `PointLightComponent`       — omnidirectional point light
 /// - `SpotLightComponent`        — cone-shaped spot light
+/// - `RectLightComponent`        — rectangular area light (LTC)
 class LightComponent : public PrimitiveComponent {
 public:
     /// Linear-space RGB color of the emitted light. Default: white (1, 1, 1).
@@ -393,6 +394,55 @@ protected:
     }
 
     /// Writes color, intensity, range, and cone angles into the newly created proxy.
+    ///
+    /// # Arguments
+    /// - `renderWorld`: The `RenderWorld` that owns the proxy.
+    /// - `handle`: Freshly created proxy handle. Guaranteed valid.
+    void OnProxyCreated(RenderWorld& renderWorld, RenderProxyHandle handle) override;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RectLightComponent
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Rectangular area light — a `width` x `height` emitting rectangle centred on the component's
+/// world position, shaded analytically with Linearly Transformed Cosines (phase3a 3.33.0 stage 1).
+///
+/// Orientation follows the spot-light convention: the rectangle emits along the component's
+/// forward axis (`rotation * Vec3::Forward()`); its width runs along `rotation * Vec3::Right()` and
+/// its height along `rotation * Vec3::Up()`. `color * intensity` is the emitted RADIANCE of the
+/// surface (an emissive quad with the same `emissiveIntensity` is the path-traced reference), so
+/// the inverse-square falloff comes out of the integral; `range` only windows the light to zero.
+/// Equivalent: UE5 RectLightComponent (SourceWidth / SourceHeight / AttenuationRadius).
+/// Stage 1 casts no shadows (area-light shadows are a later stage).
+/// @ref Heitz, Dupuy, Hill, Neubelt 2016 "Real-Time Polygonal-Light Shading with Linearly Transformed Cosines"
+class RectLightComponent : public LightComponent {
+public:
+    /// Area-light geometry. Disk uses width/height as diameters; tube uses width as the
+    /// centre-segment length and height as diameter (a capsule along the right axis).
+    enum class Shape : uint32_t { Rectangle, Disk, Tube };
+    Shape shape = Shape::Rectangle;
+
+    /// Full width / disk diameter / tube centre-segment length along the right axis (cm).
+    float width = 100.0f;
+
+    /// Full height / disk diameter along up, or tube diameter (cm). Default: 100.
+    float height = 100.0f;
+
+    /// Attenuation radius (cm) measured from the rectangle's centre: the light fades to zero there
+    /// with the point-light window. Default: 1000 cm (= 10 m).
+    float range = 1000.0f;
+
+    /// Emit from both faces. Default: false (one-sided, along the forward axis).
+    bool twoSided = false;
+
+protected:
+    /// Returns `RenderProxyType::RectLight`.
+    [[nodiscard]] RenderProxyType GetProxyType() const override {
+        return RenderProxyType::RectLight;
+    }
+
+    /// Writes color, intensity, range and the emission direction into the newly created proxy.
     ///
     /// # Arguments
     /// - `renderWorld`: The `RenderWorld` that owns the proxy.

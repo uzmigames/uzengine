@@ -3,6 +3,12 @@
 #define UZ_SSGI_WORLD_GATHER_HLSLI
 #include "ssgi_surface.hlsli"
 #include "../gi/sdf_diffuse_gather.hlsli"
+/// Phase D stage 3: the including shader names its surface-cache binding (a root DWORD holding the
+/// StructuredBuffer<SurfaceCacheParams> SRV) before this include; unnamed = no cache, the gather's
+/// hit shading is unchanged.
+#ifndef UZ_SSGI_SURFACE_CACHE_PARAMS_SRV
+#define UZ_SSGI_SURFACE_CACHE_PARAMS_SRV 0xffffffffu
+#endif
 /// @constants Four clipmaps and the shared sample count; intensity is applied once to E/pi.
 SdfReflectionScene BuildSurfaceScene() {
     SdfReflectionScene scene;
@@ -21,6 +27,7 @@ SdfReflectionScene BuildSurfaceScene() {
     scene.sunColor = lightColor.xyz;
     scene.skyMultiplier = float3(skyLightColorR,skyLightColorG,skyLightColorB) * skyLightIntensity;
     scene.plainMean = 0u; // diffuse gather does not use the reflection estimator's weight
+    scene.surfaceCacheParamsSrv = UZ_SSGI_SURFACE_CACHE_PARAMS_SRV;
     return scene;
 }
 

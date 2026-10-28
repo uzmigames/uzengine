@@ -1,0 +1,37 @@
+{
+  "name": "Surface cache stage 3: indoor Sponza (Camera A, static, sun only, fixed linear exposure) - the SDF consumers' cell reads vs the GDF+SH shading vs the path tracer",
+  "version": "1.0",
+  "content_root": "../../sample/content",
+  "default_scene": "../../scripts/rendering/surface-cache-sponza.uzscene",
+  "window": {
+    "title": "UzEngine - Sponza Atrium (surface cache stage 3)",
+    "width": 960,
+    "height": 540
+  },
+  "cvars": {
+    "r.AutoExposure": 0,
+    "r.Exposure": 1,
+    "r.ColorContrast": 1,
+    "r.ColorSaturation": 1,
+    "r.TonemapOperator": 0,
+    "r.Bloom": 0,
+    "r.TAA": 0,
+    "r.Fog": 0,
+    "r.VolumetricFog": 0,
+    "r.TechPanel.Show": 0,
+    "r.Toolbar.Show": 0,
+    "r.GTAO": 0,
+    "r.RadianceCache": 1,
+    "r.GI.Reflections": 1,
+    "r.GI.FinalGather": 1,
+    "r.GI.GDF.Resolution": 256,
+    "r.GI.MeshSdf.Resolution": 128,
+    "r.GI.MeshSdf.TwoSided": 1,
+    "r.GI.RadianceCache.GridExtent": 2000,
+    "r.GI.RadianceCache.ProbeClassification": 3,
+    "r.GI.RadianceCache.ReachRelocate": 1,
+    "r.GI.RadianceCache.ReachVisibleSeeds": 1,
+    "r.PathTracer.MaxBounces": 4,
+    "r.PathTracer.NEESamples": 1
+  }
+}

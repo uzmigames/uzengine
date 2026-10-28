@@ -1,0 +1,57 @@
+{
+  "name": "Surface cache stage 3: the stage-2 scene seen from the floor - the camera looks at the block and the floor around the lamp, so the DIFFUSE receivers (the block's shadowed front face, the floor beyond the lamp's pool) show the bounce of the rect light / emissive fixture that only the cache carries to the SDF gather (no sun, black sky; one mesh per entity).",
+  "version": "1.0",
+  "entities": [
+    {
+      "name": "Camera",
+      "components": {
+        "transform": {"position": [120, -160, 140]},
+        "camera": {"fov": 45, "near": 5, "far": 10000, "active": true, "look_at": [380, 340, -30]}
+      }
+    },
+    {
+      "name": "Black environment (no sun entity: the only light is the rect light / emissive fixture)",
+      "components": {"sky_light": {"intensity": 0, "light_color": [0, 0, 0]}}
+    },
+    {
+      "name": "Rect area light (raster only: the path tracer ignores it; specular 0 so the mirror shows the fixture through the ray pass only; rotation [90, 0, 0] = emitting down, width 120 along y, height 80 along x)",
+      "components": {
+        "transform": {"position": [380, 430, 160], "rotation": [90, 0, 0]},
+        "light": {"type": "rect", "color": [1, 1, 1], "intensity": 8, "width": 120, "height": 80, "range": 5000, "specularScale": 0}
+      }
+    },
+    {
+      "name": "Emissive fixture (path tracer light: the box [340,420] x [370,490] x [160,160.2], its bottom face the same 120 x 80 rect at z = 160, radiance 8, facing down)",
+      "components": {
+        "transform": {"position": [0, 0, 0]},
+        "mesh": {"asset": "sample/content/meshes/reference/surface-cache-locallight_fixture.uzmesh"},
+        "material": {"baseColorR": 0, "baseColorG": 0, "baseColorB": 0, "roughnessMultiplier": 1, "metallicMultiplier": 0,
+                     "emissiveColorR": 1, "emissiveColorG": 1, "emissiveColorB": 1, "emissiveIntensity": 8}
+      }
+    },
+    {
+      "name": "Mirror wall (x -600..600, y 595..605, z -100..500; faces the camera)",
+      "components": {
+        "transform": {"position": [0, 0, 0]},
+        "mesh": {"asset": "sample/content/meshes/reference/surface-cache-locallight_mirror.uzmesh"},
+        "material": {"baseColorR": 0.95, "baseColorG": 0.95, "baseColorB": 0.95, "metallicMultiplier": 1, "roughnessMultiplier": 0.02}
+      }
+    },
+    {
+      "name": "Floor (x -800..800, y -500..1100, top face at z = -100)",
+      "components": {
+        "transform": {"position": [0, 0, 0]},
+        "mesh": {"asset": "sample/content/meshes/reference/surface-cache-locallight_floor.uzmesh"},
+        "material": {"baseColorR": 0.5, "baseColorG": 0.5, "baseColorB": 0.5, "metallicMultiplier": 0, "roughnessMultiplier": 0.9}
+      }
+    },
+    {
+      "name": "Offscreen block (x 320..440, y 240..360, z -100..20: outside the 40-degree frustum, its +y face and top seen in the mirror, lit by the rect light from above and in front)",
+      "components": {
+        "transform": {"position": [0, 0, 0]},
+        "mesh": {"asset": "sample/content/meshes/reference/surface-cache-locallight_block.uzmesh"},
+        "material": {"baseColorR": 0.8, "baseColorG": 0.5, "baseColorB": 0.3, "metallicMultiplier": 0, "roughnessMultiplier": 0.8}
+      }
+    }
+  ]
+}

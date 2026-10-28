@@ -51,6 +51,24 @@
     RHITextureHandle m_fallbackBlack;  ///< 1x1 RGBA8 black (0,0,0,255) — default for metallic map.
     RHITextureHandle m_fallbackNormal; ///< 1x1 RGBA8 flat normal (128,128,255,255) — default for missing normal maps.
 
+    /// LTC tables of the rect area lights (phase3a 3.33.0): created and uploaded on the first frame
+    /// that has a rect light (frame_setup.cpp), SRVs written into LightingCB every frame after that.
+    /// Scenes without a rect light never create them (their resource layout stays as before).
+    LtcLut m_ltcLut;
+    bool   m_ltcLutFailed = false;      ///< A failed creation/upload is not retried every frame.
+    /// Per-frame StructuredBuffer<RectLightData> ring, created with the tables (frame_constants.cpp).
+    RectLightBuffer m_rectLightBuffer;
+    bool   m_rectLightBufferFailed = false;
+    /// Deferred lighting PSO permutations with UZ_RECT_LIGHTS=1 ([0] plain, [1] with
+    /// UZ_CLOUD_GROUND_SHADOWS=1; slots 2/3 also set UZ_SHAPED_LIGHTS=1 for disks/tubes),
+    /// built on first use for frames that carry an area light so the
+    /// stock pipeline's DXIL stays byte-identical for every other scene (frame_lighting_pass.cpp).
+    RHIShaderHandle   m_rectLightFullscreenVS;
+    RHIShaderHandle   m_rectLightLightingPS[8];
+    RHIPipelineHandle m_rectLightLightingPipeline[8];
+    bool              m_rectLightPipelineFailed[8] = {};
+    RHIPipelineHandle EnsureRectLightLightingPipeline(bool cloudGroundShadows, bool shapedLights, bool areaShadows);
+
     // ── GBuffer + Shadow Atlas ─────────────────────────────────────────────
 
     GBuffer m_gbuffer;
@@ -397,10 +415,13 @@
 
     // ── SSGI (Screen-Space Global Illumination) ─────────────────────────────
     SSGIRenderer m_ssgiRenderer;  ///< GPU SSGI subsystem (5 compute passes).
+    RealtimeDenoiser m_realtimeDenoiser; ///< Opt-in standalone reflection reconstruction.
 
     // ── SDF-based GI (Global Distance Field + Radiance Cache) ──────────────
     GlobalDistanceField m_globalDistanceField;   ///< 4-cascade clipmap GDF.
     RadianceCache       m_radianceCache;         ///< 16^3 world-space probe grid for diffuse GI.
+    SurfaceRadianceCache m_surfaceCache;         ///< Phase D: spatial-hash surface radiance cache (opt-in, r.GI.SurfaceCache).
+    uint32_t m_surfaceCacheResolveFrame = UINT32_MAX; ///< Frame whose resolve pass is registered (once per frame: inside the SDF GI chain, or on its own without it).
     bool m_sdfGiEnabled = false;                 ///< Runtime toggle for SDF-based GI.
     float m_giIntensity = 1.0f;                  ///< GI intensity multiplier (default 1.0).
 
@@ -964,6 +985,18 @@
     /// Registers SDF-based GI passes (GDF composite + radiance cache trace).
     void RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
 
+    /// Registers the surface radiance cache resolve (Phase D stage 1, `r.GI.SurfaceCache`): right
+    /// after the GDF composite (its change boxes evict cells) and before every GI consumer. With
+    /// the switch off, or without the ray-traced reflections (the only consumer in stage 1),
+    /// nothing is registered and nothing allocated.
+    void RegisterSurfaceCacheResolvePass(rg::RgBuilder& rgBuilder, FrameContext& ctx);
+
+    /// Registers the surface radiance cache feed trace (Phase D stage 3, `r.GI.SurfaceCache.FeedRays`):
+    /// after the radiance-cache probe trace (its completed SH buffer is the hit's indirect term)
+    /// and before the SDF consumers that read the cells it fills. `materialTableSrv` is the frame's
+    /// GI material table. Registers nothing without the resolve, the TLAS or the rays.
+    void RegisterSurfaceCacheFeedPass(rg::RgBuilder& rgBuilder, FrameContext& ctx, uint32_t materialTableSrv);
+
     /// (Re)creates + refreshes the per-mesh GI material table (tint + albedo
     /// SRV, indexed by TLAS InstanceID = meshId) read by the reference path
     /// tracer. Safe to call every frame — the
@@ -982,8 +1015,9 @@
     /// reflections when they run without the screen trace.
     void RegisterSSRDenoisePasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
 
-    /// Registers the hardware ray-traced reflection pass (`r.RayTracing.Reflections`, default
-    /// off): fills the texels of the resolved SSR buffer whose screen trace found no confident hit
+    /// Registers the hardware ray-traced reflection pass (`r.RayTracing.Reflections`, Phase B:
+    /// default on where DXR is supported, gated by RTReflectionRaysAvailable): fills the texels
+    /// of the resolved SSR buffer whose screen trace found no confident hit
     /// with a ray against the TLAS (stage 1: mirror; stage 2 opt-ins: GGX-VNDF glossy ray, probe SH
     /// indirect at the hit, SSR denoise). Called twice per frame — from RegisterSSRPasses after
     /// SSR_Resolve (`beforeDenoise` true) and from RegisterLightingPasses after the SSR chain — and
@@ -999,6 +1033,12 @@
     /// SSR on but not yet running (its first frame) is not standalone: the pass waits for the
     /// chain as before, so an SSR run is unchanged. Member state only, so both call sites agree.
     [[nodiscard]] bool RTReflectionsStandalone() const;
+
+    /// Phase B capability gate of the ray-traced reflections: DXR initialised,
+    /// `r.RayTracing.Reflections` on, a built non-empty TLAS (RTManager::ReflectionsAvailable) and
+    /// the resolved buffer allocated. False = the frame's SSR / probe fallback (the route the
+    /// frame took before Phase B; see SelectRTReflectionRoute).
+    [[nodiscard]] bool RTReflectionRaysAvailable() const;
 
     /// Registers the deferred lighting pass (or debug view / GBuffer debug).
     void RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, FrameContext& ctx);

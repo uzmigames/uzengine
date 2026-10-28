@@ -5,6 +5,7 @@
 #include "../common/encoding.hlsli"
 #include "../include/depth_common.hlsli"
 #include "../common/region_dump.hlsli"
+#include "ssgi_sample_validity.hlsli"
 cbuffer PerFrameCB : register(b1) {
     row_major float4x4 viewProj : packoffset(c0);
     float4 cameraPos : packoffset(c4);
@@ -42,6 +43,10 @@ cbuffer PerFrameCB : register(b1) {
     uint _debugRegionStamp : packoffset(c62.w);
     uint _debugRegionFields : packoffset(c63.x);
 };
+
+bool RejectUnavailableGatherSamples() {
+    return sdfDiffuseSamples != 0u && (sdfSampleRotation & 0x80000000u) != 0u;
+}
 
 /// True when this frame is capturing the gather group.
 bool UzGatherDumpActive() {
@@ -138,5 +143,34 @@ float3 SurfaceGeometricNormal(Texture2D<float> depthTex, int2 pixel, uint2 fullS
     if (!isfinite(area) || area <= 1e-12) return 0.0;
     normal *= rsqrt(area);
     return dot(normal,cameraPos.xyz-position) < 0.0 ? -normal : normal;
+}
+
+// A two-pixel extrapolation can cross a triangle edge even when its first neighbor is
+// on the receiver. Retry the four one-pixel triangles, accepting only a finite,
+// camera-facing plane agreeing with the GBuffer normal and both receiver-plane tests.
+// The original estimator and every successfully reconstructed normal stay unchanged.
+float3 SurfaceGatherGeometricNormal(Texture2D<float> depthTex, int2 pixel, uint2 fullSize,
+                                   float depth, float3 position, float3 shadingNormal) {
+    float3 normal = SurfaceGeometricNormal(depthTex,pixel,fullSize,depth,position);
+    if (!RejectUnavailableGatherSamples() || dot(normal,normal) > 0.0) return normal;
+    float bestAgreement = 0.9;
+    for (int y = -1; y <= 1; y += 2) for (int x = -1; x <= 1; x += 2) {
+        int2 px = pixel + int2(x,0), py = pixel + int2(0,y);
+        if (any(px < 0) || any(py < 0) || any(px >= int2(fullSize)) || any(py >= int2(fullSize))) continue;
+        float zx = depthTex.Load(int3(px,0)), zy = depthTex.Load(int3(py,0));
+        if (IsSkyDepth(zx) || IsSkyDepth(zy)) continue;
+        float3 dx = SurfacePosition(px,zx,fullSize) - position;
+        float3 dy = SurfacePosition(py,zy,fullSize) - position;
+        float tolerance = SurfacePlaneTolerance(position);
+        if (max(abs(dot(dx,shadingNormal)),abs(dot(dy,shadingNormal))) > tolerance) continue;
+        float3 candidate = cross(dx * float(x),dy * float(y));
+        float area = dot(candidate,candidate);
+        if (!isfinite(area) || area <= 1e-12) continue;
+        candidate *= rsqrt(area);
+        if (dot(candidate,cameraPos.xyz-position) < 0.0) candidate = -candidate;
+        float agreement = dot(candidate,shadingNormal);
+        if (agreement >= bestAgreement) { normal = candidate; bestAgreement = agreement; }
+    }
+    return normal;
 }
 #endif

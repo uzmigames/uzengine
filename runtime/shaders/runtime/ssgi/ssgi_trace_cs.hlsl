@@ -3,7 +3,9 @@
 /// @ref McGuire & Mara 2014 "Efficient GPU Screen-Space Ray Tracing".
 /// World mode reads current GBuffer geometry and produces E/pi; it never samples previous HDR.
 /// Legacy mode retains linear screen-space tracing against depth and previous HDR.
-/// Root constants contain 13 DWORDs; shared PerFrameCB supplies current SDF/cache bindings.
+/// Root constants contain 14 DWORDs; shared PerFrameCB supplies current SDF/cache bindings.
+/// Phase D stage 3: the 14th DWORD names the surface radiance cache's binding record, read by the
+/// gather's hit shading (`ShadeSdfReflectionHit`); the sentinel leaves the gather unchanged.
 #include "../common/constants.hlsli"
 #include "../common/math.hlsli"
 #include "../common/sampling.hlsli"
@@ -25,10 +27,17 @@ cbuffer RootConstants : register(b0) {
     uint g_stepSizeBits;      // CVar r.SSGI.StepSize as float bits (default 0.02)
     uint g_thicknessBits;     // CVar r.SSGI.Thickness as float bits (default 0.5)
     uint g_maxRayDistBits;    // Max ray distance in UV space as float bits (default 0.5)
+    uint g_surfaceCacheParamsSrv; // Phase D stage 3: StructuredBuffer<SurfaceCacheParams> SRV (0xffffffff = no cache)
+#ifdef UZ_GATHER_DXR
+    uint g_gatherTlasSrv;
+    uint g_gatherMaterialSrv;
+    uint g_gatherDxrMode;
+#endif
 };
 
 #include "ssgi_surface.hlsli"
 #ifdef UZ_BINDLESS
+#define UZ_SSGI_SURFACE_CACHE_PARAMS_SRV g_surfaceCacheParamsSrv
 #include "ssgi_world_gather.hlsli"
 #endif
 
@@ -173,7 +182,7 @@ void main(uint3 DTid : SV_DispatchThreadID) {
 
 #ifdef UZ_BINDLESS
     if (sdfDiffuseSamples != 0) {
-        float3 geometricNormal = SurfaceGeometricNormal(depthTex,fullPx,uint2(fullWidth,fullHeight),depth,worldPos);
+        float3 geometricNormal = SurfaceGatherGeometricNormal(depthTex,fullPx,uint2(fullWidth,fullHeight),depth,worldPos,N);
         float3 origin, firstDirection;
         float4 rays[UZ_GATHER_MAX_REPORTED_RAYS];
         float2 rotationUsed;
@@ -183,7 +192,7 @@ void main(uint3 DTid : SV_DispatchThreadID) {
         float3 gathered = GatherSurfaceLightingIdentified(worldPos,N,geometricNormal,uint2(fullPx),
                                                           g_frameIndex,origin,seed,firstDirection,resolved,
                                                           rays,reportedRays,rotationUsed,cascadeStats,clipmap0);
-        outputTex[pixel] = float4(gathered,1.0);
+        outputTex[pixel] = float4(gathered,RejectUnavailableGatherSamples() && !resolved ? 0.0 : 1.0);
         aoOutputTex[pixel] = 1.0;
         // Region dump (diagnostics): what was sampled and what was read, see common/region_dump.hlsli.
         // Guarded so a normal frame neither writes records nor traces the extra probe ray.
@@ -210,7 +219,7 @@ void main(uint3 DTid : SV_DispatchThreadID) {
             }
             UzGatherDumpHalf(pixel, fullSize, 27u, float4(gathered, float(reportedRays)));
             UzGatherDumpHalf(pixel, fullSize, 28u,
-                             float4(rotationUsed, asfloat(sdfSampleRotation), 0.0));
+                             float4(rotationUsed, asfloat(sdfSampleRotation & 0x7fffffffu), 0.0));
             // +29 where the rays ended with respect to clipmap 0; +30 clipmap 0 as this shader saw it.
             UzGatherDumpHalf(pixel, fullSize, 29u, cascadeStats);
             UzGatherDumpHalf(pixel, fullSize, 30u, clipmap0);

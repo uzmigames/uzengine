@@ -38,6 +38,14 @@ cbuffer RootConstants : register(b0) {
                                ///< 1 = followup-01 candidate: back-face fraction, relocation, guard;
                                ///< 2 = as 1, plus inside when most rays exit some mesh more often
                                ///< than they enter it (embedded faces, followup-01 R3).
+    // Phase D stage 3 (the SH writer reads the surface radiance cache): the cache's binding record
+    // (sentinel = no cache, every hit shades as before) and the raw (unexpanded) distance clipmaps
+    // of the same four cascades, for the snap of a hit back to the raw surface (sentinel = no snap).
+    uint g_surfaceCacheParamsSrv;
+    uint g_rawClipmapSrv0;
+    uint g_rawClipmapSrv1;
+    uint g_rawClipmapSrv2;
+    uint g_rawClipmapSrv3;
 };
 
 // ─── Trace constants at b2 (matches RadianceCacheTraceConstants) ──────────
@@ -218,6 +226,33 @@ void UnpackL2(float4 packed[7], out float shR[9], out float shG[9], out float sh
 // kSurfaceEpsilon, all declared above).
 #include "gdf_surface.hlsli"
 #include "rc_probe_guard.hlsli"
+#include "surface_cache.hlsli"      // Phase D stage 3: SurfaceCacheQuerySdf at a hit
+
+// ─── Phase D stage 3: the raw (unexpanded) distance at a hit ──────────────────────────
+//
+// The b2 clipmaps are the expanded field (`TraceGDF` registers a hit where it drops below
+// kSurfaceEpsilon, in front of the raw surface by the composite's expansion). The raw R16F
+// volumes share the cascades' centres, extents and toroidal layout (`SampleGdfClipmap`), so the
+// distance to the raw surface at the hit is one more tap; 1e9 where no raw cascade covers it.
+float SampleRawClipmapDistance(uint srvIdx, float3 worldPos, float3 center, float extent) {
+    if (srvIdx == kSentinelSrvIndex || extent <= 0.0) return 1e9;
+    Texture3D<float> rawTex = ResourceDescriptorHeap[srvIdx];
+    uint resX, resY, resZ;
+    rawTex.GetDimensions(resX, resY, resZ);
+    float3 local = (worldPos - center) / extent;
+    if (any(abs(local) > 1.0 - 2.0 / float(resX))) return 1e9;
+    return rawTex.SampleLevel(UZ_GDF_WRAP_SAMPLER, frac(worldPos / (2.0 * extent)), 0);
+}
+
+float SampleRawDistance(float3 worldPos) {
+    float d = SampleRawClipmapDistance(g_rawClipmapSrv0, worldPos, float3(gdfCenter0X, gdfCenter0Y, gdfCenter0Z), gdfExtent0);
+    if (d < 1e8) return d;
+    d = SampleRawClipmapDistance(g_rawClipmapSrv1, worldPos, float3(gdfCenter1X, gdfCenter1Y, gdfCenter1Z), gdfExtent1);
+    if (d < 1e8) return d;
+    d = SampleRawClipmapDistance(g_rawClipmapSrv2, worldPos, float3(gdfCenter2X, gdfCenter2Y, gdfCenter2Z), gdfExtent2);
+    if (d < 1e8) return d;
+    return SampleRawClipmapDistance(g_rawClipmapSrv3, worldPos, float3(gdfCenter3X, gdfCenter3Y, gdfCenter3Z), gdfExtent3);
+}
 
 // ─── GDF clipmap sampling ─────────────────────────────────────────────────
 //
@@ -534,27 +569,54 @@ void main(uint3 DTid : SV_DispatchThreadID) {
         } else if (t >= 0.0) {
             float3 hitPosition = traceOrigin + t * dir;
             float3 N    = GdfNormal(hitPosition);
-            float3 L    = normalize(float3(lightDirX, lightDirY, lightDirZ));
-            float  NdL  = max(dot(N, L), 0.0);
-            float visibility = 0.0;
-            if (NdL > 0.0 && dot(N, -dir) > 0.0) {
-                float3 shadowOrigin = hitPosition + N * (2.0 * kSurfaceEpsilon);
-                visibility = TraceGDF(shadowOrigin, L, maxTraceDistance) == -1.0 ? 1.0 : 0.0;
+            // Phase D stage 3: the surface radiance cache at the hit (D8). The hit is snapped back
+            // to the raw surface along the field normal, lifted by the writers' 2 cm bias and read
+            // `sdfLodBias` levels coarser than a TLAS hit; a readable cell (exact material, local
+            // lights, emission, the feed's bounce) replaces the GDF-average shading below, so the
+            // probe inherits it. Nothing is written here (the SDF consumers are read-only).
+            SurfaceCacheParams cache = (SurfaceCacheParams)0;
+            float3 cellSun = 0.0, cellOther = 0.0;
+            bool cellRead = false;
+            if (g_surfaceCacheParamsSrv != kSentinelSrvIndex && dot(N, -dir) > 0.0) {
+                StructuredBuffer<SurfaceCacheParams> cacheParams = ResourceDescriptorHeap[g_surfaceCacheParamsSrv];
+                cache = cacheParams[0];
+                if ((cache.flags & kSurfaceCacheFlagSdfReads) != 0u) {
+                    const float3 snapped = SurfaceCacheSdfReadPosition(hitPosition, N, SampleRawDistance(hitPosition));
+                    cellRead = SurfaceCacheQuerySdf(cache, snapped, N, cellSun, cellOther);
+                }
             }
-            float3 sunRad = float3(lightColorR, lightColorG, lightColorB)
-                          * lightIntensity * NdL * visibility;
-            traceStats.y += dot(N, -dir) > 0.0 ? invN : 0.0;
-            traceStats.z += dot(sunRad, float3(0.2126, 0.7152, 0.0722)) * invN;
-            /// @ref Majercik 2019 "Dynamic Diffuse Global Illumination with Ray-Traced Irradiance Fields"
-            /// @constants Direct irradiance divides by pi; packed SH already stores E/pi.
-            float3 albedo = saturate(SampleGdfSurface(hitPosition).gba);
-            float3 indirect = SamplePreviousDiffuse(hitPosition + N * (2.0 * kSurfaceEpsilon), N);
-            radiance = dot(N, -dir) > 0.0 ? albedo * (sunRad / kPI + indirect) : 0.0;
-            if (dot(N, -dir) > 0.0) {
-                pathStats.y += dot(albedo * (sunRad / kPI), float3(0.2126, 0.7152, 0.0722));
-                pathStats.z += dot(albedo * indirect,       float3(0.2126, 0.7152, 0.0722));
+            if (cellRead && (cache.flags & kSurfaceCacheFlagDirectInline) == 0u) {
+                radiance = cellSun + cellOther;
+                traceStats.y += invN;
+                traceStats.z += dot(cellSun, float3(0.2126, 0.7152, 0.0722)) * invN;
+                pathStats.y += dot(cellSun,   float3(0.2126, 0.7152, 0.0722));
+                pathStats.z += dot(cellOther, float3(0.2126, 0.7152, 0.0722));
+                pathStats.w += 1.0;
+            } else {
+                float3 L    = normalize(float3(lightDirX, lightDirY, lightDirZ));
+                float  NdL  = max(dot(N, L), 0.0);
+                float visibility = 0.0;
+                if (NdL > 0.0 && dot(N, -dir) > 0.0) {
+                    float3 shadowOrigin = hitPosition + N * (2.0 * kSurfaceEpsilon);
+                    visibility = TraceGDF(shadowOrigin, L, maxTraceDistance) == -1.0 ? 1.0 : 0.0;
+                }
+                float3 sunRad = float3(lightColorR, lightColorG, lightColorB)
+                              * lightIntensity * NdL * visibility;
+                traceStats.y += dot(N, -dir) > 0.0 ? invN : 0.0;
+                traceStats.z += dot(sunRad, float3(0.2126, 0.7152, 0.0722)) * invN;
+                /// @ref Majercik 2019 "Dynamic Diffuse Global Illumination with Ray-Traced Irradiance Fields"
+                /// @constants Direct irradiance divides by pi; packed SH already stores E/pi.
+                float3 albedo = saturate(SampleGdfSurface(hitPosition).gba);
+                float3 indirect = SamplePreviousDiffuse(hitPosition + N * (2.0 * kSurfaceEpsilon), N);
+                radiance = dot(N, -dir) > 0.0 ? albedo * (sunRad / kPI + indirect) : 0.0;
+                if (dot(N, -dir) > 0.0) {
+                    pathStats.y += dot(albedo * (sunRad / kPI), float3(0.2126, 0.7152, 0.0722));
+                    pathStats.z += dot(albedo * indirect,       float3(0.2126, 0.7152, 0.0722));
+                }
+                pathStats.w += 1.0;
+                // DirectMode 1: the inline sun with the cell's `other` layer.
+                if (cellRead) radiance = albedo * (sunRad / kPI) + cellOther;
             }
-            pathStats.w += 1.0;
         }
         traceStats.w += dot(radiance, float3(0.2126, 0.7152, 0.0722)) * invN;
         if (t == -1.0)     { skyStats.x += dot(radiance, float3(0.2126, 0.7152, 0.0722)) * invN; skyStats.y += invN; }

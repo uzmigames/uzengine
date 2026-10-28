@@ -128,18 +128,24 @@ ENTRIES = [
         'header': 'runtime/engine/renderer/core/params/constant_buffers.h', 'struct': 'ShadowDataCB',
         'map': {'cascadeViewProj': 'cascadeViewProj', 'shadowAtlasIndex': 'shadowAtlasIndex', 'cascadeCount': 'cascadeCount',
                 'localShadowAtlasIndex': 'localShadowAtlasIndex', 'localShadowCount': 'localShadowCount',
+                'localShadowNormalOffset': 'localShadowNormalOffset', 'softPCSS': 'softPCSS',
+                'pcssMinPenumbraTexels': 'pcssMinPenumbraTexels', 'pcssMaxPenumbraTexels': 'pcssMaxPenumbraTexels',
+                'cascadePcssDepthToTexelsPacked': 'cascadePcssDepthToTexels',
+                'localSoftPCSS': 'localSoftPCSS', 'localPcssSourceRadius': 'localPcssSourceRadius',
                 'localShadowRaw': 'localShadows'},
         # The struct text alone does not compile: the nested struct and the array bound come from the same header.
         'extra_structs': ['LocalLightShadowData'], 'extra_constants': ['kMaxLocalLightShadows'],
     },
     {
-        'name': 'LightingCB (block B.7: 512 point / 128 spot lights and the cluster parameters)', 'shader': 'lighting/deferred_lighting_ps.hlsl',
+        'name': 'LightingCB (block B.7: 512 point / 128 spot lights, the cluster parameters, the rect area light fields)', 'shader': 'lighting/deferred_lighting_ps.hlsl',
         'profile': 'ps_6_6', 'header': 'runtime/engine/renderer/core/params/constant_buffers.h', 'struct': 'LightingCB',
         'map': {'pointLights': 'pointLights', 'pointLightCount': 'pointLightCount', 'spotLightCount': 'spotLightCount', 'spotLights': 'spotLights',
                 'clusterForward': 'clusterForwardX', 'clusterNear': 'clusterNear', 'clusterFar': 'clusterFar', 'clusterLogScale': 'clusterLogScale',
                 'clusterTileSize': 'clusterTileSize', 'clusterTilesX': 'clusterTilesX', 'clusterTilesY': 'clusterTilesY', 'clusterSlices': 'clusterSlices',
                 'clusterListSrv': 'clusterListSrv', 'clusterListUav': 'clusterListUav', 'clusterSlots': 'clusterSlots', 'clusterFlags': 'clusterFlags',
-                'clusterViewWidth': 'clusterViewWidth', 'clusterViewHeight': 'clusterViewHeight'},
+                'clusterViewWidth': 'clusterViewWidth', 'clusterViewHeight': 'clusterViewHeight',
+                'rectLightCount': 'rectLightCount', 'rectLightsSrv': 'rectLightsSrv', 'ltcMatrixSrv': 'ltcMatrixSrv', 'ltcMagnitudeSrv': 'ltcMagnitudeSrv',
+                'surfaceCacheParamsSrv': 'surfaceCacheParamsSrv', 'areaShadowTlasSrv': 'areaShadowTlasSrv'},
         'extra_structs': ['PointLightData', 'SpotLightData'],
         'extra_constants': ['kMaxPointLights', 'kMaxSpotLights', 'kClusterTileSize', 'kClusterSlices', 'kClusterSlotsMax', 'kClusterRecordUints',
                             'kClusterFlag_Enabled', 'kClusterFlag_Debug'],
@@ -238,6 +244,10 @@ for shader in ('gbuffer/gbuffer_ps.hlsl', 'gbuffer/mesh_vs.hlsl', 'gbuffer/mesh_
     TIER_A.append(layout_entry(shader, 'PerObjectCB', PARAMS + 'constant_buffers.h',
                                before='gbuffer_ps.perobject.before.hlsl' if shader == 'gbuffer/gbuffer_ps.hlsl' else None))
 TIER_A += [
+    layout_entry('denoising/realtime_common.hlsli', 'RealtimePolicyCB',
+                 PASSES + 'realtime_denoiser.h', 'RealtimeDenoiseConfig'),
+    layout_entry('denoising/realtime_common.hlsli', 'RealtimeFrameCB',
+                 PARAMS + 'constant_buffers.h', 'PerFrameCB'),
     layout_entry('pathtracing/nrd_common.hlsli', 'NrdCamera', PARAMS + 'constant_buffers.h',
                  'PerFrameCB', {'currentViewProj': 'viewProj', 'cameraPosition': 'cameraPos',
                   'cameraTime': 'timeParams', 'cameraLightDir': 'lightDir',
@@ -293,12 +303,19 @@ TIER_A += [
                           'depthSrvIndex': 'depthSrv', 'historySrvIndex': 'historySrv', 'velocitySrvIndex': 'velocitySrv'}),
     layout_entry('ssgi/ssgi_temporal_accum_cs.hlsl', 'HistoryCB', 'runtime/engine/renderer/gi/ssgi_renderer.cpp',
                  aliases={'g_regionCount': 'regionCount', '_regionPad': '_pad', 'g_regionLo': 'regionLo', 'g_regionHi': 'regionHi'}),
+    # The same block as the screen-space ReSTIR GI temporal pass binds it at b2 (phase C).
+    layout_entry('ssgi/ssgi_restir_gi.hlsli', 'SSGIRestirHistory', 'runtime/engine/renderer/gi/ssgi_renderer.cpp', 'HistoryCB',
+                 aliases={'g_previousViewProj': 'previousViewProj', 'g_regionCount': 'regionCount', '_regionPad': '_pad',
+                          'g_regionLo': 'regionLo', 'g_regionHi': 'regionHi'}),
+    # Surface radiance cache resolve (Phase D stage 1): the change boxes at b2, the HistoryCB region rows.
+    layout_entry('gi/surface_cache_resolve_cs.hlsl', 'SurfaceCacheResolveRegionsCB',
+                 'runtime/engine/renderer/gi/surface_radiance_cache.h'),
     *[layout_entry(shader, 'TraceConstants', 'runtime/engine/renderer/gi/radiance_cache.h',
                    'RadianceCacheTraceConstants',
                    {'_shBufferUav': 'shBufferUav', '_firstWrite': 'firstWrite',
                     'ddgiRayRadianceSrv': 'shBufferUav', 'ddgiRayInfoSrv': 'firstWrite',
                     '_historyShiftPad': 'regionCount'}, extra_constants=['kMaxFieldRegions'])
-      for shader in ('gi/gi_trace_common.hlsli', 'gi/ddgi_probe_common.hlsli',
+      for shader in ('gi/gi_trace_common.hlsli', 'gi/ddgi_probe_common.hlsli', 'gi/surface_cache_feed_cs.hlsl',
                      'gi/probe_reach_cs.hlsl', 'gi/radiance_cache_trace_cs.hlsl',
                      'gi/ddgi_probe_trace_cs.hlsl', 'gi/ddgi_probe_update_cs.hlsl',
                      'pathtracing/path_tracer_ps.hlsl')],
@@ -328,6 +345,8 @@ TIER_A += [
 ]
 
 TIER_B = [
+    layout_entry('denoising/realtime_common.hlsli', 'RealtimeRootCB',
+                 PASSES + 'realtime_denoiser.h', 'RealtimeDenoiseRoot'),
     layout_entry('pathtracing/nrd_common.hlsli', 'NrdRoot',
                  PASSES + 'pathtracing/nrd_denoiser.h'),
     layout_entry('pathtracing/nrd_common.hlsli', 'NrdStage2Root',
@@ -388,6 +407,21 @@ TIER_B = [
           ('spatial_denoise', 'SsrDenoiseRootCB', 'SsrDenoiseConstants'))],
     layout_entry('reflections/rt_reflection_cs.hlsl', 'RTReflectionRootCB',
                  PASSES + 'raytracing/rt_reflection_pass.h', 'RTReflectionRootConstants'),
+    # Surface radiance cache resolve root block (Phase D stage 1): 12 DWORDs of the compute root's 20.
+    layout_entry('gi/surface_cache_resolve_cs.hlsl', 'SurfaceCacheResolveRootCB',
+                 'runtime/engine/renderer/gi/surface_radiance_cache.h', 'SurfaceCacheResolveRootConstants'),
+    # Surface radiance cache feed root block (Phase D stage 3): 5 DWORDs; the probe-grid TLAS trace
+    # whose exact-material hits fill the SDF consumers' cells.
+    layout_entry('gi/surface_cache_feed_cs.hlsl', 'SurfaceCacheFeedRootCB',
+                 'runtime/engine/renderer/gi/surface_radiance_cache.h', 'SurfaceCacheFeedRootConstants'),
+    # Stage 4 shares this 12-DWORD block between relight and cell-indirect. Reflect both
+    # declarations so a positional drift in either shader fails the layout gate.
+    *[layout_entry(shader, 'SurfaceCacheRelightRootCB',
+                   'runtime/engine/renderer/gi/surface_radiance_cache.h', 'SurfaceCacheRelightRootConstants')
+      for shader in ('gi/surface_cache_relight_cs.hlsl', 'gi/surface_cache_indirect_cs.hlsl')],
+    # Screen-space ReSTIR GI root block (phase C, r.GI.ReSTIR): 16 DWORDs of the compute root's 24.
+    layout_entry('ssgi/ssgi_restir_gi.hlsli', 'SSGIRestirRoot',
+                 'runtime/engine/renderer/gi/ssgi_renderer.h', 'SSGIRestirRootConstants'),
     layout_entry('vfx/particle_sort_cs.hlsl', 'VFXSortConstants', 'runtime/engine/vfx/core/gpu_particle_sort.h'),
     layout_entry('postprocess/exposure_histogram_cs.hlsl', 'ExposureParams', PASSES + 'postprocess/auto_exposure.h',
                  'HistogramRootConstants'),
@@ -429,6 +463,21 @@ TIER_C = [
                  'runtime/engine/renderer/gi/global_distance_field.h', 'GdfMeshSdfGPU'),
     layout_entry('gi/gi_trace_common.hlsli', 'GIMeshMaterial',
                  PASSES + 'pathtracing/path_tracer_pass.h', 'GIMeshMaterialGPU'),
+    # 80-byte rect area light (phase3a 3.33.0): the per-frame StructuredBuffer the UZ_RECT_LIGHTS
+    # lighting permutation reads through LightingCB::rectLightsSrv.
+    layout_entry('lighting/light_types.hlsli', 'RectLightData', PARAMS + 'constant_buffers.h', 'RectLightData'),
+    # 64-byte screen-space ReSTIR GI reservoir (phase C): the structured buffers of the three
+    # ssgi_restir_* passes (initial candidates + temporal ping-pong), octahedral 2x16 normals.
+    layout_entry('ssgi/ssgi_restir_gi.hlsli', 'SSGIReservoir',
+                 'runtime/engine/renderer/gi/ssgi_renderer.h', 'SSGIRestirReservoir'),
+    # 80-byte surface radiance cache binding record (Phase D stage 1, the lights row of stage 2): the
+    # one-element StructuredBuffer every consumer reads through its root DWORD (RTReflectionRootConstants[16]).
+    layout_entry('gi/surface_cache_contract.hlsli', 'SurfaceCacheParams',
+                 'runtime/engine/renderer/gi/surface_radiance_cache.h', 'SurfaceCacheParamsGPU'),
+    # 80-byte local light record (Phase D stage 2): the per-frame StructuredBuffer the cell lighting
+    # scans (SurfaceCacheParams::lightsSrv), built by SurfaceCacheBuildLights.
+    layout_entry('gi/surface_cache_contract.hlsli', 'SurfaceCacheLight',
+                 'runtime/engine/renderer/gi/surface_radiance_cache.h', 'SurfaceCacheLightGPU'),
 ]
 
 # These are not successful reflection contracts. Keep explicit exclusions visible

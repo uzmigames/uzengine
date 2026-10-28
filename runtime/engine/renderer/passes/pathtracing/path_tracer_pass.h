@@ -42,6 +42,10 @@ class GlobalDistanceField;
 /// see tlas_manager.cpp). Raw geometry views recover triangle UVs and normals;
 /// missing views retain the average-albedo fallback. Mirrored by
 /// `GIMeshMaterial` in shaders/runtime/gi/gi_trace_common.hlsli.
+///
+/// Phase D stage 2 appended the mesh's emission (`emissiveSrv`, `emissive*`: the
+/// GBuffer's emissive colour x intensity and its texture) for the surface
+/// radiance cache's cell lighting; the path tracer never reads the new fields.
 struct alignas(16) GIMeshMaterialGPU {
     float    tintR = 1.f;        ///< BaseColor tint factor (linear).
     float    tintG = 1.f;
@@ -54,10 +58,14 @@ struct alignas(16) GIMeshMaterialGPU {
     uint32_t normalOffset = 0;   ///< Normal byte offset within a vertex.
     uint32_t indexFormat = 0;    ///< Index element size in bytes (2 or 4).
     uint32_t normalFormat = 0;   ///< 0 = float3, 1 = signed packed int8 xyz.
+    uint32_t emissiveSrv = UINT32_MAX; ///< Emissive texture SRV (UINT32_MAX = colour only).
+    float    emissiveR = 0.f;    ///< Emissive colour x intensity (linear radiance); zero = no emission.
+    float    emissiveG = 0.f;
+    float    emissiveB = 0.f;
     uint32_t padding = 0;
 };
 
-static_assert(sizeof(GIMeshMaterialGPU) == 48, "GIMeshMaterialGPU must be 48 bytes");
+static_assert(sizeof(GIMeshMaterialGPU) == 64, "GIMeshMaterialGPU must be 64 bytes");
 static_assert(alignof(GIMeshMaterialGPU) == 16);
 static_assert(offsetof(GIMeshMaterialGPU, tintR) == 0);
 static_assert(offsetof(GIMeshMaterialGPU, tintG) == 4);
@@ -70,7 +78,10 @@ static_assert(offsetof(GIMeshMaterialGPU, uvOffset) == 28);
 static_assert(offsetof(GIMeshMaterialGPU, normalOffset) == 32);
 static_assert(offsetof(GIMeshMaterialGPU, indexFormat) == 36);
 static_assert(offsetof(GIMeshMaterialGPU, normalFormat) == 40);
-static_assert(offsetof(GIMeshMaterialGPU, padding) == 44);
+static_assert(offsetof(GIMeshMaterialGPU, emissiveSrv) == 44);
+static_assert(offsetof(GIMeshMaterialGPU, emissiveR) == 48);
+static_assert(offsetof(GIMeshMaterialGPU, emissiveB) == 56);
+static_assert(offsetof(GIMeshMaterialGPU, padding) == 60);
 
 /// Configuration for the path tracer pass.
 struct PathTracerPassDesc {

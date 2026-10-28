@@ -78,6 +78,7 @@ uint ReprojectGatherHistory(float3 position, float3 normal, uint2 size, uint2 fu
         if (!SurfaceCompatible(position,normal,geometry.xyz,previousNormal)) continue;
         float weight = (x == 0 ? 1.0-fraction.x : fraction.x) * (y == 0 ? 1.0-fraction.y : fraction.y);
         float4 history = historyTex.Load(int3(hp,0));
+        weight = SsgiAvailableWeight(weight,history.a,RejectUnavailableGatherSamples());
         colorSum += history.rgb * weight;
         countSum += history.a * weight;
         aoSum += historyAOTex.Load(int3(hp,0)) * weight;
@@ -148,7 +149,9 @@ void main(uint3 id : SV_DispatchThreadID) {
     depthTex.GetDimensions(fullSize.x, fullSize.y);
     int2 fullPixel = SurfacePixel(pixel, fullSize);
     float depth = depthTex.Load(int3(fullPixel,0));
-    float3 current = currentTex.Load(int3(pixel,0)).rgb;
+    float4 currentSample = currentTex.Load(int3(pixel,0));
+    float3 current = currentSample.rgb;
+    bool currentAvailable = !RejectUnavailableGatherSamples() || currentSample.a > 0.0;
     float ao = currentAO.Load(int3(pixel,0));
 
     float temporalAlpha = asfloat(g_temporalAlphaBits);
@@ -171,10 +174,10 @@ void main(uint3 id : SV_DispatchThreadID) {
     }
 
     float3 result = current;
-    float resultAO = ao, count = 1.0, alpha = 1.0;
+    float resultAO = ao, count = currentAvailable ? 1.0 : 0.0, alpha = 1.0;
     if (reject == UZ_GATHER_ACCEPTED) {
-        count = min(historyCount + 1.0, 64.0);
-        alpha = max(1.0/count, temporalAlpha);
+        count = min(historyCount + (currentAvailable ? 1.0 : 0.0), 64.0);
+        alpha = currentAvailable ? max(1.0/count, temporalAlpha) : 0.0;
         result = lerp(historyColor, current, alpha);
         resultAO = lerp(historyAOValue, ao, alpha);
     }

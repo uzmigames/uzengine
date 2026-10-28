@@ -4,6 +4,9 @@
 #define UZ_SDF_DIFFUSE_GATHER_HLSLI
 
 #include "sdf_reflections.hlsli"
+#ifdef UZ_GATHER_DXR
+#include "dxr_diffuse_gather.hlsli"
+#endif
 
 /// @constants Cosine PDF=cos(theta)/pi cancels E/pi's cosine and pi, giving mean radiance.
 /// Samples are bounded to [1,32]. The 0.999 pole threshold keeps the tangent basis nondegenerate.
@@ -28,6 +31,7 @@
 /// @ref Roberts 2018 "The Unreasonable Effectiveness of Quasirandom Sequences".
 /// @ref Cranley and Patterson 1976 "Randomization of Number Theoretic Methods".
 float2 SdfDiffuseRotation(uint2 pixel, uint frame, uint mode) {
+    mode &= 0x7fffffffu; // PerFrameCB packs diffuse sample-validity rejection in bit 31.
     if (mode == 0u) {
         uint seed = pixel.x * 1664525u + pixel.y * 1013904223u + frame * 747796405u;
         return float2(RadicalInverseVdC(seed), RadicalInverseVdC(seed ^ 0x9e3779b9u));
@@ -95,7 +99,11 @@ float3 GatherSdfDiffuseIdentified(SdfReflectionScene scene, float3 position, flo
         float3 direction = tangent * sampleDirection.x + bitangent * sampleDirection.y + normal * sampleDirection.z;
         if (i == 0u) firstDirection = direction;
         float hitT;
+#ifdef UZ_GATHER_DXR
+        float3 contribution = TraceDxrGatherRadiance(scene, origin, direction, geometricNormal, hitT);
+#else
         float3 contribution = TraceSdfSurfaceRadianceIdentified(scene, origin, direction, 0u, geometricNormal, hitT);
+#endif
         irradianceOverPi += contribution;
         if (hitT >= 0.0) {
             const float3 hitPos = origin + direction * hitT;

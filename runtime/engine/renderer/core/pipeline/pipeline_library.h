@@ -620,6 +620,9 @@ public:
     /// depth buffer. On hit, samples reduced prev-frame color with Karis weighting.
     ///
     [[nodiscard]] RHIPipelineHandle GetSsgiTrace();
+    /// Lazy DXR permutations; the original pipelines remain the non-DXR fallback.
+    [[nodiscard]] RHIPipelineHandle GetSsgiDxrTrace();
+    [[nodiscard]] RHIPipelineHandle GetSsgiDxrUpsample();
 
     /// Returns the SSGI spatial denoise compute pipeline.
     ///
@@ -638,6 +641,13 @@ public:
     /// Joint bilateral upsample from half-res to full-res using depth+normal weights.
     ///
     [[nodiscard]] RHIPipelineHandle GetSsgiBilateralUpsample();
+
+    /// Screen-space ReSTIR GI (Lumen-parity phase C, `r.GI.ReSTIR`): the gather's cosine rays
+    /// as reservoir candidates, temporal reuse, spatial reuse + resolve. Created on first use,
+    /// never warmed up: the path is opt-in and OFF dispatches the trace pipeline above unchanged.
+    [[nodiscard]] RHIPipelineHandle GetSsgiRestirInitial();
+    [[nodiscard]] RHIPipelineHandle GetSsgiRestirTemporal();
+    [[nodiscard]] RHIPipelineHandle GetSsgiRestirSpatial();
 
     // ── SVGF Denoiser Compute Pipelines ─────────────────────────────────
 
@@ -722,6 +732,31 @@ public:
     /// `RayQuery` against the TLAS, the hit shaded from the global distance field + sun as the
     /// DDGI writer does. Created on first use only when `r.RayTracing.Reflections` is on.
     [[nodiscard]] RHIPipelineHandle GetRtReflection();
+
+    /// Returns the surface radiance cache resolve compute pipeline (`surface_cache_resolve_cs.hlsl`,
+    /// Phase D stage 1): one thread per hash entry folding the frame's accumulators into the
+    /// per-frame EMA, ageing / evicting cells, or clearing the table. Created on first use only
+    /// when `r.GI.SurfaceCache` is on.
+    [[nodiscard]] RHIPipelineHandle GetSurfaceCacheResolve();
+
+    /// Returns the surface radiance cache feed compute pipeline (`surface_cache_feed_cs.hlsl`,
+    /// Phase D stage 3): one thread per radiance-cache probe ray, an inline `RayQuery` on the TLAS
+    /// whose exact-material hit shading is accumulated into the SDF consumers' cells. Created on
+    /// first use only when `r.GI.SurfaceCache` is on with `.FeedRays` > 0.
+    [[nodiscard]] RHIPipelineHandle GetSurfaceCacheFeed();
+
+    /// Returns the surface radiance cache relight compute pipeline (`surface_cache_relight_cs.hlsl`,
+    /// Phase D stage 4): one thread per entry of the frame's slice, re-shading the direct layer of
+    /// the live cells from their surface records (sun + local lights, shadow rays on the TLAS).
+    /// Created on first use only when `r.GI.SurfaceCache` is on with `.Relight`.
+    [[nodiscard]] RHIPipelineHandle GetSurfaceCacheRelight();
+
+    /// Returns the surface radiance cache cell-indirect compute pipeline
+    /// (`surface_cache_indirect_cs.hlsl`, Phase D stage 4): finite-depth whole-table Jacobi
+    /// iterations, with distinct previous/next storage and cosine rays on the TLAS.
+    /// Created on first use only when `r.GI.SurfaceCache` is on with `.MultiBounce` and
+    /// `.IndirectRays` > 0.
+    [[nodiscard]] RHIPipelineHandle GetSurfaceCacheIndirect();
 
     /// Returns the radiance cache probe side classifier (`probe_side_cs.hlsl`, followup-01
     /// candidate `r.GI.RadianceCache.ProbeClassification` = 1): for every probe, the nearest mesh

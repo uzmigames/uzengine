@@ -54,7 +54,10 @@ struct LightingParams {
     uint32_t clusterTileSize = kClusterTileSize, clusterTilesX = 0, clusterTilesY = 0, clusterSlices = kClusterSlices;
     uint32_t clusterListSrv = UINT32_MAX, clusterListUav = UINT32_MAX, clusterSlots = kClusterSlotsMax, clusterFlags = 0;
     float    clusterViewWidth = 0.0f, clusterViewHeight = 0.0f;
-    float          _pad2[44]       = {};             ///< Pad to 43264 bytes (256-byte multiple).
+    uint32_t rectLightCount = 0, rectLightsSrv = UINT32_MAX, ltcMatrixSrv = UINT32_MAX, ltcMagnitudeSrv = UINT32_MAX;   ///< Rect area lights (LightingCB).
+    uint32_t surfaceCacheParamsSrv = UINT32_MAX;     ///< Surface radiance cache record SRV (Phase D stage 3, LightingCB); sentinel = no cache.
+    uint32_t areaShadowTlasSrv = UINT32_MAX;         ///< Area-shadow permutation only (LightingCB).
+    float          _pad2[38]       = {};             ///< Pad to 43264 bytes (256-byte multiple).
 
     // ── Metadata ─────────────────────────────────────────────────────────
 

@@ -60,6 +60,7 @@ struct LightingPassDesc {
     rg::RgResourceId brixDiffuseResource;
     rg::RgResourceId brixSpecularResource;
     rg::RgResourceId clusterListResource; ///< LightCull UAV producer -> lighting SRV consumer.
+    rg::RgResourceId reflectionResource; ///< Opt-in reconstructed standalone RT signal.
     CBAllocation      perFrameAlloc;    ///< Per-frame CB with invViewProj filled (bound at b1).
     CBAllocation      lightingAlloc;    ///< LightingCB with point light data (bound at b2).
     RHIPipelineHandle pipeline;         ///< Lighting PSO (fullscreen triangle, no depth).

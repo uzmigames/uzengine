@@ -83,6 +83,8 @@ static auto* cv_EnvMIS = UZ_CVAR_BOOL("r.EnvMIS", true,
     "Environment-MIS specular on smooth metals (replaces the split-sum term by its coverage; off = split-sum only). Inactive while r.GI.Reflections is on.");
 static auto* cv_SdfFinalGather = UZ_CVAR_INT("r.GI.FinalGather", 0, "Gather diffuse illumination from surface hemisphere rays", 0, 1);
 static auto* cv_SdfDiffuseSamples = UZ_CVAR_INT("r.GI.FinalGather.Samples", 8, "Cosine-weighted rays per diffuse surface gather", 1, 32);
+static auto* cv_GIValidSampleReject = UZ_CVAR_BOOL("r.GI.ValidSampleReject", true,
+    "Recover reliable receiver normals and exclude unavailable diffuse gather samples from reconstruction");
 // Diagnostic candidate (ledger H-31): how the gather's sample set is rotated from frame to frame.
 // 0 is the shipping path, whose rotation is locked to frame parity; 1 is the pre-registered
 // Kronecker advance. Default 0 — this is evaluated, not adopted.
@@ -560,6 +562,35 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
         lightingCB->clusterListUav   = UINT32_MAX;
         lightingCB->clusterViewWidth  = static_cast<float>(m_renderWidth);
         lightingCB->clusterViewHeight = static_cast<float>(m_renderHeight);
+
+        // Rect area lights (phase3a 3.33.0): this frame's lights go to the per-frame structured
+        // buffer (created on first use) and the LTC tables' SRVs into the CB. Scenes without a rect
+        // light leave count 0 and the sentinels, and create nothing.
+        const uint32_t areaLightCount = ctx.lightData.rectLightCount + ctx.lightData.shapedLightCount;
+        if (areaLightCount > 0 && m_ltcLut.IsReady()) {
+            if (!m_rectLightBuffer.IsValid() && !m_rectLightBufferFailed) {
+                m_rectLightBufferFailed = !CreateRectLightBuffer(m_device, m_rectLightBuffer);
+            }
+            // The legacy CPU rectangle list stays rectangle-only. Merge new shapes
+            // solely for deferred LTC; the untouched GI consumers do not support them.
+            RectLightData areaLights[kMaxRectLights];
+            const RectLightData* lights = ctx.lightData.rectLights;
+            if (ctx.lightData.shapedLightCount > 0) {
+                for (uint32_t i = 0; i < ctx.lightData.rectLightCount; ++i)
+                    areaLights[i] = ctx.lightData.rectLights[i];
+                for (uint32_t i = 0; i < ctx.lightData.shapedLightCount; ++i)
+                    areaLights[ctx.lightData.rectLightCount + i] = ctx.lightData.shapedLights[i];
+                lights = areaLights;
+            }
+            const uint32_t srv = WriteRectLightBuffer(m_device, m_rectLightBuffer, ctx.frameIndex,
+                                                      lights, areaLightCount);
+            if (srv != UINT32_MAX) {
+                lightingCB->rectLightCount  = areaLightCount;
+                lightingCB->rectLightsSrv   = srv;
+                lightingCB->ltcMatrixSrv    = m_ltcLut.matrixSrv;
+                lightingCB->ltcMagnitudeSrv = m_ltcLut.magnitudeSrv;
+            }
+        }
     }
 
     // ── Extract cloud shadow & light shaft parameters from primary DirectionalLight ──
@@ -844,7 +875,8 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
         perFrame.sdfReflectionSkySrv = perFrame.prefilteredSrvIndex;
         perFrame.sdfReflectionSamples = static_cast<uint32_t>(cv_SdfReflectionSamples->value);
         perFrame.sdfReflectionPlainMean = cv_SdfReflectionHdrWeight->value ? 0u : 1u;
-        perFrame.sdfSampleRotation = static_cast<uint32_t>(cv_SdfSampleRotation->value);
+        perFrame.sdfSampleRotation = static_cast<uint32_t>(cv_SdfSampleRotation->value)
+            | (cv_GIValidSampleReject->value ? 0x80000000u : 0u);
         perFrame.sdfReflectionTraceSteps = static_cast<uint32_t>(cv_SdfReflectionSteps->value);
         perFrame.sdfReflectionTraceDistance = cv_SdfReflectionDistance->value;
         perFrame.sdfReflectionVoxelSize = m_globalDistanceField.GetVoxelSize(0);
@@ -1113,6 +1145,15 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
         ctx.totalCascadeCount             = 0;
         ctx.shadowFrame.totalCascadeCount = 0;
     }
+    // r.Shadows.SoftPCSS (registered in shadow_renderer.cpp) is re-read every frame so a runtime
+    // toggle applies at once: the CSM block above is reused while camera, lights and transforms
+    // hold still, and SetupShadowFrame only runs on a dirty frame.
+    reinterpret_cast<ShadowDataCB*>(ctx.shadowAlloc.cpuPtr)->softPCSS =
+        CVarRegistry::Get().GetBool("r.Shadows.SoftPCSS", true) ? 1u : 0u;
+    reinterpret_cast<ShadowDataCB*>(ctx.shadowAlloc.cpuPtr)->localSoftPCSS =
+        CVarRegistry::Get().GetBool("r.Shadows.SoftPCSS.Local", true) ? 1u : 0u;
+    reinterpret_cast<ShadowDataCB*>(ctx.shadowAlloc.cpuPtr)->localPcssSourceRadius =
+        CVarRegistry::Get().GetFloat("r.Shadows.SoftPCSS.Local.SourceRadius", 5.0f);
 
     // ── Build ShadowDataParams for binder path ──────────────────────────
     // Copy the 768-byte scalar section from the CB allocation, then attach

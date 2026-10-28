@@ -629,7 +629,8 @@ void RadianceCache::UpdateProbes(
     const void* perFrameCpuPtr,
     uint32_t perFrameSize,
     uint32_t frameIndex,
-    RHIPipelineHandle sidePipeline)
+    RHIPipelineHandle sidePipeline,
+    uint32_t surfaceCacheParamsSrv)
 {
     if (!m_initialized || !cmdList || !tracePipeline.IsValid() || !cbRing) {
         return;
@@ -813,7 +814,9 @@ void RadianceCache::UpdateProbes(
     // Root constants at b0 (root param 0, 8 uint32s):
     //   [0] SH UAV index, [1] previous-frame SH SRV index, [2] frame index,
     //   [3] probe offset, [4] probe budget, [5] sky radiance SRV, [6..7] padding.
-    uint32_t rootConstants[12] = {};
+    // Phase D stage 3: [12] the surface cache's binding record, [13..16] the raw (unexpanded)
+    // distance clipmaps of the four cascades (the snap of a hit back to the raw surface).
+    uint32_t rootConstants[17] = {};
     rootConstants[0] = m_shBufferUav;
     rootConstants[1] = resetHistory ? UINT32_MAX : m_historyShBufferSrv;
     rootConstants[2] = frameIndex;
@@ -837,7 +840,12 @@ void RadianceCache::UpdateProbes(
     // [10] nearest-face side per probe, [11] classification (0 = the current rule).
     rootConstants[10] = sideActive ? m_probeSideSrv : UINT32_MAX;
     rootConstants[11] = sideActive ? classification : 0u;
-    cmdList->SetRootConstants(0, rootConstants, 12);
+    rootConstants[12] = surfaceCacheParamsSrv;
+    for (uint32_t i = 0; i < 4; ++i) {
+        const auto& clip = gdf.GetClipmap(i);
+        rootConstants[13 + i] = (surfaceCacheParamsSrv != UINT32_MAX && clip.hasData) ? clip.rawSrvIndex : UINT32_MAX;
+    }
+    cmdList->SetRootConstants(0, rootConstants, 17);
     // Logged once the snapshot can be taken (frame >= 120), so it describes what the snapshot
     // sampled: on the first dispatch the IBL is not baked yet and the SRV is the sentinel.
     if (cv_RCDiagnostic->value && !m_identityLogged && frameIndex >= 120u) {
@@ -859,7 +867,7 @@ void RadianceCache::UpdateProbes(
             rootConstants[11] = 0u;
         }
         cmdList->SetPipeline(tracePipeline);
-        cmdList->SetRootConstants(0, rootConstants, 12);
+        cmdList->SetRootConstants(0, rootConstants, 17);
     }
     if (rootConstants[10] != UINT32_MAX)
         m_rgStates->Transition(cmdList, m_probeSideBuffer, RHIResourceState::ShaderResource);

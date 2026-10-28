@@ -44,8 +44,13 @@ cbuffer ShadowDataCB : register(b4) {
     uint   localShadowAtlasIndex;
     uint   localShadowCount;
     float  localShadowNormalOffset;            // r.Shadow.Local.NormalOffset (fraction of the distance)
-    float3 _shadowPad0;
-    float4 _shadowPad[3];                      // pad to 768
+    uint   softPCSS;                           // r.Shadows.SoftPCSS: 1 = PCSS variable penumbra on the CSM
+    float  pcssMinPenumbraTexels;              // r.Shadow.PCSSMinPenumbra (atlas texels)
+    float  pcssMaxPenumbraTexels;              // r.Shadow.PCSSMaxPenumbra (atlas texels)
+    float4 cascadePcssDepthToTexelsPacked[2];  // 8 floats: penumbra texels per unit depth gap (shadow_pcss.h)
+    uint   localSoftPCSS;                      // r.Shadows.SoftPCSS.Local
+    float  localPcssSourceRadius;              // emitter radius in cm
+    float2 _shadowPad1;                        // pad to 768
     // 16 entries x 6 float4: [0..3] viewProj rows, [4] (atlasOffsetX, atlasOffsetY, atlasScale,
     // bias cm), [5] (light position xyz, radius). Tiles store distance / radius.
     float4 localShadowRaw[96];                 // 1536B
@@ -55,6 +60,7 @@ float GetCascadeSplit(uint i)      { return cascadeSplitsPacked[i >> 2][i & 3]; 
 float GetCascadeFadeStart(uint i)  { return cascadeFadeStartsPacked[i >> 2][i & 3]; }
 float GetCascadeDepthBias(uint i)  { return cascadeDepthBiasPacked[i >> 2][i & 3]; }
 float GetCascadeNormalBias(uint i) { return cascadeNormalBiasPacked[i >> 2][i & 3]; }
+float GetCascadePcssDepthToTexels(uint i) { return cascadePcssDepthToTexelsPacked[i >> 2][i & 3]; }
 
 SamplerComparisonState shadowSampler : register(s1);
 
@@ -208,6 +214,228 @@ float CascadeShadow(float3 worldPos, float viewDepth, float3 N, float NdotL) {
     // This is a separate mechanism from the cascade-walk miss above and
     // must stay enabled — it prevents visible shadow popping at the
     // outermost cascade boundary.
+    if (shadowFadeEnd > shadowFadeStart && viewDepth > shadowFadeStart) {
+        float ff = saturate((viewDepth - shadowFadeStart) / (shadowFadeEnd - shadowFadeStart));
+        shadow = lerp(shadow, 1.0, ff);
+    }
+
+#ifndef UZ_BINDLESS
+    #undef shadowAtlas
+#endif
+    return shadow;
+}
+
+// ─── Soft shadows: PCSS stage 1 (r.Shadows.SoftPCSS) ─────────────────────────────
+//
+// The functions above are the r.Shadows.SoftPCSS 0 path and stay untouched; the ones below are
+// their variable-penumbra counterparts, selected by the deferred lighting pass per frame.
+//
+// Structure note: the cascade walk below tests coverage with a projection-only helper and samples
+// the atlas once, outside the unrolled walk. The first form of this path sampled inside the walk
+// (nine inlined copies of the blocker search); with DXC 1.9.2602 on an RTX 5080 (2026-10-20) that
+// compiled to a shader where the first copy returned 0 for every receiver without a blocker,
+// while the copy outside the loop (the cascade blend) returned the right value — even a constant
+// `return 1.0` placed before the atlas reads rendered dark. Keep texture reads out of the break
+// loop.
+
+/// Spatially stable rotation of the Poisson disk: interleaved gradient noise of the pixel position
+/// alone, no frame term, so a static view gets the same kernel every frame (no flicker) and a wide
+/// penumbra dithers per pixel instead of showing the 16 taps as banding.
+/// @ref Jimenez 2014 "Next Generation Post Processing in Call of Duty: Advanced Warfare" — IGN
+/// @constants the three IGN coefficients from the talk
+float ShadowKernelRotationNoise(float2 pixelPos) {
+    return frac(52.9829189 * frac(0.06711056 * pixelPos.x + 0.00583715 * pixelPos.y));
+}
+
+/// Penumbra radius in atlas texels: the receiver/average-blocker depth gap times the cascade's
+/// constant (tan(half source angle) * r.Shadows.SoftPCSS.LightSize * ortho depth range / texel
+/// size, uploaded by SetupShadowFrame). Mirrors PcssPenumbraTexels in shadow_pcss.h, which derives
+/// it from Fernando's similar triangles with the sun at infinity.
+/// @ref Fernando 2005 "Percentage-Closer Soft Shadows"
+float PcssPenumbraTexels(float receiverDepth, float avgBlockerDepth, float depthToTexels) {
+    return max(receiverDepth - avgBlockerDepth, 0.0) * depthToTexels;
+}
+
+/// Kernel radius clamp to [r.Shadow.PCSSMinPenumbra, r.Shadow.PCSSMaxPenumbra]; a max below the
+/// min collapses onto the min (PcssClampRadiusTexels in shadow_pcss.h).
+float PcssClampRadiusTexels(float radiusTexels) {
+    return clamp(radiusTexels, pcssMinPenumbraTexels, max(pcssMaxPenumbraTexels, pcssMinPenumbraTexels));
+}
+
+float2 RotateShadowTap(float2 tap, float2 rot) {
+    return float2(tap.x * rot.x - tap.y * rot.y, tap.x * rot.y + tap.y * rot.x);
+}
+
+/// A receiver projected into one cascade's tile: everything SampleShadowCascade computes before
+/// its taps (normal and slope offsets, tile UV, biased comparison depth) plus whether the cascade
+/// covers the point. Pure math — the soft cascade walk uses it to pick a cascade without touching
+/// the atlas, so the search and filter below run once, for the selected cascade only.
+struct CascadeReceiver {
+    float2 atlasUV;     ///< Receiver position in atlas UV.
+    float2 tileOffset;  ///< Cascade tile origin in atlas UV.
+    float2 tileSize;    ///< Cascade tile extent in atlas UV.
+    float  cmpDepth;    ///< Biased comparison depth (SampleShadowCascade's cmpDepth).
+    float2 planeGrad;   ///< Receiver-plane depth change per atlas-UV offset (receiver-plane bias).
+    bool   covered;     ///< Inside the cascade's depth range and tile (else the -1 sentinel case).
+};
+
+/// Receiver slope (depth change per lateral unit, both in world units) beyond which the
+/// receiver-plane bias stops growing: tan(83 deg). Past that the receiver is edge-on to the light
+/// and N.L is a few percent, so a larger bias would only detach it from its own contact shadow.
+/// @constants 8.0 = tan(83 deg)
+static const float kPcssMaxReceiverSlope = 8.0;
+
+CascadeReceiver ProjectCascadeReceiver(float3 worldPos, float3 N, float NdotL, uint cascadeIdx) {
+    CascadeReceiver r;
+    float normalBias = GetCascadeNormalBias(cascadeIdx);
+    float cosine = saturate(NdotL);
+    float normalScale = sqrt(max(0.0, 1.0 - cosine * cosine));
+    float slopeScale = min(2.0, normalScale / max(cosine, 1e-6));
+    float3 biasedPos = worldPos + N * normalBias * normalScale;
+
+    float4 lsp = mul(float4(biasedPos, 1.0), cascadeViewProj[cascadeIdx]);
+    float3 proj = lsp.xyz / lsp.w;
+
+    float2 shadowUV = proj.xy * 0.5 + 0.5;
+    shadowUV.y = 1.0 - shadowUV.y;
+    r.tileOffset = GetCascadeTileOffset(cascadeIdx, atlasColumns, r.tileSize);
+    r.atlasUV    = r.tileOffset + shadowUV * r.tileSize;
+
+    float depthBias = max(GetCascadeDepthBias(cascadeIdx), 0.0);
+    r.cmpDepth = proj.z - depthBias - depthBias * slopeScale;
+    r.covered  = !(proj.z < 0.0 || proj.z > 1.0 || any(shadowUV < 0.0) || any(shadowUV > 1.0));
+
+    // Receiver-plane depth bias: the depth gradient of the receiver plane across the shadow map, so
+    // every kernel tap compares against the plane's own depth at the tap instead of the centre's.
+    // Without it a wide kernel on a receiver seen at a grazing angle reads texels up-slope that are
+    // nearer the light than the biased centre and self-shadows (the fixed 2-texel PCF never needed
+    // it). The projection is orthographic, so the columns of the view-projection are the NDC
+    // gradients of world position; on the plane n.delta = 0, which gives dz/du and dz/dv as the
+    // triple products below. Slope-clamped, then expressed per atlas-UV offset (with the V flip).
+    /// @ref Isidoro 2006 "Shadow Mapping: GPU-based Tips and Techniques" — receiver plane depth bias
+    float4x4 M = cascadeViewProj[cascadeIdx];
+    float3 cx = float3(M._11, M._21, M._31);
+    float3 cy = float3(M._12, M._22, M._32);
+    float3 cz = float3(M._13, M._23, M._33);
+    float3 tu = cross(cy, N);   // world direction of a pure +u step along the plane (up to scale)
+    float3 tv = cross(cx, N);   // world direction of a pure +v step along the plane
+    float du = dot(tu, cx);
+    float dv = dot(tv, cy);
+    float dzdu = (abs(du) > 1e-8) ? dot(tu, cz) / du : 0.0;
+    float dzdv = (abs(dv) > 1e-8) ? dot(tv, cz) / dv : 0.0;
+    float gradMax = kPcssMaxReceiverSlope * length(cz) / max(length(cx), 1e-8);
+    dzdu = clamp(dzdu, -gradMax, gradMax);
+    dzdv = clamp(dzdv, -gradMax, gradMax);
+    r.planeGrad = float2(dzdu * 2.0 / r.tileSize.x, -dzdv * 2.0 / r.tileSize.y);
+    return r;
+}
+
+/// Percentage-closer soft shadow of one cascade for a covered receiver:
+///   1. blocker search — the average depth of the atlas texels closer to the light than the
+///      receiver, within the widest penumbra this receiver can have (a blocker at the cascade's
+///      near plane);
+///   2. penumbra estimate from the receiver/blocker depth gap (shadow_pcss.h);
+///   3. 16-tap Poisson PCF with that radius — sharp at contact, wide far from the caster.
+/// Kernel offsets are in true atlas texels (the atlas is atlasColumns x rows tiles of
+/// shadowMapSize), so the CVar radii mean texels of the map the search reads. No blocker in the
+/// search disc means none in the (never larger) filter disc: the receiver is lit.
+/// @ref Fernando 2005 "Percentage-Closer Soft Shadows"
+float SampleShadowCascadeSoft(CascadeReceiver r, uint cascadeIdx,
+                              Texture2D<float> shadowAtlas, SamplerComparisonState smplr,
+                              float2 pixelPos) {
+    float2 atlasDims;
+    shadowAtlas.GetDimensions(atlasDims.x, atlasDims.y);
+    float2 texelUV  = 1.0 / atlasDims;
+    float2 atlasMin = r.tileOffset + 0.5 * texelUV;
+    float2 atlasMax = r.tileOffset + r.tileSize - 0.5 * texelUV;
+
+    float angle = ShadowKernelRotationNoise(pixelPos) * 6.28318530718;
+    float2 rot = float2(cos(angle), sin(angle));
+
+    // 1. Blocker search. The depth gap cannot exceed the receiver depth, so the search radius
+    //    (clamped like the filter) is never smaller than the filter radius.
+    float depthToTexels = GetCascadePcssDepthToTexels(cascadeIdx);
+    float searchTexels  = PcssClampRadiusTexels(r.cmpDepth * depthToTexels);
+    float blockerSum   = 0.0;
+    uint  blockerCount = 0u;
+    [unroll] for (uint i = 0; i < 16; ++i) {
+        float2 offset = RotateShadowTap(kPoissonDisk[i], rot) * searchTexels * texelUV;
+        float2 sUV = clamp(r.atlasUV + offset, atlasMin, atlasMax);
+        float stored = shadowAtlas.Load(int3(int2(sUV * atlasDims), 0));
+        float cmpTap = r.cmpDepth + dot(r.planeGrad, sUV - r.atlasUV);
+        if (stored < cmpTap) {   // closer to the light than the receiver plane there: an occluder
+            blockerSum   += stored;
+            blockerCount += 1u;
+        }
+    }
+
+    // 2. Penumbra from the depth gap (the average is over the blockers found; the max keeps the
+    //    division finite when there are none, in which case the result below is lit anyway);
+    // 3. PCF with that radius.
+    float avgBlocker   = blockerSum / float(max(blockerCount, 1u));
+    float filterTexels = PcssClampRadiusTexels(PcssPenumbraTexels(r.cmpDepth, avgBlocker, depthToTexels));
+    float shadow = 1.0;
+    [branch] if (blockerCount != 0u) {
+        float lit = 0.0;
+        [unroll] for (uint j = 0; j < 16; ++j) {
+            float2 offset = RotateShadowTap(kPoissonDisk[j], rot) * filterTexels * texelUV;
+            float2 sUV = clamp(r.atlasUV + offset, atlasMin, atlasMax);
+            lit += shadowAtlas.SampleCmpLevelZero(smplr, sUV, r.cmpDepth + dot(r.planeGrad, sUV - r.atlasUV));
+        }
+        shadow = lit / 16.0;
+    }
+    return shadow;
+}
+
+/// CascadeShadow with the soft sampler: the same cascade selection, outward walk, split-boundary
+/// blend and distance fade. The walk projects only; the selected cascade (and the next one in
+/// the blend band) is sampled once.
+float CascadeShadowSoft(float3 worldPos, float viewDepth, float3 N, float NdotL, float2 pixelPos) {
+    if (cascadeCount == 0) return 1.0;
+
+#ifdef UZ_BINDLESS
+    Texture2D<float> shadowAtlas = ResourceDescriptorHeap[shadowAtlasIndex];
+#else
+    #define shadowAtlas shadowAtlasTexture
+#endif
+
+    uint startCascade = cascadeCount - 1;
+    [unroll] for (uint c = 0; c < kMaxCascades; ++c) {
+        if (c >= cascadeCount) break;
+        if (viewDepth < GetCascadeSplit(c)) { startCascade = c; break; }
+    }
+
+    // Walk outward from startCascade until a cascade covers the pixel (projection only).
+    uint sel = cascadeCount;   // "no cascade covers the pixel"
+    CascadeReceiver rec = (CascadeReceiver)0;
+    [unroll] for (uint step = 0; step < kMaxCascades; ++step) {
+        uint idx = startCascade + step;
+        if (idx >= cascadeCount) break;
+        CascadeReceiver r = ProjectCascadeReceiver(worldPos, N, NdotL, idx);
+        if (r.covered) { rec = r; sel = idx; break; }
+    }
+
+    // Outside the whole CSM coverage: fully lit, as CascadeShadow.
+    float shadow = 1.0;
+    if (sel < cascadeCount) {
+        shadow = SampleShadowCascadeSoft(rec, sel, shadowAtlas, shadowSampler, pixelPos);
+
+        // Split-boundary blend toward sel + 1 when it covers the pixel too.
+        if (sel < cascadeCount - 1) {
+            float splitDist = GetCascadeSplit(sel);
+            float fadeStart = GetCascadeFadeStart(sel);
+            float blendRange = splitDist - fadeStart;
+            if (blendRange > 0.0 && viewDepth > fadeStart) {
+                float bf = saturate((viewDepth - fadeStart) / blendRange);
+                CascadeReceiver rn = ProjectCascadeReceiver(worldPos, N, NdotL, sel + 1);
+                if (rn.covered) {
+                    float next = SampleShadowCascadeSoft(rn, sel + 1, shadowAtlas, shadowSampler, pixelPos);
+                    shadow = lerp(shadow, next, bf);
+                }
+            }
+        }
+    }
+
     if (shadowFadeEnd > shadowFadeStart && viewDepth > shadowFadeStart) {
         float ff = saturate((viewDepth - shadowFadeStart) / (shadowFadeEnd - shadowFadeStart));
         shadow = lerp(shadow, 1.0, ff);
