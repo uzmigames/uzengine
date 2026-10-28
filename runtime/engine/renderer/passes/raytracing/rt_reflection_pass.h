@@ -61,6 +61,9 @@ enum : uint32_t {
     /// Phase D stage 1: the surface radiance cache is bound (`surfaceCacheParamsSrv`): a readable
     /// cell replaces the whole hit radiance, a miss shades inline and updates the cell.
     kRTReflectionFlagSurfaceCache = 16u,
+    /// Rough reflections stage 1 (r.RayTracing.Reflections.Rough): every roughness eligible, the
+    /// glossy lobe sampled, full blend weight, the sample weighted by its VNDF throughput.
+    kRTReflectionFlagRough = 32u,
 };
 
 /// The ray-traced roughness cutoff: `r.RayTracing.Reflections.MaxRoughness` when set, else the

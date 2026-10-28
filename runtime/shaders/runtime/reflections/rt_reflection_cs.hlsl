@@ -58,6 +58,13 @@
 /// material table to the `other` layer (`GITrace_HitEmissive`; `r.GI.SurfaceCache.Emissive`), so a
 /// cell holds the lamp and the emitter the reference path tracer sees and stage 1 left black.
 ///
+/// Rough reflections stage 1 (`kReflectionFlagRough`, `r.RayTracing.Reflections.Rough`): every
+/// roughness is eligible (cutoff 1), the glossy lobe is sampled once per texel, the texel carries the
+/// full blend weight instead of the screen trace's roughness fade, and its radiance is scaled by
+/// `ReflectionRoughSampleWeight` (the sample's F G2/G1 over the split-sum the lighting applies), so
+/// the lighting evaluates the path tracer's estimator; a sample below the horizon weighs zero. With
+/// the flag clear nothing changes.
+///
 /// Bindings: root constants at b0 (`uz::RTReflectionRootConstants`, 17 DWORDs), PerFrameCB at b1,
 /// the shared trace constants at b2 (`uz::RadianceCacheTraceConstants`, rows 1-11 as the DDGI
 /// writer and the path tracer bind them; rows 1-2 carry the probe grid + frame index here).
@@ -230,6 +237,11 @@ void main(uint3 DTid : SV_DispatchThreadID)
     const float3 N        = OctDecode(normalData.rg);
     const float3 incident = normalize(worldPos - cameraPos.xyz);
     float3 R = ReflectionDirection(incident, N);
+    // Rough mode: the sample's VNDF throughput over the lighting's split-sum (1 = the stage 1-3
+    // unweighted texel); a sample below the horizon is drawn once and weighs zero, as the path
+    // tracer drops it, instead of being redrawn (a redraw biases toward the bright upper lobe).
+    const bool rough = ReflectionRoughMode(flags);
+    float sampleWeight = 1.0;
     if (ReflectionUsesGlossyLobe(flags, roughness)) {
         // A visible microfacet normal from the view direction (tangent space, Z along N), the ray
         // reflected about it — path_tracer_ps.hlsl's specular lobe on the same sampler and alpha.
@@ -238,12 +250,29 @@ void main(uint3 DTid : SV_DispatchThreadID)
         float3 T, B;
         BuildOrthonormalBasis(N, T, B);
         const float3 Vt = float3(dot(V, T), dot(V, B), dot(V, N));
-        [loop]
-        for (uint attempt = 0u; attempt < kReflectionGlossyAttempts; ++attempt) {
-            const float3 Ht = SampleGGX_VNDF(alpha, Vt, ReflectionSample2D(DTid.xy, frameIndex, attempt));
+        if (rough) {
+            const float3 Ht = SampleGGX_VNDF(alpha, Vt, ReflectionSample2D(DTid.xy, frameIndex, 0u));
             const float3 H  = normalize(T * Ht.x + B * Ht.y + N * Ht.z);
-            const float3 L  = ReflectionDirection(incident, H);
-            if (dot(L, N) > 0.0) { R = L; break; }
+            R = ReflectionDirection(incident, H);
+            const float  NdotV = dot(N, V);
+            const float2 envBRDF = EnvironmentBRDFApprox(roughness, max(NdotV, 1e-4));
+            sampleWeight = ReflectionRoughSampleWeight(alpha, NdotV, dot(N, R), dot(V, H),
+                                                       ReflectionRoughF0(normalData.b), envBRDF.x, envBRDF.y);
+            if (dot(R, N) <= 0.0 && NdotV > 0.0) {
+                // Zero throughput: the texel owns the layer and contributes nothing this frame.
+                RWTexture2D<float4> zeroOutput = ResourceDescriptorHeap[outputUavIdx];
+                zeroOutput[DTid.xy] = float4(0.0, 0.0, 0.0, ReflectionBlendWeight(flags, roughness, roughnessMaskScale, intensity));
+                WriteHitDistance(DTid.xy, 0.0);
+                return;
+            }
+        } else {
+            [loop]
+            for (uint attempt = 0u; attempt < kReflectionGlossyAttempts; ++attempt) {
+                const float3 Ht = SampleGGX_VNDF(alpha, Vt, ReflectionSample2D(DTid.xy, frameIndex, attempt));
+                const float3 H  = normalize(T * Ht.x + B * Ht.y + N * Ht.z);
+                const float3 L  = ReflectionDirection(incident, H);
+                if (dot(L, N) > 0.0) { R = L; break; }
+            }
         }
     }
     // A shading normal facing away from the camera reflects the ray into the surface; skip it
@@ -267,13 +296,15 @@ void main(uint3 DTid : SV_DispatchThreadID)
 
     // Same blend weight the screen trace would have carried for this surface (its roughness fade
     // times r.SSR.Intensity), so SSR and ray texels are weighted alike by the lighting.
-    const float weight = saturate(roughness * roughnessMaskScale + 2.0) * intensity;
+    const float weight = ReflectionBlendWeight(flags, roughness, roughnessMaskScale, intensity);
     RWTexture2D<float4> output = ResourceDescriptorHeap[outputUavIdx];
 
     if (q.CommittedStatus() != COMMITTED_TRIANGLE_HIT) {
         // Escaped the scene: the sky the reference path tracer and the probe writers return for
         // a miss (the atmosphere capture / HDRI scaled by the skylight colour x intensity).
-        output[DTid.xy] = float4(GITrace_SkyRadiance(R, skyCubemapSrv), weight);
+        float3 skyRadiance = GITrace_SkyRadiance(R, skyCubemapSrv);
+        if (rough) skyRadiance *= sampleWeight;
+        output[DTid.xy] = float4(skyRadiance, weight);
         WriteHitDistance(DTid.xy, 0.0);   // the SSR convention: 0 = no hit, surface reprojection
         return;
     }
@@ -401,6 +432,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
         radiance = SurfaceCacheDebugColor(cache, cachePos, hitN, cameraPos.xyz, 0u, cacheHit, cacheSamples);
     }
 
+    if (rough && !(cacheBound && SurfaceCacheDebugMode(cache) != 0u)) radiance *= sampleWeight;
     output[DTid.xy] = float4(radiance, weight);
     WriteHitDistance(DTid.xy, q.CommittedRayT());
 }

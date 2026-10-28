@@ -70,6 +70,10 @@ static auto* cv_RTReflectionsIndirect = UZ_CVAR_BOOL("r.RayTracing.Reflections.I
 static auto* cv_RTReflectionsDenoise = UZ_CVAR_BOOL("r.RayTracing.Reflections.Denoise", false,
     "Hardware ray-traced reflections (stage 2): run the pass between SSR_Resolve and SSR_Temporal so "
     "the ray texels go through the SSR temporal accumulation + spatial denoise (0 = after them, raw)");
+static auto* cv_RTReflectionsRough = UZ_CVAR_BOOL("r.RayTracing.Reflections.Rough", false,
+    "Rough reflections stage 1: ray-traced glossy reflections at every roughness (cutoff 1, the "
+    "glossy lobe, no roughness fade), each sample weighted by its VNDF throughput over the lighting's "
+    "split-sum so rough surfaces receive the path tracer's specular energy; default off");
 static auto* cv_UnifiedDenoiser = UZ_CVAR_BOOL("r.Denoiser.Unified", false,
     "Opt-in unified standalone RT reflection reconstruction (requires RT denoise; default off)");
 
@@ -1125,7 +1129,7 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
     // RegisterLightingPasses after the SSR chain; the denoise CVar selects which call registers.
     // The render graph chains every access to a resource in registration order (depth is read by
     // every SSR pass), so the registration point is the execution point.
-    const bool denoise = cv_RTReflectionsDenoise->value;
+    const bool rough = cv_RTReflectionsRough->value;
     // With the SSR chain (RegisterSSRPasses' gate) the pass fills the holes of this frame's screen
     // trace in the resolved buffer the lighting reads this frame (PerFrameCB::ssrSrvIndex). Stage 3:
     // with SSR off the pass runs on its own from the RegisterLightingPasses call, owning that
@@ -1136,12 +1140,17 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
     const bool ssrOff   = !m_ssrEnabled || !m_showFlags.Get(ShowFlag::SSR);
     const RTReflectionRoute route = SelectRTReflectionRoute(ssrChain, ssrOff, /*raysAvailable=*/true);
     const bool standalone = route == RTReflectionRoute::RaysOnly;
+    // Rough reflections stage 1: one glossy sample per texel is too noisy for the TAA, whose HDR
+    // weights pull a noisy signal's mean down (-60 % of the floor's specular on Sponza), and the SSR
+    // temporal + spatial denoise loses energy on it too, so rough mode on the rays-only route takes
+    // the unified reconstruction. On the SSR chain the denoise CVar stays in charge.
+    const bool denoise = cv_RTReflectionsDenoise->value || (rough && standalone);
     if (route == RTReflectionRoute::ScreenTraceAndRays ? (denoise != beforeDenoise)
                                                        : (!standalone || beforeDenoise)) return;
     // No screen trace this frame — SSR off, or its trace pass skipped (r.SSR.Trace 0): every
     // eligible texel is traced and the pass writes every texel (kRTReflectionFlagNoScreenTrace).
     const bool ownsOutput = standalone || cv_SSRTrace->value < 0.5f;
-    const bool unified = standalone && denoise && cv_UnifiedDenoiser->value && ctx.bindless
+    const bool unified = standalone && denoise && (cv_UnifiedDenoiser->value || rough) && ctx.bindless
         && m_realtimeDenoiser.Prepare(m_device, m_shaderMgr.get(), m_renderWidth, m_renderHeight);
     if (unified) {
         ctx.unifiedReflectionRes = rgBuilder.ImportTrackedTexture("RT_ReflectionSignal", m_ssrResolvedOutput);
@@ -1151,7 +1160,7 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
     // pass is on), the global distance field for meshes without an entry.
     const uint32_t materialTableSrv = UpdateGIMaterialTable(ctx);
 
-    rgBuilder.AddPass("RT_Reflections", [&, materialTableSrv, ownsOutput, unified](rg::RgPassBuilder& pb) {
+    rgBuilder.AddPass("RT_Reflections", [&, materialTableSrv, ownsOutput, unified, denoise, rough](rg::RgPassBuilder& pb) {
         // The GBuffer reads order this pass after the GBuffer and, in registration order, after
         // SSR_SpatialDenoise (the last writer of the resolved buffer) and before the lighting.
         // The TLAS (built in RTManager::BeginFrame, before the graph executes) and the SSR
@@ -1162,7 +1171,7 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
         pb.Read(ctx.velocityRes, RHIResourceState::ShaderResource);
         if (unified) pb.Write(ctx.unifiedReflectionRes, RHIResourceState::UnorderedAccess);
 
-        pb.SetExecutionCallback([this, &ctx, materialTableSrv, ownsOutput, unified](IRHICommandList* cmd, const rg::RgPassResources&) {
+        pb.SetExecutionCallback([this, &ctx, materialTableSrv, ownsOutput, unified, denoise, rough](IRHICommandList* cmd, const rg::RgPassResources&) {
             UZ_PROFILE_SCOPE("RTReflections::Trace");
 
             auto rtReflectionPSO = ctx.pipelines->GetRtReflection();
@@ -1187,7 +1196,7 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
             if (!traceAlloc.cpuPtr) return;
             std::memcpy(traceAlloc.cpuPtr, &traceConstants, sizeof(traceConstants));
 
-            const bool denoiseRoute = cv_RTReflectionsDenoise->value;
+            const bool denoiseRoute = denoise;
             {
                 // The screen trace is read only with the chain (unread, sentinel index, when the
                 // pass owns the buffer).
@@ -1203,8 +1212,10 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
             const float ssrMaxRoughness = std::max(0.05f, cv_SSRMaxRoughness->value);
             // Stage 2: the ray-traced cutoff may exceed the screen trace's; unset = the SSR cutoff,
             // which keeps the stage 1 range and blend weights.
-            const float rtMaxRoughness  = RTReflectionMaxRoughness(cv_RTReflectionsMaxRoughness->value,
-                                                                   ssrMaxRoughness);
+            // Rough reflections stage 1: every roughness is eligible.
+            const float rtMaxRoughness  = rough ? 1.0f
+                                                : RTReflectionMaxRoughness(cv_RTReflectionsMaxRoughness->value,
+                                                                           ssrMaxRoughness);
 
             RTReflectionRootConstants rc{};
             rc.depthSrvIdx        = m_gbuffer.depthSRV;
@@ -1228,7 +1239,8 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
             rc.flags              = (cv_RTReflectionsGlossy->value ? kRTReflectionFlagGlossy : 0u)
                                   | (indirect ? kRTReflectionFlagIndirect : 0u)
                                   | (denoiseRoute ? kRTReflectionFlagHitDistance : 0u)
-                                  | (ownsOutput ? kRTReflectionFlagNoScreenTrace : 0u);
+                                  | (ownsOutput ? kRTReflectionFlagNoScreenTrace : 0u)
+                                  | (rough ? kRTReflectionFlagRough : 0u);
             // Phase D stage 1: the surface radiance cache, bound only when its resolve ran this
             // frame (r.GI.SurfaceCache on, table created); its buffers stay in the UAV / SRV states
             // the resolve left them in, ordered by the barriers PrepareConsumer emits.
@@ -1273,7 +1285,7 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
             uint64_t hash = frame ? SurfaceCacheLightingHash(ctx, *frame) : 0ull;
             const float modes[] = {float(cv_RTReflectionsGlossy->value), float(cv_RTReflectionsIndirect->value),
                                    cv_RTReflectionsMaxRoughness->value, cv_SSRIntensity->value,
-                                   cv_RTReflectionsMaxDistance->value};
+                                   cv_RTReflectionsMaxDistance->value, float(cv_RTReflectionsRough->value)};
             return SurfaceCacheHashBytes(modes, sizeof(modes), hash);
         };
         m_realtimeDenoiser.Register(rgBuilder, ctx, m_cbRing.get(), ctx.unifiedReflectionRes,
