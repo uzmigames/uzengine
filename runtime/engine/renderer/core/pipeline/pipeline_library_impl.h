@@ -281,3 +281,5 @@
     RHIPipelineHandle m_volFogInject          = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_volFogScatter         = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_volFogComposite       = RHIPipelineHandle::Invalid();
+    RHIShaderHandle m_ssgiStableTemporalAccumCS = RHIShaderHandle::Invalid();
+    RHIPipelineHandle m_ssgiStableTemporalAccum = RHIPipelineHandle::Invalid();

@@ -150,6 +150,7 @@ void PipelineLibrary::Shutdown() {
     destroyPipeline(m_fxaa);
     destroyPipeline(m_gpuSkinningPipeline);
     destroyPipeline(m_ssgiDxrTrace);
+    destroyPipeline(m_ssgiStableTemporalAccum);
     destroyPipeline(m_ssgiDxrUpsample);
 
     // Destroy cached shaders
@@ -200,6 +201,7 @@ void PipelineLibrary::Shutdown() {
     destroyShader(m_velocityObjectPS);
     destroyShader(m_fxaaPS);
     destroyShader(m_ssgiDxrTraceCS);
+    destroyShader(m_ssgiStableTemporalAccumCS);
     destroyShader(m_ssgiDxrUpsampleCS);
 
     m_psoCache.Shutdown();

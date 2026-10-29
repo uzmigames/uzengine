@@ -43,6 +43,8 @@ static auto* cv_SSGIStepSize     = UZ_CVAR_FLOAT("r.SSGI.StepSize", 0.02f, "UV-s
 // value. Brixelizer GI is the preferred indoor GI.
 static auto* cv_SSGIThickness    = UZ_CVAR_FLOAT("r.SSGI.Thickness", 50.0f, "Depth comparison thickness (cm)", 0.01f, 1000.0f);
 static auto* cv_SSGITemporalAlpha = UZ_CVAR_FLOAT("r.SSGI.TemporalAlpha", 0.05f, "Temporal accumulation alpha (0=full history, 1=no history)", 0.01f, 0.5f);
+static auto* cv_StableTemporal = UZ_CVAR_BOOL("r.GI.FinalGather.StableTemporal", false,
+    "Variance/confidence-guided diffuse gather accumulation beyond 64 frames");
 // Screen-space ReSTIR GI (Lumen-parity phase C). Opt-in: 0 dispatches the unchanged gather trace.
 // File scope so command-line overrides register before the first frame (see SampleFrameOffset).
 static auto* cv_GIReSTIR = UZ_CVAR_INT("r.GI.ReSTIR", 0,
@@ -64,7 +66,7 @@ namespace uz {
 struct HistoryCB {
     float    previousViewProj[16];
     uint32_t regionCount;
-    uint32_t _pad[3];
+    uint32_t _pad[3]; // Stable temporal mode and moment SRV/UAV; legacy ABI unchanged.
     float    regionLo[16][4];
     float    regionHi[16][4];
 };
@@ -333,6 +335,12 @@ void SSGIRenderer::DestroyTextures() {
         destroyTex(m_historyGeometry[i]);
         m_historyGeometrySrv[i] = UINT32_MAX;
         m_historyGeometryUav[i] = UINT32_MAX;
+        destroyTex(m_historyMoments[i]);
+        m_historyMomentsSrv[i] = UINT32_MAX;
+        m_historyMomentsUav[i] = UINT32_MAX;
+        destroyTex(m_stableHistory[i]);
+        m_stableHistorySrv[i] = UINT32_MAX;
+        m_stableHistoryUav[i] = UINT32_MAX;
         destroyTex(m_ssgiHistory[i]);
         m_ssgiHistorySrv[i] = UINT32_MAX;
         m_ssgiHistoryUav[i] = UINT32_MAX;
@@ -377,7 +385,8 @@ bool SSGIRenderer::PrepareFrame(PipelineLibrary* pipelines, bool worldGather, bo
     }
     const bool ready = pipelines->GetSsgiTrace().IsValid()
         && pipelines->GetSsgiSpatialDenoise().IsValid()
-        && pipelines->GetSsgiTemporalAccum().IsValid()
+        && (worldGather && cv_StableTemporal->value >= 0.5f
+            ? pipelines->GetSsgiStableTemporalAccum() : pipelines->GetSsgiTemporalAccum()).IsValid()
         && pipelines->GetSsgiBilateralUpsample().IsValid()
         && (worldGather || pipelines->GetSsgiPrevColorReduce().IsValid());
     if (!ready) { LogGatherActivation(0); settings.enabled = false; m_hasHistory = false; m_hasProducedResult = false; }
@@ -395,6 +404,9 @@ void SSGIRenderer::Render(IRHICommandList* cmdList, const SSGIRenderParams& para
 
     // Skip if no previous frame color is available yet (first frame).
     if (!params.worldGather && !m_hasPrevColor) return;
+    const bool stableTemporal = params.worldGather && cv_StableTemporal->value >= 0.5f;
+    if (stableTemporal != m_stableTemporal) SetStableTemporalMode(stableTemporal);
+    if (m_stableTemporal) UpdateStableTemporalState(cmdList, params);
     const uint32_t dxrMode = params.gatherDxrMode
         && params.pipelines->GetSsgiDxrTrace().IsValid()
         && params.pipelines->GetSsgiDxrUpsample().IsValid() ? params.gatherDxrMode : 0u;
@@ -421,7 +433,9 @@ void SSGIRenderer::Render(IRHICommandList* cmdList, const SSGIRenderParams& para
         m_resourceStatesInitialized = true;
     }
     // Pass 1: Downsample prev scene color to half-res
-    if (params.resetHistory || m_lastFrame + 1 != params.frameIndex || m_sceneRevision != params.sceneRevision) {
+    if (m_stableTemporal) {
+        ResetStableTemporalHistory(params);
+    } else if (params.resetHistory || m_lastFrame + 1 != params.frameIndex || m_sceneRevision != params.sceneRevision) {
         m_hasHistory = false;
         m_restirHistoryValid = false;   // the reservoirs were accumulated against a frame that no longer follows
     }
@@ -452,7 +466,96 @@ void SSGIRenderer::Render(IRHICommandList* cmdList, const SSGIRenderParams& para
     LogGatherActivation(params.worldGather ? frameConstants->sdfDiffuseSamples : 0u);
     m_hasHistory = true;
     m_lastFrame = params.frameIndex;
+    m_lastSampleFrame = params.frameIndex;
     std::memcpy(m_previousViewProj, params.perFrameCpuPtr, sizeof(m_previousViewProj));
+    if (m_stableTemporal) StoreStableTemporalState(params);
+}
+
+
+[[gnu::noinline]] void SSGIRenderer::SetStableTemporalMode(bool enabled) {
+    m_hasHistory = false;
+    m_stableTemporal = enabled;
+    m_lightingHistoryRemainder = 0.0f;
+}
+
+[[gnu::noinline]] void SSGIRenderer::UpdateStableTemporalState(IRHICommandList* cmdList, const SSGIRenderParams& params) {
+    const auto* frame = static_cast<const PerFrameCB*>(params.perFrameCpuPtr);
+    const bool lightingChanged = m_hasHistory
+        && (std::memcmp(m_previousLighting, &frame->lightDir, sizeof(m_previousLighting)) != 0
+            || (m_previousLightingGeneration != 0
+                && params.lightingGeneration != m_previousLightingGeneration));
+    // At alpha .05, 128 frames leave <.15% of a lighting step. Re-arm only
+    // after this catch-up, rather than treating slow Monte Carlo drift as a light change.
+    m_lightingHistoryRemainder = GatherLightingHistoryRemainder(
+        m_lightingHistoryRemainder, lightingChanged, cv_SSGITemporalAlpha->value);
+    EnsureStableTemporalTextures(cmdList);
+}
+
+[[gnu::noinline]] void SSGIRenderer::EnsureStableTemporalTextures(IRHICommandList* cmdList) {
+    if (!m_historyMoments[0].IsValid()) {
+        for (int i = 0; i < 2; ++i) {
+            RHITextureDesc desc{};
+            desc.width = m_halfWidth;
+            desc.height = m_halfHeight;
+            desc.format = RHIFormat::RGBA32Float;
+            desc.usage = RHITextureUsage::ShaderResource | RHITextureUsage::UnorderedAccess;
+            desc.debugName = "SSGI_HistoryMoments";
+            m_historyMoments[i] = m_device->CreateTexture(desc);
+            UZ_VERIFY(m_historyMoments[i].IsValid());
+            m_historyMomentsSrv[i] = m_device->GetTextureSRVIndex(m_historyMoments[i]);
+            m_historyMomentsUav[i] = m_device->GetTextureUAVIndex(m_historyMoments[i]);
+            RHIBarrierDesc barrier{};
+            barrier.texture = m_historyMoments[i];
+            barrier.stateBefore = RHIResourceState::Common;
+            barrier.stateAfter = RHIResourceState::ShaderResource;
+            cmdList->ResourceBarrier(&barrier, 1);
+            // FP16 would eventually round away small updates and falsely freeze the signal.
+            desc.debugName = "SSGI_StableHistory";
+            m_stableHistory[i] = m_device->CreateTexture(desc);
+            UZ_VERIFY(m_stableHistory[i].IsValid());
+            m_stableHistorySrv[i] = m_device->GetTextureSRVIndex(m_stableHistory[i]);
+            m_stableHistoryUav[i] = m_device->GetTextureUAVIndex(m_stableHistory[i]);
+            barrier.texture = m_stableHistory[i];
+            cmdList->ResourceBarrier(&barrier, 1);
+        }
+    }
+}
+
+[[gnu::noinline]] void SSGIRenderer::ResetStableTemporalHistory(const SSGIRenderParams& params) {
+    const uint32_t receiverFrame = params.receiverFrameIndex;
+    const bool historyReset = params.resetHistory || m_sceneRevision != params.sceneRevision;
+    if (historyReset || m_lastFrame + 1 != receiverFrame) {
+        m_hasHistory = false;
+    }
+    // Keep the producer's existing diagnostic seed/reset behaviour; only the
+    // gather reconstruction opts into the independent receiver timeline.
+    if (historyReset || m_lastSampleFrame + 1 != params.frameIndex) m_restirHistoryValid = false;
+}
+
+[[gnu::noinline]] void SSGIRenderer::StoreStableTemporalState(const SSGIRenderParams& params) {
+    m_lastFrame = params.receiverFrameIndex;
+    const auto* frameConstants = static_cast<const PerFrameCB*>(params.perFrameCpuPtr);
+    std::memcpy(m_previousCamera, &frameConstants->cameraPos, sizeof(m_previousCamera));
+    std::memcpy(m_previousLighting, &frameConstants->lightDir, sizeof(m_previousLighting));
+    m_previousLightingGeneration = params.lightingGeneration;
+}
+
+[[gnu::noinline]] void SSGIRenderer::FillStableTemporalHistory(uint32_t (&pad)[3], const SSGIRenderParams& params) {
+    const int writeIdx = m_historyIndex;
+    const int readIdx = 1 - m_historyIndex;
+    const auto* frame = static_cast<const PerFrameCB*>(params.perFrameCpuPtr);
+    // Projective w (the forward direction) is unaffected by TAA jitter.
+    bool stationary = std::memcmp(m_previousCamera, &frame->cameraPos, sizeof(m_previousCamera)) == 0;
+    stationary = stationary
+        && std::memcmp(m_previousLighting, &frame->lightDir, sizeof(m_previousLighting)) == 0
+        && params.lightingGeneration == m_previousLightingGeneration
+        && m_lightingHistoryRemainder < 0.0015f;
+    const auto* matrix = reinterpret_cast<const float*>(&frame->viewProj);
+    for (int i = 3; i < 16; i += 4)
+        stationary = stationary && matrix[i] == m_previousViewProj[i];
+    pad[0] = stationary ? 1u : 2u;
+    pad[1] = m_historyMomentsSrv[readIdx];
+    pad[2] = m_historyMomentsUav[writeIdx];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -960,6 +1063,11 @@ void SSGIRenderer::DispatchSpatialDenoise(IRHICommandList* cmdList, const SSGIRe
 void SSGIRenderer::DispatchTemporalAccum(IRHICommandList* cmdList, const SSGIRenderParams& params) {
     UZ_PROFILE_SCOPE("SSGI::TemporalAccum");
 
+    if (m_stableTemporal) {
+        DispatchStableTemporalAccum(cmdList, params);
+        return;
+    }
+
     auto pso = params.pipelines->GetSsgiTemporalAccum();
     if (!pso.IsValid()) return;
 
@@ -1059,6 +1167,123 @@ void SSGIRenderer::DispatchTemporalAccum(IRHICommandList* cmdList, const SSGIRen
     }
 }
 
+
+[[gnu::noinline]] void SSGIRenderer::DispatchStableTemporalAccum(IRHICommandList* cmdList, const SSGIRenderParams& params) {
+    auto pso = m_stableTemporal ? params.pipelines->GetSsgiStableTemporalAccum()
+                               : params.pipelines->GetSsgiTemporalAccum();
+    if (!pso.IsValid()) return;
+
+    // Write index = current m_historyIndex, read index = 1 - m_historyIndex
+    const int writeIdx = m_historyIndex;
+    const int readIdx  = 1 - m_historyIndex;
+    if (m_stableTemporal) {
+        RHIBarrierDesc barrier{};
+        barrier.texture = m_historyMoments[writeIdx];
+        barrier.stateBefore = RHIResourceState::ShaderResource;
+        barrier.stateAfter = RHIResourceState::UnorderedAccess;
+        cmdList->ResourceBarrier(&barrier, 1);
+    }
+
+    // Transition write targets to UAV, read targets to SRV
+    {
+        RHIBarrierDesc barriers[3] = {};
+        barriers[0].texture     = m_stableTemporal ? m_stableHistory[writeIdx] : m_ssgiHistory[writeIdx];
+        barriers[0].stateBefore = RHIResourceState::ShaderResource;
+        barriers[0].stateAfter  = RHIResourceState::UnorderedAccess;
+        barriers[1].texture     = m_ssgiHistoryAO[writeIdx];
+        barriers[1].stateBefore = RHIResourceState::ShaderResource;
+        barriers[1].stateAfter  = RHIResourceState::UnorderedAccess;
+        barriers[2].texture = m_historyGeometry[writeIdx];
+        barriers[2].stateBefore = barriers[0].stateBefore;
+        barriers[2].stateAfter = barriers[0].stateAfter;
+        cmdList->ResourceBarrier(barriers, 3);
+    }
+
+    cmdList->SetPipeline(pso);
+
+    // Fifteen DWORDs plus the previous jittered view-projection at b2.
+    struct TemporalAccumRC {
+        uint32_t currentSrvIndex;
+        uint32_t currentAOSrvIndex;
+        uint32_t historySrvIndex;
+        uint32_t historyAOSrvIndex;
+        uint32_t velocitySrvIndex;
+        uint32_t outputUavIndex;
+        uint32_t aoOutputUavIndex;
+        uint32_t packedDimensions;  // low 16 = width, high 16 = height
+        uint32_t temporalAlphaBits;
+        uint32_t varianceClipGammaBits;
+        uint32_t depthSrv;
+        uint32_t normalSrv;
+        uint32_t historyGeometrySrv;
+        uint32_t geometryUav;
+        uint32_t historyValid;
+    };
+    static_assert(sizeof(TemporalAccumRC) == 60, "Must fit 16 root DWORDs");
+
+    HistoryCB history{};
+    FillHistoryCB(history, m_previousViewProj, m_previousRegions, params.changedRegions);
+    if (m_stableTemporal) FillStableTemporalHistory(history._pad, params);
+    m_previousRegions = params.changedRegions ? *params.changedRegions : std::vector<GlobalDistanceField::ChangedRegion>{};
+    auto historyAllocation = params.cbRing->Allocate(sizeof(HistoryCB));
+    UZ_VERIFY(historyAllocation.cpuPtr != nullptr);
+    std::memcpy(historyAllocation.cpuPtr, &history, sizeof(HistoryCB));
+    cmdList->SetRootCBV(kSlotPerObject, historyAllocation.bufferHandle, historyAllocation.offsetBytes,
+                       historyAllocation.cpuPtr, sizeof(HistoryCB));
+    TemporalAccumRC rc{};
+    rc.depthSrv = params.depthSrvIndex;
+    rc.normalSrv = params.normalSrvIndex;
+    rc.historyGeometrySrv = m_historyGeometrySrv[readIdx];
+    rc.geometryUav = m_historyGeometryUav[writeIdx];
+    rc.historyValid = m_hasHistory ? 1u : 0u;
+    rc.currentSrvIndex   = m_ssgiDenoisedSrv;
+    rc.currentAOSrvIndex = m_ssgiDenoisedAOSrv;
+    rc.historySrvIndex   = m_stableTemporal ? m_stableHistorySrv[readIdx] : m_ssgiHistorySrv[readIdx];
+    rc.historyAOSrvIndex = m_ssgiHistoryAOSrv[readIdx];
+    rc.velocitySrvIndex  = params.velocitySrvIndex;
+    rc.outputUavIndex    = m_stableTemporal ? m_stableHistoryUav[writeIdx] : m_ssgiHistoryUav[writeIdx];
+    rc.aoOutputUavIndex  = m_ssgiHistoryAOUav[writeIdx];
+    rc.packedDimensions  = (m_halfWidth & 0xFFFF) | ((m_halfHeight & 0xFFFF) << 16);
+    float temporalAlpha = cv_SSGITemporalAlpha->value;
+    float varClipGamma = 1.0f; // Reserved ABI slot; geometric history rejection replaces color clipping.
+    std::memcpy(&rc.temporalAlphaBits, &temporalAlpha, 4);
+    std::memcpy(&rc.varianceClipGammaBits, &varClipGamma, 4);
+
+    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 15);
+
+    cmdList->SetRootCBV(kSlotPerFrame, params.perFrameBuffer,
+                        params.perFrameOffset, params.perFrameCpuPtr,
+                        params.perFrameSize);
+
+    cmdList->SetDescriptorTable(4, rc.outputUavIndex);
+
+    const uint32_t groupsX = (m_halfWidth  + kThreadGroupSize - 1) / kThreadGroupSize;
+    const uint32_t groupsY = (m_halfHeight + kThreadGroupSize - 1) / kThreadGroupSize;
+    cmdList->Dispatch(groupsX, groupsY, 1);
+
+    // Transition write targets: UAV -> SRV for upsample pass
+    if (m_stableTemporal) {
+        RHIBarrierDesc barrier{};
+        barrier.texture = m_historyMoments[writeIdx];
+        barrier.stateBefore = RHIResourceState::UnorderedAccess;
+        barrier.stateAfter = RHIResourceState::ShaderResource;
+        cmdList->ResourceBarrier(&barrier, 1);
+    }
+    {
+        RHIBarrierDesc barriers[3] = {};
+        barriers[0].texture     = m_stableTemporal ? m_stableHistory[writeIdx] : m_ssgiHistory[writeIdx];
+        barriers[0].stateBefore = RHIResourceState::UnorderedAccess;
+        barriers[0].stateAfter  = RHIResourceState::ShaderResource;
+        barriers[1].texture     = m_ssgiHistoryAO[writeIdx];
+        barriers[1].stateBefore = RHIResourceState::UnorderedAccess;
+        barriers[1].stateAfter  = RHIResourceState::ShaderResource;
+        barriers[2].texture = m_historyGeometry[writeIdx];
+        barriers[2].stateBefore = barriers[0].stateBefore;
+        barriers[2].stateAfter = barriers[0].stateAfter;
+        cmdList->ResourceBarrier(barriers, 3);
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Pass 5: Bilateral Upsample
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1109,7 +1334,7 @@ void SSGIRenderer::DispatchUpsample(IRHICommandList* cmdList, const SSGIRenderPa
     static auto* cv_UpsNormalPow  = UZ_CVAR_FLOAT("r.SSGI.UpsampleNormalSigma", 32.0f, "Upsample normal cosine power", 4.0f, 128.0f);
 
     UpsampleRC rc{};
-    rc.ssgiHalfSrvIndex   = m_ssgiHistorySrv[readIdx];
+    rc.ssgiHalfSrvIndex   = m_stableTemporal ? m_stableHistorySrv[readIdx] : m_ssgiHistorySrv[readIdx];
     rc.ssgiAOHalfSrvIndex = m_ssgiHistoryAOSrv[readIdx];
     rc.depthFullSrvIndex  = params.depthSrvIndex;
     rc.normalFullSrvIndex = params.normalSrvIndex;

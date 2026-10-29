@@ -635,6 +635,7 @@ public:
     /// Velocity-reprojected temporal accumulation with neighborhood variance clipping.
     ///
     [[nodiscard]] RHIPipelineHandle GetSsgiTemporalAccum();
+    [[nodiscard]] RHIPipelineHandle GetSsgiStableTemporalAccum();
 
     /// Returns the SSGI bilateral upsample compute pipeline.
     ///

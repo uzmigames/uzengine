@@ -350,6 +350,24 @@ RHIPipelineHandle PipelineLibrary::GetSsgiTemporalAccum() {
     return m_ssgiTemporalAccum;
 }
 
+RHIPipelineHandle PipelineLibrary::GetSsgiStableTemporalAccum() {
+    if (!m_initialized) return RHIPipelineHandle::Invalid();
+    if (m_ssgiStableTemporalAccum.IsValid()) return m_ssgiStableTemporalAccum;
+    if (!m_ssgiStableTemporalAccumCS.IsValid()) {
+        m_ssgiStableTemporalAccumCS = m_shaderMgr->CreateShader(
+            EngineShader::SsgiStableTemporalAccumCS, RHIShaderStage::Compute);
+        if (!m_ssgiStableTemporalAccumCS.IsValid()) return RHIPipelineHandle::Invalid();
+    }
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_ssgiStableTemporalAccumCS;
+    desc.debugName = "SSGI_StableTemporalAccum";
+    m_ssgiStableTemporalAccum = m_device->CreateComputePipeline(desc);
+    if (!m_ssgiStableTemporalAccum.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SSGI_StableTemporalAccum pipeline");
+    }
+    return m_ssgiStableTemporalAccum;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SSGI Bilateral Upsample Compute Pipeline
 // ─────────────────────────────────────────────────────────────────────────────

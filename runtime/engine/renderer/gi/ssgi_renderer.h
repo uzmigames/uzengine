@@ -37,6 +37,19 @@ class PipelineLibrary;
         && tlasSrv != UINT32_MAX && materialSrv != UINT32_MAX ? requested : 0u;
 }
 
+/// Fraction of the old lighting retained by the legacy weight, including its 64-frame cap.
+[[nodiscard]] inline float GatherLightingHistoryRemainder(float previous, bool changed,
+                                                         float temporalAlpha) noexcept {
+    const float alpha = temporalAlpha > 1.0f / 64.0f ? temporalAlpha : 1.0f / 64.0f;
+    return (changed ? 1.0f : previous) * (1.0f - alpha);
+}
+
+/// Stable reconstruction validates the receiver timeline, never the stochastic sample phase.
+[[nodiscard]] inline uint32_t SelectGatherReceiverFrame(bool stable, uint32_t receiverFrame,
+                                                       uint32_t sampleFrame) noexcept {
+    return stable ? receiverFrame : sampleFrame;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SSGISettings — runtime-tunable parameters
 // ─────────────────────────────────────────────────────────────────────────────
@@ -96,6 +109,8 @@ struct SSGIRenderParams {
     uint32_t gatherDxrMode = 0;
     uint32_t gatherTlasSrv = UINT32_MAX;
     uint32_t gatherMaterialSrv = UINT32_MAX;
+    uint32_t receiverFrameIndex = 0; ///< Actual frame, independent of a frozen/offset sampling phase.
+    uint32_t lightingGeneration = 0; ///< Surface-cache lighting changes, including local lights.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -243,7 +258,14 @@ private:
     void DestroyRestirBuffers();
     void DispatchRestir(IRHICommandList* cmdList, const SSGIRenderParams& params);
     void DispatchSpatialDenoise(IRHICommandList* cmdList, const SSGIRenderParams& params);
+    void SetStableTemporalMode(bool enabled);
+    void UpdateStableTemporalState(IRHICommandList* cmdList, const SSGIRenderParams& params);
+    void EnsureStableTemporalTextures(IRHICommandList* cmdList);
+    void ResetStableTemporalHistory(const SSGIRenderParams& params);
+    void StoreStableTemporalState(const SSGIRenderParams& params);
+    void FillStableTemporalHistory(uint32_t (&pad)[3], const SSGIRenderParams& params);
     void DispatchTemporalAccum(IRHICommandList* cmdList, const SSGIRenderParams& params);
+    void DispatchStableTemporalAccum(IRHICommandList* cmdList, const SSGIRenderParams& params);
     void DispatchUpsample(IRHICommandList* cmdList, const SSGIRenderParams& params);
 
     IRHIDevice* m_device = nullptr;
@@ -335,6 +357,20 @@ private:
     std::vector<GlobalDistanceField::ChangedRegion> m_previousRegions;
 
     static constexpr uint32_t kThreadGroupSize = 8;
+
+    // Append opt-in state so legacy members retain their original offsets.
+    RHITextureHandle m_historyMoments[2];
+    uint32_t m_historyMomentsSrv[2] = {UINT32_MAX, UINT32_MAX};
+    uint32_t m_historyMomentsUav[2] = {UINT32_MAX, UINT32_MAX};
+    RHITextureHandle m_stableHistory[2];
+    uint32_t m_stableHistorySrv[2] = {UINT32_MAX, UINT32_MAX};
+    uint32_t m_stableHistoryUav[2] = {UINT32_MAX, UINT32_MAX};
+    bool m_stableTemporal = false;
+    float m_previousCamera[4] = {};
+    float m_previousLighting[12] = {};
+    uint32_t m_previousLightingGeneration = 0;
+    float m_lightingHistoryRemainder = 0.0f; ///< Keep legacy response until old lighting has decayed.
+    uint32_t m_lastSampleFrame = UINT32_MAX;
 };
 
 } // namespace uz

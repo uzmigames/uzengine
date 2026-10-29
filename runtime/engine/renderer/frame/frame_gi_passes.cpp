@@ -168,6 +168,7 @@ void SceneRenderer::RegisterSSGIPasses(rg::RgBuilder& rgBuilder, FrameContext& c
             // Diagnostic (followup-12): `r.GI.Reflections.FreezeSeed` also freezes the world
             // gather's sampling seed, otherwise "freeze the seed" would only cover the deferred
             // reflections and the gather would keep re-sampling every frame.
+            ssgiParams.receiverFrameIndex = ctx.frameIndex;
             ssgiParams.frameIndex      = ctx.perFrame.timeParams.w >= 0.f
                                        ? static_cast<uint32_t>(ctx.perFrame.timeParams.w)
                                        : ctx.frameIndex;
@@ -177,6 +178,7 @@ void SceneRenderer::RegisterSSGIPasses(rg::RgBuilder& rgBuilder, FrameContext& c
             ssgiParams.gatherMaterialSrv = materialSrv;
             ssgiParams.resetHistory = !ctx.temporal.matrixValid;
             ssgiParams.sceneRevision = m_globalDistanceField.GetSceneRevision();
+            ssgiParams.lightingGeneration = m_surfaceCache.GetLightingGeneration();
             ssgiParams.changedRegions = &m_globalDistanceField.GetChangedRegions();   // read at execution (block B.2)
             ssgiParams.renderWidth     = static_cast<uint32_t>(ctx.renderWidth);
             ssgiParams.renderHeight    = static_cast<uint32_t>(ctx.renderHeight);

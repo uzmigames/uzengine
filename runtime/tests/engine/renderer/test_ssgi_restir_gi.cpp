@@ -9,6 +9,7 @@
 #include "gi/ssgi_renderer.h"
 #include "../../../shaders/runtime/include/restir_math.hlsli"
 #include "../../../shaders/runtime/ssgi/ssgi_sample_validity.hlsli"
+#include "../../../shaders/runtime/ssgi/ssgi_stable_temporal.hlsli"
 #include <gtest/gtest.h>
 #include <array>
 #include <cmath>
@@ -28,6 +29,61 @@ TEST(SsgiGatherValidity, ExcludesUnavailableBlackButCountsGenuinelyUnlitSamples)
     EXPECT_FLOAT_EQ(reconstruct(0.0f, false), 1.0f);
     EXPECT_FLOAT_EQ(uz::SsgiAvailableWeight(1.0f, 0.0f, true), 0.0f);
     EXPECT_FLOAT_EQ(uz::SsgiAvailableWeight(1.0f, 64.0f, true), 1.0f);
+}
+
+TEST(SsgiStableTemporal, QuietAcceptedReceiversGrowBeyondLegacyHistory) {
+    float confidence = 0.0f, count = 1.0f;
+    for (int frame = 1; frame < 660; ++frame) {
+        confidence = uz::SsgiStableConfidence(1.0f, 1.0001f, 1.0f, confidence, true, true);
+        count = uz::SsgiStableCount(count, confidence);
+    }
+    EXPECT_FLOAT_EQ(count, 660.0f);
+    EXPECT_LT(uz::SsgiStableAlpha(count, confidence, 0.05f), 1.0f / 64.0f);
+    EXPECT_GT(uz::SsgiStableAlpha(count, confidence, 0.05f), 0.0f);
+}
+
+TEST(SsgiStableTemporal, RejectionMotionVarianceAndLightChangeRespondQuickly) {
+    for (const float confidence : {
+        uz::SsgiStableConfidence(1.0f, 1.0001f, 1.0f, 32.0f, false, true),
+        uz::SsgiStableConfidence(1.0f, 1.0001f, 1.0f, 32.0f, true, false),
+        uz::SsgiStableConfidence(1.0f, 1.5f, 1.0f, 32.0f, true, true),
+        uz::SsgiStableConfidence(1.0f, 1.0001f, 2.0f, 32.0f, true, true)}) {
+        EXPECT_FLOAT_EQ(confidence, 0.0f);
+        const float count = uz::SsgiStableCount(600.0f, confidence);
+        EXPECT_FLOAT_EQ(count, 64.0f);
+        EXPECT_FLOAT_EQ(uz::SsgiStableAlpha(count, confidence, 0.05f), 0.05f);
+    }
+    EXPECT_FLOAT_EQ(uz::SsgiStableAlpha(1.0f, 0.0f, 0.05f), 1.0f);
+}
+
+TEST(SsgiStableTemporal, SettledInputCannotLengthenHistoryDuringLightingCatchup) {
+    for (const float fastAlpha : {0.01f, 0.05f, 0.5f}) {
+        float remainder = uz::GatherLightingHistoryRemainder(0.0f, true, fastAlpha);
+        float confidence = 32.0f, count = 600.0f;
+        const float baselineAlpha = fastAlpha > 1.0f / 64.0f ? fastAlpha : 1.0f / 64.0f;
+        // Test the actual host transition gate, not a duplicate of its decay math.
+        for (int frame = 0; remainder >= 0.0015f && frame < 512; ++frame) {
+            confidence = uz::SsgiStableConfidence(2.0f, 4.0001f, 2.0f,
+                                                 confidence, true, false);
+            EXPECT_FLOAT_EQ(confidence, 0.0f);
+            count = uz::SsgiStableCount(count, confidence);
+            EXPECT_FLOAT_EQ(uz::SsgiStableAlpha(count, confidence, fastAlpha), baselineAlpha);
+            remainder = uz::GatherLightingHistoryRemainder(remainder, false, fastAlpha);
+        }
+        EXPECT_LT(remainder, 0.0015f);
+        for (int frame = 0; frame < 16; ++frame) {
+            confidence = uz::SsgiStableConfidence(2.0f, 4.0001f, 2.0f, confidence, true, true);
+            count = uz::SsgiStableCount(count, confidence);
+        }
+        EXPECT_LT(uz::SsgiStableAlpha(count, confidence, fastAlpha), baselineAlpha);
+    }
+}
+
+TEST(SsgiStableTemporal, FrozenSamplePhaseDoesNotResetReceiverTimeline) {
+    const auto previous = uz::SelectGatherReceiverFrame(true, 600u, 42u);
+    EXPECT_EQ(uz::SelectGatherReceiverFrame(true, 601u, 42u), previous + 1u);
+    // OFF retains the original diagnostic behaviour as well as the original render path.
+    EXPECT_EQ(uz::SelectGatherReceiverFrame(false, 601u, 42u), 42u);
 }
 
 namespace {
