@@ -244,6 +244,10 @@ for shader in ('gbuffer/gbuffer_ps.hlsl', 'gbuffer/mesh_vs.hlsl', 'gbuffer/mesh_
     TIER_A.append(layout_entry(shader, 'PerObjectCB', PARAMS + 'constant_buffers.h',
                                before='gbuffer_ps.perobject.before.hlsl' if shader == 'gbuffer/gbuffer_ps.hlsl' else None))
 TIER_A += [
+    layout_entry('denoising/rough_specular_common.hlsli', 'RoughSpecularConfig',
+                 PASSES + 'gi/rough_specular_reconstruction.cpp'),
+    layout_entry('denoising/rough_specular_common.hlsli', 'RoughSpecularFrame',
+                 PARAMS + 'constant_buffers.h', 'PerFrameCB'),
     layout_entry('denoising/realtime_common.hlsli', 'RealtimePolicyCB',
                  PASSES + 'realtime_denoiser.h', 'RealtimeDenoiseConfig'),
     layout_entry('denoising/realtime_common.hlsli', 'RealtimeFrameCB',
@@ -347,6 +351,8 @@ TIER_A += [
 ]
 
 TIER_B = [
+    layout_entry('denoising/rough_specular_common.hlsli', 'RoughSpecularRoot',
+                 PASSES + 'gi/rough_specular_reconstruction.cpp'),
     layout_entry('denoising/realtime_common.hlsli', 'RealtimeRootCB',
                  PASSES + 'realtime_denoiser.h', 'RealtimeDenoiseRoot'),
     layout_entry('pathtracing/nrd_common.hlsli', 'NrdRoot',

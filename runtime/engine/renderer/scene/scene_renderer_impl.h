@@ -1051,6 +1051,7 @@
 
     /// Copies current HDR scene color to SSGI prev-frame buffer.
     void RegisterSSGIPrevColorCopy(rg::RgBuilder& rgBuilder, FrameContext& ctx);
+    void RegisterRoughSpecularReconstruction(rg::RgBuilder& rgBuilder, FrameContext& ctx);
 
     /// Registers intermediate render targets with the PassInspector for visualization.
     void RegisterPassInspectorTargets(FrameContext& ctx);
@@ -1075,3 +1076,6 @@
     /// Reads CVars and applies changes (screen percentage, upscaler type, dynres).
     /// Called once per frame at the start of SetupFrameData().
     void ApplyCVars();
+
+    // Appended so the opt-in feature does not move existing renderer members.
+    RoughSpecularReconstruction m_roughSpecularReconstruction;

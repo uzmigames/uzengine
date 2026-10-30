@@ -1615,6 +1615,7 @@ void SceneRenderer::Shutdown() {
     // ── SSGI cleanup ──────────────────────────────────────────────────
     m_ssgiRenderer.DestroyResources();
     m_realtimeDenoiser.DestroyResources();
+    m_roughSpecularReconstruction.DestroyResources();
 
     // ── SDF GI cleanup ───────────────────────────────────────────────
     m_surfaceCache.DestroyResources();

@@ -76,6 +76,8 @@ static auto* cv_RTReflectionsRough = UZ_CVAR_BOOL("r.RayTracing.Reflections.Roug
     "split-sum so rough surfaces receive the path tracer's specular energy; default off");
 static auto* cv_UnifiedDenoiser = UZ_CVAR_BOOL("r.Denoiser.Unified", false,
     "Opt-in unified standalone RT reflection reconstruction (requires RT denoise; default off)");
+static auto* cv_RoughReconstruct = UZ_CVAR_BOOL("r.RayTracing.Reflections.RoughReconstruct", false,
+    "Reconstruct rough RT specular before scene-color TAA using lobe guides and estimator variance; default off");
 
 /// Selects DXR ray-traced probe update over the SDF sphere-trace path.
 /// Requires DXR 1.1 (`RayQuery<>`) and a built TLAS. When the device does not
@@ -885,6 +887,7 @@ void SceneRenderer::RegisterSSRDenoisePasses(rg::RgBuilder& rgBuilder, FrameCont
             });
         });
     }
+    RegisterRoughSpecularReconstruction(rgBuilder, ctx);
 }
 
 // ── Hardware Ray-Traced Reflections (stage 1) ───────────────────────────────────
@@ -961,6 +964,27 @@ static uint64_t SurfaceCacheLightingHash(const FrameContext& ctx, const PerFrame
     hash = SurfaceCacheHashBytes(&rects, sizeof(rects), hash);
     hash = SurfaceCacheHashBytes(ctx.lightData.rectLights, rects * sizeof(RectLightData), hash);
     return hash;
+}
+
+void SceneRenderer::RegisterRoughSpecularReconstruction(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
+    // Preserve the current reflection estimator's energy normalization and the
+    // entire mirror route. The raw SSR+RT route remains raw when denoise is off.
+    if (!cv_RoughReconstruct->value || !cv_RTReflectionsRough->value || !ctx.bindless
+        || !RTReflectionRaysAvailable()
+        || (!cv_RTReflectionsDenoise->value && !RTReflectionsStandalone())
+        || !m_roughSpecularReconstruction.Prepare(m_device, m_shaderMgr.get(), m_renderWidth, m_renderHeight)) return;
+    auto epoch = [this, &ctx]() {
+        const auto* frame = static_cast<const PerFrameCB*>(ctx.perFrameAlloc.cpuPtr);
+        uint64_t hash = frame ? SurfaceCacheLightingHash(ctx, *frame) : 0ull;
+        const float modes[] = {float(cv_RTReflectionsGlossy->value), float(cv_RTReflectionsIndirect->value),
+            cv_RTReflectionsMaxRoughness->value, cv_SSRIntensity->value, cv_RTReflectionsMaxDistance->value};
+        return SurfaceCacheHashBytes(modes, sizeof(modes), hash);
+    };
+    m_roughSpecularReconstruction.Register(rgBuilder, ctx, m_cbRing.get(), ctx.unifiedReflectionRes,
+        m_ssrResolvedOutputSrv, m_gbuffer.depthSRV, m_gbuffer.normalSRV, m_gbuffer.velocitySRV,
+        m_ssrHitDistanceSrv, epoch);
+    m_roughSpecularReconstruction.Apply(rgBuilder, ctx, ctx.unifiedReflectionRes, m_ssrResolvedOutput,
+        m_ssrResolvedOutputUav, m_gbuffer.normalSRV, m_rgStates.get());
 }
 
 void SceneRenderer::RegisterSurfaceCacheResolvePass(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
@@ -1293,6 +1317,7 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
         m_realtimeDenoiser.Register(rgBuilder, ctx, m_cbRing.get(), ctx.unifiedReflectionRes,
             m_ssrResolvedOutputSrv, m_ssrResolvedOutputUav, m_gbuffer.depthSRV, m_gbuffer.normalSRV,
             m_gbuffer.velocitySRV, epoch, RealtimeDenoiser::Policy{});
+        RegisterRoughSpecularReconstruction(rgBuilder, ctx);
     } else if (standalone && denoise) RegisterSSRDenoisePasses(rgBuilder, ctx);
 }
 
