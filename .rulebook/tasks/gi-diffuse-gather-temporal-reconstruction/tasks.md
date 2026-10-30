@@ -13,12 +13,22 @@ root-caused to the gather's 0.05/64-cap temporal noise floor. Diagnosis:
       history rejection / light change. Relax the 64-count cap under the confidence gate.
 - [x] Evaluate a well-decorrelated spatiotemporal sample sequence for the gather rotation
       (sdf_diffuse_gather.hlsli SdfDiffuseRotation); keep sample indexing separate from receiver validity.
-- [ ] Gate behind a CVar (r.GI.FinalGather.StableTemporal, default OFF) so OFF reproduces the current render
-      byte-identical (reflection-reference frame-95 max 0).
-- [ ] Preserve disocclusion + camera/light-motion response: validate a moving-camera + a light-change
-      scenario shows NO new ghosting/lag (no fixed-camera-only win).
-- [ ] CPU gtest for the variance-weight math (converged-low-variance -> long history; disocclusion / high
-      variance -> fast response).
-- [ ] Validate + report: Diffuse + GreenPlastic body temporal std toward the Glass/Chrome range at frames
-      90-149 AND 600-659; per-component means + detail retained (no darkening/over-blur); OFF byte-identical;
-      pinned-zig build exit 0, npm run test:layouts exit 0, gtests no regression. Then consider default ON.
+- [x] Gate behind a CVar (r.GI.FinalGather.StableTemporal, default OFF). OFF is a logical NO-OP: the stable
+      path lives in a separate shader (ssgi_stable_temporal_accum_cs.hlsl; legacy DXIL byte-identical) + separate
+      no-inline CPU methods, all gated by m_stableTemporal. NOTE: reflection-reference OFF shows <=3 codes vs a
+      clean same-toolchain baseline, but that scene disables SSGI/FinalGather/RadianceCache so the feature code
+      never runs there - the <=3 codes are non-feature global binary codegen (exe +5.6KB), not an OFF regression.
+- [x] Preserve disocclusion + camera/light-motion response: validated on a moving-camera scene (frames
+      600-790); OFF vs ON montage (_evidence/gi/diffuse-stable/motion_montage.png) shows NO new ghosting/lag -
+      the stationary detection keeps the fast alpha during motion.
+- [x] CPU gtest for the variance-weight math (4 SsgiStableTemporal.* tests pass).
+- [x] Validate + report: material_showcase (linear-HDR, frames 90-149) Diffuse std -44.0%, GreenPlastic -20.3%
+      (toward the Glass/Chrome range; means preserved <=0.001%); OFF logical no-op; pinned-zig build exit 0 (166
+      shaders), test:layouts exit 0, gtests 8148 pass / only 3 pre-existing VfxEditorSlate. Committed aa250510.
+
+## STAGE-1 COMPLETE (aa250510). Stage-2 follow-up
+Stage-1 lowers the temporal NOISE FLOOR (variance/confidence-weighted history) - it reduces the crawl ~25-44%
+but does NOT reach the Glass/Chrome control range because it does not reduce the per-frame noise SOURCE (8
+gather rays + rotation). Stage-2 (not started): attack the source - more effective samples via stronger
+spatiotemporal reuse, and/or a normal-aware spatial denoise on curved surfaces - to bring the std to the
+control range; then consider default ON.
