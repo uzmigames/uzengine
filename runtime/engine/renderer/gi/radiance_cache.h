@@ -84,6 +84,15 @@ public:
     /// the current rule).
     static constexpr uint32_t kGuardFloat4PerProbe = 1;
 
+    /// One float4 per probe after the guard records, at
+    /// `kTotalProbes * (kSHFloat4PerProbe + kGuardFloat4PerProbe) + probe`: the trace's own temporal
+    /// state (stage-1 stability, `rc_probe_guard.hlsli` `ProbeStateIndex`): x = mean radiance
+    /// luminance of the stored SH, y = its per-update innovation variance, z = the signed drift
+    /// accumulator of the change detector, w = update count + 256 x classification counter +
+    /// 4096 x flags. Written on every update, read only by the trace shader; with the stability
+    /// CVars at their defaults it is written but never read, so the SH records are unchanged.
+    static constexpr uint32_t kStateFloat4PerProbe = 1;
+
     /// Diagnostic records per probe (r.GI.RadianceCache.Diagnostic): surface, trace, sky, path,
     /// classification (signed side distance, relocation distance, class code, 0).
     static constexpr uint32_t kDiagnosticFloat4PerProbe = 6;
@@ -170,6 +179,13 @@ public:
     /// candidate (the side of the nearest face decides, probes kept in the band are traced from a
     /// relocated origin and carry a guard). The caller passes `sidePipeline` when this is non-zero.
     [[nodiscard]] static uint32_t ClassificationMode();
+
+    /// True when any stage-1 stability CVar is off its default (`r.GI.RadianceCache.JitterCycle`,
+    /// `.Temporal.Mode`, `.Classification.Hysteresis`): the caller then passes the `UZ_RC_STABILITY`
+    /// trace pipeline (`PipelineLibrary::GetRadianceCacheTraceStability`), which maintains the
+    /// per-probe state records; the default pipeline is the unchanged trace. Toggling re-arms every
+    /// probe (the state records are only written by the stability variant).
+    [[nodiscard]] static bool StabilityEnabled();
 
     /// Mode 3: the G-buffer world position (bindless SRV, cleared to 0 where nothing was drawn) whose
     /// visible points seed the flood fill when `r.GI.RadianceCache.ReachVisibleSeeds` is on. The caller
@@ -349,6 +365,7 @@ private:
     bool   m_firstWritePending = true; ///< Set at CreateResources; consumed by the first UpdateProbes.
     bool   m_frozen = false;           ///< Diagnostic: hold the converged probes (SetFrozen).
     bool   m_historyInvalid    = false; ///< Set by InvalidateHistory(); the next trace replaces instead of blends.
+    bool   m_stabilityActive   = false; ///< StabilityEnabled() at the last UpdateProbes; a change re-arms the probes.
 
     /// Grid shift in whole probes (new − old) accumulated by Update() since the
     /// last UpdateProbes(). The trace shader reads probe c's history at
@@ -442,17 +459,31 @@ struct RadianceCacheTraceConstants {
     /// rows before them and probe_reach_cs.hlsl the first 8.
     float    regionLo[kMaxFieldRegions][4] = {};
     float    regionHi[kMaxFieldRegions][4] = {};
+
+    // ── Stage-1 stability (radiance-cache trace only; every field at zero = the behaviour
+    // before them, bit for bit). Two rows appended after the change boxes so every prefix
+    // declaration keeps its offsets. ───────────────────────────────────────────────────────
+    uint32_t jitterCycle = 0;             ///< r.GI.RadianceCache.JitterCycle: 0 = the per-frame white-noise ray rotation; C > 0 = a period-C-frames R2 rotation shared by every probe (c0fe1c0a's construction).
+    uint32_t temporalMode = 0;            ///< r.GI.RadianceCache.Temporal.Mode: 0 = flat temporalBlendAlpha; 1 = count-capped blend with the noise-normalised change detector.
+    float    temporalMinAlpha = 0.0f;     ///< r.GI.RadianceCache.Temporal.MinAlpha: steady-state per-update blend floor (mode 1).
+    float    temporalChangeThreshold = 0.0f; ///< r.GI.RadianceCache.Temporal.ChangeThreshold: re-arm when the drift accumulator exceeds this many of its own noise standard deviations (mode 1).
+    uint32_t temporalMaxHistory = 0;      ///< r.GI.RadianceCache.Temporal.MaxHistory: cap on the per-probe update count (mode 1).
+    uint32_t classHysteresis = 0;         ///< r.GI.RadianceCache.Classification.Hysteresis: K consecutive updates confirm a class change and the SH is kept while inside; 0/1 = immediate flip, SH zeroed (today).
+    uint32_t _stabilityPad0 = 0;
+    uint32_t _stabilityPad1 = 0;
 };
 
 // Rows 1-11: 176 bytes of shared trace constants; row 12: the 16-byte VFX emissive
 // tail; row 13: the 16-byte grid-recentre row (followup-06 4.5; its fourth field is
-// `regionCount` since block B-02); rows 14-29: the change boxes (block B-02), 464
-// bytes in all. Every shader that binds this CB declares a prefix of it, scalars only
-// through row 13 — `radiance_cache_trace_cs.hlsl` all of it, the DDGI writers through
-// `ddgi_probe_common.hlsli` rows 1-13, `probe_reach_cs.hlsl` rows 1-8 — or HLSL
-// register packing shifts every field past the mismatch.
-static_assert(sizeof(RadianceCacheTraceConstants) == 464, "RadianceCacheTraceConstants must be 464 bytes (13 shared rows + 16 change-box rows)");
+// `regionCount` since block B-02); rows 14-29: the change boxes (block B-02); rows 30-31:
+// the stage-1 stability knobs, 496 bytes in all. Every shader that binds this CB declares
+// a prefix of it, scalars only through row 13 — `radiance_cache_trace_cs.hlsl` all of it,
+// the DDGI writers through `ddgi_probe_common.hlsli` rows 1-13, `probe_reach_cs.hlsl`
+// rows 1-8 — or HLSL register packing shifts every field past the mismatch.
+static_assert(sizeof(RadianceCacheTraceConstants) == 496, "RadianceCacheTraceConstants must be 496 bytes (13 shared rows + 16 change-box rows + 2 stability rows)");
 static_assert(offsetof(RadianceCacheTraceConstants, regionCount) == 204);
 static_assert(offsetof(RadianceCacheTraceConstants, regionLo) == 208);
+static_assert(offsetof(RadianceCacheTraceConstants, jitterCycle) == 464);
+static_assert(offsetof(RadianceCacheTraceConstants, classHysteresis) == 484);
 
 } // namespace uz

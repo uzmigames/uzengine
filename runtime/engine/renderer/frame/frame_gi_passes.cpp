@@ -361,7 +361,14 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
 
             // Always run the SDF SH path so the existing deferred lighting
             // SH sample stays populated regardless of DXR availability.
+            // Stage-1 stability (docs/analysis/lumen-radiance-cache-stability): the UZ_RC_STABILITY
+            // variant only when one of its CVars is on; the default pipeline is the unchanged trace,
+            // and a variant that failed to compile falls back to it.
             auto rcPipeline = ctx.pipelines->GetRadianceCacheTrace();
+            if (RadianceCache::StabilityEnabled()) {
+                const RHIPipelineHandle stability = ctx.pipelines->GetRadianceCacheTraceStability();
+                if (stability.IsValid()) rcPipeline = stability;
+            }
             if (ctx.frameIndex % 120 == 0) {
                 UZ_LOG(Renderer, Debug, "SDF GI trace: frame={}, pipelineValid={}",
                        ctx.frameIndex, rcPipeline.IsValid());

@@ -325,6 +325,12 @@ TIER_A += [
                      'gi/probe_reach_cs.hlsl', 'gi/radiance_cache_trace_cs.hlsl',
                      'gi/ddgi_probe_trace_cs.hlsl', 'gi/ddgi_probe_update_cs.hlsl',
                      'pathtracing/path_tracer_ps.hlsl')],
+    # The stage-1 stability variant of the trace declares the two trailing rows (30-31) only under
+    # UZ_RC_STABILITY, so the default pipeline's text stays the one before them; check them too.
+    layout_entry('gi/radiance_cache_trace_cs.hlsl', 'TraceConstants', 'runtime/engine/renderer/gi/radiance_cache.h',
+                 'RadianceCacheTraceConstants',
+                 {'_shBufferUav': 'shBufferUav', '_firstWrite': 'firstWrite', '_historyShiftPad': 'regionCount'},
+                 extra_constants=['kMaxFieldRegions'], defines=('-D', 'UZ_RC_STABILITY=1')),
     layout_entry('vfx/vfx_camera.hlsli', 'VfxCameraCB', 'runtime/engine/vfx/data_interfaces/vfx_camera_di.h',
                  'VfxCameraConstants', {'vfxCameraView': 'viewMatrix', 'vfxCameraProj': 'projMatrix',
                  'vfxCameraPos': 'cameraPos', '_vfxCameraPadPos': '_padPos', 'vfxCameraForward': 'cameraFwd',
@@ -696,7 +702,7 @@ def members(text):
     return result
 
 
-def reflect_declaration(shader_path, name, workdir, kind='cbuffer', extra_structs=()):
+def reflect_declaration(shader_path, name, workdir, kind='cbuffer', extra_structs=(), defines=()):
     source_text = Path(shader_path).read_text(encoding='utf-8')
     try:
         text = declaration(source_text, kind, name)
@@ -716,7 +722,7 @@ def reflect_declaration(shader_path, name, workdir, kind='cbuffer', extra_struct
         source = os.path.join(workdir, 'conditional.hlsl')
         preprocessed = os.path.join(workdir, 'conditional.preprocessed.hlsl')
         Path(source).write_text(text, encoding='utf-8')
-        out = subprocess.run([DXC, '-P', preprocessed, '-D', 'UZ_BINDLESS=1', source],
+        out = subprocess.run([DXC, '-P', preprocessed, '-D', 'UZ_BINDLESS=1', *defines, source],
                              capture_output=True, text=True, timeout=30)
         if out.returncode:
             raise ValueError(f'{shader_path}: DXC preprocessing failed:\n{out.stderr}')
@@ -752,7 +758,7 @@ def reflect_declaration(shader_path, name, workdir, kind='cbuffer', extra_struct
 
 
 def compare_isolated(entry, shader_path, workdir):
-    declared, hl, _ = reflect_declaration(shader_path, entry['name'], workdir)
+    declared, hl, _ = reflect_declaration(shader_path, entry['name'], workdir, defines=entry.get('defines', ()))
     header_path = os.path.join(REPO, entry['header'])
     cpp_text = struct_text(header_path, entry['struct'])
     aliases = {**ALIASES.get(entry['name'], {}), **entry['aliases']}

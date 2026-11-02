@@ -111,6 +111,21 @@ cbuffer TraceConstants : register(b2) {
     uint  regionCount;         ///< Change boxes (block B.2): probes inside replace their history
     float4 regionLo[8];        ///< lo.xyz of each box
     float4 regionHi[8];        ///< hi.xyz of each box
+
+#if UZ_RC_STABILITY
+    // Stage-1 stability (rows 30-31 of RadianceCacheTraceConstants), compiled only into the
+    // UZ_RC_STABILITY variant (PipelineLibrary::GetRadianceCacheTraceStability): the default
+    // pipeline compiles exactly the text before them, so with the stability CVars at their
+    // defaults the probes are bit-identical. See docs/analysis/lumen-radiance-cache-stability/02, 04.
+    uint  jitterCycle;             ///< r.GI.RadianceCache.JitterCycle: 0 = per-frame white-noise rotation; C > 0 = period-C R2 rotation stepped per probe update
+    uint  temporalMode;            ///< r.GI.RadianceCache.Temporal.Mode: 0 = flat temporalBlendAlpha; 1 = count-capped blend + change detector
+    float temporalMinAlpha;        ///< Temporal.MinAlpha: steady-state blend floor (mode 1)
+    float temporalChangeThreshold; ///< Temporal.ChangeThreshold: re-arm when the drift exceeds this many of its noise standard deviations (mode 1)
+    uint  temporalMaxHistory;      ///< Temporal.MaxHistory: cap on the update count (mode 1)
+    uint  classHysteresis;         ///< Classification.Hysteresis: K updates confirm a class flip, SH kept while inside; 0/1 = immediate, SH zeroed
+    uint  _stabilityPad0;
+    uint  _stabilityPad1;
+#endif
 };
 
 /// True inside one of this frame's change boxes: the distance field changed there, so the
@@ -425,6 +440,34 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     float3 probePos = float3(gridOriginX, gridOriginY, gridOriginZ)
                     + float3(float(gx), float(gy), float(gz)) * probeSpacing;
 
+#if UZ_RC_STABILITY
+    // ── History coordinate and this probe's temporal state (stage-1 stability) ────────────────
+    // This probe's history lives at its coordinate in the *previous* grid; a probe that entered
+    // the grid this frame (shifted coordinate outside the grid) has none. Read before the
+    // classification: the hysteresis counter and the kept SH of an inside probe live there.
+    const int3 historyCoord = int3(int(gx), int(gy), int(gz)) + HistoryShift();
+    const bool hasHistoryCoord = (firstWrite == 0)
+                              && all(historyCoord >= 0) && all(historyCoord < int(probesPerAxis));
+    uint historyBase = probeIdx * 7u;
+    float historyValidity = 0.0;      // history record 6.w: 1 valid, 0 none or zeroed, -1 inside with its SH kept
+    float4 stateHist = 0.0;           // rc_probe_guard.hlsli ProbeStateIndex: mu, innovation variance, drift, packed counters
+    if (hasHistoryCoord) {
+        StructuredBuffer<float4> validity = ResourceDescriptorHeap[g_shBufferSrvIndex];
+        const uint historyLinear = uint(historyCoord.x)
+                                 + uint(historyCoord.y) * probesPerAxis
+                                 + uint(historyCoord.z) * probesPerAxis * probesPerAxis;
+        historyBase = historyLinear * 7u;
+        historyValidity = validity[historyBase + 6].w;
+        stateHist = validity[ProbeStateIndex(probesPerAxis, historyLinear)];
+    }
+    // state.w packs three small integers exactly in a float: count + 256 * counter + 4096 * flags.
+    const float stateFlags   = floor(stateHist.w / 4096.0);
+    const float stateCounter = floor((stateHist.w - stateFlags * 4096.0) / 256.0);
+    const float stateCount   = stateHist.w - stateFlags * 4096.0 - stateCounter * 256.0;
+    /// @constants The counter field holds 0..15, so K is clamped to 15 (the CVar's range).
+    const uint hysteresisK = clamp(classHysteresis, 1u, 15u);
+#endif
+
     /// @ref Majercik 2021 "Scaling Probe-Based Real-Time Dynamic Global Illumination for Production", section 6.1.
     /// @constants SH record6.w stores validity (0=inside geometry,1=active); seven records per probe,
     /// then one guard record per probe (rc_probe_guard.hlsli); six diagnostic records per probe.
@@ -488,12 +531,54 @@ void main(uint3 DTid : SV_DispatchThreadID) {
             if (!inside) guard = float4(nearest.xyz, nearest.w);
         }
     }
+#if UZ_RC_STABILITY
+    // ── Classification hysteresis (stage-1, r.GI.RadianceCache.Classification.Hysteresis) ───────
+    // The raw decision above is re-made on every update against a field whose cascade phase follows
+    // the camera, so a probe in the band around a surface can flip without the scene changing. A
+    // counter walks towards K while the raw decision says inside and towards 0 while it says valid,
+    // and the effective class changes only at the two ends (a Schmitt trigger). K = 1 is the rule
+    // before this: the class follows the raw decision on the update that sees it.
+    /// @ref Majercik 2021, section 6.1 (probe classification: an inactive probe keeps its data).
+    const bool insideRaw = inside;
+    float counter = stateCounter;
+    bool insideState = fmod(stateFlags, 2.0) >= 1.0;      // flag bit 0
+    if (!hasHistoryCoord) {                                // no history: the raw decision, as before
+        counter = insideRaw ? float(hysteresisK) : 0.0;
+        insideState = insideRaw;
+    }
+    counter = insideRaw ? min(counter + 1.0, float(hysteresisK)) : max(counter - 1.0, 0.0);
+    if (insideState) { if (counter <= 0.0) insideState = false; }
+    else             { if (counter >= float(hysteresisK)) insideState = true; }
+    inside = insideState;
+#endif
+
     RWStructuredBuffer<float4> guardOut = ResourceDescriptorHeap[g_shBufferUavIndex];
     guardOut[ProbeGuardIndex(probesPerAxis, probeIdx)] = guard;
     if (inside) {
         RWStructuredBuffer<float4> outputSH = ResourceDescriptorHeap[g_shBufferUavIndex];
+#if UZ_RC_STABILITY
+        // With the hysteresis on, an inside probe keeps its SH under validity -1 ("inactive is not
+        // zero"): every reader tests record 6.w > 0, so nothing reads it, and the probe blends from
+        // it when it returns instead of replacing its history with one 32-ray estimate.
+        const bool keepSh = hysteresisK > 1u && hasHistoryCoord && historyValidity != 0.0;
+        if (keepSh) {
+            StructuredBuffer<float4> history = ResourceDescriptorHeap[g_shBufferSrvIndex];
+            [unroll] for (uint coefficient = 0; coefficient < 7; ++coefficient)
+                outputSH[probeIdx * 7 + coefficient] = history[historyBase + coefficient];
+            outputSH[probeIdx * 7 + 6].w = -1.0;
+        } else {
+            [unroll] for (uint coefficient = 0; coefficient < 7; ++coefficient)
+                outputSH[probeIdx * 7 + coefficient] = 0.0;
+        }
+        // State: a kept SH keeps one update's worth of weight (the return blends at 1/2) and its
+        // noise estimate; a zeroed probe starts over. Flag bit 0 = inside.
+        outputSH[ProbeStateIndex(probesPerAxis, probeIdx)] =
+            float4(keepSh ? stateHist.x : 0.0, keepSh ? stateHist.y : 0.0, 0.0,
+                   (keepSh ? 1.0 : 0.0) + counter * 256.0 + 4096.0);
+#else
         [unroll] for (uint coefficient = 0; coefficient < 7; ++coefficient)
             outputSH[probeIdx * 7 + coefficient] = 0.0;
+#endif
         if (g_diagnosticUav != 0 && g_diagnosticUav != kSentinelSrvIndex) {
             RWStructuredBuffer<float4> diagnostic = ResourceDescriptorHeap[g_diagnosticUav];
             diagnostic[probeIdx * 6] = probeSurface;
@@ -516,6 +601,25 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     // Per-frame jitter — rotate the Hammersley sequence so different frames
     // sample different directions, then EMA-blend in time.
     uint frameJitter = (frameIndex * 1664525u + 1013904223u);
+#if UZ_RC_STABILITY
+    // Stage-1 (r.GI.RadianceCache.JitterCycle): a period-C R2 shift stepped once per FRAME and
+    // shared by every probe, plus a per-probe shift that is constant in time (c0fe1c0a's
+    // construction, regressed in 7eea6b95). A probe updated every 4th frame sees the 4 phases of
+    // its slot, so its estimate is a limit cycle of period C frames that TAA averages, instead of a
+    // random walk on independent estimates. Measured on Sponza (RC-direct lane, static camera):
+    // a 16-frame period removes ~30-70 % of the slow crawl; stepping the phase once per probe
+    // update instead (period 4C frames) removed nothing, so the period in frames is what counts.
+    /// @ref Roberts 2018 "The Unreasonable Effectiveness of Quasirandom Sequences" - the R2 recurrence.
+    /// @constants R2 = (1/phi2, 1/phi2^2) with phi2 = 1.3247... the plastic number.
+    const bool periodicJitter = jitterCycle != 0u;
+    const uint jitterPhase = periodicJitter ? (frameIndex % jitterCycle) : 0u;
+    const float2 kR2 = float2(0.7548776662466927, 0.5698402909980532);
+    const float2 periodicShift = frac(kR2 * float(jitterPhase) + frac(kR2 * float(probeIdx)));
+    // Mean and mean square of the per-ray luminance (stage-1 change detector: the estimate's own
+    // noise level, which a fixed threshold would ignore).
+    float lumSum = 0.0;
+    float lumSquareSum = 0.0;
+#endif
     /// @constants Diagnostic luminance uses Rec.709 weights (0.2126,0.7152,0.0722).
     float4 traceStats = 0.0;
     // Sky-only readback: x = mean luminance carried by SKY rays (over all rays), y = sky ray
@@ -533,8 +637,13 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     for (uint i = 0; i < nRays; ++i) {
         // Since H-57 the DDGI writer uses this same construction; the diagnostic mode that once
         // replicated its windowed sequence is therefore the identity and is kept for the record.
+#if UZ_RC_STABILITY
+        const float2 whiteShift = float2(RadicalInverseVdC(frameJitter), RadicalInverseVdC(frameJitter ^ probeIdx));
+        float2 xi = frac(Hammersley(i, nRays) + (periodicJitter ? periodicShift : whiteShift));
+#else
         float2 xi = frac(Hammersley(i, nRays)
                          + float2(RadicalInverseVdC(frameJitter), RadicalInverseVdC(frameJitter ^ probeIdx)));
+#endif
         float3 dir = SphericalSample(xi);
 
         float endT, minD;
@@ -619,6 +728,13 @@ void main(uint3 DTid : SV_DispatchThreadID) {
             }
         }
         traceStats.w += dot(radiance, float3(0.2126, 0.7152, 0.0722)) * invN;
+#if UZ_RC_STABILITY
+        {
+            const float rayLuminance = dot(radiance, float3(0.2126, 0.7152, 0.0722));
+            lumSum += rayLuminance;
+            lumSquareSum += rayLuminance * rayLuminance;
+        }
+#endif
         if (t == -1.0)     { skyStats.x += dot(radiance, float3(0.2126, 0.7152, 0.0722)) * invN; skyStats.y += invN; }
         else if (t >= 0.0) { skyStats.w += dot(radiance, float3(0.2126, 0.7152, 0.0722)) * invN; }
         else               { skyStats.z += invN; }
@@ -660,6 +776,13 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     RWStructuredBuffer<float4> shBuf = ResourceDescriptorHeap[g_shBufferUavIndex];
     uint base = probeIdx * 7u;
 
+#if UZ_RC_STABILITY
+    // A probe that entered the grid this frame or whose history was zeroed (inside geometry under
+    // K = 1) has no history: replace. Under the classification hysteresis a kept SH (validity -1)
+    // is history too, so a probe that returns blends from it instead of replacing.
+    const bool hasHistory = hasHistoryCoord
+                         && (hysteresisK > 1u ? historyValidity != 0.0 : historyValidity > 0.0);
+#else
     // This probe's history lives at its coordinate in the *previous* grid. A probe
     // that entered the grid this frame (shifted coordinate outside the grid) or
     // that was inside geometry last time (validity 0) has no history: replace.
@@ -674,6 +797,7 @@ void main(uint3 DTid : SV_DispatchThreadID) {
                      + uint(historyCoord.z) * probesPerAxis * probesPerAxis) * 7u;
         hasHistory = validity[historyBase + 6].w > 0.0;
     }
+#endif
 
     // Inside a change box the history was traced against geometry that no longer exists
     // (block B.2 phase 4): it is replaced (regionBlendAlpha 1) or blended out over a few frames.
@@ -682,6 +806,64 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     // short fade of the stale history for a smaller transient.
     const bool fieldChanged = hasHistory && InChangedRegion(probePos);
     float a = hasHistory ? saturate(fieldChanged ? regionBlendAlpha : temporalBlendAlpha) : 1.0;
+
+#if UZ_RC_STABILITY
+    // ── Stage-1 temporal state and mode 1 (r.GI.RadianceCache.Temporal.*) ───────────────────
+    // The state is maintained in every mode (so the mode can be switched live); only mode 1 lets
+    // it decide the blend weight. mu is the mean radiance luminance of the stored SH: SH blending
+    // is linear in radiance, so blending mu with the same weight keeps it exact.
+    /// @ref RTXGI ProbeBlendingCS: hysteresis 0.97 kept high because a per-texel change detector
+    ///      re-arms it; here the detector is normalised by the probe's own noise, since at 32 rays
+    ///      the single-update noise of the mean is ~18 % and a fixed threshold would fire on it.
+    /// @constants Re-arm count 3: weight 1/4 on every update while the change is detected (RTXGI
+    /// drops its hysteresis to 0.22), a running mean from there - faster than the flat 0.12 for 8
+    /// updates. The drift EMA at 1/5 has sqrt(0.2/1.8) = 0.33333 of the innovation's noise std, so
+    /// at the default threshold of 4 drift sigmas a persistent change of 1.3 innovation sigmas re-arms
+    /// within ~5 updates and a large step one update late (Sponza sun step: 0.5 was too short a
+    /// memory - a 2-sigma step never re-armed and tracked at the floor); 1/10 for the variance EMA
+    /// (a 20-update window); 5 % of the mean as the floor of the threshold (a constant-radiance probe
+    /// has zero noise and must never re-arm).
+    const float muNew = lumSum * invN;
+    const float rayVariance = max(lumSquareSum * invN - muNew * muNew, 0.0)
+                            * (float(nRays) / max(float(nRays) - 1.0, 1.0));
+    const float standardError = sqrt(rayVariance * invN);
+    const float kReArmCount = 3.0;
+    float4 stateNext;
+    {
+        const float muHist    = stateHist.x;
+        const float varHist   = stateHist.y;
+        const float driftHist = stateHist.z;
+        float count = stateCount;
+        float varNext = 0.0;
+        float driftNext = 0.0;
+        if (hasHistory && !fieldChanged) {
+            const float innovation = muNew - muHist;
+            // Noise level of one update: the larger of this estimate's standard error and the
+            // history of squared innovations (the standard error collapses on an update where the
+            // few bright rays of a sparsely lit probe are all missed; the innovation history does not).
+            const float sigma = sqrt(max(varHist, standardError * standardError));
+            // Drift: an EMA of the signed innovation. Noise averages out (its std is a third of the
+            // innovation's); a persistent change accumulates towards the step and crosses the
+            // threshold while noise of the same size does not.
+            driftNext = lerp(driftHist, innovation, 0.2);
+            const float threshold = max(temporalChangeThreshold * 0.33333 * sigma, 0.05 * max(muHist, muNew));
+            const bool rearm = abs(driftNext) > threshold;
+            if (temporalMode != 0u) {
+                if (rearm) count = min(count, kReArmCount);
+                a = max(1.0 / (count + 1.0), temporalMinAlpha);
+            }
+            // The innovation of a detected change is the change, not noise: the estimate keeps its value.
+            varNext = rearm ? varHist
+                    : (count <= 1.0 ? innovation * innovation : lerp(varHist, innovation * innovation, 0.1));
+            count = min(count + 1.0, float(clamp(temporalMaxHistory, 1u, 255u)));
+        } else {
+            count = 1.0;   // one update's worth of history after a replace
+        }
+        const float muNext = (hasHistory && a < 1.0) ? lerp(muHist, muNew, a) : muNew;
+        stateNext = float4(muNext, varNext, driftNext, count + counter * 256.0);   // flags 0: valid
+    }
+#endif
+
     const bool replace = !hasHistory || a >= 1.0;
     [unroll]
     for (uint k = 0; k < 7; ++k) {
@@ -693,4 +875,7 @@ void main(uint3 DTid : SV_DispatchThreadID) {
         }
     }
     shBuf[base + 6].w = 1.0;
+#if UZ_RC_STABILITY
+    shBuf[ProbeStateIndex(probesPerAxis, probeIdx)] = stateNext;
+#endif
 }

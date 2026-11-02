@@ -24,6 +24,15 @@ uint ProbeGuardIndex(uint probesPerAxis, uint probeLinear) {
     return probesPerAxis * probesPerAxis * probesPerAxis * 7u + probeLinear;
 }
 
+/// Index of a probe's temporal-state record in the SH buffer (after the guard records; stage-1
+/// stability, written and read by `radiance_cache_trace_cs.hlsl` alone): x = mean radiance luminance of
+/// the stored SH, y = its per-update innovation variance, z = the change detector's signed drift,
+/// w = update count + 256 * classification counter + 4096 * flags (bit 0: inside). Readers of the cache
+/// never touch it; SH record 6.w stays their validity (1 valid, 0 none, -1 inside with the SH kept).
+uint ProbeStateIndex(uint probesPerAxis, uint probeLinear) {
+    return probesPerAxis * probesPerAxis * probesPerAxis * 8u + probeLinear;
+}
+
 /// Second encoding (classification mode 3 with `r.GI.RadianceCache.ReachRelocate`): w < 0 marks a
 /// RELOCATED probe — one that was inside geometry or in air the camera cannot reach and was moved to
 /// the nearest reached air within half a spacing. xyz is the offset from its grid position to where it

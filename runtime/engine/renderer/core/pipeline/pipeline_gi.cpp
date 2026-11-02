@@ -657,8 +657,32 @@ RHIPipelineHandle PipelineLibrary::GetRadianceCacheTrace() {
     } else {
         UZ_LOG(Renderer, Info, "PipelineLibrary: created RadianceCache_Trace pipeline");
     }
-
     return m_radianceCacheTrace;
+}
+
+RHIPipelineHandle PipelineLibrary::GetRadianceCacheTraceStability() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetRadianceCacheTraceStability called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+    if (m_radianceCacheTraceStability.IsValid()) return m_radianceCacheTraceStability;
+    if (!m_radianceCacheTraceStabilityCS.IsValid())
+        m_radianceCacheTraceStabilityCS = m_shaderMgr->CreateShaderWithDefines(
+            EngineShader::RadianceCacheTraceCS, RHIShaderStage::Compute, "UZ_RC_STABILITY=1");
+    if (!m_radianceCacheTraceStabilityCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile the RadianceCacheTraceCS stability variant");
+        return RHIPipelineHandle::Invalid();
+    }
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_radianceCacheTraceStabilityCS;
+    desc.debugName     = "RadianceCache_Trace_Stability";
+    m_radianceCacheTraceStability = m_device->CreateComputePipeline(desc);
+    if (!m_radianceCacheTraceStability.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create RadianceCache_Trace_Stability pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created RadianceCache_Trace_Stability pipeline");
+    }
+    return m_radianceCacheTraceStability;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -85,11 +85,48 @@ static constexpr uint32_t kReadbackFrameLag = 4;
 static auto* cv_RCReachDump = UZ_CVAR_BOOL("r.GI.RadianceCache.ReachDump", false,
     "Classification mode 3 diagnostic: log the air grid once after frame 120 (one 'RC reach dump' line per "
     "(z, y) row: '#' solid, '.' air not reached, 'R' reached from the camera)");
+// Stage-1 temporal stability (docs/analysis/lumen-radiance-cache-stability/02, 04). Every default is
+// the behaviour before them, bit for bit; the trace shader reads them from the trailing rows of the
+// trace constants.
+static auto* cv_RCJitterCycle = UZ_CVAR_INT("r.GI.RadianceCache.JitterCycle", 0,
+    "Probe ray rotation. 0 = a fresh pseudo-random Cranley-Patterson shift every frame and probe (the "
+    "EMA then random-walks: the slow crawl of indirect shadows). C > 0 = a period-C-frames R2 shift "
+    "shared by every probe (the 2026-07-27 construction, c0fe1c0a), so a probe's estimate is a limit "
+    "cycle TAA can average; keep C a multiple of the update interval (4 at 1024 probes/frame), 16 measured", 0, 64);
+static auto* cv_RCTemporalMode = UZ_CVAR_INT("r.GI.RadianceCache.Temporal.Mode", 0,
+    "Probe temporal blend. 0 = flat EMA (kTemporalBlendAlpha, no change detection). 1 = count-capped "
+    "blend (1/(n+1), floored at Temporal.MinAlpha) with a change detector on the probe's mean radiance "
+    "normalised by its own 32-ray noise level; a real lighting change re-arms the blend, noise does not", 0, 1);
+static auto* cv_RCTemporalMinAlpha = UZ_CVAR_FLOAT("r.GI.RadianceCache.Temporal.MinAlpha", 0.06f,
+    "Temporal.Mode 1: steady-state per-update blend weight once a probe has converged (the flat EMA is "
+    "0.12). Lower = less wander but slower tracking of changes the detector cannot see (those within "
+    "about one 32-ray noise sigma of a probe's mean): Sponza sun step, RC-direct lane, t90 of the "
+    "indirect term ~49 frames at 0.12, ~2x that at 0.06, ~4x at 0.03; static-camera TAA std of the "
+    "indirect-only ROIs x0.55-0.63 at 0.06, x0.49-0.58 at 0.03", 0.005f, 0.5f);
+static auto* cv_RCTemporalMaxHistory = UZ_CVAR_INT("r.GI.RadianceCache.Temporal.MaxHistory", 64,
+    "Temporal.Mode 1: cap on the per-probe update count (the running-mean weight is 1/(count+1) before "
+    "MinAlpha takes over)", 4, 256);
+static auto* cv_RCTemporalChangeThreshold = UZ_CVAR_FLOAT("r.GI.RadianceCache.Temporal.ChangeThreshold", 4.0f,
+    "Temporal.Mode 1: the blend re-arms (count back to 3, weight 1/4 per update while it persists) when "
+    "the signed drift of the probe's mean radiance from its history exceeds this many of the drift's own "
+    "noise standard deviations (estimated from the 32 rays and the history of innovations); a fixed "
+    "threshold would fire on noise. 4 = ~6e-5 false re-arms per probe update; changes of ~1.3 noise "
+    "sigmas and above are caught within ~5 updates, smaller ones follow MinAlpha", 1.0f, 16.0f);
+static auto* cv_RCClassHysteresis = UZ_CVAR_INT("r.GI.RadianceCache.Classification.Hysteresis", 1,
+    "Probe inside/valid classification hysteresis. 1 = a class flip takes effect on the update that sees "
+    "it and an inside probe's SH is zeroed (today). K > 1 = K consecutive updates confirm a flip, a probe "
+    "that goes inside keeps its SH (invalid for every reader), and one that returns blends from it instead "
+    "of replacing it with a single 32-ray estimate", 1, 15);
 
 namespace uz {
 
 uint32_t RadianceCache::ClassificationMode() {
     return static_cast<uint32_t>(cv_RCProbeClassification->value);
+}
+
+bool RadianceCache::StabilityEnabled() {
+    return cv_RCJitterCycle->value != 0.0f || cv_RCTemporalMode->value != 0.0f
+        || cv_RCClassHysteresis->value > 1.0f;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -127,8 +164,9 @@ bool RadianceCache::CreateResources(IRHIDevice* device, float worldExtent) {
 
     // ── Create StructuredBuffer for SH coefficients ────────────────────────
     // kTotalProbes * kSHFloat4PerProbe * sizeof(float4) = 4096 * 7 * 16 = 458752 bytes, followed by
-    // one guard record per probe (kGuardFloat4PerProbe; zero under the current classification).
-    const uint32_t totalFloat4s = kTotalProbes * (kSHFloat4PerProbe + kGuardFloat4PerProbe);
+    // one guard record per probe (kGuardFloat4PerProbe; zero under the current classification) and
+    // one temporal-state record per probe (kStateFloat4PerProbe, read only by the trace).
+    const uint32_t totalFloat4s = kTotalProbes * (kSHFloat4PerProbe + kGuardFloat4PerProbe + kStateFloat4PerProbe);
     const uint32_t bufferSize   = totalFloat4s * 4 * sizeof(float); // float4 = 16 bytes
 
     RHIBufferDesc bufDesc{};
@@ -664,6 +702,14 @@ void RadianceCache::UpdateProbes(
     // probe's history: the shader reads it at the shifted coordinate
     // (`historyShift`), so only the slab of probes that entered the grid starts
     // from scratch and the multi-bounce feedback stays alive.
+    // The stability variant reads per-probe state records the default trace never writes: on a
+    // toggle either way every probe re-arms from scratch (one replace, as InvalidateHistory()).
+    const bool stabilityActive = StabilityEnabled();
+    if (stabilityActive != m_stabilityActive) {
+        m_stabilityActive = stabilityActive;
+        m_dirty = true;
+        m_historyInvalid = true;
+    }
     const bool resetHistory = m_firstWritePending || m_historyInvalid;
     const bool fullRetrace  = resetHistory || m_dirty;
 
@@ -697,7 +743,7 @@ void RadianceCache::UpdateProbes(
         m_rgStates->Transition(cmdList, m_historyShBuffer, RHIResourceState::CopySrc);
         m_rgStates->Transition(cmdList, m_shBuffer, RHIResourceState::CopyDst);
         cmdList->CopyBuffer(m_historyShBuffer, 0, m_shBuffer, 0,
-                            kTotalProbes * (kSHFloat4PerProbe + kGuardFloat4PerProbe) * 4 * sizeof(float));
+                            kTotalProbes * (kSHFloat4PerProbe + kGuardFloat4PerProbe + kStateFloat4PerProbe) * 4 * sizeof(float));
     }
     if (!resetHistory)
         m_rgStates->Transition(cmdList, m_historyShBuffer, RHIResourceState::ShaderResource);
@@ -741,6 +787,13 @@ void RadianceCache::UpdateProbes(
         constants.regionHi[r][2] = m_pendingRegions[r].hi.z;
     }
     constants.regionBlendAlpha = cv_RCRegionBlendAlpha->value;
+    // Stage-1 stability knobs (all defaults = today's trace, bit for bit).
+    constants.jitterCycle             = static_cast<uint32_t>(cv_RCJitterCycle->value);
+    constants.temporalMode            = static_cast<uint32_t>(cv_RCTemporalMode->value);
+    constants.temporalMinAlpha        = cv_RCTemporalMinAlpha->value;
+    constants.temporalChangeThreshold = cv_RCTemporalChangeThreshold->value;
+    constants.temporalMaxHistory      = static_cast<uint32_t>(cv_RCTemporalMaxHistory->value);
+    constants.classHysteresis         = static_cast<uint32_t>(cv_RCClassHysteresis->value);
 
     // Fill GDF clipmap parameters from the global distance field
     const uint32_t numClipmaps = GlobalDistanceField::kNumClipmaps;

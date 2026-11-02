@@ -704,6 +704,15 @@ public:
     ///
     [[nodiscard]] RHIPipelineHandle GetRadianceCacheTrace();
 
+    /// The stage-1 stability variant of the radiance cache trace (`UZ_RC_STABILITY=1`: periodic
+    /// ray rotation, count-capped blend with a change detector, classification hysteresis -
+    /// docs/analysis/lumen-radiance-cache-stability). `GetRadianceCacheTrace()` compiles the same
+    /// source without the define, i.e. exactly the text before the stage-1 additions, so with the
+    /// stability CVars at their defaults the probes stay bit-identical. The GI pass selects this
+    /// pipeline when `RadianceCache::StabilityEnabled()`; invalid when the variant failed to compile
+    /// (the caller falls back to the default pipeline).
+    [[nodiscard]] RHIPipelineHandle GetRadianceCacheTraceStability();
+
     /// Returns the DDGI probe update compute pipeline (DXR inline ray tracing).
     ///
     /// Hardware-RT counterpart to `GetRadianceCacheTrace()`. Writes into the
