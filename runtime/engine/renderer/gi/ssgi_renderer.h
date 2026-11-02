@@ -217,6 +217,14 @@ public:
     /// `r.GI.FinalGather.HitSpecular.Roughness`, clamped to [0.4, 1]: the scene-constant roughness of
     /// that lobe (the GI material table and the SDF clipmap carry no roughness).
     [[nodiscard]] static float HitSpecularRoughness();
+    /// `r.GI.HitMaterial.WrapUv` (docs/analysis/lumen-radiance-cache-stability/07-firstbounce-diffuse-decomposition): every GI
+    /// consumer samples a hit's albedo / emissive texture with the bilinear WRAP static sampler instead of the
+    /// CLAMP one, so a tiled triangle UV reads the tiled content rather than the texture's edge texel. Default
+    /// OFF: the default pipelines compile the unchanged text; ON selects the `UZ_GI_HIT_UV_WRAP=1` permutations
+    /// (PipelineLibrary::GetGiHitUvWrap) in the gather (this renderer, DXR mode only: the SDF gather shades
+    /// its hits from the clipmap), the DDGI probe trace, the surface-cache writers and the RT reflections
+    /// (frame_gi_passes.cpp). One source of truth for all of them.
+    [[nodiscard]] static bool HitMaterialWrapUvEnabled();
 
     /// True once Render() has produced a valid output texture. Until then the
     /// result texture has never been written and must not be bound.
@@ -364,6 +372,10 @@ private:
     bool m_hitSpecular = false;
     bool m_loggedHitSpecularFallback = false;   ///< One-time log: a HitSpecular variant failed to compile.
     bool m_loggedHitSpecularRestir = false;     ///< One-time log: HitSpecular is not applied under r.GI.ReSTIR=1.
+    /// The effective r.GI.HitMaterial.WrapUv state this frame (the CVar AND DXR mode AND both gather variants
+    /// compiled); a change invalidates the temporal history exactly as a DXR-mode change does.
+    bool m_hitUvWrap = false;
+    bool m_loggedHitUvWrapFallback = false;     ///< One-time log: a UZ_GI_HIT_UV_WRAP gather variant failed to compile.
     bool m_hasHistory = false;
     uint64_t m_sceneRevision = 0;
     uint32_t m_lastFrame = UINT32_MAX;

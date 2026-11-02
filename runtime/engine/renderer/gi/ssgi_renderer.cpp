@@ -58,6 +58,16 @@ static auto* cv_HitSpecularRoughness = UZ_CVAR_FLOAT("r.GI.FinalGather.HitSpecul
     "averages 0.6-0.8). The lobe's D*Vis*NoL is capped at 1: a no-op from 0.74 up, below that it trims only the "
     "grazing-mirror configuration (19% at 0.7, the whole low end at 0.4)",
     0.4f, 1.0f);
+// Hit-material UV wrap (docs/analysis/lumen-radiance-cache-stability/07-firstbounce-diffuse-decomposition): every GI consumer
+// fetches a hit's albedo with the bilinear CLAMP sampler at the raw triangle UV, so a tiled surface reads the
+// texture's edge texel (Sponza's floors and walls: 0.66-0.78x of the texture mean; 28% of the measured
+// first-bounce deficit, the gather's E/pi at 0.880 of the path tracer's). Opt-in: OFF dispatches the
+// unchanged pipelines (byte-identical DXIL); ON selects the UZ_GI_HIT_UV_WRAP=1 permutations, which sample
+// with the shared WRAP static sampler as the raster path and the path tracer do.
+static auto* cv_HitMaterialWrapUv = UZ_CVAR_BOOL("r.GI.HitMaterial.WrapUv", false,
+    "Sample the GI hit material's albedo/emissive texture with the WRAP sampler (a tiled UV reads the tiled "
+    "content instead of the texture's edge texel) in the DXR final gather, the DDGI probe trace, the "
+    "surface-cache feed/indirect writers and the RT reflections, as the raster path and the path tracer do");
 // Screen-space ReSTIR GI (Lumen-parity phase C). Opt-in: 0 dispatches the unchanged gather trace.
 // File scope so command-line overrides register before the first frame (see SampleFrameOffset).
 static auto* cv_GIReSTIR = UZ_CVAR_INT("r.GI.ReSTIR", 0,
@@ -79,6 +89,10 @@ bool SSGIRenderer::HitSpecularEnabled() {
 
 float SSGIRenderer::HitSpecularRoughness() {
     return std::clamp(cv_HitSpecularRoughness->value, 0.4f, 1.0f);
+}
+
+bool SSGIRenderer::HitMaterialWrapUvEnabled() {
+    return cv_HitMaterialWrapUv->value >= 0.5f;
 }
 
 // HistoryCB: the previous view-projection plus the world boxes where the distance field changed this
@@ -462,6 +476,30 @@ void SSGIRenderer::Render(IRHICommandList* cmdList, const SSGIRenderParams& para
         m_hitSpecular = hitSpecular;
         UZ_LOG(Renderer, Info, "Final gather hit specular={} roughness={}", hitSpecular, HitSpecularRoughness());
     }
+    // r.GI.HitMaterial.WrapUv: only the DXR permutations fetch the hit albedo through gi_hit_material.hlsli
+    // (the SDF gather shades its hits from the clipmap), so the wrap is effective under DXR only, and only
+    // when both gather variants of the effective hit-specular state compiled; a change of the effective
+    // state invalidates the temporal history exactly as a DXR-mode change does.
+    bool hitUvWrap = params.worldGather && dxrMode != 0u && HitMaterialWrapUvEnabled();
+    if (hitUvWrap) {
+        using Variant = PipelineLibrary::GiHitUvWrapVariant;
+        const bool variantsValid =
+            params.pipelines->GetGiHitUvWrap(hitSpecular ? Variant::SsgiDxrTraceHitSpecular : Variant::SsgiDxrTrace).IsValid()
+            && params.pipelines->GetGiHitUvWrap(hitSpecular ? Variant::SsgiDxrUpsampleHitSpecular : Variant::SsgiDxrUpsample).IsValid();
+        if (!variantsValid) {
+            if (!m_loggedHitUvWrapFallback) {
+                m_loggedHitUvWrapFallback = true;
+                UZ_LOG(Renderer, Warning, "Final gather HitMaterial.WrapUv: a UZ_GI_HIT_UV_WRAP variant failed to compile (hitSpecular={}); running the clamp-sampled pipelines", hitSpecular);
+            }
+            hitUvWrap = false;
+        }
+    }
+    if (m_hitUvWrap != hitUvWrap) {
+        m_hasHistory = false;
+        m_restirHistoryValid = false;
+        m_hitUvWrap = hitUvWrap;
+        UZ_LOG(Renderer, Info, "Final gather hit material UV wrap={}", hitUvWrap);
+    }
 
     if (!m_resourceStatesInitialized) {
         const RHITextureHandle textures[] = {
@@ -748,6 +786,10 @@ void SSGIRenderer::DispatchTrace(IRHICommandList* cmdList, const SSGIRenderParam
     auto pso = m_hitSpecular
         ? (m_gatherDxrMode ? params.pipelines->GetSsgiDxrTraceHitSpecular() : params.pipelines->GetSsgiTraceHitSpecular())
         : (m_gatherDxrMode ? params.pipelines->GetSsgiDxrTrace() : params.pipelines->GetSsgiTrace());
+    // r.GI.HitMaterial.WrapUv (DXR only; both variants validated in Render()): the same root constants.
+    if (m_hitUvWrap)
+        pso = params.pipelines->GetGiHitUvWrap(m_hitSpecular ? PipelineLibrary::GiHitUvWrapVariant::SsgiDxrTraceHitSpecular
+                                                             : PipelineLibrary::GiHitUvWrapVariant::SsgiDxrTrace);
     if (!pso.IsValid()) return;
 
     // Transition trace outputs to UAV
@@ -1354,6 +1396,10 @@ void SSGIRenderer::DispatchUpsample(IRHICommandList* cmdList, const SSGIRenderPa
     auto pso = m_hitSpecular
         ? (m_gatherDxrMode ? params.pipelines->GetSsgiDxrUpsampleHitSpecular() : params.pipelines->GetSsgiUpsampleHitSpecular())
         : (m_gatherDxrMode ? params.pipelines->GetSsgiDxrUpsample() : params.pipelines->GetSsgiBilateralUpsample());
+    // r.GI.HitMaterial.WrapUv (DXR only; both variants validated in Render()): the same root constants.
+    if (m_hitUvWrap)
+        pso = params.pipelines->GetGiHitUvWrap(m_hitSpecular ? PipelineLibrary::GiHitUvWrapVariant::SsgiDxrUpsampleHitSpecular
+                                                             : PipelineLibrary::GiHitUvWrapVariant::SsgiDxrUpsample);
     if (!pso.IsValid()) return;
 
     const int readIdx = m_historyIndex; // Just written by temporal pass

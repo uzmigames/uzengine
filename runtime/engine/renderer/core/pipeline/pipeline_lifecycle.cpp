@@ -160,6 +160,10 @@ void PipelineLibrary::Shutdown() {
     destroyPipeline(m_ssgiDxrUpsampleHitSpecular);
     destroyPipeline(m_radianceCacheTraceHitSpecular);
     destroyPipeline(m_radianceCacheTraceStabilityHitSpecular);
+    for (auto& pipeline : m_giHitUvWrap) {
+        destroyPipeline(pipeline);
+        pipeline = RHIPipelineHandle::Invalid();   // a Failed() sentinel is retried after a re-Init
+    }
 
     // Destroy cached shaders
     auto destroyShader = [this](RHIShaderHandle& h) {
@@ -219,6 +223,10 @@ void PipelineLibrary::Shutdown() {
     destroyShader(m_ssgiDxrUpsampleHitSpecularCS);
     destroyShader(m_radianceCacheTraceHitSpecularCS);
     destroyShader(m_radianceCacheTraceStabilityHitSpecularCS);
+    for (auto& shader : m_giHitUvWrapCS) {
+        destroyShader(shader);
+        shader = RHIShaderHandle::Invalid();
+    }
 
     m_psoCache.Shutdown();
     m_psoDiskCache.reset();

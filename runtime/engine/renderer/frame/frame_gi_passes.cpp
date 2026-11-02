@@ -112,6 +112,23 @@ static auto* cv_GDFCentrePhase = UZ_CVAR_FLOAT("r.GI.GDF.CenterPhaseOffset", 0.f
 
 namespace uz {
 
+// r.GI.HitMaterial.WrapUv (docs/analysis/lumen-radiance-cache-stability/07-firstbounce-diffuse-decomposition): the pass's
+// UZ_GI_HIT_UV_WRAP=1 permutation when the CVar is on and it compiled, else its default pipeline (the
+// clamp-sampled hit albedo), logged once per variant. The gather selects its own variants (ssgi_renderer.cpp).
+static RHIPipelineHandle GiHitUvWrapOrDefault(PipelineLibrary* pipelines, PipelineLibrary::GiHitUvWrapVariant variant,
+                                              RHIPipelineHandle pipeline) {
+    if (!pipeline.IsValid() || !SSGIRenderer::HitMaterialWrapUvEnabled()) return pipeline;
+    const RHIPipelineHandle wrapped = pipelines->GetGiHitUvWrap(variant);
+    if (wrapped.IsValid()) return wrapped;
+    static bool logged[static_cast<size_t>(PipelineLibrary::GiHitUvWrapVariant::Count)] = {};
+    if (!logged[static_cast<size_t>(variant)]) {
+        logged[static_cast<size_t>(variant)] = true;
+        UZ_LOG(Renderer, Warning, "r.GI.HitMaterial.WrapUv: the UZ_GI_HIT_UV_WRAP variant {} failed to compile; the pass runs its default pipeline (clamp-sampled hit albedo)",
+               static_cast<int>(variant));
+    }
+    return pipeline;
+}
+
 // Shared diffuse gather follows GDF/RC updates and precedes lighting.
 // World mode uses current surface rays; legacy SSGI also reduces previous HDR.
 // Both reconstruct filtered E/pi for deferred lighting.
@@ -454,7 +471,11 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
             }
             if (wantDdgi) {
                 auto ddgiPipeline   = ctx.pipelines->GetDdgiProbeUpdate();
-                auto tracePipeline  = ctx.pipelines->GetDdgiProbeTrace();   // block B.6; invalid = per-texel trace
+                // block B.6; invalid = per-texel trace. The trace is the only DDGI writer that reads the
+                // material table (the per-texel fallback traces with the sentinel), so it alone is permuted
+                // for r.GI.HitMaterial.WrapUv.
+                auto tracePipeline  = GiHitUvWrapOrDefault(ctx.pipelines, PipelineLibrary::GiHitUvWrapVariant::DdgiProbeTrace,
+                                                           ctx.pipelines->GetDdgiProbeTrace());
                 auto borderPipeline = ctx.pipelines->GetDdgiBorderFill();
                 if (ddgiPipeline.IsValid() && borderPipeline.IsValid()) {
                     const uint32_t tlasSrv = m_rtManager->GetTLASSRVIndex();
@@ -1079,7 +1100,12 @@ void SceneRenderer::RegisterSurfaceCacheResolvePass(rg::RgBuilder& rgBuilder, Fr
                 if (paramsSrv == UINT32_MAX || !m_rtManager || !m_rtManager->IsReady()) return;
                 const auto* perFrame = static_cast<const PerFrameCB*>(ctx.perFrameAlloc.cpuPtr);
                 if (!perFrame) return;
-                const auto pso = indirect ? ctx.pipelines->GetSurfaceCacheIndirect() : ctx.pipelines->GetSurfaceCacheRelight();
+                // r.GI.HitMaterial.WrapUv: the indirect pass re-shades its cold hits from the material table;
+                // the relight pass reads the cells' stored attributes only.
+                const auto pso = indirect
+                    ? GiHitUvWrapOrDefault(ctx.pipelines, PipelineLibrary::GiHitUvWrapVariant::SurfaceCacheIndirect,
+                                           ctx.pipelines->GetSurfaceCacheIndirect())
+                    : ctx.pipelines->GetSurfaceCacheRelight();
                 if (!pso.IsValid()) return;
                 RadianceCacheTraceConstants trace{};
                 FillRTReflectionTraceConstants(trace, m_globalDistanceField, *perFrame, ctx.frameIndex);
@@ -1143,7 +1169,8 @@ void SceneRenderer::RegisterSurfaceCacheFeedPass(rg::RgBuilder& rgBuilder, Frame
             if (paramsSrv == UINT32_MAX) return;
             const uint32_t rays = SurfaceRadianceCache::FeedRays();
             if (rays == 0u || !m_rtManager || !m_rtManager->IsReady() || m_rtManager->GetTLASInstanceCount() == 0u) return;
-            const RHIPipelineHandle pso = ctx.pipelines->GetSurfaceCacheFeed();
+            const RHIPipelineHandle pso = GiHitUvWrapOrDefault(ctx.pipelines, PipelineLibrary::GiHitUvWrapVariant::SurfaceCacheFeed,
+                                                               ctx.pipelines->GetSurfaceCacheFeed());
             if (!pso.IsValid()) return;
             const auto* perFrame = static_cast<const PerFrameCB*>(ctx.perFrameAlloc.cpuPtr);
             if (perFrame == nullptr) return;
@@ -1232,7 +1259,8 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
         pb.SetExecutionCallback([this, &ctx, materialTableSrv, ownsOutput, unified, denoise, rough](IRHICommandList* cmd, const rg::RgPassResources&) {
             UZ_PROFILE_SCOPE("RTReflections::Trace");
 
-            auto rtReflectionPSO = ctx.pipelines->GetRtReflection();
+            auto rtReflectionPSO = GiHitUvWrapOrDefault(ctx.pipelines, PipelineLibrary::GiHitUvWrapVariant::RtReflection,
+                                                        ctx.pipelines->GetRtReflection());
             if (!rtReflectionPSO.IsValid()) return;
 
             // The shared b2 trace constants, built at execution time like the path tracer's:

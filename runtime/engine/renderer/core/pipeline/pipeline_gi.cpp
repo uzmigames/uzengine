@@ -329,6 +329,64 @@ RHIPipelineHandle PipelineLibrary::GetSsgiDxrUpsampleHitSpecular() {
     return m_ssgiDxrUpsampleHitSpecular;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// r.GI.HitMaterial.WrapUv permutations (UZ_GI_HIT_UV_WRAP=1; reference/rendering/
+// firstbounce-diffuse-decomposition-2026-11-02): every entry shader that fetches the GI material
+// table's albedo / emissive at a hit, each with its own define string plus the wrap define, built on
+// first use only - the same mechanism as the hit-specular permutations above.
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace {
+struct GiHitUvWrapSource {
+    EngineShader shader;
+    const char*  defines;
+    const char*  debugName;
+};
+// Indexed by PipelineLibrary::GiHitUvWrapVariant.
+constexpr GiHitUvWrapSource kGiHitUvWrapSources[] = {
+    {EngineShader::SsgiTraceCS,            "UZ_GATHER_DXR=1;UZ_GI_HIT_UV_WRAP=1",                      "SSGI_DXRTrace_WrapUv"},
+    {EngineShader::SsgiTraceCS,            "UZ_GATHER_DXR=1;UZ_GI_HIT_SPECULAR=1;UZ_GI_HIT_UV_WRAP=1", "SSGI_DXRTrace_HitSpecular_WrapUv"},
+    {EngineShader::SsgiUpsampleCS,         "UZ_GATHER_DXR=1;UZ_GI_HIT_UV_WRAP=1",                      "SSGI_DXRUpsample_WrapUv"},
+    {EngineShader::SsgiUpsampleCS,         "UZ_GATHER_DXR=1;UZ_GI_HIT_SPECULAR=1;UZ_GI_HIT_UV_WRAP=1", "SSGI_DXRUpsample_HitSpecular_WrapUv"},
+    {EngineShader::DdgiProbeTraceCS,       "UZ_GI_HIT_UV_WRAP=1",                                      "DDGI_ProbeTrace_WrapUv"},
+    {EngineShader::SurfaceCacheFeedCS,     "UZ_GI_HIT_UV_WRAP=1",                                      "SurfaceCache_Feed_WrapUv"},
+    {EngineShader::SurfaceCacheIndirectCS, "UZ_GI_HIT_UV_WRAP=1",                                      "SurfaceCache_Indirect_WrapUv"},
+    {EngineShader::RtReflectionCS,         "UZ_GI_HIT_UV_WRAP=1",                                      "RTReflection_WrapUv"},
+};
+static_assert(sizeof(kGiHitUvWrapSources) / sizeof(kGiHitUvWrapSources[0])
+                  == static_cast<size_t>(PipelineLibrary::GiHitUvWrapVariant::Count),
+              "one source per GiHitUvWrapVariant");
+} // namespace
+
+RHIPipelineHandle PipelineLibrary::GetGiHitUvWrap(GiHitUvWrapVariant variant) {
+    // Every entry traces the scene TLAS with an inline RayQuery.
+    if (!m_initialized || !m_device->SupportsRayTracing()) return RHIPipelineHandle::Invalid();
+    const size_t i = static_cast<size_t>(variant);
+    const GiHitUvWrapSource& source = kGiHitUvWrapSources[i];
+    if (m_giHitUvWrap[i].IsValid()) return m_giHitUvWrap[i];
+    if (m_giHitUvWrap[i].IsFailed() || m_giHitUvWrapCS[i].IsFailed()) return RHIPipelineHandle::Invalid();
+    if (!m_giHitUvWrapCS[i].IsValid()) {
+        m_giHitUvWrapCS[i] = m_shaderMgr->CreateShaderWithDefines(source.shader, RHIShaderStage::Compute, source.defines);
+        if (!m_giHitUvWrapCS[i].IsValid()) {
+            UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile the {} variant ({}); the pass keeps its default pipeline (clamp-sampled hit albedo)",
+                   source.debugName, source.defines);
+            m_giHitUvWrapCS[i] = RHIShaderHandle::Failed();
+            return RHIPipelineHandle::Invalid();
+        }
+    }
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_giHitUvWrapCS[i];
+    desc.debugName     = source.debugName;
+    m_giHitUvWrap[i] = m_device->CreateComputePipeline(desc);
+    if (!m_giHitUvWrap[i].IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create {} pipeline", source.debugName);
+        m_giHitUvWrap[i] = RHIPipelineHandle::Failed();
+        return RHIPipelineHandle::Invalid();
+    }
+    UZ_LOG(Renderer, Info, "PipelineLibrary: created {} pipeline", source.debugName);
+    return m_giHitUvWrap[i];
+}
+
 bool PipelineLibrary::EnsureSsgiSpatialDenoiseShader() {
     if (m_ssgiSpatialDenoiseCS.IsValid()) return true;
 

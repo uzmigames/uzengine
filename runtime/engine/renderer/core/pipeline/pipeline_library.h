@@ -631,6 +631,26 @@ public:
     [[nodiscard]] RHIPipelineHandle GetSsgiDxrTraceHitSpecular();
     [[nodiscard]] RHIPipelineHandle GetSsgiUpsampleHitSpecular();
     [[nodiscard]] RHIPipelineHandle GetSsgiDxrUpsampleHitSpecular();
+    /// `r.GI.HitMaterial.WrapUv` (docs/analysis/lumen-radiance-cache-stability/07-firstbounce-diffuse-decomposition): the
+    /// `UZ_GI_HIT_UV_WRAP=1` permutation of every pipeline whose entry shader fetches the GI material
+    /// table's albedo / emissive at a hit (gi_hit_material.hlsli): the DXR gather trace and upsample
+    /// (plain and hit-specular), the DDGI probe trace, the surface-cache feed and indirect writers, the
+    /// RT reflections. Each is the pipeline's own define string with the wrap define appended, built on
+    /// first use (the hit-specular mechanism above), so the default pipelines compile the unchanged text
+    /// and OFF is byte-identical; invalid when the variant failed to compile (never retried; the caller
+    /// runs the default pipeline).
+    enum class GiHitUvWrapVariant : uint8_t {
+        SsgiDxrTrace,               ///< SsgiTraceCS    UZ_GATHER_DXR=1
+        SsgiDxrTraceHitSpecular,    ///< SsgiTraceCS    UZ_GATHER_DXR=1;UZ_GI_HIT_SPECULAR=1
+        SsgiDxrUpsample,            ///< SsgiUpsampleCS UZ_GATHER_DXR=1
+        SsgiDxrUpsampleHitSpecular, ///< SsgiUpsampleCS UZ_GATHER_DXR=1;UZ_GI_HIT_SPECULAR=1
+        DdgiProbeTrace,             ///< DdgiProbeTraceCS
+        SurfaceCacheFeed,           ///< SurfaceCacheFeedCS
+        SurfaceCacheIndirect,       ///< SurfaceCacheIndirectCS
+        RtReflection,               ///< RtReflectionCS
+        Count
+    };
+    [[nodiscard]] RHIPipelineHandle GetGiHitUvWrap(GiHitUvWrapVariant variant);
 
     /// Returns the SSGI spatial denoise compute pipeline.
     ///
