@@ -87,7 +87,19 @@ float3 TraceDxrGatherRadiance(SdfReflectionScene scene, float3 origin, float3 di
     float ndl = saturate(dot(normal, scene.sunDirection));
     float visibility = ndl > 0.0 && any(scene.sunColor > 0.0)
         ? GatherDxrSunVisibility(scene, position, normal) : 0.0;
+#ifdef UZ_GI_HIT_SPECULAR
+    // r.GI.FinalGather.HitSpecular (doc 06 sections 4, 5.3): the sun Lambert weighted by the LUT's
+    // (1 - E_spec) and the sun's GGX lobe toward the ray origin (V = -direction); `normal` is unit and
+    // faces the ray. Emission and the probe-irradiance Lambert are unchanged.
+    const float3 sunLambert = albedo * (scene.sunColor * (ndl * visibility * M_1_PI));
+    const GiHitSunSpecular hs = EvalGiHitSunSpecular(normal, -direction, scene.sunDirection, ndl,
+                                                     scene.hitSpecularRoughness, kGiHitSpecularF0,
+                                                     scene.hitSpecularLutSrv, UZ_SDF_REFLECTION_SAMPLER);
+    return emission + sunLambert * hs.diffuseWeight + scene.sunColor * (visibility * hs.specularCos)
+        + albedo * SdfReflectionIrradiance(scene, position, normal, hitT);
+#else
     return emission + albedo * (scene.sunColor * (ndl * visibility * M_1_PI)
         + SdfReflectionIrradiance(scene, position, normal, hitT));
+#endif
 }
 #endif

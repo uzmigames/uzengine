@@ -162,6 +162,10 @@
     RHIShaderHandle m_ssgiTraceCS              = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssgiDxrTraceCS           = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssgiDxrUpsampleCS        = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_ssgiTraceHitSpecularCS       = RHIShaderHandle::Invalid();   ///< UZ_GI_HIT_SPECULAR=1
+    RHIShaderHandle m_ssgiDxrTraceHitSpecularCS    = RHIShaderHandle::Invalid();   ///< UZ_GATHER_DXR=1;UZ_GI_HIT_SPECULAR=1
+    RHIShaderHandle m_ssgiUpsampleHitSpecularCS    = RHIShaderHandle::Invalid();   ///< UZ_GI_HIT_SPECULAR=1
+    RHIShaderHandle m_ssgiDxrUpsampleHitSpecularCS = RHIShaderHandle::Invalid();   ///< UZ_GATHER_DXR=1;UZ_GI_HIT_SPECULAR=1
     RHIShaderHandle m_ssgiSpatialDenoiseCS     = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssgiTemporalAccumCS      = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssgiBilateralUpsampleCS  = RHIShaderHandle::Invalid();
@@ -177,6 +181,8 @@
     RHIShaderHandle m_meshSdfBakeCS             = RHIShaderHandle::Invalid();
     RHIShaderHandle m_radianceCacheTraceCS      = RHIShaderHandle::Invalid();
     RHIShaderHandle m_radianceCacheTraceStabilityCS = RHIShaderHandle::Invalid();   ///< UZ_RC_STABILITY=1 variant
+    RHIShaderHandle m_radianceCacheTraceHitSpecularCS          = RHIShaderHandle::Invalid();   ///< UZ_GI_HIT_SPECULAR=1 variant
+    RHIShaderHandle m_radianceCacheTraceStabilityHitSpecularCS = RHIShaderHandle::Invalid();   ///< UZ_RC_STABILITY=1;UZ_GI_HIT_SPECULAR=1 variant
     RHIShaderHandle m_ddgiProbeUpdateCS         = RHIShaderHandle::Invalid();
     RHIShaderHandle m_radianceCacheDepthMomentsCS = RHIShaderHandle::Invalid();   ///< DdgiProbeUpdateCS, UZ_RC_DEPTH=1 variant
     RHIShaderHandle m_ddgiProbeTraceCS          = RHIShaderHandle::Invalid();
@@ -254,6 +260,10 @@
     RHIPipelineHandle m_ssgiTrace             = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssgiDxrTrace          = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssgiDxrUpsample       = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_ssgiTraceHitSpecular       = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_ssgiDxrTraceHitSpecular    = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_ssgiUpsampleHitSpecular    = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_ssgiDxrUpsampleHitSpecular = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssgiSpatialDenoise    = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssgiTemporalAccum     = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssgiBilateralUpsample = RHIPipelineHandle::Invalid();
@@ -269,6 +279,8 @@
     RHIPipelineHandle m_meshSdfBake           = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_radianceCacheTrace    = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_radianceCacheTraceStability = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_radianceCacheTraceHitSpecular          = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_radianceCacheTraceStabilityHitSpecular = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_radianceCacheDepthMoments = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ddgiProbeUpdate       = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ddgiProbeTrace        = RHIPipelineHandle::Invalid();

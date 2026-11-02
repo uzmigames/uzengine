@@ -45,6 +45,19 @@ static auto* cv_SSGIThickness    = UZ_CVAR_FLOAT("r.SSGI.Thickness", 50.0f, "Dep
 static auto* cv_SSGITemporalAlpha = UZ_CVAR_FLOAT("r.SSGI.TemporalAlpha", 0.05f, "Temporal accumulation alpha (0=full history, 1=no history)", 0.01f, 0.5f);
 static auto* cv_StableTemporal = UZ_CVAR_BOOL("r.GI.FinalGather.StableTemporal", true,
     "Variance/confidence-guided diffuse gather accumulation beyond 64 frames");
+// Hit-vertex sun specular (docs/analysis/lumen-radiance-cache-stability/06): the gather shades its
+// secondary hits Lambert-only, which is 33.5% of the measured real-time indirect deficit. Opt-in:
+// OFF dispatches the unchanged pipelines (byte-identical DXIL); ON selects the UZ_GI_HIT_SPECULAR=1
+// permutations of the gather trace/upsample and the radiance-cache trace.
+static auto* cv_HitSpecular = UZ_CVAR_BOOL("r.GI.FinalGather.HitSpecular", false,
+    "Sun GGX lobe at the final gather's hit vertices and in the radiance-cache probe writer (F0 0.04), with the "
+    "hit's sun Lambert weighted by the IBL LUT's (1 - E_spec) as the path tracer does (D7), so the hit's sun "
+    "energy stays <= 1. Scene-constant roughness (.Roughness); metals stay under-lit, never over-lit");
+static auto* cv_HitSpecularRoughness = UZ_CVAR_FLOAT("r.GI.FinalGather.HitSpecular.Roughness", 0.7f,
+    "Roughness of the hit-vertex sun lobe (the GI material table and the SDF clipmap carry none; Sponza's ORM "
+    "averages 0.6-0.8). The lobe's D*Vis*NoL is capped at 1: a no-op from 0.74 up, below that it trims only the "
+    "grazing-mirror configuration (19% at 0.7, the whole low end at 0.4)",
+    0.4f, 1.0f);
 // Screen-space ReSTIR GI (Lumen-parity phase C). Opt-in: 0 dispatches the unchanged gather trace.
 // File scope so command-line overrides register before the first frame (see SampleFrameOffset).
 static auto* cv_GIReSTIR = UZ_CVAR_INT("r.GI.ReSTIR", 0,
@@ -59,6 +72,14 @@ static auto* cv_GIReSTIRSpatialRadius = UZ_CVAR_FLOAT("r.GI.ReSTIR.SpatialRadius
     "Spatial reuse disk radius in half-resolution pixels", 1.0f, 32.0f);
 
 namespace uz {
+
+bool SSGIRenderer::HitSpecularEnabled() {
+    return cv_HitSpecular->value >= 0.5f;
+}
+
+float SSGIRenderer::HitSpecularRoughness() {
+    return std::clamp(cv_HitSpecularRoughness->value, 0.4f, 1.0f);
+}
 
 // HistoryCB: the previous view-projection plus the world boxes where the distance field changed this
 // frame or the last one (the gather reads the radiance cache one frame late): pixels inside reject
@@ -416,6 +437,31 @@ void SSGIRenderer::Render(IRHICommandList* cmdList, const SSGIRenderParams& para
         m_gatherDxrMode = dxrMode;
         UZ_LOG(Renderer, Info, "Final gather DXR mode={} (0=SDF, 1=full, 2=shadow only)", dxrMode);
     }
+    // r.GI.FinalGather.HitSpecular (doc 06 section 6.3): effective only when BOTH gather variants of the
+    // selected DXR mode compiled (the DXR precedent above); a change of the effective state invalidates
+    // the temporal history exactly as a DXR-mode change does, so the accumulator never blends OFF
+    // frames with ON frames.
+    bool hitSpecular = params.worldGather && HitSpecularEnabled();
+    if (hitSpecular) {
+        const bool variantsValid = dxrMode
+            ? params.pipelines->GetSsgiDxrTraceHitSpecular().IsValid()
+              && params.pipelines->GetSsgiDxrUpsampleHitSpecular().IsValid()
+            : params.pipelines->GetSsgiTraceHitSpecular().IsValid()
+              && params.pipelines->GetSsgiUpsampleHitSpecular().IsValid();
+        if (!variantsValid) {
+            if (!m_loggedHitSpecularFallback) {
+                m_loggedHitSpecularFallback = true;
+                UZ_LOG(Renderer, Warning, "Final gather HitSpecular: a UZ_GI_HIT_SPECULAR variant failed to compile (dxrMode={}); running the plain pipelines", dxrMode);
+            }
+            hitSpecular = false;
+        }
+    }
+    if (m_hitSpecular != hitSpecular) {
+        m_hasHistory = false;
+        m_restirHistoryValid = false;
+        m_hitSpecular = hitSpecular;
+        UZ_LOG(Renderer, Info, "Final gather hit specular={} roughness={}", hitSpecular, HitSpecularRoughness());
+    }
 
     if (!m_resourceStatesInitialized) {
         const RHITextureHandle textures[] = {
@@ -444,6 +490,12 @@ void SSGIRenderer::Render(IRHICommandList* cmdList, const SSGIRenderParams& para
 
     // Pass 2: SSGI trace (half-res), or the opt-in screen-space ReSTIR GI writing the same textures
     if (params.worldGather && cv_GIReSTIR->value >= 1.0f && EnsureRestirResources(params.pipelines)) {
+        // The ReSTIR pipelines are not permuted in pass one (doc 06 section 8.6): their candidates and
+        // re-traces are shaded without the hit-specular term.
+        if (m_hitSpecular && !m_loggedHitSpecularRestir) {
+            m_loggedHitSpecularRestir = true;
+            UZ_LOG(Renderer, Warning, "Final gather HitSpecular not applied under r.GI.ReSTIR=1 (the ReSTIR pipelines have no UZ_GI_HIT_SPECULAR variant)");
+        }
         DispatchRestir(cmdList, params);
     } else {
         m_restirHistoryValid = false;
@@ -693,7 +745,9 @@ void SSGIRenderer::DispatchPrevColorReduce(IRHICommandList* cmdList, const SSGIR
 void SSGIRenderer::DispatchTrace(IRHICommandList* cmdList, const SSGIRenderParams& params) {
     UZ_PROFILE_SCOPE("SSGI::Trace");
 
-    auto pso = m_gatherDxrMode ? params.pipelines->GetSsgiDxrTrace() : params.pipelines->GetSsgiTrace();
+    auto pso = m_hitSpecular
+        ? (m_gatherDxrMode ? params.pipelines->GetSsgiDxrTraceHitSpecular() : params.pipelines->GetSsgiTraceHitSpecular())
+        : (m_gatherDxrMode ? params.pipelines->GetSsgiDxrTrace() : params.pipelines->GetSsgiTrace());
     if (!pso.IsValid()) return;
 
     // Transition trace outputs to UAV
@@ -710,7 +764,9 @@ void SSGIRenderer::DispatchTrace(IRHICommandList* cmdList, const SSGIRenderParam
 
     cmdList->SetPipeline(pso);
 
-    // Root constants: 14 DWORDs matching ssgi_trace_cs.hlsl RootConstants (the 14th: Phase D stage 3)
+    // Root constants: 14 DWORDs matching ssgi_trace_cs.hlsl RootConstants (the 14th: Phase D stage 3),
+    // + 3 under UZ_GATHER_DXR, + 1 under UZ_GI_HIT_SPECULAR (the 18th; the DXR trio is declared in that
+    // variant too so the index is stable).
     struct SSGITraceRC {
         uint32_t depthSrvIndex;
         uint32_t normalSrvIndex;
@@ -729,8 +785,9 @@ void SSGIRenderer::DispatchTrace(IRHICommandList* cmdList, const SSGIRenderParam
         uint32_t gatherTlasSrv;
         uint32_t gatherMaterialSrv;
         uint32_t gatherDxrMode;
+        uint32_t hitSpecularRoughnessBits; // r.GI.FinalGather.HitSpecular.Roughness as float bits
     };
-    static_assert(sizeof(SSGITraceRC) == 68, "14 legacy + 3 DXR DWORDs");
+    static_assert(sizeof(SSGITraceRC) == 72, "14 legacy + 3 DXR + 1 HitSpecular DWORDs");
 
     SSGITraceRC rc{};
     rc.depthSrvIndex     = params.depthSrvIndex;
@@ -753,8 +810,10 @@ void SSGIRenderer::DispatchTrace(IRHICommandList* cmdList, const SSGIRenderParam
     rc.gatherTlasSrv = params.gatherTlasSrv;
     rc.gatherMaterialSrv = params.gatherMaterialSrv;
     rc.gatherDxrMode = m_gatherDxrMode;
+    const float hitSpecularRoughness = HitSpecularRoughness();
+    std::memcpy(&rc.hitSpecularRoughnessBits, &hitSpecularRoughness, 4);
 
-    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), m_gatherDxrMode ? 17 : 14);
+    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), m_hitSpecular ? 18 : (m_gatherDxrMode ? 17 : 14));
 
     // PerFrameCB at b1
     cmdList->SetRootCBV(kSlotPerFrame, params.perFrameBuffer,
@@ -1292,8 +1351,9 @@ void SSGIRenderer::DispatchTemporalAccum(IRHICommandList* cmdList, const SSGIRen
 void SSGIRenderer::DispatchUpsample(IRHICommandList* cmdList, const SSGIRenderParams& params) {
     UZ_PROFILE_SCOPE("SSGI::BilateralUpsample");
 
-    auto pso = m_gatherDxrMode ? params.pipelines->GetSsgiDxrUpsample()
-                             : params.pipelines->GetSsgiBilateralUpsample();
+    auto pso = m_hitSpecular
+        ? (m_gatherDxrMode ? params.pipelines->GetSsgiDxrUpsampleHitSpecular() : params.pipelines->GetSsgiUpsampleHitSpecular())
+        : (m_gatherDxrMode ? params.pipelines->GetSsgiDxrUpsample() : params.pipelines->GetSsgiBilateralUpsample());
     if (!pso.IsValid()) return;
 
     const int readIdx = m_historyIndex; // Just written by temporal pass
@@ -1312,7 +1372,8 @@ void SSGIRenderer::DispatchUpsample(IRHICommandList* cmdList, const SSGIRenderPa
 
     cmdList->SetPipeline(pso);
 
-    // Root constants: 10 DWORDs matching ssgi_upsample_cs.hlsl
+    // Root constants: 10 DWORDs matching ssgi_upsample_cs.hlsl, + 3 under UZ_GATHER_DXR, + 1 under
+    // UZ_GI_HIT_SPECULAR (the 14th; the DXR trio is declared in that variant too so the index is stable)
     struct UpsampleRC {
         uint32_t ssgiHalfSrvIndex;
         uint32_t ssgiAOHalfSrvIndex;
@@ -1327,8 +1388,9 @@ void SSGIRenderer::DispatchUpsample(IRHICommandList* cmdList, const SSGIRenderPa
         uint32_t gatherTlasSrv;
         uint32_t gatherMaterialSrv;
         uint32_t gatherDxrMode;
+        uint32_t hitSpecularRoughnessBits; // r.GI.FinalGather.HitSpecular.Roughness as float bits
     };
-    static_assert(sizeof(UpsampleRC) == 52, "10 legacy + 3 DXR DWORDs");
+    static_assert(sizeof(UpsampleRC) == 56, "10 legacy + 3 DXR + 1 HitSpecular DWORDs");
 
     static auto* cv_UpsDepthSigma = UZ_CVAR_FLOAT("r.SSGI.UpsampleDepthSigma", 0.5f, "Upsample depth weight sigma", 0.1f, 2.0f);
     static auto* cv_UpsNormalPow  = UZ_CVAR_FLOAT("r.SSGI.UpsampleNormalSigma", 32.0f, "Upsample normal cosine power", 4.0f, 128.0f);
@@ -1348,8 +1410,10 @@ void SSGIRenderer::DispatchUpsample(IRHICommandList* cmdList, const SSGIRenderPa
     rc.gatherTlasSrv = params.gatherTlasSrv;
     rc.gatherMaterialSrv = params.gatherMaterialSrv;
     rc.gatherDxrMode = m_gatherDxrMode;
+    const float hitSpecularRoughness = HitSpecularRoughness();
+    std::memcpy(&rc.hitSpecularRoughnessBits, &hitSpecularRoughness, 4);
 
-    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), m_gatherDxrMode ? 13 : 10);
+    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), m_hitSpecular ? 14 : (m_gatherDxrMode ? 13 : 10));
 
     cmdList->SetRootCBV(kSlotPerFrame, params.perFrameBuffer,
                         params.perFrameOffset, params.perFrameCpuPtr,

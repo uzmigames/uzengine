@@ -256,6 +256,79 @@ RHIPipelineHandle PipelineLibrary::GetSsgiDxrUpsample() {
     return m_ssgiDxrUpsample;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Hit-vertex sun specular permutations (r.GI.FinalGather.HitSpecular, doc 06 section 6.2):
+// the same sources with UZ_GI_HIT_SPECULAR=1, built on first use only.
+// ─────────────────────────────────────────────────────────────────────────────
+
+RHIPipelineHandle PipelineLibrary::GetSsgiTraceHitSpecular() {
+    if (!m_initialized) return RHIPipelineHandle::Invalid();
+    if (m_ssgiTraceHitSpecular.IsValid()) return m_ssgiTraceHitSpecular;
+    if (!m_ssgiTraceHitSpecularCS.IsValid())
+        m_ssgiTraceHitSpecularCS = m_shaderMgr->CreateShaderWithDefines(
+            EngineShader::SsgiTraceCS, RHIShaderStage::Compute, "UZ_GI_HIT_SPECULAR=1");
+    if (!m_ssgiTraceHitSpecularCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile the SsgiTraceCS hit-specular variant");
+        return RHIPipelineHandle::Invalid();
+    }
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_ssgiTraceHitSpecularCS;
+    desc.debugName = "SSGI_Trace_HitSpecular";
+    m_ssgiTraceHitSpecular = m_device->CreateComputePipeline(desc);
+    return m_ssgiTraceHitSpecular;
+}
+
+RHIPipelineHandle PipelineLibrary::GetSsgiDxrTraceHitSpecular() {
+    if (!m_initialized || !m_device->SupportsRayTracing()) return RHIPipelineHandle::Invalid();
+    if (m_ssgiDxrTraceHitSpecular.IsValid()) return m_ssgiDxrTraceHitSpecular;
+    if (!m_ssgiDxrTraceHitSpecularCS.IsValid())
+        m_ssgiDxrTraceHitSpecularCS = m_shaderMgr->CreateShaderWithDefines(
+            EngineShader::SsgiTraceCS, RHIShaderStage::Compute, "UZ_GATHER_DXR=1;UZ_GI_HIT_SPECULAR=1");
+    if (!m_ssgiDxrTraceHitSpecularCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile the SsgiTraceCS DXR hit-specular variant");
+        return RHIPipelineHandle::Invalid();
+    }
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_ssgiDxrTraceHitSpecularCS;
+    desc.debugName = "SSGI_DXRTrace_HitSpecular";
+    m_ssgiDxrTraceHitSpecular = m_device->CreateComputePipeline(desc);
+    return m_ssgiDxrTraceHitSpecular;
+}
+
+RHIPipelineHandle PipelineLibrary::GetSsgiUpsampleHitSpecular() {
+    if (!m_initialized) return RHIPipelineHandle::Invalid();
+    if (m_ssgiUpsampleHitSpecular.IsValid()) return m_ssgiUpsampleHitSpecular;
+    if (!m_ssgiUpsampleHitSpecularCS.IsValid())
+        m_ssgiUpsampleHitSpecularCS = m_shaderMgr->CreateShaderWithDefines(
+            EngineShader::SsgiUpsampleCS, RHIShaderStage::Compute, "UZ_GI_HIT_SPECULAR=1");
+    if (!m_ssgiUpsampleHitSpecularCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile the SsgiUpsampleCS hit-specular variant");
+        return RHIPipelineHandle::Invalid();
+    }
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_ssgiUpsampleHitSpecularCS;
+    desc.debugName = "SSGI_Upsample_HitSpecular";
+    m_ssgiUpsampleHitSpecular = m_device->CreateComputePipeline(desc);
+    return m_ssgiUpsampleHitSpecular;
+}
+
+RHIPipelineHandle PipelineLibrary::GetSsgiDxrUpsampleHitSpecular() {
+    if (!m_initialized || !m_device->SupportsRayTracing()) return RHIPipelineHandle::Invalid();
+    if (m_ssgiDxrUpsampleHitSpecular.IsValid()) return m_ssgiDxrUpsampleHitSpecular;
+    if (!m_ssgiDxrUpsampleHitSpecularCS.IsValid())
+        m_ssgiDxrUpsampleHitSpecularCS = m_shaderMgr->CreateShaderWithDefines(
+            EngineShader::SsgiUpsampleCS, RHIShaderStage::Compute, "UZ_GATHER_DXR=1;UZ_GI_HIT_SPECULAR=1");
+    if (!m_ssgiDxrUpsampleHitSpecularCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile the SsgiUpsampleCS DXR hit-specular variant");
+        return RHIPipelineHandle::Invalid();
+    }
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_ssgiDxrUpsampleHitSpecularCS;
+    desc.debugName = "SSGI_DXRUpsample_HitSpecular";
+    m_ssgiDxrUpsampleHitSpecular = m_device->CreateComputePipeline(desc);
+    return m_ssgiDxrUpsampleHitSpecular;
+}
+
 bool PipelineLibrary::EnsureSsgiSpatialDenoiseShader() {
     if (m_ssgiSpatialDenoiseCS.IsValid()) return true;
 
@@ -658,6 +731,52 @@ RHIPipelineHandle PipelineLibrary::GetRadianceCacheTrace() {
         UZ_LOG(Renderer, Info, "PipelineLibrary: created RadianceCache_Trace pipeline");
     }
     return m_radianceCacheTrace;
+}
+
+// r.GI.FinalGather.HitSpecular (doc 06 sections 6.2, 7): the probe writer with the hit-vertex sun lobe,
+// alone and combined with the stage-1/2 stability variant; built on first use only.
+RHIPipelineHandle PipelineLibrary::GetRadianceCacheTraceHitSpecular() {
+    if (!m_initialized) return RHIPipelineHandle::Invalid();
+    if (m_radianceCacheTraceHitSpecular.IsValid()) return m_radianceCacheTraceHitSpecular;
+    if (!m_radianceCacheTraceHitSpecularCS.IsValid())
+        m_radianceCacheTraceHitSpecularCS = m_shaderMgr->CreateShaderWithDefines(
+            EngineShader::RadianceCacheTraceCS, RHIShaderStage::Compute, "UZ_GI_HIT_SPECULAR=1");
+    if (!m_radianceCacheTraceHitSpecularCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile the RadianceCacheTraceCS hit-specular variant");
+        return RHIPipelineHandle::Invalid();
+    }
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_radianceCacheTraceHitSpecularCS;
+    desc.debugName     = "RadianceCache_Trace_HitSpecular";
+    m_radianceCacheTraceHitSpecular = m_device->CreateComputePipeline(desc);
+    if (!m_radianceCacheTraceHitSpecular.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create RadianceCache_Trace_HitSpecular pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created RadianceCache_Trace_HitSpecular pipeline");
+    }
+    return m_radianceCacheTraceHitSpecular;
+}
+
+RHIPipelineHandle PipelineLibrary::GetRadianceCacheTraceStabilityHitSpecular() {
+    if (!m_initialized) return RHIPipelineHandle::Invalid();
+    if (m_radianceCacheTraceStabilityHitSpecular.IsValid()) return m_radianceCacheTraceStabilityHitSpecular;
+    if (!m_radianceCacheTraceStabilityHitSpecularCS.IsValid())
+        m_radianceCacheTraceStabilityHitSpecularCS = m_shaderMgr->CreateShaderWithDefines(
+            EngineShader::RadianceCacheTraceCS, RHIShaderStage::Compute, "UZ_RC_STABILITY=1;UZ_GI_HIT_SPECULAR=1");
+    if (!m_radianceCacheTraceStabilityHitSpecularCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile the RadianceCacheTraceCS stability+hit-specular variant");
+        return RHIPipelineHandle::Invalid();
+    }
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_radianceCacheTraceStabilityHitSpecularCS;
+    desc.debugName     = "RadianceCache_Trace_Stability_HitSpecular";
+    m_radianceCacheTraceStabilityHitSpecular = m_device->CreateComputePipeline(desc);
+    if (!m_radianceCacheTraceStabilityHitSpecular.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create RadianceCache_Trace_Stability_HitSpecular pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created RadianceCache_Trace_Stability_HitSpecular pipeline");
+    }
+    return m_radianceCacheTraceStabilityHitSpecular;
 }
 
 RHIPipelineHandle PipelineLibrary::GetRadianceCacheTraceStability() {

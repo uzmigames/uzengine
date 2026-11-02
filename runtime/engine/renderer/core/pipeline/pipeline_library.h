@@ -623,6 +623,14 @@ public:
     /// Lazy DXR permutations; the original pipelines remain the non-DXR fallback.
     [[nodiscard]] RHIPipelineHandle GetSsgiDxrTrace();
     [[nodiscard]] RHIPipelineHandle GetSsgiDxrUpsample();
+    /// Lazy `UZ_GI_HIT_SPECULAR=1` permutations of the gather trace and upsample, plain and DXR
+    /// (`r.GI.FinalGather.HitSpecular`, docs/analysis/lumen-radiance-cache-stability/06): the sun's GGX
+    /// lobe at the gather's hit vertices. The default pipelines compile the unchanged text, so OFF is
+    /// byte-identical; invalid when the variant failed to compile (the gather runs the plain pipelines).
+    [[nodiscard]] RHIPipelineHandle GetSsgiTraceHitSpecular();
+    [[nodiscard]] RHIPipelineHandle GetSsgiDxrTraceHitSpecular();
+    [[nodiscard]] RHIPipelineHandle GetSsgiUpsampleHitSpecular();
+    [[nodiscard]] RHIPipelineHandle GetSsgiDxrUpsampleHitSpecular();
 
     /// Returns the SSGI spatial denoise compute pipeline.
     ///
@@ -712,6 +720,14 @@ public:
     /// pipeline when `RadianceCache::StabilityEnabled()`; invalid when the variant failed to compile
     /// (the caller falls back to the default pipeline).
     [[nodiscard]] RHIPipelineHandle GetRadianceCacheTraceStability();
+
+    /// The `UZ_GI_HIT_SPECULAR=1` variants of the radiance cache trace, alone and combined with
+    /// `UZ_RC_STABILITY=1` (`r.GI.FinalGather.HitSpecular`, doc 06 section 6.2): the probe writer shades
+    /// its hits with the same sun lobe and D7 weight as the gather, so cache and gather agree. The GI
+    /// pass selects among the four trace pipelines on (RadianceCache::StabilityEnabled(),
+    /// SSGIRenderer::HitSpecularEnabled()); invalid when the variant failed to compile.
+    [[nodiscard]] RHIPipelineHandle GetRadianceCacheTraceHitSpecular();
+    [[nodiscard]] RHIPipelineHandle GetRadianceCacheTraceStabilityHitSpecular();
 
     /// Returns the DDGI probe update compute pipeline (DXR inline ray tracing).
     ///

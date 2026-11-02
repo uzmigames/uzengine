@@ -28,16 +28,25 @@ cbuffer RootConstants : register(b0) {
     uint g_thicknessBits;     // CVar r.SSGI.Thickness as float bits (default 0.5)
     uint g_maxRayDistBits;    // Max ray distance in UV space as float bits (default 0.5)
     uint g_surfaceCacheParamsSrv; // Phase D stage 3: StructuredBuffer<SurfaceCacheParams> SRV (0xffffffff = no cache)
-#ifdef UZ_GATHER_DXR
+#if defined(UZ_GATHER_DXR) || defined(UZ_GI_HIT_SPECULAR)
     uint g_gatherTlasSrv;
     uint g_gatherMaterialSrv;
     uint g_gatherDxrMode;
+#endif
+#ifdef UZ_GI_HIT_SPECULAR
+    // r.GI.FinalGather.HitSpecular (doc 06 section 6.3): the 18th DWORD, the scene-constant roughness of
+    // the sun lobe at the gather's hits (float bits). The DXR trio above is declared (unused) in the
+    // HitSpecular-only variant too, so this DWORD sits at index 17 in every variant that declares it.
+    uint g_hitSpecularRoughnessBits;
 #endif
 };
 
 #include "ssgi_surface.hlsli"
 #ifdef UZ_BINDLESS
 #define UZ_SSGI_SURFACE_CACHE_PARAMS_SRV g_surfaceCacheParamsSrv
+#ifdef UZ_GI_HIT_SPECULAR
+#define UZ_SSGI_HIT_SPECULAR_ROUGHNESS_BITS g_hitSpecularRoughnessBits
+#endif
 #include "ssgi_world_gather.hlsli"
 #endif
 

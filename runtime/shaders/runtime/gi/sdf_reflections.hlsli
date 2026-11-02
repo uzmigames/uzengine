@@ -7,6 +7,9 @@
 #include "../lighting/ibl.hlsli"
 #include "rc_probe_guard.hlsli"   // cache probes kept near a surface do not reach behind it (followup-01)
 #include "surface_cache.hlsli"    // Phase D stage 3: the surface radiance cache at an SDF hit (SurfaceCacheQuerySdf)
+#ifdef UZ_GI_HIT_SPECULAR
+#include "gi_hit_specular.hlsli"  // r.GI.FinalGather.HitSpecular: the sun's GGX lobe at the hit (doc 06)
+#endif
 
 #ifndef UZ_SDF_REFLECTION_SAMPLER
 SamplerState sdfReflectionSampler : register(s2);
@@ -53,6 +56,13 @@ struct SdfReflectionScene {
     /// one element); 0xffffffff = no cache, every hit shades inline as before. Set by the caller
     /// from its own binding (LightingCB::surfaceCacheParamsSrv, the SSGI root DWORD).
     uint surfaceCacheParamsSrv;
+#ifdef UZ_GI_HIT_SPECULAR
+    /// r.GI.FinalGather.HitSpecular (doc 06 section 5.2): the scene-constant roughness of the sun lobe at
+    /// the hit and the IBL BRDF LUT for its D7 diffuse weight (0xffffffff before the IBL bake = identity).
+    /// Set by the gather shaders only; the deferred PS never compiles this permutation.
+    float hitSpecularRoughness;
+    uint hitSpecularLutSrv;
+#endif
 };
 
 /// @constants Four clipmaps; 0xffffffff invalid SRV; 65504 is the largest finite half.
@@ -253,6 +263,29 @@ float3 ShadeSdfReflectionHit(SdfReflectionScene scene, float3 position, float3 r
         visibility = TraceSdfRay(scene, origin, scene.sunDirection, scene.traceDistance, 2u, normal) == -1.0 ? 1.0 : 0.0;
     }
     float3 albedo = saturate(SampleSdfReflectionSurface(scene, position).gba);
+#ifdef UZ_GI_HIT_SPECULAR
+    // r.GI.FinalGather.HitSpecular (doc 06 sections 4, 5.2): the sun Lambert weighted by the LUT's
+    // (1 - E_spec) and the sun's GGX lobe toward the ray origin (V = -rayDirection), both gated by the
+    // same visibility. The probe-irradiance Lambert and the cell's `other` layer are unchanged.
+    const float3 sunLambert = albedo * (scene.sunColor * (ndl * visibility * M_1_PI));
+    const GiHitSunSpecular hs = EvalGiHitSunSpecular(normal, -rayDirection, scene.sunDirection, ndl,
+                                                     scene.hitSpecularRoughness, kGiHitSpecularF0,
+                                                     scene.hitSpecularLutSrv, UZ_SDF_REFLECTION_SAMPLER);
+    const float3 sunShaded = sunLambert * hs.diffuseWeight + scene.sunColor * (visibility * hs.specularCos);
+    if (cellRead) {
+        // DirectMode 1: the inline sun (the field's shadow trace) with the cell's `other` layer.
+        return sunShaded + cellOther;
+    }
+    if (cellWrite) {
+        // The cell's `sun` layer is view-independent: it receives the unweighted Lambert, never the
+        // lobe or its view-dependent weight.
+        const float3 otherTerm = albedo * SdfReflectionIrradiance(scene, origin, normal, hitT);
+        SurfaceCacheUpdate(cache, cachePos, normal, SurfaceCacheCameraPos(cache), cache.sdfLodBias,
+                           sunLambert, otherTerm, kSurfaceCacheWriterSdf);
+        return sunShaded + otherTerm;
+    }
+    return sunShaded + albedo * SdfReflectionIrradiance(scene, origin, normal, hitT);
+#else
     if (cellRead) {
         // DirectMode 1: the inline sun (the field's shadow trace) with the cell's `other` layer.
         return albedo * (scene.sunColor * (ndl * visibility * M_1_PI)) + cellOther;
@@ -266,6 +299,7 @@ float3 ShadeSdfReflectionHit(SdfReflectionScene scene, float3 position, float3 r
     }
     return albedo * (scene.sunColor * (ndl * visibility * M_1_PI)
                    + SdfReflectionIrradiance(scene, origin, normal, hitT));
+#endif
 }
 
 /// The surface trace with its hit distance exposed: `hitT` >= 0 on a hit, -1 when the ray escaped,

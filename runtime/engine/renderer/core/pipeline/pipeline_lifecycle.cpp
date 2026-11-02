@@ -154,6 +154,12 @@ void PipelineLibrary::Shutdown() {
     destroyPipeline(m_ssgiDxrUpsample);
     destroyPipeline(m_radianceCacheTraceStability);
     destroyPipeline(m_radianceCacheDepthMoments);
+    destroyPipeline(m_ssgiTraceHitSpecular);
+    destroyPipeline(m_ssgiDxrTraceHitSpecular);
+    destroyPipeline(m_ssgiUpsampleHitSpecular);
+    destroyPipeline(m_ssgiDxrUpsampleHitSpecular);
+    destroyPipeline(m_radianceCacheTraceHitSpecular);
+    destroyPipeline(m_radianceCacheTraceStabilityHitSpecular);
 
     // Destroy cached shaders
     auto destroyShader = [this](RHIShaderHandle& h) {
@@ -207,6 +213,12 @@ void PipelineLibrary::Shutdown() {
     destroyShader(m_ssgiDxrUpsampleCS);
     destroyShader(m_radianceCacheTraceStabilityCS);
     destroyShader(m_radianceCacheDepthMomentsCS);
+    destroyShader(m_ssgiTraceHitSpecularCS);
+    destroyShader(m_ssgiDxrTraceHitSpecularCS);
+    destroyShader(m_ssgiUpsampleHitSpecularCS);
+    destroyShader(m_ssgiDxrUpsampleHitSpecularCS);
+    destroyShader(m_radianceCacheTraceHitSpecularCS);
+    destroyShader(m_radianceCacheTraceStabilityHitSpecularCS);
 
     m_psoCache.Shutdown();
     m_psoDiskCache.reset();

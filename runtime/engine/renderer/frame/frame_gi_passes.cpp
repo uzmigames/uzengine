@@ -363,11 +363,27 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
             // SH sample stays populated regardless of DXR availability.
             // Stage-1 stability (docs/analysis/lumen-radiance-cache-stability): the UZ_RC_STABILITY
             // variant only when one of its CVars is on; the default pipeline is the unchanged trace,
-            // and a variant that failed to compile falls back to it.
+            // and a variant that failed to compile falls back to it. r.GI.FinalGather.HitSpecular
+            // (doc 06 section 6.4) adds the UZ_GI_HIT_SPECULAR variants, alone or combined with the
+            // stability one; a missing combined variant falls back to the stability variant (the
+            // stage-2 state records must stay maintained), logged once so a run that silently lost
+            // the cache term is visible.
             auto rcPipeline = ctx.pipelines->GetRadianceCacheTrace();
-            if (RadianceCache::StabilityEnabled()) {
-                const RHIPipelineHandle stability = ctx.pipelines->GetRadianceCacheTraceStability();
-                if (stability.IsValid()) rcPipeline = stability;
+            {
+                const bool stability = RadianceCache::StabilityEnabled();
+                const bool hitSpecular = SSGIRenderer::HitSpecularEnabled();
+                RHIPipelineHandle variant = RHIPipelineHandle::Invalid();
+                if (stability && hitSpecular) variant = ctx.pipelines->GetRadianceCacheTraceStabilityHitSpecular();
+                else if (hitSpecular)         variant = ctx.pipelines->GetRadianceCacheTraceHitSpecular();
+                if (hitSpecular && !variant.IsValid()) {
+                    static bool loggedHitSpecularFallback = false;
+                    if (!loggedHitSpecularFallback) {
+                        loggedHitSpecularFallback = true;
+                        UZ_LOG(Renderer, Warning, "Radiance cache trace: the HitSpecular variant (stability={}) failed to compile; the probe writer runs without the hit-vertex sun lobe", stability);
+                    }
+                }
+                if (!variant.IsValid() && stability) variant = ctx.pipelines->GetRadianceCacheTraceStability();
+                if (variant.IsValid()) rcPipeline = variant;
             }
             if (ctx.frameIndex % 120 == 0) {
                 UZ_LOG(Renderer, Debug, "SDF GI trace: frame={}, pipelineValid={}",

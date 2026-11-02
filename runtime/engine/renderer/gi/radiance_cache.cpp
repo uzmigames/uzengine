@@ -8,6 +8,7 @@
 /// Probe world offsets computed per-frame to follow camera movement.
 
 #include "radiance_cache.h"
+#include "ssgi_renderer.h"   // SSGIRenderer::HitSpecularRoughness (r.GI.FinalGather.HitSpecular, doc 06 section 6.4)
 #include "../render_graph/render_graph_states.h"
 
 #include "global_distance_field.h"
@@ -1045,7 +1046,10 @@ void RadianceCache::UpdateProbes(
     // distance clipmaps of the four cascades (the snap of a hit back to the raw surface).
     // Stage 2 (read by the UZ_RC_STABILITY variant only): [17] ray radiance UAV, [18] ray info UAV
     // (the depth-moments pass's inputs), [19] the depth atlas SRV for the feedback read's Chebyshev test.
-    uint32_t rootConstants[20] = {};
+    // r.GI.FinalGather.HitSpecular (read by the UZ_GI_HIT_SPECULAR variants only): [20] the hit lobe's
+    // roughness as float bits, [21] the IBL BRDF LUT SRV for its D7 diffuse weight (this shader binds
+    // no PerFrameCB). The default pipelines ignore the DWORDs past their declaration (root param 0 = 24).
+    uint32_t rootConstants[22] = {};
     rootConstants[0] = m_shBufferUav;
     rootConstants[1] = resetHistory ? UINT32_MAX : m_historyShBufferSrv;
     rootConstants[2] = frameIndex;
@@ -1083,7 +1087,12 @@ void RadianceCache::UpdateProbes(
         m_rgStates->Transition(cmdList, m_rayInfo, RHIResourceState::UnorderedAccess);
         if (m_depthAtlasCleared) m_rgStates->Transition(cmdList, m_depthAtlas, RHIResourceState::ShaderResource);
     }
-    cmdList->SetRootConstants(0, rootConstants, 20);
+    {
+        const float hitSpecularRoughness = SSGIRenderer::HitSpecularRoughness();
+        std::memcpy(&rootConstants[20], &hitSpecularRoughness, sizeof(float));
+    }
+    rootConstants[21] = pf->brdfLutSrvIndex;
+    cmdList->SetRootConstants(0, rootConstants, 22);
     // Logged once the snapshot can be taken (frame >= 120), so it describes what the snapshot
     // sampled: on the first dispatch the IBL is not baked yet and the SRV is the sentinel.
     if (cv_RCDiagnostic->value && !m_identityLogged && frameIndex >= 120u) {
@@ -1105,7 +1114,7 @@ void RadianceCache::UpdateProbes(
             rootConstants[11] = 0u;
         }
         cmdList->SetPipeline(tracePipeline);
-        cmdList->SetRootConstants(0, rootConstants, 20);
+        cmdList->SetRootConstants(0, rootConstants, 22);
     }
     if (rootConstants[10] != UINT32_MAX)
         m_rgStates->Transition(cmdList, m_probeSideBuffer, RHIResourceState::ShaderResource);

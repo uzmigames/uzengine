@@ -239,6 +239,11 @@ for shader in (
     'atmosphere/skybox_cubemap_ps.hlsl', 'atmosphere/sky_atmosphere_ps.hlsl',
 ):
     TIER_A.append(layout_entry(shader, 'PerFrameCB', PARAMS + 'constant_buffers.h'))
+# The hit-specular gather permutation (r.GI.FinalGather.HitSpecular, docs/analysis/
+# lumen-radiance-cache-stability/06 section 5.6) declares the IBL BRDF LUT in the sparse PerFrameCB
+# mirror only under UZ_GI_HIT_SPECULAR, so the default text stays the one before it; check that mirror too.
+TIER_A.append(layout_entry('ssgi/ssgi_surface.hlsli', 'PerFrameCB', PARAMS + 'constant_buffers.h',
+                           defines=('-D', 'UZ_GI_HIT_SPECULAR=1')))
 for shader in ('gbuffer/gbuffer_ps.hlsl', 'gbuffer/mesh_vs.hlsl', 'gbuffer/mesh_ps.hlsl',
                'gbuffer/translucent_ps.hlsl', 'lighting/shadow_depth_vs.hlsl'):
     TIER_A.append(layout_entry(shader, 'PerObjectCB', PARAMS + 'constant_buffers.h',

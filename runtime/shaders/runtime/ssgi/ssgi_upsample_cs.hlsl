@@ -11,12 +11,21 @@ cbuffer RootConstants : register(b0) {
     uint g_fullHeight;
     uint g_depthSigmaBits;
     uint g_normalPowerBits;
-#ifdef UZ_GATHER_DXR
+#if defined(UZ_GATHER_DXR) || defined(UZ_GI_HIT_SPECULAR)
     uint g_gatherTlasSrv;
     uint g_gatherMaterialSrv;
     uint g_gatherDxrMode;
 #endif
+#ifdef UZ_GI_HIT_SPECULAR
+    // r.GI.FinalGather.HitSpecular (doc 06 section 6.3): the 14th DWORD, the scene-constant roughness of
+    // the sun lobe at the full-resolution fallback gather's hits (float bits); the DXR trio above is
+    // declared (unused) in the HitSpecular-only variant so this DWORD sits at index 13 in every variant.
+    uint g_hitSpecularRoughnessBits;
+#endif
 };
+#ifdef UZ_GI_HIT_SPECULAR
+#define UZ_SSGI_HIT_SPECULAR_ROUGHNESS_BITS g_hitSpecularRoughnessBits
+#endif
 #include "ssgi_world_gather.hlsli"
 
 /// What the upsample did with the pixel, recorded because an all-zero weight vector is otherwise

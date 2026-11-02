@@ -207,6 +207,17 @@ public:
         return m_initialized && settings.enabled;
     }
 
+    /// `r.GI.FinalGather.HitSpecular` (docs/analysis/lumen-radiance-cache-stability/06): the sun's GGX
+    /// lobe at the gather's hit vertices and in the radiance-cache probe writer, with the hit's sun
+    /// Lambert weighted by the IBL LUT's (1 - E_spec) (the path tracer's D7 coupling). Default OFF: the
+    /// default pipelines compile the unchanged text; ON selects the `UZ_GI_HIT_SPECULAR=1` permutations
+    /// (PipelineLibrary::Get*HitSpecular). One source of truth for the gather (this renderer) and the
+    /// radiance-cache pipeline selection (frame_gi_passes.cpp) and root DWORDs (radiance_cache.cpp).
+    [[nodiscard]] static bool HitSpecularEnabled();
+    /// `r.GI.FinalGather.HitSpecular.Roughness`, clamped to [0.4, 1]: the scene-constant roughness of
+    /// that lobe (the GI material table and the SDF clipmap carry no roughness).
+    [[nodiscard]] static float HitSpecularRoughness();
+
     /// True once Render() has produced a valid output texture. Until then the
     /// result texture has never been written and must not be bound.
     [[nodiscard]] bool HasProducedResult() const noexcept { return m_hasProducedResult; }
@@ -348,6 +359,11 @@ private:
     uint32_t m_loggedWorldSamples = 0;
     bool m_worldGather = false;
     uint32_t m_gatherDxrMode = 0;
+    /// The effective HitSpecular state this frame (the CVar AND both gather variants compiled); a
+    /// change invalidates the temporal history exactly as a DXR-mode change does.
+    bool m_hitSpecular = false;
+    bool m_loggedHitSpecularFallback = false;   ///< One-time log: a HitSpecular variant failed to compile.
+    bool m_loggedHitSpecularRestir = false;     ///< One-time log: HitSpecular is not applied under r.GI.ReSTIR=1.
     bool m_hasHistory = false;
     uint64_t m_sceneRevision = 0;
     uint32_t m_lastFrame = UINT32_MAX;

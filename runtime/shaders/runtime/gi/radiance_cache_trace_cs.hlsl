@@ -15,6 +15,9 @@
 
 #include "../common/constants.hlsli"
 #include "../lighting/ibl.hlsli"
+#if UZ_GI_HIT_SPECULAR
+#include "gi_hit_specular.hlsli"   // r.GI.FinalGather.HitSpecular: the sun's GGX lobe at the hit (doc 06)
+#endif
 
 SamplerState linearClamp : register(s2);
 
@@ -46,13 +49,21 @@ cbuffer RootConstants : register(b0) {
     uint g_rawClipmapSrv1;
     uint g_rawClipmapSrv2;
     uint g_rawClipmapSrv3;
-#if UZ_RC_STABILITY
+#if UZ_RC_STABILITY || UZ_GI_HIT_SPECULAR
     // Stage-2 visibility (r.GI.RadianceCache.Visibility): the per-ray (radiance, hitT) and (direction)
     // buffers in the DDGI layout (probe * nRays + i) that the DDGI depth-moments pass integrates into
     // the cache's depth atlas, and that atlas for the feedback read's Chebyshev test. Sentinel = off.
     uint g_rayRadianceUav;
     uint g_rayInfoUav;
     uint g_depthAtlasSrv;
+#endif
+#if UZ_GI_HIT_SPECULAR
+    // r.GI.FinalGather.HitSpecular (doc 06 section 6.4): [20] the scene-constant roughness of the sun
+    // lobe at the hit (float bits), [21] the IBL BRDF LUT SRV for its D7 diffuse weight (this shader
+    // binds no PerFrameCB; 0xffffffff before the IBL bake = identity). The stability trio above is
+    // declared (unused) in the HitSpecular-only variant too, so these keep their indices in every variant.
+    uint g_hitSpecularRoughnessBits;
+    uint g_hitSpecularLutSrv;
 #endif
 };
 
@@ -753,6 +764,27 @@ void main(uint3 DTid : SV_DispatchThreadID) {
 #else
                 float3 indirect = SamplePreviousDiffuse(hitPosition + N * (2.0 * kSurfaceEpsilon), N);
 #endif
+#if UZ_GI_HIT_SPECULAR
+                // r.GI.FinalGather.HitSpecular (doc 06 sections 4, 5.4, 7): the same term the gather adds at
+                // its hits, so cache and gather agree - the sun Lambert weighted by the LUT's (1 - E_spec)
+                // and the sun's GGX lobe toward the probe (V = -dir; the SH integrates radiance arriving at
+                // the probe). `visibility` already carries the dot(N, -dir) > 0 condition; the probe-
+                // irradiance Lambert is unchanged. The "sun-term" record keeps meaning what the sun put in.
+                const float3 sunLambert = albedo * (sunRad / kPI);
+                const GiHitSunSpecular hs = EvalGiHitSunSpecular(N, -dir, L, NdL, asfloat(g_hitSpecularRoughnessBits),
+                                                                 kGiHitSpecularF0, g_hitSpecularLutSrv, linearClamp);
+                const float3 sunShaded = sunLambert * hs.diffuseWeight
+                                       + float3(lightColorR, lightColorG, lightColorB) * lightIntensity
+                                       * (visibility * hs.specularCos);
+                radiance = dot(N, -dir) > 0.0 ? sunShaded + albedo * indirect : 0.0;
+                if (dot(N, -dir) > 0.0) {
+                    pathStats.y += dot(sunShaded,         float3(0.2126, 0.7152, 0.0722));
+                    pathStats.z += dot(albedo * indirect, float3(0.2126, 0.7152, 0.0722));
+                }
+                pathStats.w += 1.0;
+                // DirectMode 1: the inline sun with the cell's `other` layer.
+                if (cellRead) radiance = sunShaded + cellOther;
+#else
                 radiance = dot(N, -dir) > 0.0 ? albedo * (sunRad / kPI + indirect) : 0.0;
                 if (dot(N, -dir) > 0.0) {
                     pathStats.y += dot(albedo * (sunRad / kPI), float3(0.2126, 0.7152, 0.0722));
@@ -761,6 +793,7 @@ void main(uint3 DTid : SV_DispatchThreadID) {
                 pathStats.w += 1.0;
                 // DirectMode 1: the inline sun with the cell's `other` layer.
                 if (cellRead) radiance = albedo * (sunRad / kPI) + cellOther;
+#endif
             }
         }
         traceStats.w += dot(radiance, float3(0.2126, 0.7152, 0.0722)) * invN;
