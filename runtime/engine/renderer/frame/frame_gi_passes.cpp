@@ -398,6 +398,13 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
                     ? m_device->GetTextureSRVIndex(res.GetTexture(ctx.positionRes)) : UINT32_MAX;
                 m_radianceCache.SetVisibleSeedSource(positionSrv,
                     visibleSeeds ? ctx.renderWidth : 0u, visibleSeeds ? ctx.renderHeight : 0u);
+                // Stage-2 visibility (r.GI.RadianceCache.Visibility): the UZ_RC_DEPTH DDGI depth pass and
+                // the DDGI border fill on the cache's own depth atlas; invalid handles = no visibility.
+                const bool rcVisibility = RadianceCache::VisibilityEnabled();
+                const RHIPipelineHandle rcDepthPipeline = rcVisibility
+                    ? ctx.pipelines->GetRadianceCacheDepthMoments() : RHIPipelineHandle::Invalid();
+                const RHIPipelineHandle rcBorderPipeline = rcVisibility
+                    ? ctx.pipelines->GetDdgiBorderFill() : RHIPipelineHandle::Invalid();
                 m_radianceCache.UpdateProbes(
                     cmd, m_globalDistanceField, rcPipeline,
                     m_cbRing.get(),
@@ -407,7 +414,9 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
                     sizeof(PerFrameCB),
                     ctx.frameIndex,
                     sidePipeline,
-                    probeCacheSrv);
+                    probeCacheSrv,
+                    rcDepthPipeline,
+                    rcBorderPipeline);
             }
 
             // DDGI atlas writer — only when DXR is ON (master switch `r.RayTracing`

@@ -685,6 +685,31 @@ RHIPipelineHandle PipelineLibrary::GetRadianceCacheTraceStability() {
     return m_radianceCacheTraceStability;
 }
 
+RHIPipelineHandle PipelineLibrary::GetRadianceCacheDepthMoments() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetRadianceCacheDepthMoments called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+    if (m_radianceCacheDepthMoments.IsValid()) return m_radianceCacheDepthMoments;
+    if (!m_radianceCacheDepthMomentsCS.IsValid())
+        m_radianceCacheDepthMomentsCS = m_shaderMgr->CreateShaderWithDefines(
+            EngineShader::DdgiProbeUpdateCS, RHIShaderStage::Compute, "UZ_RC_DEPTH=1");
+    if (!m_radianceCacheDepthMomentsCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile the DdgiProbeUpdateCS radiance-cache depth variant");
+        return RHIPipelineHandle::Invalid();
+    }
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_radianceCacheDepthMomentsCS;
+    desc.debugName     = "RadianceCache_DepthMoments";
+    m_radianceCacheDepthMoments = m_device->CreateComputePipeline(desc);
+    if (!m_radianceCacheDepthMoments.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create RadianceCache_DepthMoments pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created RadianceCache_DepthMoments pipeline");
+    }
+    return m_radianceCacheDepthMoments;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // DDGI Probe Update Compute Pipeline (DXR inline ray tracing)
 // ─────────────────────────────────────────────────────────────────────────────

@@ -117,6 +117,23 @@ static auto* cv_RCClassHysteresis = UZ_CVAR_INT("r.GI.RadianceCache.Classificati
     "it and an inside probe's SH is zeroed (today). K > 1 = K consecutive updates confirm a flip, a probe "
     "that goes inside keeps its SH (invalid for every reader), and one that returns blends from it instead "
     "of replacing it with a single 32-ray estimate", 1, 15);
+// Stage-2 (docs/analysis/lumen-radiance-cache-stability/01 section 2.8, 03 section 4 move 2, 04 section 2.4):
+// the readers' side. Both default OFF; their parameters reach every reader through the parameter record
+// appended to the SH buffer (rc_probe_visibility.hlsli), zero at the defaults.
+static auto* cv_RCNearFieldExclude = UZ_CVAR_BOOL("r.GI.RadianceCache.NearFieldExclude", false,
+    "Lumen's far-field contract for the world radiance cache: a ray's hit nearer than MinTraceDistance probe "
+    "spacings to its origin takes none of the probe-interpolated indirect (the receiver's own trace carries "
+    "the occlusion the grid cannot express below a cell; the grid injected open-space irradiance and its "
+    "wander into contacts), the full term from TMin + spacing * sqrt(3) on, smoothstep between. Applies to "
+    "every hit-point reader (gather, reflections, surface cache) and to the probe writer's own feedback read");
+static auto* cv_RCMinTraceDistance = UZ_CVAR_FLOAT("r.GI.RadianceCache.MinTraceDistance", 1.7320508f,
+    "NearFieldExclude: TMin in probe spacings (Lumen's ProbeTMin = cell * sqrt(3) = 1.732)", 0.1f, 4.0f);
+static auto* cv_RCVisibility = UZ_CVAR_BOOL("r.GI.RadianceCache.Visibility", false,
+    "Chebyshev visibility for the radiance cache (Majercik 2019 section 3.4, RTXGI): the DDGI depth-moments "
+    "atlas writer runs on the cache's own 32 rays, and every reader weights each of the eight probes by the "
+    "statistical visibility of the receiver from the probe (cubed, floored at 0.05), so a probe behind a thin "
+    "wall or floor fades out continuously instead of leaking. Costs the atlas (5.3 MB), two 4 MiB ray "
+    "buffers and one depth-moments dispatch per frame");
 
 namespace uz {
 
@@ -126,7 +143,12 @@ uint32_t RadianceCache::ClassificationMode() {
 
 bool RadianceCache::StabilityEnabled() {
     return cv_RCJitterCycle->value != 0.0f || cv_RCTemporalMode->value != 0.0f
-        || cv_RCClassHysteresis->value > 1.0f;
+        || cv_RCClassHysteresis->value > 1.0f
+        || cv_RCNearFieldExclude->value != 0.0f || cv_RCVisibility->value != 0.0f;
+}
+
+bool RadianceCache::VisibilityEnabled() {
+    return cv_RCVisibility->value != 0.0f;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -164,9 +186,11 @@ bool RadianceCache::CreateResources(IRHIDevice* device, float worldExtent) {
 
     // ── Create StructuredBuffer for SH coefficients ────────────────────────
     // kTotalProbes * kSHFloat4PerProbe * sizeof(float4) = 4096 * 7 * 16 = 458752 bytes, followed by
-    // one guard record per probe (kGuardFloat4PerProbe; zero under the current classification) and
-    // one temporal-state record per probe (kStateFloat4PerProbe, read only by the trace).
-    const uint32_t totalFloat4s = kTotalProbes * (kSHFloat4PerProbe + kGuardFloat4PerProbe + kStateFloat4PerProbe);
+    // one guard record per probe (kGuardFloat4PerProbe; zero under the current classification), one
+    // temporal-state record per probe (kStateFloat4PerProbe, read only by the trace) and the stage-2
+    // reader parameter record (kParamsFloat4, written by UpdateProbes every frame).
+    const uint32_t totalFloat4s = kTotalProbes * (kSHFloat4PerProbe + kGuardFloat4PerProbe + kStateFloat4PerProbe)
+                                + kParamsFloat4;
     const uint32_t bufferSize   = totalFloat4s * 4 * sizeof(float); // float4 = 16 bytes
 
     RHIBufferDesc bufDesc{};
@@ -246,6 +270,22 @@ void RadianceCache::DestroyResources() {
     if (m_device && m_probeSideBuffer.IsValid()) {
         m_device->DestroyBuffer(m_probeSideBuffer);
     }
+    if (m_device && m_depthAtlas.IsValid()) {
+        m_device->DestroyTexture(m_depthAtlas);
+    }
+    if (m_device && m_rayRadiance.IsValid()) {
+        m_device->DestroyBuffer(m_rayRadiance);
+    }
+    if (m_device && m_rayInfo.IsValid()) {
+        m_device->DestroyBuffer(m_rayInfo);
+    }
+    m_depthAtlas = {};
+    m_depthAtlasSrv = m_depthAtlasUav = UINT32_MAX;
+    m_depthAtlasCleared = false;
+    m_rayRadiance = {};
+    m_rayInfo = {};
+    m_rayRadianceSrv = m_rayRadianceUav = UINT32_MAX;
+    m_rayInfoSrv = m_rayInfoUav = UINT32_MAX;
     m_probeSideBuffer = {};
     m_probeSideSrv = UINT32_MAX;
     m_probeSideUav = UINT32_MAX;
@@ -296,13 +336,64 @@ void RadianceCache::DestroyResources() {
     m_diagnosticSpacing = 0.0f;
 }
 
+bool RadianceCache::EnsureVisibilityResources() {
+    if (m_depthAtlas.IsValid() && m_rayRadiance.IsValid() && m_rayInfo.IsValid()) return true;
+    if (!m_device) return false;
+
+    // The depth-moments atlas in the DDGI layout (DDGISystem::CreateResources' depth atlas): one
+    // (kDepthProbeSize + 2)^2 tile per probe, probes^2 tiles across, probes tiles down.
+    if (!m_depthAtlas.IsValid()) {
+        RHITextureDesc desc{};
+        desc.width     = kProbesPerAxis * kProbesPerAxis * (kDepthProbeSize + 2);
+        desc.height    = kProbesPerAxis * (kDepthProbeSize + 2);
+        desc.format    = RHIFormat::RG16Float;
+        desc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::UnorderedAccess;
+        desc.debugName = "RadianceCache_DepthAtlas";
+        m_depthAtlas = m_device->CreateTexture(desc);
+        if (!m_depthAtlas.IsValid()) {
+            UZ_LOG(Renderer, Error, "RadianceCache: failed to create the depth-moments atlas {}x{}", desc.width, desc.height);
+            return false;
+        }
+        m_depthAtlasSrv = m_device->GetTextureSRVIndex(m_depthAtlas);
+        m_depthAtlasUav = m_device->GetTextureUAVIndex(m_depthAtlas);
+        m_depthAtlasCleared = false;
+    }
+    // The per-ray buffers in the DDGI layout (`probe * nRays + i`, DDGISystem's ray buffers).
+    if (!m_rayRadiance.IsValid() || !m_rayInfo.IsValid()) {
+        RHIBufferDesc desc{};
+        desc.sizeBytes = static_cast<uint64_t>(kTotalProbes) * kMaxRaysPerProbeBuffer * 4 * sizeof(float);
+        desc.stride    = 4 * sizeof(float);
+        desc.usage     = RHIBufferUsage::StructuredBuffer | RHIBufferUsage::UnorderedAccess;
+        desc.debugName = "RadianceCache_RayRadiance";
+        if (!m_rayRadiance.IsValid()) m_rayRadiance = m_device->CreateBuffer(desc);
+        desc.debugName = "RadianceCache_RayInfo";
+        if (!m_rayInfo.IsValid()) m_rayInfo = m_device->CreateBuffer(desc);
+        if (!m_rayRadiance.IsValid() || !m_rayInfo.IsValid()) {
+            UZ_LOG(Renderer, Error, "RadianceCache: failed to create the per-ray buffers ({} bytes each)", desc.sizeBytes);
+            return false;
+        }
+        m_rayRadianceSrv = m_device->GetBufferSRVIndex(m_rayRadiance);
+        m_rayRadianceUav = m_device->GetBufferUAVIndex(m_rayRadiance);
+        m_rayInfoSrv     = m_device->GetBufferSRVIndex(m_rayInfo);
+        m_rayInfoUav     = m_device->GetBufferUAVIndex(m_rayInfo);
+    }
+    UZ_LOG(Renderer, Info, "RadianceCache: created the stage-2 visibility resources (depth atlas SRV={} UAV={}, ray buffers SRV={}/{} UAV={}/{})",
+           m_depthAtlasSrv, m_depthAtlasUav, m_rayRadianceSrv, m_rayInfoSrv, m_rayRadianceUav, m_rayInfoUav);
+    return true;
+}
+
 void RadianceCache::QueueDiagnosticReadback(IRHICommandList* cmdList, uint32_t frameIndex) {
     if (!cv_RCDiagnostic->value || m_diagnosticComplete || m_diagnosticReadback.IsValid() || frameIndex < 120) return;
     RHIBufferDesc desc{};
     const uint32_t shBytes = kTotalProbes * kSHFloat4PerProbe * 4 * sizeof(float);
     const uint32_t statsBytes = m_diagnosticStats.IsValid()
         ? kTotalProbes * kDiagnosticFloat4PerProbe * 4 * sizeof(float) : 0;
-    desc.sizeBytes = shBytes + statsBytes;
+    // Stage-2 visibility: the depth-moments atlas when it exists (RG16F, 4 bytes a texel; its row of
+    // 256 * 18 texels is 18432 bytes, a multiple of the 256-byte readback pitch).
+    const uint32_t atlasRowPitch = kProbesPerAxis * kProbesPerAxis * (kDepthProbeSize + 2u) * 4u;
+    const uint32_t atlasBytes = (m_depthAtlas.IsValid() && m_depthAtlasCleared)
+        ? atlasRowPitch * kProbesPerAxis * (kDepthProbeSize + 2u) : 0u;
+    desc.sizeBytes = shBytes + statsBytes + atlasBytes;
     desc.memory = RHIMemoryType::Readback;
     desc.debugName = "RadianceCache_DiagnosticReadback";
     m_diagnosticReadback = m_device->CreateBuffer(desc);
@@ -318,6 +409,13 @@ void RadianceCache::QueueDiagnosticReadback(IRHICommandList* cmdList, uint32_t f
         m_rgStates->Transition(cmdList, m_diagnosticStats, RHIResourceState::CopySrc);
         cmdList->CopyBuffer(m_diagnosticStats, 0, m_diagnosticReadback, shBytes, statsBytes);
         m_rgStates->Transition(cmdList, m_diagnosticStats, RHIResourceState::UnorderedAccess);
+    }
+    m_diagnosticAtlasOffset = shBytes + statsBytes;
+    m_diagnosticAtlasBytes = atlasBytes;
+    if (atlasBytes != 0) {
+        m_rgStates->Transition(cmdList, m_depthAtlas, RHIResourceState::CopySrc);
+        cmdList->CopyTextureToBuffer(m_depthAtlas, 0, m_diagnosticReadback, shBytes + statsBytes, atlasRowPitch);
+        m_rgStates->Transition(cmdList, m_depthAtlas, RHIResourceState::ShaderResource);
     }
     m_diagnosticCopyFrame = frameIndex;
     m_diagnosticOrigin = m_gridOrigin;
@@ -609,6 +707,51 @@ void RadianceCache::ReadDiagnosticResults(uint32_t frameIndex) {
                    index, stats[0], stats[1], stats[2], stats[3], stats[4], stats[5], stats[6], stats[7]);
         }
     }
+    if (m_diagnosticAtlasBytes != 0) {
+        // Stage-2 visibility (r.GI.RadianceCache.Visibility): the depth-moments atlas the cache's rays
+        // wrote - per probe, the interior texels' mean hit distance (moment x, normalised by the
+        // trace's maxTraceDistance = grid diameter) and variance (moment y - x^2). A probe counts as
+        // written when any interior texel is non-zero (the border fill clears the fresh atlas).
+        const auto halfToFloat = [](uint16_t h) {
+            const uint32_t sign = (static_cast<uint32_t>(h) & 0x8000u) << 16;
+            uint32_t exponent = (h >> 10) & 0x1Fu, mantissa = h & 0x3FFu, bits;
+            if (exponent == 0) {
+                if (mantissa == 0) { bits = sign; }
+                else {
+                    exponent = 127 - 15 + 1;
+                    while ((mantissa & 0x400u) == 0) { mantissa <<= 1; --exponent; }
+                    bits = sign | (exponent << 23) | ((mantissa & 0x3FFu) << 13);
+                }
+            } else if (exponent == 31) { bits = sign | 0x7F800000u | (mantissa << 13); }
+            else { bits = sign | ((exponent + 127 - 15) << 23) | (mantissa << 13); }
+            float value; std::memcpy(&value, &bits, sizeof(value)); return value;
+        };
+        const auto* texels = reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(data) + m_diagnosticAtlasOffset);
+        const uint32_t stride = kDepthProbeSize + 2u, atlasW = kProbesPerAxis * kProbesPerAxis * stride;
+        const double maxTrace = m_gridExtent * 2.0;
+        uint32_t writtenProbes = 0, atlasTexels = 0, atlasFinite = 0;
+        double sumMean = 0.0, sumVariance = 0.0, minMean = std::numeric_limits<double>::max(), maxMean = 0.0;
+        for (uint32_t index = 0; index < kTotalProbes; ++index) {
+            const uint32_t tileX = index % (kProbesPerAxis * kProbesPerAxis), tileY = index / (kProbesPerAxis * kProbesPerAxis);
+            bool written = false;
+            for (uint32_t ly = 1; ly <= kDepthProbeSize; ++ly) for (uint32_t lx = 1; lx <= kDepthProbeSize; ++lx) {
+                const uint16_t* texel = texels + (static_cast<size_t>(tileY * stride + ly) * atlasW + tileX * stride + lx) * 2u;
+                if (texel[0] == 0 && texel[1] == 0) continue;
+                written = true;
+                const double mean = halfToFloat(texel[0]) * maxTrace, mean2 = halfToFloat(texel[1]) * maxTrace * maxTrace;
+                ++atlasTexels;
+                if (!std::isfinite(mean) || !std::isfinite(mean2)) continue;
+                ++atlasFinite;
+                sumMean += mean; sumVariance += std::max(mean2 - mean * mean, 0.0);
+                minMean = std::min(minMean, mean); maxMean = std::max(maxMean, mean);
+            }
+            writtenProbes += written;
+        }
+        UZ_LOG(Renderer, Info, "RC visibility: depth atlas snapshotFrame={} probesWritten={}/{} nonzeroTexels={} finite={} meanHitDistance={} cm (min={} max={}) meanVariance={} cm^2 maxTraceDistance={} cm",
+               m_diagnosticCopyFrame, writtenProbes, kTotalProbes, atlasTexels, atlasFinite,
+               atlasFinite ? sumMean / atlasFinite : 0.0, atlasFinite ? minMean : 0.0, maxMean,
+               atlasFinite ? sumVariance / atlasFinite : 0.0, maxTrace);
+    }
     m_device->UnmapBuffer(m_diagnosticReadback);
 }
 
@@ -668,7 +811,9 @@ void RadianceCache::UpdateProbes(
     uint32_t perFrameSize,
     uint32_t frameIndex,
     RHIPipelineHandle sidePipeline,
-    uint32_t surfaceCacheParamsSrv)
+    uint32_t surfaceCacheParamsSrv,
+    RHIPipelineHandle depthPipeline,
+    RHIPipelineHandle borderPipeline)
 {
     if (!m_initialized || !cmdList || !tracePipeline.IsValid() || !cbRing) {
         return;
@@ -748,6 +893,32 @@ void RadianceCache::UpdateProbes(
     if (!resetHistory)
         m_rgStates->Transition(cmdList, m_historyShBuffer, RHIResourceState::ShaderResource);
 
+    // ── Stage 2: the readers' parameter record (rc_probe_visibility.hlsli) ───────────────────
+    // Written into the buffer this frame's trace fills - the one every consumer reads next frame -
+    // on every update, so it is zero (the readers' arithmetic before stage 2, bit for bit) whenever
+    // the two CVars are at their defaults, and the depth atlas is only advertised on a frame whose
+    // depth pass runs. The stage-2 writer side needs the stability trace variant (StabilityEnabled()).
+    const bool nearFieldExclude = stabilityActive && cv_RCNearFieldExclude->value != 0.0f;
+    const bool visibility = stabilityActive && VisibilityEnabled() && depthPipeline.IsValid()
+                         && borderPipeline.IsValid() && EnsureVisibilityResources();
+    const float nearFieldTMin    = nearFieldExclude ? cv_RCMinTraceDistance->value * m_probeSpacing : 0.0f;
+    const float nearFieldBandEnd = nearFieldExclude ? nearFieldTMin + m_probeSpacing * 1.7320508f : 0.0f;
+    {
+        CBAllocation paramsAlloc = cbRing->Allocate(4 * sizeof(float));
+        if (paramsAlloc.cpuPtr) {
+            const float params[4] = {nearFieldTMin, nearFieldBandEnd,
+                                     visibility ? static_cast<float>(m_depthAtlasSrv + 1u) : 0.0f,
+                                     visibility ? m_gridExtent * 2.0f : 0.0f};   // the writer's maxTraceDistance (below)
+            std::memcpy(paramsAlloc.cpuPtr, params, sizeof(params));
+            const uint64_t paramsOffset = static_cast<uint64_t>(kTotalProbes)
+                                        * (kSHFloat4PerProbe + kGuardFloat4PerProbe + kStateFloat4PerProbe) * 4 * sizeof(float);
+            m_rgStates->Transition(cmdList, m_shBuffer, RHIResourceState::CopyDst);
+            cmdList->CopyBuffer(paramsAlloc.bufferHandle, paramsAlloc.offsetBytes, m_shBuffer, paramsOffset, sizeof(params));
+        } else {
+            UZ_LOG(Renderer, Error, "RadianceCache: failed to allocate the stage-2 parameter record");
+        }
+    }
+
     // Transition SH buffer to UAV for compute read/write
     m_rgStates->Transition(cmdList, m_shBuffer, RHIResourceState::UnorderedAccess);
 
@@ -794,6 +965,9 @@ void RadianceCache::UpdateProbes(
     constants.temporalChangeThreshold = cv_RCTemporalChangeThreshold->value;
     constants.temporalMaxHistory      = static_cast<uint32_t>(cv_RCTemporalMaxHistory->value);
     constants.classHysteresis         = static_cast<uint32_t>(cv_RCClassHysteresis->value);
+    // Stage-2 near-field exclusion for the writer's own feedback read (0 = off).
+    constants.nearFieldTMin           = nearFieldTMin;
+    constants.nearFieldBandEnd        = nearFieldBandEnd;
 
     // Fill GDF clipmap parameters from the global distance field
     const uint32_t numClipmaps = GlobalDistanceField::kNumClipmaps;
@@ -869,7 +1043,9 @@ void RadianceCache::UpdateProbes(
     //   [3] probe offset, [4] probe budget, [5] sky radiance SRV, [6..7] padding.
     // Phase D stage 3: [12] the surface cache's binding record, [13..16] the raw (unexpanded)
     // distance clipmaps of the four cascades (the snap of a hit back to the raw surface).
-    uint32_t rootConstants[17] = {};
+    // Stage 2 (read by the UZ_RC_STABILITY variant only): [17] ray radiance UAV, [18] ray info UAV
+    // (the depth-moments pass's inputs), [19] the depth atlas SRV for the feedback read's Chebyshev test.
+    uint32_t rootConstants[20] = {};
     rootConstants[0] = m_shBufferUav;
     rootConstants[1] = resetHistory ? UINT32_MAX : m_historyShBufferSrv;
     rootConstants[2] = frameIndex;
@@ -898,7 +1074,16 @@ void RadianceCache::UpdateProbes(
         const auto& clip = gdf.GetClipmap(i);
         rootConstants[13 + i] = (surfaceCacheParamsSrv != UINT32_MAX && clip.hasData) ? clip.rawSrvIndex : UINT32_MAX;
     }
-    cmdList->SetRootConstants(0, rootConstants, 17);
+    rootConstants[17] = visibility ? m_rayRadianceUav : UINT32_MAX;
+    rootConstants[18] = visibility ? m_rayInfoUav : UINT32_MAX;
+    // The atlas the depth pass wrote last frame (this frame's pass runs after the trace); none until it ran once.
+    rootConstants[19] = (visibility && m_depthAtlasCleared) ? m_depthAtlasSrv : UINT32_MAX;
+    if (visibility) {
+        m_rgStates->Transition(cmdList, m_rayRadiance, RHIResourceState::UnorderedAccess);
+        m_rgStates->Transition(cmdList, m_rayInfo, RHIResourceState::UnorderedAccess);
+        if (m_depthAtlasCleared) m_rgStates->Transition(cmdList, m_depthAtlas, RHIResourceState::ShaderResource);
+    }
+    cmdList->SetRootConstants(0, rootConstants, 20);
     // Logged once the snapshot can be taken (frame >= 120), so it describes what the snapshot
     // sampled: on the first dispatch the IBL is not baked yet and the SRV is the sentinel.
     if (cv_RCDiagnostic->value && !m_identityLogged && frameIndex >= 120u) {
@@ -920,7 +1105,7 @@ void RadianceCache::UpdateProbes(
             rootConstants[11] = 0u;
         }
         cmdList->SetPipeline(tracePipeline);
-        cmdList->SetRootConstants(0, rootConstants, 17);
+        cmdList->SetRootConstants(0, rootConstants, 20);
     }
     if (rootConstants[10] != UINT32_MAX)
         m_rgStates->Transition(cmdList, m_probeSideBuffer, RHIResourceState::ShaderResource);
@@ -935,6 +1120,66 @@ void RadianceCache::UpdateProbes(
 
     // Transition back to SRV for lighting shader reads
     m_rgStates->Transition(cmdList, m_shBuffer, RHIResourceState::ShaderResource);
+
+    // ── Stage 2: the depth-moments atlas from this frame's rays ─────────────────────────────
+    // The DDGI depth pass (ddgi_probe_update_cs.hlsl mode 1, the UZ_RC_DEPTH variant: ray directions
+    // from the info buffer, the cache's probe budget, a cleared texel takes the new moments) on the
+    // ray buffers the trace just wrote, then the DDGI border fill, as DDGISystem::DispatchUpdate runs
+    // them. Its own constants allocation: the two radiance-cache-only slots carry the ray buffers'
+    // SRVs to the writer (ddgiRayRadianceSrv / ddgiRayInfoSrv), and a full retrace replaces the moments
+    // (the tiles are indexed by grid coordinate: after a recentre they belong to other world probes).
+    if (visibility) {
+        m_rgStates->Transition(cmdList, m_rayRadiance, RHIResourceState::ShaderResource);
+        m_rgStates->Transition(cmdList, m_rayInfo, RHIResourceState::ShaderResource);
+        m_rgStates->Transition(cmdList, m_depthAtlas, RHIResourceState::UnorderedAccess);
+
+        auto borderFill = [&](uint32_t clear) {
+            cmdList->SetPipeline(borderPipeline);
+            const uint32_t rc[5] = {m_depthAtlasUav, kProbesPerAxis, kDepthProbeSize, 1u, clear};
+            cmdList->SetRootConstants(0, rc, 5);
+            const uint32_t stride = kDepthProbeSize + 2u;
+            cmdList->Dispatch((kProbesPerAxis * kProbesPerAxis * stride + 7u) / 8u, (kProbesPerAxis * stride + 7u) / 8u, 1);
+        };
+        if (!m_depthAtlasCleared) {
+            borderFill(1u);                       // defined initial contents (the RHI has no UAV clear)
+            m_rgStates->UavBarrier(cmdList, m_depthAtlas);
+            m_depthAtlasCleared = true;
+        }
+
+        RadianceCacheTraceConstants depthConstants = constants;
+        depthConstants.shBufferUav        = m_rayRadianceSrv;
+        depthConstants.firstWrite         = m_rayInfoSrv;
+        depthConstants.temporalBlendAlpha = fullRetrace ? 1.0f : kTemporalBlendAlpha;
+        CBAllocation depthAlloc = cbRing->Allocate(sizeof(RadianceCacheTraceConstants));
+        if (depthAlloc.cpuPtr) {
+            std::memcpy(depthAlloc.cpuPtr, &depthConstants, sizeof(depthConstants));
+            cmdList->SetPipeline(depthPipeline);
+            // Root constants (ddgi_probe_update_cs.hlsl): [0] irradiance UAV (unused in mode 1), [1] depth
+            // UAV, [2] TLAS (unused with ray buffers), [3] atlas mode 1, [4] frame, [5] probes per axis,
+            // [6] first probe updated this frame, [7] sky, [8] diagnostic, [9..14] known-radiance
+            // diagnostics off, [15] the probe budget (UZ_RC_DEPTH).
+            uint32_t depthRoot[16] = {};
+            depthRoot[0]  = UINT32_MAX;
+            depthRoot[1]  = m_depthAtlasUav;
+            depthRoot[2]  = UINT32_MAX;
+            depthRoot[3]  = 1u;
+            depthRoot[4]  = frameIndex;
+            depthRoot[5]  = kProbesPerAxis;
+            depthRoot[6]  = probeOffset;
+            depthRoot[7]  = UINT32_MAX;
+            depthRoot[8]  = UINT32_MAX;
+            depthRoot[15] = probeBudget;
+            cmdList->SetRootConstants(0, depthRoot, 16);
+            cmdList->SetRootCBV(2, depthAlloc.bufferHandle, depthAlloc.offsetBytes, depthAlloc.cpuPtr, sizeof(depthConstants));
+            const uint32_t stride = kDepthProbeSize + 2u;
+            cmdList->Dispatch((kProbesPerAxis * kProbesPerAxis * stride + 7u) / 8u, (kProbesPerAxis * stride + 7u) / 8u, 1);
+            m_rgStates->UavBarrier(cmdList, m_depthAtlas);
+            borderFill(0u);                       // the Chebyshev test samples the moments bilinearly too
+        } else {
+            UZ_LOG(Renderer, Error, "RadianceCache: failed to allocate the depth-moments constants");
+        }
+        m_rgStates->Transition(cmdList, m_depthAtlas, RHIResourceState::ShaderResource);
+    }
 
     m_probeUpdateCursor = (probeOffset + probeBudget) % kTotalProbes;
     m_completedGridOrigin = m_gridOrigin;
