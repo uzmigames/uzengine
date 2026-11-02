@@ -153,6 +153,7 @@ void PipelineLibrary::Shutdown() {
     destroyPipeline(m_ssgiStableTemporalAccum);
     destroyPipeline(m_ssgiDxrUpsample);
     destroyPipeline(m_radianceCacheTraceStability);
+    destroyPipeline(m_radianceCacheDepthMoments);
 
     // Destroy cached shaders
     auto destroyShader = [this](RHIShaderHandle& h) {
@@ -205,6 +206,7 @@ void PipelineLibrary::Shutdown() {
     destroyShader(m_ssgiStableTemporalAccumCS);
     destroyShader(m_ssgiDxrUpsampleCS);
     destroyShader(m_radianceCacheTraceStabilityCS);
+    destroyShader(m_radianceCacheDepthMomentsCS);
 
     m_psoCache.Shutdown();
     m_psoDiskCache.reset();

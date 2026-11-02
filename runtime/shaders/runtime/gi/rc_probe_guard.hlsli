@@ -60,4 +60,8 @@ bool ProbeGuardRejects(float4 guard, float3 probePosition, float3 receiver) {
     return dot(receiver - facePoint, guard.xyz) < -kProbeGuardTolerance;
 }
 
+// Stage-2 reader helpers (near-field exclusion, Chebyshev visibility; the parameter record after the
+// state records). Every reader of the cache includes this file, so they all get them here.
+#include "rc_probe_visibility.hlsli"
+
 #endif // UZ_RC_PROBE_GUARD_HLSLI

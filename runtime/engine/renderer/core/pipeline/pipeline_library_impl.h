@@ -178,6 +178,7 @@
     RHIShaderHandle m_radianceCacheTraceCS      = RHIShaderHandle::Invalid();
     RHIShaderHandle m_radianceCacheTraceStabilityCS = RHIShaderHandle::Invalid();   ///< UZ_RC_STABILITY=1 variant
     RHIShaderHandle m_ddgiProbeUpdateCS         = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_radianceCacheDepthMomentsCS = RHIShaderHandle::Invalid();   ///< DdgiProbeUpdateCS, UZ_RC_DEPTH=1 variant
     RHIShaderHandle m_ddgiProbeTraceCS          = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ddgiBorderFillCS          = RHIShaderHandle::Invalid();
     RHIShaderHandle m_rtReflectionCS            = RHIShaderHandle::Invalid();
@@ -268,6 +269,7 @@
     RHIPipelineHandle m_meshSdfBake           = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_radianceCacheTrace    = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_radianceCacheTraceStability = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_radianceCacheDepthMoments = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ddgiProbeUpdate       = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ddgiProbeTrace        = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ddgiBorderFill        = RHIPipelineHandle::Invalid();

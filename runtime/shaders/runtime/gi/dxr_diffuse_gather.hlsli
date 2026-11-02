@@ -88,6 +88,6 @@ float3 TraceDxrGatherRadiance(SdfReflectionScene scene, float3 origin, float3 di
     float visibility = ndl > 0.0 && any(scene.sunColor > 0.0)
         ? GatherDxrSunVisibility(scene, position, normal) : 0.0;
     return emission + albedo * (scene.sunColor * (ndl * visibility * M_1_PI)
-        + SdfReflectionIrradiance(scene, position, normal));
+        + SdfReflectionIrradiance(scene, position, normal, hitT));
 }
 #endif

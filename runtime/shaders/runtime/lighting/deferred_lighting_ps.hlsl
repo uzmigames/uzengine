@@ -24,18 +24,12 @@ float3 WorldToCubemap(float3 dir) { return float3(dir.x, dir.z, dir.y); }
 
 /// Octahedral direction encode — must mirror `OctEncodeDir` in
 /// `ddgi_probe_update_cs.hlsl` so the deferred sampler reads the texel that
-/// the writer produced for the corresponding direction.
+/// the writer produced for the corresponding direction. The body lives in
+/// `gi/rc_probe_visibility.hlsli` (`ProbeOctEncode`), shared with the radiance
+/// cache's Chebyshev consumer.
 /// @ref Cigolle 2014 "A Survey of Efficient Representations for Independent
 ///                    Unit Vectors"
-float2 DDGIOctEncode(float3 n) {
-    n /= (abs(n.x) + abs(n.y) + abs(n.z));
-    float2 e = n.xy;
-    if (n.z < 0.0) {
-        e = (1.0 - abs(e.yx)) * float2(e.x >= 0.0 ? 1.0 : -1.0,
-                                       e.y >= 0.0 ? 1.0 : -1.0);
-    }
-    return e * 0.5 + 0.5;
-}
+float2 DDGIOctEncode(float3 n) { return ProbeOctEncode(n); }
 // NOTE: shadow.hlsli and contact_shadows.hlsli are included AFTER PerFrameCB
 // because they reference CVar fields (shadowPCFPenumbra, etc.) from the CB.
 
@@ -1064,15 +1058,12 @@ LightingOutput main(FSInput input) {
                                          int(_ddgiProbesPerAxis)-1));
             float3 ddgiFrac   = saturate(ddgiCell - float3(ddgi0));
 
-            // Atlas tile constants — must match DDGISystem in C++.
+            // Atlas tile constants — must match DDGISystem in C++ (the depth tile's live in
+            // gi/rc_probe_visibility.hlsli with the Chebyshev test).
             const uint kIrradTile = 6u;
-            const uint kDepthTile = 16u;
             const uint kIrradStride = kIrradTile + 2u;
-            const uint kDepthStride = kDepthTile + 2u;
             const uint atlasIrradW = _ddgiProbesPerAxis * _ddgiProbesPerAxis * kIrradStride;
             const uint atlasIrradH = _ddgiProbesPerAxis * kIrradStride;
-            const uint atlasDepthW = _ddgiProbesPerAxis * _ddgiProbesPerAxis * kDepthStride;
-            const uint atlasDepthH = _ddgiProbesPerAxis * kDepthStride;
 
             float2 octIrrad = DDGIOctEncode(N);
 
@@ -1107,13 +1098,6 @@ LightingOutput main(FSInput input) {
 
                 // ── Chebyshev visibility (Majercik 2019 §3.4) ────────
                 {
-                    float2 dirOct = DDGIOctEncode(normalize(-toProbe));
-                    float2 depthOrigin = float2(
-                        float(tileX * kDepthStride + 1u),
-                        float(tileY * kDepthStride + 1u));
-                    float2 depthUV = (depthOrigin + dirOct * float(kDepthTile))
-                                   / float2(float(atlasDepthW),
-                                            float(atlasDepthH));
                     // The writer stores both moments normalised by
                     // maxTraceDistance so the squared term fits FP16 (see
                     // ddgi_probe_update_cs.hlsl). Rescale with the same
@@ -1121,21 +1105,12 @@ LightingOutput main(FSInput input) {
                     //   maxTraceDistance = probeSpacing * probesPerAxis * 2
                     const float ddgiMaxTrace = _ddgiProbeSpacing
                                              * float(_ddgiProbesPerAxis) * 2.0;
-                    float2 momentT = ddgiDepthTex.SampleLevel(linearSampler, depthUV, 0);
-                    float meanD  = momentT.x * ddgiMaxTrace;
-                    float meanD2 = momentT.y * (ddgiMaxTrace * ddgiMaxTrace);
-                    float variance = max(meanD2 - meanD * meanD, 1e-4);
-                    // VSM-style Chebyshev — fully visible if probe is closer
-                    // than the surface, otherwise upper-bound the visibility
-                    // by p_max = variance / (variance + diff²).
-                    float visibility = 1.0;
-                    if (distToProbe > meanD) {
-                        float diff = distToProbe - meanD;
-                        visibility = variance / (variance + diff * diff);
-                        // Sharpen — Majercik recommends pow(p_max, 8) to
-                        // remove residual leakage.
-                        visibility = visibility * visibility * visibility;
-                    }
+                    // The test itself (octahedral lookup, VSM-style upper bound, cubed) is
+                    // `ProbeChebyshevVisibility` in gi/rc_probe_visibility.hlsli, shared with
+                    // the radiance cache's depth atlas since stage 2.
+                    float visibility = ProbeChebyshevVisibility(ddgiDepthTex, linearSampler, probeLinear,
+                                                                _ddgiProbesPerAxis, ddgiMaxTrace,
+                                                                toProbe, distToProbe);
                     if (visibility > 1e-3) ddgiCntVis += 1.0; else ddgiCntRej += 1.0;
                     wTri *= visibility;
                 }
@@ -1169,6 +1144,11 @@ LightingOutput main(FSInput input) {
 #ifdef UZ_BINDLESS
         if (!irradianceFromGI && _rcEnabled != 0 && _rcProbesSrv != 0xFFFFFFFFu) {
             StructuredBuffer<float4> probeSH = ResourceDescriptorHeap[_rcProbesSrv];
+            // Stage 2 (docs/analysis/lumen-radiance-cache-stability): the cache's parameter record
+            // (zero at the defaults). The Chebyshev visibility from the cache's own depth atlas
+            // (r.GI.RadianceCache.Visibility) weights the eight probes below; there is no ray here,
+            // so the near-field exclusion does not apply to this receiver.
+            const float4 rcParams = probeSH[ProbeParamsIndex(_rcProbesPerAxis)];
 
             float3 gridOrigin = float3(_rcOriginX, _rcOriginY, _rcOriginZ);
             float  gridSize   = _rcExtent * 2.0;
@@ -1213,12 +1193,16 @@ LightingOutput main(FSInput input) {
                                  + uint(idx3.z) * _rcProbesPerAxis * _rcProbesPerAxis;
                 // A relocated probe (rc_probe_guard.hlsli) is weighted where it was traced.
                 const float4 probeGuard = probeSH[ProbeGuardIndex(_rcProbesPerAxis, probeLinear)];
-                float3 toProbe = ProbeEffectivePosition(probeGuard, probePosition) - worldPos;
+                const float3 probeEffective = ProbeEffectivePosition(probeGuard, probePosition);
+                float3 toProbe = probeEffective - worldPos;
                 float probeDistance = length(toProbe);
                 float3 probeFacing = dot(geometricNormal, geometricNormal) > 0.5 ? geometricNormal : N;
                 float normalWeight = probeDistance > 0.0 ? saturate(dot(probeFacing, toProbe / probeDistance)) : 1.0;
                 w *= normalWeight * normalWeight;
                 if (normalWeight > 0.0) rcCntFacing += 1.0;
+                // Stage 2: Chebyshev visibility of this receiver from the probe (identity when off).
+                w *= RcProbeVisibilityWeight(rcParams, linearSampler, probeLinear, _rcProbesPerAxis,
+                                             gridSize / (ppa - 1.0), probeEffective, worldPos, probeFacing);
 
                 uint base = probeLinear * 7u;
                 // Record 6.w carries validity: a probe buried inside geometry

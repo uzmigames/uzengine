@@ -46,6 +46,14 @@ cbuffer RootConstants : register(b0) {
     uint g_rawClipmapSrv1;
     uint g_rawClipmapSrv2;
     uint g_rawClipmapSrv3;
+#if UZ_RC_STABILITY
+    // Stage-2 visibility (r.GI.RadianceCache.Visibility): the per-ray (radiance, hitT) and (direction)
+    // buffers in the DDGI layout (probe * nRays + i) that the DDGI depth-moments pass integrates into
+    // the cache's depth atlas, and that atlas for the feedback read's Chebyshev test. Sentinel = off.
+    uint g_rayRadianceUav;
+    uint g_rayInfoUav;
+    uint g_depthAtlasSrv;
+#endif
 };
 
 // ─── Trace constants at b2 (matches RadianceCacheTraceConstants) ──────────
@@ -123,8 +131,8 @@ cbuffer TraceConstants : register(b2) {
     float temporalChangeThreshold; ///< Temporal.ChangeThreshold: re-arm when the drift exceeds this many of its noise standard deviations (mode 1)
     uint  temporalMaxHistory;      ///< Temporal.MaxHistory: cap on the update count (mode 1)
     uint  classHysteresis;         ///< Classification.Hysteresis: K updates confirm a class flip, SH kept while inside; 0/1 = immediate, SH zeroed
-    uint  _stabilityPad0;
-    uint  _stabilityPad1;
+    float nearFieldTMin;           ///< Stage-2 r.GI.RadianceCache.NearFieldExclude: the feedback read takes no probe term for hits nearer than this (cm; 0 = off)
+    float nearFieldBandEnd;        ///< ... and the full term from this distance (TMin + spacing * sqrt(3)), smoothstep between
 #endif
 };
 
@@ -355,7 +363,22 @@ bool RelocateOrigin(float3 probePos, float3 direction, out float3 origin) {
 
 /// @ref Majercik 2019 "Dynamic Diffuse Global Illumination with Ray-Traced Irradiance Fields", sections 5.2-5.3.
 /// @constants Eight trilinear corners; squared normal weight rejects probes behind a surface.
+#if UZ_RC_STABILITY
+/// Stage 2: `hitT` is the probe ray's hit distance. The near-field exclusion
+/// (r.GI.RadianceCache.NearFieldExclude) fades the feedback out for hits inside the probe's own
+/// near field - the grid has no information below a cell, so reading it there fed the probe its own
+/// neighbourhood back (a self-referential EMA that amplified the wander near surfaces) - and the
+/// Chebyshev visibility (r.GI.RadianceCache.Visibility) weights the eight history probes by the
+/// cache's depth atlas (rc_probe_visibility.hlsli). Both are the identity at the defaults.
+float3 SamplePreviousDiffuse(float3 position, float3 normal, float hitT) {
+    const float4 rcParams = float4(nearFieldTMin, nearFieldBandEnd,
+                                   g_depthAtlasSrv != kSentinelSrvIndex ? float(g_depthAtlasSrv + 1u) : 0.0,
+                                   maxTraceDistance);
+    const float nearWeight = RcNearFieldWeight(hitT, rcParams);
+    if (nearWeight <= 0.0) return 0.0;
+#else
 float3 SamplePreviousDiffuse(float3 position, float3 normal) {
+#endif
     if (firstWrite != 0 || g_shBufferSrvIndex == kSentinelSrvIndex) return 0.0;
     // The history buffer is laid out on the *previous* grid.
     const float3 historyOrigin = HistoryGridOrigin();
@@ -382,6 +405,11 @@ float3 SamplePreviousDiffuse(float3 position, float3 normal) {
         float distance = length(toProbe);
         float normalWeight = distance > 0.0 ? saturate(dot(normal, toProbe / distance)) : 1.0;
         weight *= normalWeight * normalWeight;
+#if UZ_RC_STABILITY
+        // The atlas tile of the HISTORY probe (the grid before a recentre) is the one its rays wrote.
+        weight *= RcProbeVisibilityWeight(rcParams, linearClamp, probeLinear, probesPerAxis, probeSpacing,
+                                          ProbeEffectivePosition(guard, probePosition), position, normal);
+#endif
         uint base = probeLinear * 7;
         if (history[base + 6].w <= 0.0) continue;
         if (ProbeGuardRejects(guard, probePosition, position)) continue;
@@ -390,7 +418,11 @@ float3 SamplePreviousDiffuse(float3 position, float3 normal) {
         irradiance += weight * EvalSH_L2(normal, coefficients);
         totalWeight += weight;
     }
+#if UZ_RC_STABILITY
+    return totalWeight > 0.0 ? irradiance / totalWeight * nearWeight : 0.0;
+#else
     return totalWeight > 0.0 ? irradiance / totalWeight : 0.0;
+#endif
 }
 
 
@@ -716,7 +748,11 @@ void main(uint3 DTid : SV_DispatchThreadID) {
                 /// @ref Majercik 2019 "Dynamic Diffuse Global Illumination with Ray-Traced Irradiance Fields"
                 /// @constants Direct irradiance divides by pi; packed SH already stores E/pi.
                 float3 albedo = saturate(SampleGdfSurface(hitPosition).gba);
+#if UZ_RC_STABILITY
+                float3 indirect = SamplePreviousDiffuse(hitPosition + N * (2.0 * kSurfaceEpsilon), N, t);
+#else
                 float3 indirect = SamplePreviousDiffuse(hitPosition + N * (2.0 * kSurfaceEpsilon), N);
+#endif
                 radiance = dot(N, -dir) > 0.0 ? albedo * (sunRad / kPI + indirect) : 0.0;
                 if (dot(N, -dir) > 0.0) {
                     pathStats.y += dot(albedo * (sunRad / kPI), float3(0.2126, 0.7152, 0.0722));
@@ -733,6 +769,18 @@ void main(uint3 DTid : SV_DispatchThreadID) {
             const float rayLuminance = dot(radiance, float3(0.2126, 0.7152, 0.0722));
             lumSum += rayLuminance;
             lumSquareSum += rayLuminance * rayLuminance;
+        }
+        // Stage-2 visibility: this ray in the DDGI ray-buffer layout for the depth-moments pass
+        // (ddgi_probe_update_cs.hlsl, mode 1, UZ_RC_DEPTH): (radiance, hitT) and its direction (the
+        // DDGI writer would otherwise reconstruct the white-noise sequence, not the JitterCycle one).
+        // An escape reports the far distance as the DDGI trace does; a ray that ran out of steps
+        // reports where it stopped - the surface is at least that far.
+        if (g_rayRadianceUav != kSentinelSrvIndex && g_rayInfoUav != kSentinelSrvIndex) {
+            RWStructuredBuffer<float4> rayRadiance = ResourceDescriptorHeap[g_rayRadianceUav];
+            RWStructuredBuffer<float4> rayInfo     = ResourceDescriptorHeap[g_rayInfoUav];
+            const float rayHitT = t >= 0.0 ? t : (t == -1.0 ? maxTraceDistance : endT);
+            rayRadiance[probeIdx * nRays + i] = float4(radiance, rayHitT);
+            rayInfo[probeIdx * nRays + i]     = float4(dir, 0.0);
         }
 #endif
         if (t == -1.0)     { skyStats.x += dot(radiance, float3(0.2126, 0.7152, 0.0722)) * invN; skyStats.y += invN; }

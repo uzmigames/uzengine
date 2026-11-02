@@ -731,6 +731,14 @@ public:
     /// the probe's rays itself (292 traces of each ray).
     [[nodiscard]] RHIPipelineHandle GetDdgiProbeTrace();
 
+    /// The radiance cache's depth-moments pass (stage 2 of docs/analysis/lumen-radiance-cache-stability,
+    /// `r.GI.RadianceCache.Visibility`): `ddgi_probe_update_cs.hlsl` compiled with `UZ_RC_DEPTH=1`, the
+    /// DDGI depth pass run on the cache's own ray buffers (ray directions from the info buffer, the
+    /// cache's probe budget, a cleared texel takes the new moments). `GetDdgiProbeUpdate()` compiles the
+    /// same source without the define, i.e. exactly the DDGI writer before it. Invalid when the variant
+    /// failed to compile (the cache then runs without visibility).
+    [[nodiscard]] RHIPipelineHandle GetRadianceCacheDepthMoments();
+
     /// Returns the DDGI atlas border-fill compute pipeline (`ddgi_border_fill_cs.hlsl`):
     /// copies each probe tile's interior into its 1-texel octahedral border after the probe
     /// update, and clears both atlases once at creation. Without it the deferred lighting's

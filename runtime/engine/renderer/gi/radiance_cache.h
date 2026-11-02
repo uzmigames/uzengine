@@ -93,6 +93,25 @@ public:
     /// CVars at their defaults it is written but never read, so the SH records are unchanged.
     static constexpr uint32_t kStateFloat4PerProbe = 1;
 
+    /// One float4 for the whole buffer after the per-probe records, at
+    /// `kTotalProbes * (kSHFloat4PerProbe + kGuardFloat4PerProbe + kStateFloat4PerProbe)`
+    /// (`rc_probe_visibility.hlsli` `ProbeParamsIndex`): the stage-2 reader parameters, written by
+    /// `UpdateProbes` every frame so every reader of the buffer finds them without a constant-buffer
+    /// change - x = near-field TMin (cm, `r.GI.RadianceCache.NearFieldExclude`; 0 = off), y = the end of
+    /// its transition band (cm), z = the depth-moments atlas SRV + 1 (`r.GI.RadianceCache.Visibility`;
+    /// 0 = none), w = that atlas writer's maxTraceDistance (cm). All zero at the defaults: the readers'
+    /// arithmetic is then the one before stage 2, bit for bit.
+    static constexpr uint32_t kParamsFloat4 = 1;
+
+    /// Stage-2 visibility (`r.GI.RadianceCache.Visibility`): the cache's depth-moments atlas has the
+    /// DDGI layout (16x16 octahedral interior + 1-texel border per probe, RG16F mean / mean-squared hit
+    /// distance normalised by maxTraceDistance), written by the DDGI depth pass
+    /// (`ddgi_probe_update_cs.hlsl` mode 1, `UZ_RC_DEPTH`) from the cache's own rays and read by every
+    /// consumer's Chebyshev test. Must match `kRcDepthTile` in rc_probe_visibility.hlsli and
+    /// `DDGISystem::kDepthProbeSize` / `kMaxRaysPerProbe`.
+    static constexpr uint32_t kDepthProbeSize = 16;
+    static constexpr uint32_t kMaxRaysPerProbeBuffer = 64;
+
     /// Diagnostic records per probe (r.GI.RadianceCache.Diagnostic): surface, trace, sky, path,
     /// classification (signed side distance, relocation distance, class code, 0).
     static constexpr uint32_t kDiagnosticFloat4PerProbe = 6;
@@ -172,7 +191,9 @@ public:
         uint32_t perFrameSize,
         uint32_t frameIndex,
         RHIPipelineHandle sidePipeline = RHIPipelineHandle::Invalid(),
-        uint32_t surfaceCacheParamsSrv = UINT32_MAX);   ///< Phase D stage 3: the surface cache's binding record (sentinel = no cache).
+        uint32_t surfaceCacheParamsSrv = UINT32_MAX,   ///< Phase D stage 3: the surface cache's binding record (sentinel = no cache).
+        RHIPipelineHandle depthPipeline = RHIPipelineHandle::Invalid(),   ///< Stage 2 (`VisibilityEnabled()`): the UZ_RC_DEPTH DDGI depth pass.
+        RHIPipelineHandle borderPipeline = RHIPipelineHandle::Invalid()); ///< Stage 2: the DDGI atlas border fill, run on the cache's depth atlas.
 
     /// `r.GI.RadianceCache.ProbeClassification`: 0 = the current rule (a probe whose biased field
     /// distance is below the trace's 5 cm surface epsilon is inside geometry); 1 = the followup-01
@@ -181,11 +202,17 @@ public:
     [[nodiscard]] static uint32_t ClassificationMode();
 
     /// True when any stage-1 stability CVar is off its default (`r.GI.RadianceCache.JitterCycle`,
-    /// `.Temporal.Mode`, `.Classification.Hysteresis`): the caller then passes the `UZ_RC_STABILITY`
-    /// trace pipeline (`PipelineLibrary::GetRadianceCacheTraceStability`), which maintains the
-    /// per-probe state records; the default pipeline is the unchanged trace. Toggling re-arms every
-    /// probe (the state records are only written by the stability variant).
+    /// `.Temporal.Mode`, `.Classification.Hysteresis`) or a stage-2 CVar is on (`.NearFieldExclude`,
+    /// `.Visibility`): the caller then passes the `UZ_RC_STABILITY` trace pipeline
+    /// (`PipelineLibrary::GetRadianceCacheTraceStability`), which maintains the per-probe state records
+    /// and carries the stage-2 writer side (ray buffers, the feedback read's near-field and visibility
+    /// weights); the default pipeline is the unchanged trace. Toggling re-arms every probe (the state
+    /// records are only written by the stability variant).
     [[nodiscard]] static bool StabilityEnabled();
+
+    /// True when `r.GI.RadianceCache.Visibility` is on: the caller passes the depth-moments pipelines
+    /// (`PipelineLibrary::GetRadianceCacheDepthMoments`, `GetDdgiBorderFill`) to `UpdateProbes`.
+    [[nodiscard]] static bool VisibilityEnabled();
 
     /// Mode 3: the G-buffer world position (bindless SRV, cleared to 0 where nothing was drawn) whose
     /// visible points seed the flood fill when `r.GI.RadianceCache.ReachVisibleSeeds` is on. The caller
@@ -282,6 +309,9 @@ public:
     [[nodiscard]] const int32_t* GetPendingHistoryShift() const noexcept { return m_pendingHistoryShift; }
 
 private:
+    /// Stage 2: creates the depth-moments atlas and the two per-ray buffers on first use
+    /// (`r.GI.RadianceCache.Visibility` on); false when they could not be created.
+    bool EnsureVisibilityResources();
     void QueueDiagnosticReadback(IRHICommandList* cmdList, uint32_t frameIndex);
     void ReadDiagnosticResults(uint32_t frameIndex);
     void DispatchProbeSide(IRHICommandList* cmdList, const GlobalDistanceField& gdf,
@@ -311,6 +341,8 @@ private:
     bool m_diagnosticComplete = false;
     Vec3 m_diagnosticOrigin;
     float m_diagnosticSpacing = 0.0f;
+    uint32_t m_diagnosticAtlasOffset = 0;   ///< Stage-2 visibility: the depth atlas copy inside the readback (bytes; 0 bytes = none).
+    uint32_t m_diagnosticAtlasBytes = 0;
 
     /// Per probe, two float4 (`probe_side_cs.hlsl`): nearest face (direction to the probe, distance)
     /// and the fixed rays (back-face fraction, hits, side of the nearest face). Recomputed when the
@@ -323,6 +355,21 @@ private:
     Vec3     m_probeSideOrigin;
     bool     m_probeSideTooManyLogged = false;
     uint32_t m_probeSideMode = 0;   ///< Classification mode whose layout the side buffer holds.
+
+    /// Stage-2 visibility resources (created by `EnsureVisibilityResources`, kept until
+    /// `DestroyResources`): the depth-moments atlas (RG16F, DDGI layout) and the per-ray
+    /// (radiance, hitT) / (direction) buffers in the DDGI layout (`kTotalProbes * kMaxRaysPerProbeBuffer`
+    /// float4 each) the stability trace writes and the UZ_RC_DEPTH depth pass integrates.
+    RHITextureHandle m_depthAtlas;
+    uint32_t m_depthAtlasSrv = UINT32_MAX;
+    uint32_t m_depthAtlasUav = UINT32_MAX;
+    bool     m_depthAtlasCleared = false;   ///< The border-fill clear ran once on the fresh atlas.
+    RHIBufferHandle m_rayRadiance;
+    RHIBufferHandle m_rayInfo;
+    uint32_t m_rayRadianceUav = UINT32_MAX;
+    uint32_t m_rayRadianceSrv = UINT32_MAX;
+    uint32_t m_rayInfoUav = UINT32_MAX;
+    uint32_t m_rayInfoSrv = UINT32_MAX;
 
     /// Mode 3 (`probe_reach_cs.hlsl`): one uint per voxel of a 128^3 grid over the probe grid
     /// (0 solid, 1 air, 2 reached from the camera) and a seed counter. Created on first use (8 MiB).
@@ -469,14 +516,16 @@ struct RadianceCacheTraceConstants {
     float    temporalChangeThreshold = 0.0f; ///< r.GI.RadianceCache.Temporal.ChangeThreshold: re-arm when the drift accumulator exceeds this many of its own noise standard deviations (mode 1).
     uint32_t temporalMaxHistory = 0;      ///< r.GI.RadianceCache.Temporal.MaxHistory: cap on the per-probe update count (mode 1).
     uint32_t classHysteresis = 0;         ///< r.GI.RadianceCache.Classification.Hysteresis: K consecutive updates confirm a class change and the SH is kept while inside; 0/1 = immediate flip, SH zeroed (today).
-    uint32_t _stabilityPad0 = 0;
-    uint32_t _stabilityPad1 = 0;
+    // Stage 2 (the former two pads of row 31; the size and every offset are unchanged).
+    float    nearFieldTMin = 0.0f;        ///< r.GI.RadianceCache.NearFieldExclude: the writer's feedback read takes no probe term for hits nearer than this to the probe (cm; 0 = off).
+    float    nearFieldBandEnd = 0.0f;     ///< ... and the full term from this distance on (TMin + spacing * sqrt(3), Lumen's MinTraceDistanceBeforeInterpolation), smoothstep between.
 };
 
 // Rows 1-11: 176 bytes of shared trace constants; row 12: the 16-byte VFX emissive
 // tail; row 13: the 16-byte grid-recentre row (followup-06 4.5; its fourth field is
 // `regionCount` since block B-02); rows 14-29: the change boxes (block B-02); rows 30-31:
-// the stage-1 stability knobs, 496 bytes in all. Every shader that binds this CB declares
+// the stage-1 stability knobs and, in row 31's former pads, the stage-2 near-field distances;
+// 496 bytes in all. Every shader that binds this CB declares
 // a prefix of it, scalars only through row 13 — `radiance_cache_trace_cs.hlsl` all of it,
 // the DDGI writers through `ddgi_probe_common.hlsli` rows 1-13, `probe_reach_cs.hlsl`
 // rows 1-8 — or HLSL register packing shifts every field past the mismatch.
@@ -485,5 +534,6 @@ static_assert(offsetof(RadianceCacheTraceConstants, regionCount) == 204);
 static_assert(offsetof(RadianceCacheTraceConstants, regionLo) == 208);
 static_assert(offsetof(RadianceCacheTraceConstants, jitterCycle) == 464);
 static_assert(offsetof(RadianceCacheTraceConstants, classHysteresis) == 484);
+static_assert(offsetof(RadianceCacheTraceConstants, nearFieldTMin) == 488);
 
 } // namespace uz
