@@ -76,7 +76,7 @@ static auto* cv_RTReflectionsRough = UZ_CVAR_BOOL("r.RayTracing.Reflections.Roug
     "split-sum so rough surfaces receive the path tracer's specular energy; default off");
 static auto* cv_UnifiedDenoiser = UZ_CVAR_BOOL("r.Denoiser.Unified", false,
     "Opt-in unified standalone RT reflection reconstruction (requires RT denoise; default off)");
-static auto* cv_RoughReconstruct = UZ_CVAR_BOOL("r.RayTracing.Reflections.RoughReconstruct", false,
+static auto* cv_RoughReconstruct = UZ_CVAR_BOOL("r.RayTracing.Reflections.RoughReconstruct", true,
     "Reconstruct rough RT specular before scene-color TAA using lobe guides and estimator variance; default off");
 
 /// Selects DXR ray-traced probe update over the SDF sphere-trace path.

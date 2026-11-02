@@ -43,7 +43,7 @@ static auto* cv_SSGIStepSize     = UZ_CVAR_FLOAT("r.SSGI.StepSize", 0.02f, "UV-s
 // value. Brixelizer GI is the preferred indoor GI.
 static auto* cv_SSGIThickness    = UZ_CVAR_FLOAT("r.SSGI.Thickness", 50.0f, "Depth comparison thickness (cm)", 0.01f, 1000.0f);
 static auto* cv_SSGITemporalAlpha = UZ_CVAR_FLOAT("r.SSGI.TemporalAlpha", 0.05f, "Temporal accumulation alpha (0=full history, 1=no history)", 0.01f, 0.5f);
-static auto* cv_StableTemporal = UZ_CVAR_BOOL("r.GI.FinalGather.StableTemporal", false,
+static auto* cv_StableTemporal = UZ_CVAR_BOOL("r.GI.FinalGather.StableTemporal", true,
     "Variance/confidence-guided diffuse gather accumulation beyond 64 frames");
 // Screen-space ReSTIR GI (Lumen-parity phase C). Opt-in: 0 dispatches the unchanged gather trace.
 // File scope so command-line overrides register before the first frame (see SampleFrameOffset).
