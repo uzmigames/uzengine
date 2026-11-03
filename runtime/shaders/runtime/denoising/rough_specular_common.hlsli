@@ -13,6 +13,19 @@ cbuffer RoughSpecularFrame : register(b1) {
 cbuffer RoughSpecularConfig : register(b2) {
     float2 previousJitter;
     float2 currentJitter;
+#ifdef UZ_ROUGH_MOTION_AWARE
+    // Motion-aware reconstruction (doc 09 section 4.1): the previous frame's unjittered view-projection,
+    // this frame's unjittered one (the velocity pass's pair), the previous camera position and the tunables.
+    row_major float4x4 prevViewProj;
+    row_major float4x4 unjitteredViewProj;
+    float4 prevCameraPos;
+    float fireflyK;
+    float shortHistory;
+    float parallaxPower;
+    float curvatureGate;
+    float debugMode;
+    float3 _motionAwarePad;
+#endif
 };
 cbuffer RoughSpecularRoot : register(b0) {
     uint inputSrv, depthSrv, normalSrv, velocitySrv;

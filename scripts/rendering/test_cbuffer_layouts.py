@@ -251,6 +251,11 @@ for shader in ('gbuffer/gbuffer_ps.hlsl', 'gbuffer/mesh_vs.hlsl', 'gbuffer/mesh_
 TIER_A += [
     layout_entry('denoising/rough_specular_common.hlsli', 'RoughSpecularConfig',
                  PASSES + 'gi/rough_specular_reconstruction.cpp'),
+    # The motion-aware permutation (docs/analysis/lumen-radiance-cache-stability/09 section 4.1) declares
+    # the matrices, the previous camera and the tunables only under UZ_ROUGH_MOTION_AWARE; the OFF text is
+    # the entry above. Check that mirror too.
+    layout_entry('denoising/rough_specular_common.hlsli', 'RoughSpecularConfig',
+                 PASSES + 'gi/rough_specular_reconstruction.cpp', defines=('-D', 'UZ_ROUGH_MOTION_AWARE=1')),
     layout_entry('denoising/rough_specular_common.hlsli', 'RoughSpecularFrame',
                  PARAMS + 'constant_buffers.h', 'PerFrameCB'),
     layout_entry('denoising/realtime_common.hlsli', 'RealtimePolicyCB',

@@ -77,7 +77,31 @@ static auto* cv_RTReflectionsRough = UZ_CVAR_BOOL("r.RayTracing.Reflections.Roug
 static auto* cv_UnifiedDenoiser = UZ_CVAR_BOOL("r.Denoiser.Unified", false,
     "Opt-in unified standalone RT reflection reconstruction (requires RT denoise; default off)");
 static auto* cv_RoughReconstruct = UZ_CVAR_BOOL("r.RayTracing.Reflections.RoughReconstruct", true,
-    "Reconstruct rough RT specular before scene-color TAA using lobe guides and estimator variance; default off");
+    "Reconstruct rough RT specular before scene-color TAA using lobe guides and estimator variance; default on");
+// Motion-aware rough reconstruction (docs/analysis/lumen-radiance-cache-stability/09): the history is
+// reprojected by the reflection's curvature-corrected virtual point instead of the surface motion vector,
+// so the cap under camera motion follows the lobe's parallax instead of dropping to 4 frames (the white
+// cloud on rough metals, the Sponza specular shimmer). A UZ_ROUGH_MOTION_AWARE=1 permutation; OFF is the
+// unchanged pipeline. Default OFF until the moving-camera gates of doc 09 section 6 are met.
+static auto* cv_RoughMotionAware = UZ_CVAR_BOOL("r.RayTracing.Reflections.RoughReconstruct.MotionAware", false,
+    "Rough reconstruction under camera motion: reproject the history by the curvature-corrected virtual "
+    "reflected point, parallax-driven history cap, short-history firefly clamp, curvature-gated spatial "
+    "support (0 = today's surface reprojection with the 4-frame motion cap); default off");
+static auto* cv_RoughMotionAwareFireflyK = UZ_CVAR_FLOAT("r.RayTracing.Reflections.RoughReconstruct.MotionAware.FireflyK", 8.f,
+    "Motion-aware rough reconstruction: short-history firefly limit as a multiple of max(history luminance, "
+    "3x3 median of the current neighbourhood); relaxes 2x per frame from half the short history", 1.f, 64.f);
+static auto* cv_RoughMotionAwareShortHistory = UZ_CVAR_FLOAT("r.RayTracing.Reflections.RoughReconstruct.MotionAware.ShortHistory", 8.f,
+    "Motion-aware rough reconstruction: history length (frames) below which the firefly limit is active", 0.f, 64.f);
+static auto* cv_RoughMotionAwareParallaxPower = UZ_CVAR_FLOAT("r.RayTracing.Reflections.RoughReconstruct.MotionAware.ParallaxPower", 2.f,
+    "Motion-aware rough reconstruction: exponent of the parallax-driven history cap, static cap x "
+    "(1 - lobe rotation / lobe half angle)^power, floor 4", 0.5f, 8.f);
+static auto* cv_RoughMotionAwareCurvatureGate = UZ_CVAR_BOOL("r.RayTracing.Reflections.RoughReconstruct.MotionAware.CurvatureGate", true,
+    "Motion-aware rough reconstruction: keep the 25-tap spatial support inside the lobe's angular footprint "
+    "on curved receivers (radius <= lobe half angle / (4 curvature world step))");
+static auto* cv_RoughMotionAwareDebug = UZ_CVAR_INT("r.RayTracing.Reflections.RoughReconstruct.MotionAware.Debug", 0,
+    "Diagnostic: the motion-aware reconstruction writes its decisions instead of the colour. 1 = (trusted "
+    "virtual history, camera-only motion, accepted weight); 2 = (curvature x 100, lens image distance / 100 cm, "
+    "lobe 1/t x 1000); 3 = (used - surface motion + 4 px, surface motion x + 8 px)", 0, 3);
 
 /// Selects DXR ray-traced probe update over the SDF sphere-trace path.
 /// Requires DXR 1.1 (`RayQuery<>`) and a built TLAS. When the device does not
@@ -1054,20 +1078,32 @@ static uint64_t SurfaceCacheLightingHash(const FrameContext& ctx, const PerFrame
 void SceneRenderer::RegisterRoughSpecularReconstruction(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
     // Preserve the current reflection estimator's energy normalization and the
     // entire mirror route. The raw SSR+RT route remains raw when denoise is off.
+    RoughSpecularReconstruction::MotionAware motionAware{};
+    motionAware.enabled = cv_RoughMotionAware->value > 0.5f;
+    motionAware.fireflyK = cv_RoughMotionAwareFireflyK->value;
+    motionAware.shortHistory = cv_RoughMotionAwareShortHistory->value;
+    motionAware.parallaxPower = cv_RoughMotionAwareParallaxPower->value;
+    motionAware.curvatureGate = cv_RoughMotionAwareCurvatureGate->value > 0.5f ? 1.f : 0.f;
+    motionAware.debugMode = cv_RoughMotionAwareDebug->value;
     if (!cv_RoughReconstruct->value || !cv_RTReflectionsRough->value || !ctx.bindless
         || !RTReflectionRaysAvailable()
         || (!cv_RTReflectionsDenoise->value && !RTReflectionsStandalone())
-        || !m_roughSpecularReconstruction.Prepare(m_device, m_shaderMgr.get(), m_renderWidth, m_renderHeight)) return;
-    auto epoch = [this, &ctx]() {
+        || !m_roughSpecularReconstruction.Prepare(m_device, m_shaderMgr.get(), m_renderWidth, m_renderHeight,
+                                                  motionAware.enabled)) return;
+    // The motion-aware tunables are part of the epoch: a toggle restarts the history instead of blending
+    // two estimators.
+    auto epoch = [this, &ctx, motionAware]() {
         const auto* frame = static_cast<const PerFrameCB*>(ctx.perFrameAlloc.cpuPtr);
         uint64_t hash = frame ? SurfaceCacheLightingHash(ctx, *frame) : 0ull;
         const float modes[] = {float(cv_RTReflectionsGlossy->value), float(cv_RTReflectionsIndirect->value),
-            cv_RTReflectionsMaxRoughness->value, cv_SSRIntensity->value, cv_RTReflectionsMaxDistance->value};
+            cv_RTReflectionsMaxRoughness->value, cv_SSRIntensity->value, cv_RTReflectionsMaxDistance->value,
+            motionAware.enabled ? 1.f : 0.f, motionAware.fireflyK, motionAware.shortHistory,
+            motionAware.parallaxPower, motionAware.curvatureGate, motionAware.debugMode};
         return SurfaceCacheHashBytes(modes, sizeof(modes), hash);
     };
     m_roughSpecularReconstruction.Register(rgBuilder, ctx, m_cbRing.get(), ctx.unifiedReflectionRes,
         m_ssrResolvedOutputSrv, m_gbuffer.depthSRV, m_gbuffer.normalSRV, m_gbuffer.velocitySRV,
-        m_ssrHitDistanceSrv, epoch);
+        m_ssrHitDistanceSrv, epoch, motionAware);
     m_roughSpecularReconstruction.Apply(rgBuilder, ctx, ctx.unifiedReflectionRes, m_ssrResolvedOutput,
         m_ssrResolvedOutputUav, m_gbuffer.normalSRV, m_rgStates.get());
 }

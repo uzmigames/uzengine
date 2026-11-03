@@ -9,6 +9,7 @@
 #include "render_graph_states.h"
 #include "root_slots.h"
 #include "rhi.h"
+#include "log.h"
 #include <cstring>
 
 namespace uz {
@@ -21,13 +22,21 @@ struct RoughSpecularRoot {
     uint32_t outputUav;
 };
 static_assert(sizeof(RoughSpecularRoot) == 17 * sizeof(uint32_t));
+// b2. The OFF permutation declares and reads only the jitter pair (the first 16 bytes); the
+// UZ_ROUGH_MOTION_AWARE=1 permutation declares the rest (rough_specular_common.hlsli).
 struct RoughSpecularConfig {
     float previousJitter[2], currentJitter[2];
+    Mat4 prevViewProj;
+    Mat4 unjitteredViewProj;
+    float prevCameraPos[4];
+    float fireflyK, shortHistory, parallaxPower, curvatureGate;
+    float debugMode, motionAwarePad[3];
 };
+static_assert(sizeof(RoughSpecularConfig) == 192);
 }
 
 bool RoughSpecularReconstruction::Prepare(IRHIDevice* device, ShaderManager* shaders,
-                                          uint32_t width, uint32_t height) {
+                                          uint32_t width, uint32_t height, bool motionAware) {
     if (!device || !device->IsBindless() || !width || !height) return false;
     if (m_device && (m_width != width || m_height != height)) DestroyResources();
     m_device = device;
@@ -42,6 +51,22 @@ bool RoughSpecularReconstruction::Prepare(IRHIDevice* device, ShaderManager* sha
         m_apply = device->CreateComputePipeline(desc);
     }
     if (!m_reconstruct.IsValid() || !m_apply.IsValid()) return false;
+    // The motion-aware permutation, compiled on first use with the CVar on; a compile failure is
+    // logged once and the OFF pipeline keeps running (Register selects it while this stays invalid).
+    if (motionAware && !m_reconstructMotionAware.IsValid() && !m_motionAwareFailed) {
+        m_reconstructMotionAwareShader = shaders->CreateShaderWithDefines(
+            EngineShader::RoughSpecularReconstructCS, RHIShaderStage::Compute, "UZ_ROUGH_MOTION_AWARE=1");
+        if (m_reconstructMotionAwareShader.IsValid()) {
+            RHIComputePipelineDesc desc{};
+            desc.computeShader = m_reconstructMotionAwareShader;
+            desc.debugName = "RoughSpecular_Reconstruct_MotionAware";
+            m_reconstructMotionAware = device->CreateComputePipeline(desc);
+        }
+        if (!m_reconstructMotionAware.IsValid()) {
+            m_motionAwareFailed = true;
+            UZ_LOG(Renderer, Warning, "RoughSpecular_Reconstruct: the UZ_ROUGH_MOTION_AWARE permutation failed to compile; r.RayTracing.Reflections.RoughReconstruct.MotionAware runs the surface-reprojected pipeline");
+        }
+    }
     if (m_width == width && m_height == height) return true;
     for (uint32_t i = 0; i < 2; ++i) {
         for (Texture* t : {&m_color[i], &m_moments[i], &m_geometry[i], &m_guides[i]}) {
@@ -70,9 +95,12 @@ void RoughSpecularReconstruction::DestroyResources() {
     }
     if (m_reconstruct.IsValid()) m_device->DestroyPipeline(m_reconstruct);
     if (m_apply.IsValid()) m_device->DestroyPipeline(m_apply);
+    if (m_reconstructMotionAware.IsValid()) m_device->DestroyPipeline(m_reconstructMotionAware);
     if (m_reconstructShader.IsValid()) m_device->DestroyShader(m_reconstructShader);
     if (m_applyShader.IsValid()) m_device->DestroyShader(m_applyShader);
+    if (m_reconstructMotionAwareShader.IsValid()) m_device->DestroyShader(m_reconstructMotionAwareShader);
     m_reconstruct = {}; m_apply = {}; m_reconstructShader = {}; m_applyShader = {};
+    m_reconstructMotionAware = {}; m_reconstructMotionAwareShader = {};
     m_width = m_height = m_write = 0;
     m_lastFrame = m_registeredFrame = UINT32_MAX;
     m_produced = false; m_device = nullptr;
@@ -81,8 +109,10 @@ void RoughSpecularReconstruction::DestroyResources() {
 void RoughSpecularReconstruction::Register(rg::RgBuilder& graph, FrameContext& frame,
     CBRingAllocator* ring, rg::RgResourceId signal, uint32_t signalSrv, uint32_t depthSrv,
     uint32_t normalSrv, uint32_t velocitySrv, uint32_t hitDistanceSrv,
-    std::function<uint64_t()> epoch) {
+    std::function<uint64_t()> epoch, const MotionAware& motionAware) {
     const uint32_t write = m_write, read = 1 - write;
+    const bool useMotionAware = motionAware.enabled && m_reconstructMotionAware.IsValid();
+    const RHIPipelineHandle pipeline = useMotionAware ? m_reconstructMotionAware : m_reconstruct;
     m_result = write;
     m_registeredFrame = frame.frameIndex;
     m_produced = false;
@@ -115,11 +145,22 @@ void RoughSpecularReconstruction::Register(rg::RgBuilder& graph, FrameContext& f
                 || (frame.temporal.contentReason != TemporalReset::None
                     && frame.temporal.contentReason != TemporalReset::FrameGap);
             rc.historyValid = RealtimeHistoryReusable(m_lastFrame, frame.frameIndex, m_epoch, currentEpoch, reset);
-            RoughSpecularConfig config{{m_previousJitterX, m_previousJitterY}, {frame.jitterX, frame.jitterY}};
+            RoughSpecularConfig config{};
+            config.previousJitter[0] = m_previousJitterX; config.previousJitter[1] = m_previousJitterY;
+            config.currentJitter[0] = frame.jitterX; config.currentJitter[1] = frame.jitterY;
+            config.prevViewProj = frame.temporal.prevViewProj;
+            config.unjitteredViewProj = frame.unjitteredViewProj;
+            for (int i = 0; i < 3; ++i) config.prevCameraPos[i] = m_previousCameraPos[i];
+            config.prevCameraPos[3] = 1.f;
+            config.fireflyK = motionAware.fireflyK;
+            config.shortHistory = motionAware.shortHistory;
+            config.parallaxPower = motionAware.parallaxPower;
+            config.curvatureGate = motionAware.curvatureGate;
+            config.debugMode = motionAware.debugMode;
             auto alloc = ring->Allocate(sizeof(config));
             if (!alloc.cpuPtr) return;
             std::memcpy(alloc.cpuPtr, &config, sizeof(config));
-            cmd->SetPipeline(m_reconstruct);
+            cmd->SetPipeline(pipeline);
             cmd->SetRootConstants(kSlotRootConstants, reinterpret_cast<const uint32_t*>(&rc), sizeof(rc)/4);
             cmd->SetRootCBV(kSlotPerFrame, frame.perFrameAlloc.bufferHandle, frame.perFrameAlloc.offsetBytes,
                            frame.perFrameAlloc.cpuPtr, sizeof(PerFrameCB));
@@ -128,6 +169,11 @@ void RoughSpecularReconstruction::Register(rg::RgBuilder& graph, FrameContext& f
             m_produced = true;
             m_lastFrame = frame.frameIndex; m_epoch = currentEpoch;
             m_previousJitterX = frame.jitterX; m_previousJitterY = frame.jitterY;
+            if (const auto* perFrame = static_cast<const PerFrameCB*>(frame.perFrameAlloc.cpuPtr)) {
+                m_previousCameraPos[0] = perFrame->cameraPos.x;
+                m_previousCameraPos[1] = perFrame->cameraPos.y;
+                m_previousCameraPos[2] = perFrame->cameraPos.z;
+            }
             m_write = read;
         });
     });

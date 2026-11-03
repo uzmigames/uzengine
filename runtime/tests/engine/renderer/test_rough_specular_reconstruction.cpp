@@ -35,3 +35,38 @@ TEST(RoughSpecularReconstruction, VarianceClampPreservesMeanAndRespondsToMotion)
     }
     EXPECT_NEAR(estimate, 12.f, 0.0001f);
 }
+
+// Motion-aware reconstruction (doc 09 section 4.8): the thin lens, the parallax cap, the short-history
+// firefly limit and the curvature gate; the OFF semantics above are untouched.
+TEST(RoughSpecularReconstruction, ThinLensImageDistanceFollowsCurvatureAndHitDistance) {
+    EXPECT_NEAR(ThinLensDistance(0.f, 1.f / 100.f), 100.f, 0.001f);   // plane: the planar virtual point
+    EXPECT_NEAR(ThinLensDistance(1.f / 50.f, 0.f), 25.f, 0.001f);     // sphere, miss: rho / 2
+    EXPECT_LT(ThinLensDistance(0.f, 0.f), 0.f);                        // plane, miss: infinite sentinel
+    EXPECT_GT(ThinLensDistance(1.f / 50.f, 0.f), ThinLensDistance(1.f / 25.f, 0.f));
+    EXPECT_GT(ThinLensDistance(1.f / 50.f, 0.f), ThinLensDistance(1.f / 50.f, 1.f / 100.f));
+}
+
+TEST(RoughSpecularReconstruction, MotionCapIsParallaxDrivenWithTodaysFloor) {
+    EXPECT_NEAR(LobeHalfAngle(0.4f), 0.3173f, 0.001f);
+    EXPECT_FLOAT_EQ(MotionCap(0.4f, 0.f, 2.f), HistoryCap(0.4f, 0.f));
+    EXPECT_FLOAT_EQ(MotionCap(0.4f, LobeHalfAngle(0.4f), 2.f), 4.f);
+    EXPECT_GE(MotionCap(0.4f, 0.035f, 2.f), 58.f);
+    EXPECT_LE(MotionCap(0.4f, 0.035f, 2.f), 64.f);
+    EXPECT_GT(MotionCap(0.8f, 0.008f, 2.f), 120.f);
+    EXPECT_FLOAT_EQ(MotionCap(0.1f, 1.f, 2.f), 4.f);
+}
+
+TEST(RoughSpecularReconstruction, FireflyLimitRelaxesWithHistoryAndScalesWithReference) {
+    EXPECT_FLOAT_EQ(FireflyLimit(1.f, 0.f, 8.f, 8.f), 8.f);
+    EXPECT_FLOAT_EQ(FireflyLimit(1.f, 4.f, 8.f, 8.f), 8.f);
+    EXPECT_FLOAT_EQ(FireflyLimit(1.f, 5.f, 8.f, 8.f), 16.f);
+    EXPECT_FLOAT_EQ(FireflyLimit(1.f, 7.f, 8.f, 8.f), 64.f);
+    EXPECT_GT(FireflyLimit(1.f, 8.f, 8.f, 8.f), 1e30f);
+    EXPECT_FLOAT_EQ(FireflyLimit(2.5f, 0.f, 8.f, 8.f), 20.f);
+}
+
+TEST(RoughSpecularReconstruction, CurvatureGateKeepsTheReportSphereAndTightensSmallReceivers) {
+    EXPECT_GT(CurvatureRadiusLimit(0.4f, 0.02f, 0.53f), 2.28f);
+    EXPECT_LT(CurvatureRadiusLimit(0.4f, 0.2f, 0.53f), 1.0f);
+    EXPECT_GT(CurvatureRadiusLimit(0.4f, 0.f, 0.53f), 100.f);
+}
