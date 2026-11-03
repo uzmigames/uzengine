@@ -201,8 +201,8 @@ public:
     /// relocated origin and carry a guard). The caller passes `sidePipeline` when this is non-zero.
     [[nodiscard]] static uint32_t ClassificationMode();
 
-    /// True when any stage-1 stability CVar is off its default (`r.GI.RadianceCache.JitterCycle`,
-    /// `.Temporal.Mode`, `.Classification.Hysteresis`) or a stage-2 CVar is on (`.NearFieldExclude`,
+    /// True when any stage-1 stability CVar is on (`r.GI.RadianceCache.JitterCycle` > 0, `.Temporal.Mode` 1,
+    /// `.Classification.Hysteresis` > 1 - all three by default) or a stage-2 CVar is on (`.NearFieldExclude`,
     /// `.Visibility`): the caller then passes the `UZ_RC_STABILITY` trace pipeline
     /// (`PipelineLibrary::GetRadianceCacheTraceStability`), which maintains the per-probe state records
     /// and carries the stage-2 writer side (ray buffers, the feedback read's near-field and visibility
@@ -216,7 +216,7 @@ public:
 
     /// True when `r.GI.RadianceCache.FitScene` is on: Update() places the grid against the scene's
     /// GI bounds (`SetSceneBounds`) instead of purely around the camera, at the same spacing and
-    /// extent. Off (the default) = the camera-centred placement, unchanged.
+    /// extent (on by default). Off = the camera-centred placement, unchanged.
     [[nodiscard]] static bool FitSceneEnabled();
 
     /// FitScene: the union world AABB of the frame's GI occluders (the distance field / TLAS

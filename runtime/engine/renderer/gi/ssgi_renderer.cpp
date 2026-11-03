@@ -46,10 +46,10 @@ static auto* cv_SSGITemporalAlpha = UZ_CVAR_FLOAT("r.SSGI.TemporalAlpha", 0.05f,
 static auto* cv_StableTemporal = UZ_CVAR_BOOL("r.GI.FinalGather.StableTemporal", true,
     "Variance/confidence-guided diffuse gather accumulation beyond 64 frames");
 // Hit-vertex sun specular (docs/analysis/lumen-radiance-cache-stability/06): the gather shades its
-// secondary hits Lambert-only, which is 33.5% of the measured real-time indirect deficit. Opt-in:
+// secondary hits Lambert-only, which is 33.5% of the measured real-time indirect deficit. Default ON:
 // OFF dispatches the unchanged pipelines (byte-identical DXIL); ON selects the UZ_GI_HIT_SPECULAR=1
 // permutations of the gather trace/upsample and the radiance-cache trace.
-static auto* cv_HitSpecular = UZ_CVAR_BOOL("r.GI.FinalGather.HitSpecular", false,
+static auto* cv_HitSpecular = UZ_CVAR_BOOL("r.GI.FinalGather.HitSpecular", true,
     "Sun GGX lobe at the final gather's hit vertices and in the radiance-cache probe writer (F0 0.04), with the "
     "hit's sun Lambert weighted by the IBL LUT's (1 - E_spec) as the path tracer does (D7), so the hit's sun "
     "energy stays <= 1. Scene-constant roughness (.Roughness); metals stay under-lit, never over-lit");
@@ -61,19 +61,19 @@ static auto* cv_HitSpecularRoughness = UZ_CVAR_FLOAT("r.GI.FinalGather.HitSpecul
 // Hit-material UV wrap (docs/analysis/lumen-radiance-cache-stability/07-firstbounce-diffuse-decomposition): every GI consumer
 // fetches a hit's albedo with the bilinear CLAMP sampler at the raw triangle UV, so a tiled surface reads the
 // texture's edge texel (Sponza's floors and walls: 0.66-0.78x of the texture mean; 28% of the measured
-// first-bounce deficit, the gather's E/pi at 0.880 of the path tracer's). Opt-in: OFF dispatches the
+// first-bounce deficit, the gather's E/pi at 0.880 of the path tracer's). Default ON: OFF dispatches the
 // unchanged pipelines (byte-identical DXIL); ON selects the UZ_GI_HIT_UV_WRAP=1 permutations, which sample
 // with the shared WRAP static sampler as the raster path and the path tracer do.
-static auto* cv_HitMaterialWrapUv = UZ_CVAR_BOOL("r.GI.HitMaterial.WrapUv", false,
+static auto* cv_HitMaterialWrapUv = UZ_CVAR_BOOL("r.GI.HitMaterial.WrapUv", true,
     "Sample the GI hit material's albedo/emissive texture with the WRAP sampler (a tiled UV reads the tiled "
     "content instead of the texture's edge texel) in the DXR final gather, the DDGI probe trace, the "
     "surface-cache feed/indirect writers and the RT reflections, as the raster path and the path tracer do");
 // Per-mesh hit material (docs/analysis/lumen-radiance-cache-stability/08-per-mesh-hit-material): the hit-vertex
 // sun lobe landed with a scene-constant roughness and F0 = 0.04 because the GI hit material carries no
-// roughness / metallic, and the DXR gather shades a metal's base colour as a white Lambertian. Opt-in: OFF
+// roughness / metallic, and the DXR gather shades a metal's base colour as a white Lambertian. Default ON: OFF
 // dispatches the unchanged pipelines (byte-identical DXIL); ON selects the UZ_GI_HIT_PERMESH=1 permutations
 // (a superset of HitSpecular) of the DXR gather trace/upsample, which read a 32-byte sibling material record.
-static auto* cv_HitMaterialPerMesh = UZ_CVAR_BOOL("r.GI.HitMaterial.PerMesh", false,
+static auto* cv_HitMaterialPerMesh = UZ_CVAR_BOOL("r.GI.HitMaterial.PerMesh", true,
     "Per-mesh roughness and metallic at the DXR final gather's hits (the draw's roughness/metallic/ORM maps and "
     "multipliers, the path tracer's rule): F0 = lerp(0.04, baseColor, metallic), diffuse x (1 - metallic), the "
     "probe term coupled by the LUT's E_spec. Requires r.GI.FinalGather.HitSpecular 1 and r.GI.FinalGather.DXR 1; "

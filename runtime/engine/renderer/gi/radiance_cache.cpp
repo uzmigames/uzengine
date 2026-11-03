@@ -86,15 +86,16 @@ static constexpr uint32_t kReadbackFrameLag = 4;
 static auto* cv_RCReachDump = UZ_CVAR_BOOL("r.GI.RadianceCache.ReachDump", false,
     "Classification mode 3 diagnostic: log the air grid once after frame 120 (one 'RC reach dump' line per "
     "(z, y) row: '#' solid, '.' air not reached, 'R' reached from the camera)");
-// Stage-1 temporal stability (docs/analysis/lumen-radiance-cache-stability/02, 04). Every default is
-// the behaviour before them, bit for bit; the trace shader reads them from the trailing rows of the
-// trace constants.
-static auto* cv_RCJitterCycle = UZ_CVAR_INT("r.GI.RadianceCache.JitterCycle", 0,
+// Stage-1 temporal stability (docs/analysis/lumen-radiance-cache-stability/02, 04). Default ON (the
+// measured configuration of _evidence/gi/radiance-cache-stable: JitterCycle 16, Temporal.Mode 1,
+// Hysteresis 4); 0 / 0 / 1 restore the behaviour before them, bit for bit. The trace shader reads them
+// from the trailing rows of the trace constants.
+static auto* cv_RCJitterCycle = UZ_CVAR_INT("r.GI.RadianceCache.JitterCycle", 16,
     "Probe ray rotation. 0 = a fresh pseudo-random Cranley-Patterson shift every frame and probe (the "
     "EMA then random-walks: the slow crawl of indirect shadows). C > 0 = a period-C-frames R2 shift "
     "shared by every probe (the 2026-07-27 construction, c0fe1c0a), so a probe's estimate is a limit "
     "cycle TAA can average; keep C a multiple of the update interval (4 at 1024 probes/frame), 16 measured", 0, 64);
-static auto* cv_RCTemporalMode = UZ_CVAR_INT("r.GI.RadianceCache.Temporal.Mode", 0,
+static auto* cv_RCTemporalMode = UZ_CVAR_INT("r.GI.RadianceCache.Temporal.Mode", 1,
     "Probe temporal blend. 0 = flat EMA (kTemporalBlendAlpha, no change detection). 1 = count-capped "
     "blend (1/(n+1), floored at Temporal.MinAlpha) with a change detector on the probe's mean radiance "
     "normalised by its own 32-ray noise level; a real lighting change re-arms the blend, noise does not", 0, 1);
@@ -113,9 +114,9 @@ static auto* cv_RCTemporalChangeThreshold = UZ_CVAR_FLOAT("r.GI.RadianceCache.Te
     "noise standard deviations (estimated from the 32 rays and the history of innovations); a fixed "
     "threshold would fire on noise. 4 = ~6e-5 false re-arms per probe update; changes of ~1.3 noise "
     "sigmas and above are caught within ~5 updates, smaller ones follow MinAlpha", 1.0f, 16.0f);
-static auto* cv_RCClassHysteresis = UZ_CVAR_INT("r.GI.RadianceCache.Classification.Hysteresis", 1,
+static auto* cv_RCClassHysteresis = UZ_CVAR_INT("r.GI.RadianceCache.Classification.Hysteresis", 4,
     "Probe inside/valid classification hysteresis. 1 = a class flip takes effect on the update that sees "
-    "it and an inside probe's SH is zeroed (today). K > 1 = K consecutive updates confirm a flip, a probe "
+    "it and an inside probe's SH is zeroed (the pre-hysteresis behaviour). K > 1 = K consecutive updates confirm a flip, a probe "
     "that goes inside keeps its SH (invalid for every reader), and one that returns blends from it instead "
     "of replacing it with a single 32-ray estimate", 1, 15);
 // Stage-2 (docs/analysis/lumen-radiance-cache-stability/01 section 2.8, 03 section 4 move 2, 04 section 2.4):
@@ -135,9 +136,9 @@ static auto* cv_RCVisibility = UZ_CVAR_BOOL("r.GI.RadianceCache.Visibility", fal
     "statistical visibility of the receiver from the probe (cubed, floored at 0.05), so a probe behind a thin "
     "wall or floor fades out continuously instead of leaking. Costs the atlas (5.3 MB), two 4 MiB ray "
     "buffers and one depth-moments dispatch per frame");
-// Probe-grid placement (_evidence/gi/probe-feed/report.md section 5.1). Default OFF = the camera-centred
-// grid, unchanged.
-static auto* cv_RCFitScene = UZ_CVAR_BOOL("r.GI.RadianceCache.FitScene", false,
+// Probe-grid placement (_evidence/gi/probe-feed/report.md section 5.1, _evidence/gi/fitscene). Default ON;
+// OFF = the camera-centred grid, unchanged.
+static auto* cv_RCFitScene = UZ_CVAR_BOOL("r.GI.RadianceCache.FitScene", true,
     "Place the probe grid against the scene's GI bounds (the union AABB of the GI-occluder draws) instead "
     "of around the camera alone, at the same spacing and extent: per axis, centred on the scene when the "
     "scene is no larger than the grid, else the camera-centred grid kept inside the scene's extent. Off = "
