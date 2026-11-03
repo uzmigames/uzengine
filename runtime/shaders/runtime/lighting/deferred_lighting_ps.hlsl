@@ -1400,6 +1400,23 @@ LightingOutput main(FSInput input) {
         // cubemap lookup, with SSR blended in *before* the BRDF rather than
         // summed after TAA. Both neutralise their sky tint because the traced
         // radiance already carries the sky it hit.
+        //
+        // Block B.5's screen / ray-traced reflection texel (rgb radiance, a = blend weight) is read
+        // here, ahead of the gather, so the gate below can see its weight; the blend itself stays
+        // after the gather, unchanged.
+        if (ssrSrvIndex != kSentinelSrvIndex) {
+            Texture2D<float4> screenReflections = ResourceDescriptorHeap[ssrSrvIndex];
+            ssrHit = screenReflections.SampleLevel(clampSampler, input.texcoord, 0);
+            ssrHit.a = saturate(ssrHit.a);
+        }
+        // r.GI.Reflections.SkipWhenRT (bit 1 of _sdfReflectionsEnabled, set by the CPU only while the
+        // ray-traced reflection pass runs): where the texel's blend weight is 1 the lerp below discards
+        // the SDF gather entirely - lerp(sdf, ray, 1) = ray - so the cone trace is skipped on that pixel
+        // and the lighting is what it was, up to the rounding of that lerp. A weight below 1 (a
+        // roughness fade, no ray, an ineligible surface) keeps the trace: the SDF layer still shows
+        // through there.
+        const bool sdfReflectionSkipped = (_sdfReflectionsEnabled & 2u) != 0u
+            && ssrSrvIndex != kSentinelSrvIndex && ssrHit.a >= 1.0;
         if (_sdfReflectionsEnabled != 0 || _sdfDiffuseSamples != 0) {
             SdfReflectionScene scene;
             [unroll] for (uint cascade = 0; cascade < 4; ++cascade)
@@ -1432,13 +1449,16 @@ LightingOutput main(FSInput input) {
                 dbgPath |= 2u;
             }
             if (_sdfReflectionsEnabled != 0) {
-                // timeParams.w < 0 is production (seed = frame count); a non-negative value is the
-                // diagnostic seed freeze of `r.GI.Reflections.FreezeSeed`.
-                const uint reflectionSeed = timeParams.w >= 0.0 ? uint(timeParams.w) : uint(timeParams.z);
-                radiance = GatherSdfReflections(scene, worldPos, N, geometricNormal, reflect(-V, N), roughness,
-                    uint2(px), reflectionSeed, _sdfReflectionSamples) * _sdfReflectionIntensity;
-                dbgReflection = radiance;
-                dbgPath |= 1u;
+                // The record and path bit stay clear on a pixel the gate skipped: the trace did not run.
+                if (!sdfReflectionSkipped) {
+                    // timeParams.w < 0 is production (seed = frame count); a non-negative value is the
+                    // diagnostic seed freeze of `r.GI.Reflections.FreezeSeed`.
+                    const uint reflectionSeed = timeParams.w >= 0.0 ? uint(timeParams.w) : uint(timeParams.z);
+                    radiance = GatherSdfReflections(scene, worldPos, N, geometricNormal, reflect(-V, N), roughness,
+                        uint2(px), reflectionSeed, _sdfReflectionSamples) * _sdfReflectionIntensity;
+                    dbgReflection = radiance;
+                    dbgPath |= 1u;
+                }
                 skyTintSpecular = 1.0;
             }
         }
@@ -1449,9 +1469,6 @@ LightingOutput main(FSInput input) {
         // terms below weight every layer alike (SSR -> SDF -> IBL by confidence). The additive post-TAA
         // composite that used to carry the IBL case is off by default (r.SSR.Composite).
         if (ssrSrvIndex != kSentinelSrvIndex) {
-            Texture2D<float4> screenReflections = ResourceDescriptorHeap[ssrSrvIndex];
-            ssrHit = screenReflections.SampleLevel(clampSampler, input.texcoord, 0);
-            ssrHit.a = saturate(ssrHit.a);
             radiance = lerp(radiance, ssrHit.rgb, ssrHit.a);
             if (ssrHit.a > 0.0) dbgPath |= 128u;
         }

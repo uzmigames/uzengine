@@ -280,7 +280,7 @@ struct PerFrameCB {
     /// @ref Lagarde & de Rousiers 2014 "Moving Frostbite to PBR" — §4.9.3
     float    indirectAOExponent = 2.0f;     ///< CVar r.IndirectAO.Exponent — default 2.0.
 
-    uint32_t sdfReflectionsEnabled = 0;
+    uint32_t sdfReflectionsEnabled = 0;   ///< Bit 0: SDF reflection trace on (r.GI.Reflections). Bit 1: r.GI.Reflections.SkipWhenRT armed (ray-traced reflections available) - the lighting skips the trace where the ray texel's blend weight is 1.
     uint32_t sdfReflectionSkySrv = UINT32_MAX;
     uint32_t sdfReflectionSamples = 4;
     Vec4     sdfReflectionClipmaps[4] = {};
