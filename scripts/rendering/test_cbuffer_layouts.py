@@ -349,6 +349,11 @@ TIER_A += [
                  'vfxCameraScreenSize': 'screenSize', '_vfxCameraPadScreen': '_padScreen'}),
     layout_entry('postprocess/ssr_temporal_cs.hlsl', 'SsrTemporalPrevVP',
                  'runtime/engine/renderer/frame/frame_gi_passes.cpp'),
+    # The SSR temporal fix permutation (r.RayTracing.Reflections.TemporalFix, UZ_SSR_TEMPORAL_FIX=1) declares the
+    # previous camera, the resource indices and the tunables after the matrix only under the define; the OFF text
+    # is the entry above. Check that mirror too.
+    layout_entry('postprocess/ssr_temporal_cs.hlsl', 'SsrTemporalPrevVP',
+                 'runtime/engine/renderer/frame/frame_gi_passes.cpp', defines=('-D', 'UZ_SSR_TEMPORAL_FIX=1')),
     layout_entry('../editor/gizmo_vs.hlsl', 'GizmoCB', 'runtime/editor/gizmo/gizmo_renderer.h'),
     layout_entry('../editor/grid_ps.hlsl', 'GridCB', 'runtime/editor/grid/editor_grid.cpp'),
     layout_entry('../editor/outline_detect_ps.hlsl', 'OutlineCB', 'runtime/editor/outline/outline_pass.cpp',

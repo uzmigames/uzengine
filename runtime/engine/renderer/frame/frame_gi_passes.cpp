@@ -102,6 +102,25 @@ static auto* cv_RoughMotionAwareDebug = UZ_CVAR_INT("r.RayTracing.Reflections.Ro
     "Diagnostic: the motion-aware reconstruction writes its decisions instead of the colour. 1 = (trusted "
     "virtual history, camera-only motion, accepted weight); 2 = (curvature x 100, lens image distance / 100 cm, "
     "lobe 1/t x 1000); 3 = (used - surface motion + 4 px, surface motion x + 8 px)", 0, 3);
+// SSR temporal fix (the motion-aware lane's report section 7, doc 09 section 8.1): ssr_temporal_cs.hlsl read the
+// pixel-space velocity as UV (no reprojection under motion), placed the virtual hit in front of the surface, drove
+// its history cap by the blend weight instead of the roughness, and its 1.25-sigma 3x3 clip on 1-spp input held
+// only 0.83-0.86x of the raw ray-texel energy once converged. A UZ_SSR_TEMPORAL_FIX=1 permutation corrects the
+// four (the virtual hit is the thin-lens image of the motion-aware reconstruction, so a curved receiver's
+// reflection reprojects too), plus a surface-distance disocclusion test, a sample count, a smoothed lens hit
+// distance and a lighting-epoch reset, which a history that now reprojects needs; OFF is the unchanged pass.
+// Default OFF until validated against the raw ray texels.
+static auto* cv_SSRTemporalFix = UZ_CVAR_BOOL("r.RayTracing.Reflections.TemporalFix", false,
+    "SSR / RT reflection temporal filter: velocity in pixels -> UV reprojection, thin-lens virtual hit behind the "
+    "surface (receiver curvature from the g-buffer), g-buffer roughness history cap (4..32 frames, scaled by the "
+    "lobe's parallax), variance clip widened by the texel's temporal variance so the converged energy matches the "
+    "raw ray texels, surface-distance disocclusion, lighting-epoch reset (0 = today's pass); default off");
+static auto* cv_SSRTemporalFixClipFloor = UZ_CVAR_FLOAT("r.RayTracing.Reflections.TemporalFix.ClipFloor", 2.0f,
+    "SSR temporal fix: the clip box grows by gamma x this x (temporal sigma / 3), the sampling noise of the 3x3 mean "
+    "of the texel's own signal; 0 = today's box", 0.0f, 8.0f);
+static auto* cv_SSRTemporalFixRoughnessFull = UZ_CVAR_FLOAT("r.RayTracing.Reflections.TemporalFix.RoughnessFull", 0.3f,
+    "SSR temporal fix: roughness from which the history cap is the full 32 frames (4 at the mirror threshold)",
+    0.04f, 1.0f);
 
 /// Selects DXR ray-traced probe update over the SDF sphere-trace path.
 /// Requires DXR 1.1 (`RayQuery<>`) and a built TLAS. When the device does not
@@ -136,6 +155,9 @@ static auto* cv_GDFCentrePhase = UZ_CVAR_FLOAT("r.GI.GDF.CenterPhaseOffset", 0.f
     "grid-boundary effect from a feature of the trajectory.", -1000.f, 1000.f);
 
 namespace uz {
+
+// Defined next to the lighting hash it extends (below RegisterSSRDenoisePasses, which reads it).
+static uint64_t SsrTemporalFixEpoch(const FrameContext& ctx, const PerFrameCB& perFrame);
 
 // r.GI.HitMaterial.WrapUv (docs/analysis/lumen-radiance-cache-stability/07-firstbounce-diffuse-decomposition): the pass's
 // UZ_GI_HIT_UV_WRAP=1 permutation when the CVar is on and it compiled, else its default pipeline (the
@@ -868,8 +890,12 @@ void SceneRenderer::RegisterSSRDenoisePasses(rg::RgBuilder& rgBuilder, FrameCont
         const uint32_t ssrReadIdx  = 1 - m_ssrHistoryIndex;
         const bool ssrFirstFrame = !ctx.temporal.matrixValid
                                  || !m_ssrHistory[ssrReadIdx].IsValid();
+        // r.RayTracing.Reflections.TemporalFix: the corrected permutation and its moments / lens guide pairs (created
+        // on first use). While off nothing else changes on this path but the size of the b2 block below.
+        const bool ssrTemporalFix = cv_SSRTemporalFix->value > 0.5f && ctx.bindless
+                                 && EnsureSsrTemporalFixResources();
 
-        rgBuilder.AddPass("SSR_Temporal", [&, ssrWriteIdx, ssrReadIdx, ssrFirstFrame](rg::RgPassBuilder& pb) {
+        rgBuilder.AddPass("SSR_Temporal", [&, ssrWriteIdx, ssrReadIdx, ssrFirstFrame, ssrTemporalFix](rg::RgPassBuilder& pb) {
             // Block B.5: the depth read was undeclared, so the graph (which orders passes only through
             // the resources they declare) scheduled this pass right after the velocity pass, before the
             // trace and the resolve; it read last frame's resolved texture, the denoise then read its
@@ -878,18 +904,28 @@ void SceneRenderer::RegisterSSRDenoisePasses(rg::RgBuilder& rgBuilder, FrameCont
             pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);
             pb.Read(ctx.velocityRes, RHIResourceState::ShaderResource);
 
-            pb.SetExecutionCallback([this, &ctx, ssrWriteIdx, ssrReadIdx, ssrFirstFrame](IRHICommandList* cmd, const rg::RgPassResources&) {
+            pb.SetExecutionCallback([this, &ctx, ssrWriteIdx, ssrReadIdx, ssrFirstFrame, ssrTemporalFix](IRHICommandList* cmd, const rg::RgPassResources&) {
                 UZ_PROFILE_SCOPE("SSR::Temporal");
 
                 auto ssrTemporalPSO = ctx.pipelines->GetSsrTemporal();
                 if (!ssrTemporalPSO.IsValid() || cv_SSRTemporal->value < 0.5f) return;
+                // The fix's permutation, or the default pipeline if it failed to compile (logged once).
+                const RHIPipelineHandle fixPSO = ssrTemporalFix ? ctx.pipelines->GetSsrTemporalFix()
+                                                                : RHIPipelineHandle::Invalid();
+                const bool fix = fixPSO.IsValid();
 
                 {
                     m_rgStates->Transition(cmd, m_ssrHistory[ssrWriteIdx], RHIResourceState::UnorderedAccess);
                     m_rgStates->Transition(cmd, m_ssrHistory[ssrReadIdx], RHIResourceState::ShaderResource);
+                    if (fix) {
+                        m_rgStates->Transition(cmd, m_ssrMoments[ssrWriteIdx], RHIResourceState::UnorderedAccess);
+                        m_rgStates->Transition(cmd, m_ssrMoments[ssrReadIdx], RHIResourceState::ShaderResource);
+                        m_rgStates->Transition(cmd, m_ssrLens[ssrWriteIdx], RHIResourceState::UnorderedAccess);
+                        m_rgStates->Transition(cmd, m_ssrLens[ssrReadIdx], RHIResourceState::ShaderResource);
+                    }
                 }
 
-                cmd->SetPipeline(ssrTemporalPSO);
+                cmd->SetPipeline(fix ? fixPSO : ssrTemporalPSO);
 
                 struct SsrTemporalConstants {
                     uint32_t currentSsrSrvIdx, historySsrSrvIdx, velocitySrvIdx, depthSrvIdx;
@@ -913,13 +949,39 @@ void SceneRenderer::RegisterSSRDenoisePasses(rg::RgBuilder& rgBuilder, FrameCont
 
                 // Bind prevViewProj matrix at slot 2 (b2) via CBV from the CB ring.
                 // @ref AMD FidelityFX SSSR — prevVP needed for virtual hit reprojection.
+                // The default permutation declares and reads the matrix only; the UZ_SSR_TEMPORAL_FIX=1
+                // permutation declares the rest (ssr_temporal_cs.hlsl).
                 struct SsrTemporalPrevVP {
                     Mat4 prevViewProj;
+                    float prevCameraPos[4];
+                    uint32_t normalSrvIdx, momentsSrvIdx, momentsUavIdx, resetHistory;
+                    float clipFloorK, roughnessFull;
+                    uint32_t lensSrvIdx, lensUavIdx;
                 };
+                static_assert(sizeof(SsrTemporalPrevVP) == 112);
+                const auto* perFrame = static_cast<const PerFrameCB*>(ctx.perFrameAlloc.cpuPtr);
+                const uint64_t fixEpoch = (fix && perFrame) ? SsrTemporalFixEpoch(ctx, *perFrame) : 0ull;
                 auto prevVPAlloc = m_cbRing->Allocate(sizeof(SsrTemporalPrevVP));
                 if (prevVPAlloc.cpuPtr) {
                     auto* pvp = reinterpret_cast<SsrTemporalPrevVP*>(prevVPAlloc.cpuPtr);
+                    *pvp = {};
                     pvp->prevViewProj = ctx.temporal.prevViewProj;
+                    if (fix) {
+                        // The moments the pass reads must be last frame's, written under the same lighting /
+                        // reflection-mode epoch (a light step restarts the history instead of trailing through it).
+                        const bool reusable = RealtimeHistoryReusable(m_ssrTemporalFixFrame, ctx.frameIndex,
+                                                                      m_ssrTemporalFixEpoch, fixEpoch, /*reset=*/false);
+                        for (int i = 0; i < 3; ++i) pvp->prevCameraPos[i] = m_ssrTemporalFixPrevCameraPos[i];
+                        pvp->prevCameraPos[3] = 1.f;
+                        pvp->normalSrvIdx  = m_gbuffer.normalSRV;
+                        pvp->momentsSrvIdx = m_ssrMomentsSrv[ssrReadIdx];
+                        pvp->momentsUavIdx = m_ssrMomentsUav[ssrWriteIdx];
+                        pvp->resetHistory  = reusable ? 0u : 1u;
+                        pvp->clipFloorK    = cv_SSRTemporalFixClipFloor->value;
+                        pvp->roughnessFull = cv_SSRTemporalFixRoughnessFull->value;
+                        pvp->lensSrvIdx    = m_ssrLensSrv[ssrReadIdx];
+                        pvp->lensUavIdx    = m_ssrLensUav[ssrWriteIdx];
+                    }
                     cmd->SetRootCBV(kSlotPerObject, prevVPAlloc.bufferHandle,
                                     prevVPAlloc.offsetBytes, prevVPAlloc.cpuPtr,
                                     sizeof(SsrTemporalPrevVP));
@@ -933,6 +995,19 @@ void SceneRenderer::RegisterSSRDenoisePasses(rg::RgBuilder& rgBuilder, FrameCont
 
                 {
                     m_rgStates->Transition(cmd, m_ssrHistory[ssrWriteIdx], RHIResourceState::ShaderResource);
+                    if (fix) {
+                        m_rgStates->Transition(cmd, m_ssrMoments[ssrWriteIdx], RHIResourceState::ShaderResource);
+                        m_rgStates->Transition(cmd, m_ssrLens[ssrWriteIdx], RHIResourceState::ShaderResource);
+                    }
+                }
+                if (fix) {
+                    m_ssrTemporalFixFrame = ctx.frameIndex;
+                    m_ssrTemporalFixEpoch = fixEpoch;
+                    if (perFrame) {
+                        m_ssrTemporalFixPrevCameraPos[0] = perFrame->cameraPos.x;
+                        m_ssrTemporalFixPrevCameraPos[1] = perFrame->cameraPos.y;
+                        m_ssrTemporalFixPrevCameraPos[2] = perFrame->cameraPos.z;
+                    }
                 }
             });
         });
@@ -1073,6 +1148,18 @@ static uint64_t SurfaceCacheLightingHash(const FrameContext& ctx, const PerFrame
     hash = SurfaceCacheHashBytes(&rects, sizeof(rects), hash);
     hash = SurfaceCacheHashBytes(ctx.lightData.rectLights, rects * sizeof(RectLightData), hash);
     return hash;
+}
+
+// The epoch of the corrected SSR temporal history (r.RayTracing.Reflections.TemporalFix): the lighting hash the
+// surface cache and the rough reconstruction reset on, the reflection-mode CVars and the fix's own tunables. A
+// change restarts the history (the pass's resetHistory), as the reconstruction's epoch does for its own.
+static uint64_t SsrTemporalFixEpoch(const FrameContext& ctx, const PerFrameCB& perFrame) {
+    uint64_t hash = SurfaceCacheLightingHash(ctx, perFrame);
+    const float modes[] = {float(cv_RTReflectionsGlossy->value), float(cv_RTReflectionsIndirect->value),
+        float(cv_RTReflectionsRough->value), cv_RTReflectionsMaxRoughness->value, cv_SSRIntensity->value,
+        cv_RTReflectionsMaxDistance->value, cv_SSRMaxRoughness->value,
+        cv_SSRTemporalFixClipFloor->value, cv_SSRTemporalFixRoughnessFull->value};
+    return SurfaceCacheHashBytes(modes, sizeof(modes), hash);
 }
 
 void SceneRenderer::RegisterRoughSpecularReconstruction(rg::RgBuilder& rgBuilder, FrameContext& ctx) {

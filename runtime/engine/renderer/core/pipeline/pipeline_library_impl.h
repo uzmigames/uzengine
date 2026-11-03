@@ -146,6 +146,8 @@
     RHIShaderHandle m_ssrTraceCS               = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssrResolveCS             = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssrTemporalCS            = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_ssrTemporalFixCS         = RHIShaderHandle::Invalid();   ///< UZ_SSR_TEMPORAL_FIX=1 variant
+    bool            m_ssrTemporalFixFailed     = false;                        ///< its compile failed (logged once)
     RHIShaderHandle m_ssrSpatialDenoiseCS     = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssrCompositeCS          = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssrTileClassifyCS       = RHIShaderHandle::Invalid();
@@ -250,6 +252,7 @@
     RHIPipelineHandle m_ssrTrace              = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssrResolve            = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssrTemporal           = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_ssrTemporalFix        = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssrSpatialDenoise    = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssrComposite         = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssrTileClassify      = RHIPipelineHandle::Invalid();

@@ -478,6 +478,11 @@ public:
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetSsrTemporal();
 
+    /// Returns the corrected SSR temporal pipeline: ssr_temporal_cs.hlsl compiled with UZ_SSR_TEMPORAL_FIX=1
+    /// (r.RayTracing.Reflections.TemporalFix). Compiled on first use; a compile failure is logged once and the
+    /// handle stays invalid, so the caller keeps the default pipeline.
+    [[nodiscard]] RHIPipelineHandle GetSsrTemporalFix();
+
     /// Returns the SSR spatial bilateral denoise compute pipeline (ssr_spatial_denoise_cs.hlsl).
     ///
     /// Post-temporal cleanup filter that removes residual per-pixel noise using

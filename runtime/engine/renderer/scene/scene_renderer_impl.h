@@ -502,6 +502,21 @@
     uint32_t m_ssrHitDistanceSrv = UINT32_MAX;     ///< SRV for temporal pass to read.
     uint32_t m_ssrHitDistanceUav = UINT32_MAX;     ///< UAV for trace pass to write.
 
+    /// r.RayTracing.Reflections.TemporalFix: the corrected temporal pass's moments / guide pair (RGBA32F: Y mean,
+    /// Y^2 mean, sample count, surface distance) and its lens guide pair (R32F: the lobe's smoothed inverse hit
+    /// distance), ping-pong in step with m_ssrHistory; created on first use by EnsureSsrTemporalFixResources, so
+    /// nothing is allocated while the CVar is off.
+    RHITextureHandle m_ssrMoments[2];
+    uint32_t m_ssrMomentsSrv[2] = {UINT32_MAX, UINT32_MAX};
+    uint32_t m_ssrMomentsUav[2] = {UINT32_MAX, UINT32_MAX};
+    RHITextureHandle m_ssrLens[2];
+    uint32_t m_ssrLensSrv[2] = {UINT32_MAX, UINT32_MAX};
+    uint32_t m_ssrLensUav[2] = {UINT32_MAX, UINT32_MAX};
+    uint32_t m_ssrTemporalFixFrame = UINT32_MAX;   ///< Last frame the corrected pass ran: its moments are one frame old.
+    uint64_t m_ssrTemporalFixEpoch = 0;            ///< Lighting / reflection-mode epoch of that frame (a change restarts the history).
+    float    m_ssrTemporalFixPrevCameraPos[3] = {0.f, 0.f, 0.f};   ///< Camera position of that frame (the disocclusion test).
+    bool EnsureSsrTemporalFixResources();
+
     /// STBN (Spatiotemporal Blue Noise) 128x128x64 RG8 volume texture.
     /// Each slice is a blue noise pattern; consecutive slices are temporally decorrelated.
     /// Used by SSR trace for low-discrepancy per-pixel random seeds.

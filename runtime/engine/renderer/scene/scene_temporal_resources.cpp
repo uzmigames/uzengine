@@ -369,6 +369,21 @@ void SceneRenderer::DestroySsrResources() {
         m_ssrHitDistanceSrv = UINT32_MAX;
         m_ssrHitDistanceUav = UINT32_MAX;
     }
+    for (int i = 0; i < 2; ++i) {
+        if (m_ssrMoments[i].IsValid()) {
+            m_device->DestroyTexture(m_ssrMoments[i]);
+            m_ssrMoments[i] = RHITextureHandle{};
+            m_ssrMomentsSrv[i] = UINT32_MAX;
+            m_ssrMomentsUav[i] = UINT32_MAX;
+        }
+        if (m_ssrLens[i].IsValid()) {
+            m_device->DestroyTexture(m_ssrLens[i]);
+            m_ssrLens[i] = RHITextureHandle{};
+            m_ssrLensSrv[i] = UINT32_MAX;
+            m_ssrLensUav[i] = UINT32_MAX;
+        }
+    }
+    m_ssrTemporalFixFrame = UINT32_MAX;
 
     if (m_ssrPrevSceneColor.IsValid()) {
         m_device->DestroyTexture(m_ssrPrevSceneColor);
@@ -382,6 +397,51 @@ void SceneRenderer::DestroySsrResources() {
         m_translucentSceneColor = RHITextureHandle{};
         m_translucentSceneColorSrv = UINT32_MAX;
     }
+}
+
+// r.RayTracing.Reflections.TemporalFix: the corrected SSR temporal pass keeps two per-texel guides next to the
+// colour history, ping-pong in step with m_ssrHistory: the moments (RGBA32F: luminance mean, luminance^2 mean,
+// sample count, surface distance from the camera) and the lens (R32F: the lobe's smoothed inverse hit distance,
+// which focuses the thin-lens virtual reprojection). Created at the render resolution on the first frame the CVar
+// is on (destroyed with the SSR resources, so a resize recreates them); a fresh set restarts the history.
+bool SceneRenderer::EnsureSsrTemporalFixResources() {
+    if (!m_device || !m_ssrHistory[0].IsValid() || !m_ssrHistory[1].IsValid()) return false;
+    if (m_ssrMoments[0].IsValid() && m_ssrMoments[1].IsValid() && m_ssrLens[0].IsValid() && m_ssrLens[1].IsValid())
+        return true;
+    for (int i = 0; i < 2; ++i) {
+        if (!m_ssrMoments[i].IsValid()) {
+            RHITextureDesc desc{};
+            desc.width     = m_renderWidth;
+            desc.height    = m_renderHeight;
+            desc.format    = RHIFormat::RGBA32Float;
+            desc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::UnorderedAccess;
+            desc.debugName = (i == 0) ? "SSR_TemporalMoments_0" : "SSR_TemporalMoments_1";
+            m_ssrMoments[i] = m_device->CreateTexture(desc);
+            if (!m_ssrMoments[i].IsValid()) {
+                UZ_LOG(Renderer, Error, "SceneRenderer: failed to create SSR temporal moments texture {}", i);
+                return false;
+            }
+            m_ssrMomentsSrv[i] = m_device->GetTextureSRVIndex(m_ssrMoments[i]);
+            m_ssrMomentsUav[i] = m_device->GetTextureUAVIndex(m_ssrMoments[i]);
+        }
+        if (!m_ssrLens[i].IsValid()) {
+            RHITextureDesc desc{};
+            desc.width     = m_renderWidth;
+            desc.height    = m_renderHeight;
+            desc.format    = RHIFormat::R32Float;
+            desc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::UnorderedAccess;
+            desc.debugName = (i == 0) ? "SSR_TemporalLens_0" : "SSR_TemporalLens_1";
+            m_ssrLens[i] = m_device->CreateTexture(desc);
+            if (!m_ssrLens[i].IsValid()) {
+                UZ_LOG(Renderer, Error, "SceneRenderer: failed to create SSR temporal lens texture {}", i);
+                return false;
+            }
+            m_ssrLensSrv[i] = m_device->GetTextureSRVIndex(m_ssrLens[i]);
+            m_ssrLensUav[i] = m_device->GetTextureUAVIndex(m_ssrLens[i]);
+        }
+    }
+    m_ssrTemporalFixFrame = UINT32_MAX;
+    return true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
