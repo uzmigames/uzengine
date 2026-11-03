@@ -214,6 +214,20 @@ public:
     /// (`PipelineLibrary::GetRadianceCacheDepthMoments`, `GetDdgiBorderFill`) to `UpdateProbes`.
     [[nodiscard]] static bool VisibilityEnabled();
 
+    /// True when `r.GI.RadianceCache.FitScene` is on: Update() places the grid against the scene's
+    /// GI bounds (`SetSceneBounds`) instead of purely around the camera, at the same spacing and
+    /// extent. Off (the default) = the camera-centred placement, unchanged.
+    [[nodiscard]] static bool FitSceneEnabled();
+
+    /// FitScene: the union world AABB of the frame's GI occluders (the distance field / TLAS
+    /// membership), set by the caller before Update(). Per axis, Update() centres the grid on the
+    /// scene when the scene is no larger than the grid, and otherwise keeps the camera-centred grid
+    /// inside the scene's extent. Without bounds (or with the CVar off) the placement is camera-centred.
+    void SetSceneBounds(const Vec3& boundsMin, const Vec3& boundsMax) noexcept {
+        m_sceneBoundsMin = boundsMin; m_sceneBoundsMax = boundsMax; m_sceneBoundsValid = true;
+    }
+    void ClearSceneBounds() noexcept { m_sceneBoundsValid = false; }
+
     /// Mode 3: the G-buffer world position (bindless SRV, cleared to 0 where nothing was drawn) whose
     /// visible points seed the flood fill when `r.GI.RadianceCache.ReachVisibleSeeds` is on. The caller
     /// declares the read in the render graph.
@@ -428,6 +442,11 @@ private:
     /// Grid origin the last completed SH buffer was traced with (see
     /// GetCompletedGridOrigin()).
     Vec3   m_completedGridOrigin;
+
+    /// FitScene (`SetSceneBounds`): the scene's GI bounds the grid is placed against.
+    Vec3   m_sceneBoundsMin;
+    Vec3   m_sceneBoundsMax;
+    bool   m_sceneBoundsValid = false;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -91,6 +91,7 @@ static const uz::CVar* RayTracingGICVar() {
 }
 
 #include <algorithm>
+#include <cfloat>
 #include <cstring>
 
 static auto* cv_RCFreezeAfter = UZ_CVAR_INT("r.GI.RadianceCache.FreezeAfterFrame", -1,
@@ -408,6 +409,33 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
             }
             if (rcPipeline.IsValid()) {
                 Vec3 camPos = ctx.perFrame.cameraPos.xyz();
+                // r.GI.RadianceCache.FitScene: the grid is placed against the union world AABB of this
+                // frame's GI occluders (the distance field / TLAS membership, the mesh bounds through the
+                // draw's transform). Off = no bounds, and Update() keeps the camera-centred placement.
+                if (RadianceCache::FitSceneEnabled()) {
+                    Vec3 sceneMin(FLT_MAX, FLT_MAX, FLT_MAX);
+                    Vec3 sceneMax(-FLT_MAX, -FLT_MAX, -FLT_MAX);
+                    for (const auto& draw : ctx.drawList.GetCommands()) {
+                        if (!IsGIOccluder(draw) || draw.meshId >= m_meshes.size()) continue;
+                        const GPUMesh& mesh = m_meshes[draw.meshId];
+                        for (uint32_t corner = 0; corner < 8; ++corner) {
+                            const Vec3 p = draw.worldMatrix.TransformPoint(Vec3(
+                                (corner & 1) ? mesh.boundsMax.x : mesh.boundsMin.x,
+                                (corner & 2) ? mesh.boundsMax.y : mesh.boundsMin.y,
+                                (corner & 4) ? mesh.boundsMax.z : mesh.boundsMin.z));
+                            sceneMin.x = std::min(sceneMin.x, p.x);
+                            sceneMin.y = std::min(sceneMin.y, p.y);
+                            sceneMin.z = std::min(sceneMin.z, p.z);
+                            sceneMax.x = std::max(sceneMax.x, p.x);
+                            sceneMax.y = std::max(sceneMax.y, p.y);
+                            sceneMax.z = std::max(sceneMax.z, p.z);
+                        }
+                    }
+                    if (sceneMin.x <= sceneMax.x) m_radianceCache.SetSceneBounds(sceneMin, sceneMax);
+                    else                          m_radianceCache.ClearSceneBounds();
+                } else {
+                    m_radianceCache.ClearSceneBounds();
+                }
                 m_radianceCache.Update(camPos);
                 if (m_radianceCache.IsDirty() && m_radianceCache.HasProducedResult()) {
                     const Vec3 o = m_radianceCache.GetGridOrigin();

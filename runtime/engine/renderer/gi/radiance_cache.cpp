@@ -135,6 +135,14 @@ static auto* cv_RCVisibility = UZ_CVAR_BOOL("r.GI.RadianceCache.Visibility", fal
     "statistical visibility of the receiver from the probe (cubed, floored at 0.05), so a probe behind a thin "
     "wall or floor fades out continuously instead of leaking. Costs the atlas (5.3 MB), two 4 MiB ray "
     "buffers and one depth-moments dispatch per frame");
+// Probe-grid placement (_evidence/gi/probe-feed/report.md section 5.1). Default OFF = the camera-centred
+// grid, unchanged.
+static auto* cv_RCFitScene = UZ_CVAR_BOOL("r.GI.RadianceCache.FitScene", false,
+    "Place the probe grid against the scene's GI bounds (the union AABB of the GI-occluder draws) instead "
+    "of around the camera alone, at the same spacing and extent: per axis, centred on the scene when the "
+    "scene is no larger than the grid, else the camera-centred grid kept inside the scene's extent. Off = "
+    "the camera-centred grid (Sponza at GridExtent 2000: the building's far end is outside it and every "
+    "hit-point probe reader returns zero there)");
 
 namespace uz {
 
@@ -150,6 +158,27 @@ bool RadianceCache::StabilityEnabled() {
 
 bool RadianceCache::VisibilityEnabled() {
     return cv_RCVisibility->value != 0.0f;
+}
+
+bool RadianceCache::FitSceneEnabled() {
+    return cv_RCFitScene->value != 0.0f;
+}
+
+/// FitScene, one axis. The grid box is [c - extent, c + extent]; `c` must stay on the camera
+/// snap's lattice (multiples of the spacing) so a recentre is still a whole number of probes.
+/// Scene no larger than the box: centre on the scene (the nearest lattice point covers the whole
+/// scene whenever the slack is at least one spacing, and misses the least of it otherwise).
+/// Scene larger than the box: the camera's snapped centre, kept where the box lies inside the
+/// scene so no probes sit beyond the scene's end.
+static float FitGridAxis(float snappedCamera, float sceneMin, float sceneMax, float extent, float spacing) {
+    const float lowTouch  = sceneMin + extent;  // centre whose box starts exactly at sceneMin
+    const float highTouch = sceneMax - extent;  // centre whose box ends exactly at sceneMax
+    if (highTouch <= lowTouch) {
+        return std::round(0.5f * (sceneMin + sceneMax) / spacing) * spacing;
+    }
+    if (snappedCamera < lowTouch)  return std::ceil(lowTouch / spacing) * spacing;
+    if (snappedCamera > highTouch) return std::floor(highTouch / spacing) * spacing;
+    return snappedCamera;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -770,8 +799,19 @@ void RadianceCache::Update(const Vec3& cameraPos) {
     const XMVECTOR vCamPos    = cameraPos.toXM();
     const XMVECTOR vSpacing   = XMVectorReplicate(m_probeSpacing);
     const XMVECTOR vInvSpacing = XMVectorReciprocal(vSpacing);
-    const XMVECTOR vSnapped   = XMVectorMultiply(
+    XMVECTOR vSnapped         = XMVectorMultiply(
         XMVectorFloor(XMVectorMultiply(vCamPos, vInvSpacing)), vSpacing);
+
+    // r.GI.RadianceCache.FitScene: place the grid against the scene's GI bounds instead of the
+    // camera alone (the camera-centred box left the far end of Sponza outside the grid, where every
+    // hit-point reader returns zero). Same spacing and extent; the fitted centre is on the camera
+    // snap's lattice, so the recentre below is unchanged. Off = the camera snap above, as is.
+    if (m_sceneBoundsValid && FitSceneEnabled()) {
+        const Vec3 cam(vSnapped);
+        vSnapped = Vec3{FitGridAxis(cam.x, m_sceneBoundsMin.x, m_sceneBoundsMax.x, m_gridExtent, m_probeSpacing),
+                        FitGridAxis(cam.y, m_sceneBoundsMin.y, m_sceneBoundsMax.y, m_gridExtent, m_probeSpacing),
+                        FitGridAxis(cam.z, m_sceneBoundsMin.z, m_sceneBoundsMax.z, m_gridExtent, m_probeSpacing)}.toXM();
+    }
 
     // Check if grid shifted (any axis moved by >= probeSpacing)
     const XMVECTOR vGridCenter = m_gridCenter.toXM();
