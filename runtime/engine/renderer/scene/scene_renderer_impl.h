@@ -459,6 +459,11 @@
     RHIBufferHandle m_giMaterialTable{};
     uint32_t        m_giMaterialTableSrv = UINT32_MAX;
     uint32_t        m_giMaterialTableCapacity = 0;  ///< Entries allocated.
+    /// The 32-byte sibling record (GIMeshMaterialExtGPU: per-mesh roughness / metallic maps and
+    /// multipliers, `r.GI.HitMaterial.PerMesh`, doc 08 section 4), same capacity, filled by the
+    /// same UpdateGIMaterialTable loop; bound only by the UZ_GI_HIT_PERMESH gather permutations.
+    RHIBufferHandle m_giMaterialTableExt{};
+    uint32_t        m_giMaterialTableExtSrv = UINT32_MAX;
 
     // ── Brixelizer GI (AMD FidelityFX sparse SDF voxel GI) ─────────────────
     std::unique_ptr<BrixelizerGIPass> m_brixelizerGI;  ///< FFX Brixelizer GI pass (diffuse + specular indirect).
@@ -1003,6 +1008,8 @@
     /// buffer is Upload-heap and grows on demand. Returns the table SRV
     /// (UINT32_MAX when no meshes / creation failed).
     uint32_t UpdateGIMaterialTable(const FrameContext& ctx);
+    /// The sibling table's SRV after UpdateGIMaterialTable has run this frame (UINT32_MAX = none).
+    [[nodiscard]] uint32_t GetGIMaterialTableExtSrv() const noexcept { return m_giMaterialTableExtSrv; }
 
     /// Registers AMD FidelityFX Brixelizer GI passes (SDF bake + GI dispatch).
     void RegisterBrixelizerGIPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);

@@ -651,6 +651,21 @@ public:
         Count
     };
     [[nodiscard]] RHIPipelineHandle GetGiHitUvWrap(GiHitUvWrapVariant variant);
+    /// `r.GI.HitMaterial.PerMesh` (docs/analysis/lumen-radiance-cache-stability/08-per-mesh-hit-material): the
+    /// `UZ_GI_HIT_PERMESH=1` permutation of the DXR hit-specular gather trace and upsample (plain and UV-wrap):
+    /// the hit reads its mesh's roughness / metallic from the sibling material table and shades with the path
+    /// tracer's F0 / (1 - metallic) / E_spec coupling. A superset of the hit-specular define set, built on
+    /// first use (the UV-wrap mechanism above), so the default pipelines compile the unchanged text and OFF
+    /// is byte-identical; invalid when the variant failed to compile (never retried; the caller runs the
+    /// hit-specular pipeline).
+    enum class GiHitPerMeshVariant : uint8_t {
+        SsgiDxrTrace,          ///< SsgiTraceCS    UZ_GATHER_DXR=1;UZ_GI_HIT_SPECULAR=1;UZ_GI_HIT_PERMESH=1
+        SsgiDxrTraceWrapUv,    ///< SsgiTraceCS    the above + UZ_GI_HIT_UV_WRAP=1
+        SsgiDxrUpsample,       ///< SsgiUpsampleCS UZ_GATHER_DXR=1;UZ_GI_HIT_SPECULAR=1;UZ_GI_HIT_PERMESH=1
+        SsgiDxrUpsampleWrapUv, ///< SsgiUpsampleCS the above + UZ_GI_HIT_UV_WRAP=1
+        Count
+    };
+    [[nodiscard]] RHIPipelineHandle GetGiHitPerMesh(GiHitPerMeshVariant variant);
 
     /// Returns the SSGI spatial denoise compute pipeline.
     ///

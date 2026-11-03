@@ -387,6 +387,57 @@ RHIPipelineHandle PipelineLibrary::GetGiHitUvWrap(GiHitUvWrapVariant variant) {
     return m_giHitUvWrap[i];
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// r.GI.HitMaterial.PerMesh permutations (UZ_GI_HIT_PERMESH=1; docs/analysis/
+// lumen-radiance-cache-stability/08-per-mesh-hit-material section 7.2): the DXR hit-specular gather
+// trace and upsample, plain and UV-wrap, each with its own define string plus the per-mesh define,
+// built on first use only - the same mechanism as the UV-wrap permutations above. Only the DXR
+// gather is permuted: an SDF hit has no mesh identity, and the TLAS writers have no HitSpecular
+// variant to extend yet.
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace {
+// Indexed by PipelineLibrary::GiHitPerMeshVariant.
+constexpr GiHitUvWrapSource kGiHitPerMeshSources[] = {
+    {EngineShader::SsgiTraceCS,    "UZ_GATHER_DXR=1;UZ_GI_HIT_SPECULAR=1;UZ_GI_HIT_PERMESH=1",                      "SSGI_DXRTrace_HitSpecular_PerMesh"},
+    {EngineShader::SsgiTraceCS,    "UZ_GATHER_DXR=1;UZ_GI_HIT_SPECULAR=1;UZ_GI_HIT_PERMESH=1;UZ_GI_HIT_UV_WRAP=1", "SSGI_DXRTrace_HitSpecular_WrapUv_PerMesh"},
+    {EngineShader::SsgiUpsampleCS, "UZ_GATHER_DXR=1;UZ_GI_HIT_SPECULAR=1;UZ_GI_HIT_PERMESH=1",                      "SSGI_DXRUpsample_HitSpecular_PerMesh"},
+    {EngineShader::SsgiUpsampleCS, "UZ_GATHER_DXR=1;UZ_GI_HIT_SPECULAR=1;UZ_GI_HIT_PERMESH=1;UZ_GI_HIT_UV_WRAP=1", "SSGI_DXRUpsample_HitSpecular_WrapUv_PerMesh"},
+};
+static_assert(sizeof(kGiHitPerMeshSources) / sizeof(kGiHitPerMeshSources[0])
+                  == static_cast<size_t>(PipelineLibrary::GiHitPerMeshVariant::Count),
+              "one source per GiHitPerMeshVariant");
+} // namespace
+
+RHIPipelineHandle PipelineLibrary::GetGiHitPerMesh(GiHitPerMeshVariant variant) {
+    // Every entry traces the scene TLAS with an inline RayQuery.
+    if (!m_initialized || !m_device->SupportsRayTracing()) return RHIPipelineHandle::Invalid();
+    const size_t i = static_cast<size_t>(variant);
+    const GiHitUvWrapSource& source = kGiHitPerMeshSources[i];
+    if (m_giHitPerMesh[i].IsValid()) return m_giHitPerMesh[i];
+    if (m_giHitPerMesh[i].IsFailed() || m_giHitPerMeshCS[i].IsFailed()) return RHIPipelineHandle::Invalid();
+    if (!m_giHitPerMeshCS[i].IsValid()) {
+        m_giHitPerMeshCS[i] = m_shaderMgr->CreateShaderWithDefines(source.shader, RHIShaderStage::Compute, source.defines);
+        if (!m_giHitPerMeshCS[i].IsValid()) {
+            UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile the {} variant ({}); the pass keeps its hit-specular pipeline (scene-constant hit material)",
+                   source.debugName, source.defines);
+            m_giHitPerMeshCS[i] = RHIShaderHandle::Failed();
+            return RHIPipelineHandle::Invalid();
+        }
+    }
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_giHitPerMeshCS[i];
+    desc.debugName     = source.debugName;
+    m_giHitPerMesh[i] = m_device->CreateComputePipeline(desc);
+    if (!m_giHitPerMesh[i].IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create {} pipeline", source.debugName);
+        m_giHitPerMesh[i] = RHIPipelineHandle::Failed();
+        return RHIPipelineHandle::Invalid();
+    }
+    UZ_LOG(Renderer, Info, "PipelineLibrary: created {} pipeline", source.debugName);
+    return m_giHitPerMesh[i];
+}
+
 bool PipelineLibrary::EnsureSsgiSpatialDenoiseShader() {
     if (m_ssgiSpatialDenoiseCS.IsValid()) return true;
 

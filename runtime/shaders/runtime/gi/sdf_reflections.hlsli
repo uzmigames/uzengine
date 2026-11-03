@@ -62,6 +62,13 @@ struct SdfReflectionScene {
     /// Set by the gather shaders only; the deferred PS never compiles this permutation.
     float hitSpecularRoughness;
     uint hitSpecularLutSrv;
+#ifdef UZ_GI_HIT_PERMESH
+    /// r.GI.HitMaterial.PerMesh (doc 08 section 7.3): the per-mesh roughness / metallic sibling table
+    /// (StructuredBuffer<GIMeshMaterialExt> SRV, 0xffffffff = none: every hit keeps the scene constant)
+    /// and the floor on a hit's authored roughness. Set by the DXR gather permutations only.
+    uint hitMaterialExtSrv;
+    float hitMinRoughness;
+#endif
 #endif
 };
 

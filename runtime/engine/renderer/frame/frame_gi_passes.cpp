@@ -157,17 +157,20 @@ void SceneRenderer::RegisterSSGIPasses(rg::RgBuilder& rgBuilder, FrameContext& c
     const uint32_t requestedDxr = dxrCvar ? static_cast<uint32_t>(dxrCvar->value) : 0u;
     const bool dxrReady = m_rtManager && m_rtManager->IsReady();
     const uint32_t materialSrv = requestedDxr && dxrReady ? UpdateGIMaterialTable(ctx) : UINT32_MAX;
+    // r.GI.HitMaterial.PerMesh (doc 08 section 4.3): the sibling roughness / metallic table built by the
+    // same call; bound only by the UZ_GI_HIT_PERMESH gather permutations (SSGIRenderer decides).
+    const uint32_t materialExtSrv = requestedDxr && dxrReady ? GetGIMaterialTableExtSrv() : UINT32_MAX;
     const uint32_t tlasSrv = dxrReady ? m_rtManager->GetTLASSRVIndex() : UINT32_MAX;
     const uint32_t dxrMode = SelectFinalGatherDxrMode(requestedDxr, ctx.perFrame.sdfDiffuseSamples != 0,
         restirCvar && restirCvar->value >= 1.0f, dxrReady,
         dxrReady ? m_rtManager->GetTLASInstanceCount() : 0u, tlasSrv, materialSrv);
 
-    rgBuilder.AddPass("SSGI", [&, dxrMode, tlasSrv, materialSrv](rg::RgPassBuilder& pb) {
+    rgBuilder.AddPass("SSGI", [&, dxrMode, tlasSrv, materialSrv, materialExtSrv](rg::RgPassBuilder& pb) {
         pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);
         pb.Read(ctx.normalRes, RHIResourceState::ShaderResource);
         pb.Read(ctx.velocityRes, RHIResourceState::ShaderResource);
 
-        pb.SetExecutionCallback([this, &ctx, dxrMode, tlasSrv, materialSrv](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
+        pb.SetExecutionCallback([this, &ctx, dxrMode, tlasSrv, materialSrv, materialExtSrv](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
             UZ_PROFILE_SCOPE("SSGI::Execute");
 
             SSGIRenderParams ssgiParams{};
@@ -196,6 +199,7 @@ void SceneRenderer::RegisterSSGIPasses(rg::RgBuilder& rgBuilder, FrameContext& c
             ssgiParams.gatherDxrMode = dxrMode;
             ssgiParams.gatherTlasSrv = tlasSrv;
             ssgiParams.gatherMaterialSrv = materialSrv;
+            ssgiParams.gatherMaterialExtSrv = materialExtSrv;
             ssgiParams.resetHistory = !ctx.temporal.matrixValid;
             ssgiParams.sceneRevision = m_globalDistanceField.GetSceneRevision();
             ssgiParams.lightingGeneration = m_surfaceCache.GetLightingGeneration();

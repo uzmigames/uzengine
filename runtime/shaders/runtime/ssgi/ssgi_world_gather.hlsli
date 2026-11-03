@@ -15,6 +15,17 @@
 #ifndef UZ_SSGI_HIT_SPECULAR_ROUGHNESS_BITS
 #define UZ_SSGI_HIT_SPECULAR_ROUGHNESS_BITS 0u
 #endif
+#ifdef UZ_GI_HIT_PERMESH
+/// r.GI.HitMaterial.PerMesh (doc 08 section 7.3): the including shader names the root DWORDs holding the
+/// per-mesh material sibling table SRV and the roughness floor (float bits) before this include; an unnamed
+/// table = no per-mesh data, every hit keeps the scene constant.
+#ifndef UZ_SSGI_HIT_MATERIAL_EXT_SRV
+#define UZ_SSGI_HIT_MATERIAL_EXT_SRV 0xffffffffu
+#endif
+#ifndef UZ_SSGI_HIT_MIN_ROUGHNESS_BITS
+#define UZ_SSGI_HIT_MIN_ROUGHNESS_BITS 0u
+#endif
+#endif
 #endif
 /// @constants Four clipmaps and the shared sample count; intensity is applied once to E/pi.
 SdfReflectionScene BuildSurfaceScene() {
@@ -38,6 +49,10 @@ SdfReflectionScene BuildSurfaceScene() {
 #ifdef UZ_GI_HIT_SPECULAR
     scene.hitSpecularRoughness = asfloat(UZ_SSGI_HIT_SPECULAR_ROUGHNESS_BITS);
     scene.hitSpecularLutSrv = brdfLutSrvIndex;   // the PerFrameCB mirror (ssgi_surface.hlsli), sentinel before the IBL bake
+#ifdef UZ_GI_HIT_PERMESH
+    scene.hitMaterialExtSrv = UZ_SSGI_HIT_MATERIAL_EXT_SRV;
+    scene.hitMinRoughness = asfloat(UZ_SSGI_HIT_MIN_ROUGHNESS_BITS);
+#endif
 #endif
     return scene;
 }

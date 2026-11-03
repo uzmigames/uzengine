@@ -165,4 +165,73 @@ float3 GITrace_HitEmissive(uint meshId, uint primIndex, float2 bary, uint materi
     return emissive;
 }
 
+#ifdef UZ_GI_HIT_PERMESH
+// ─── r.GI.HitMaterial.PerMesh: the hit's own roughness and metallic ───
+// (docs/analysis/lumen-radiance-cache-stability/08-per-mesh-hit-material.md section 5.1). Only the
+// UZ_GI_HIT_PERMESH=1 gather permutations compile this block; the default pipelines keep the text above.
+
+/// Mirrors GIMeshMaterialExtGPU (path_tracer_pass.h, 32 bytes): the sibling of GIMeshMaterial, indexed by
+/// the same TLAS InstanceID, carrying what the primary record has no slot for.
+struct GIMeshMaterialExt {
+    uint  roughnessSrv;         ///< ORM map (G = roughness, B = metallic) under materialFlags bit 2, else the roughness map (R).
+    uint  metallicSrv;          ///< Metallic map (R); unused under ORM.
+    uint  materialFlags;        ///< DrawCommand::materialFlags (bit 2 = ORM packed).
+    uint  padding0;
+    float roughnessMultiplier;
+    float metallicMultiplier;
+    uint2 padding1;
+};
+
+/// The roughness / metallic / ORM taps follow the albedo tap's sampler exactly: the WRAP sampler under
+/// r.GI.HitMaterial.WrapUv (a tiled ORM map would otherwise read its edge texel), else the bilinear clamp.
+#ifdef UZ_GI_HIT_UV_WRAP
+#define UZ_GI_HIT_MATERIAL_SAMPLER UZ_GI_HIT_WRAP_SAMPLER
+#else
+#define UZ_GI_HIT_MATERIAL_SAMPLER linearClamp
+#endif
+
+/// The hit's roughness and metallic: the sibling table at the triangle UV, the path tracer's rule
+/// (pathtracer_closesthit.hlsl: both default to 1, the ORM map's G/B or the separate maps' R, then
+/// `saturate(x * multiplier)`, so a missing map yields the multiplier itself - the G-buffer's value).
+/// False when either table is unbound or the mesh has no raw views (the caller keeps the scene-constant
+/// path); the sentinel and firewall policies are GITrace_HitSurface's.
+bool GITrace_HitRoughnessMetallic(uint meshId, uint primIndex, float2 bary, uint materialTableSrv,
+                                  uint materialExtSrv, out float roughness, out float metallic) {
+    roughness = 1.0;
+    metallic = 0.0;
+    if (materialTableSrv == kGITraceSentinelSrv || materialExtSrv == kGITraceSentinelSrv) return false;
+    StructuredBuffer<GIMeshMaterial> table = ResourceDescriptorHeap[materialTableSrv];
+    GIMeshMaterial mat = table[meshId];
+    if (mat.vbSrv == kGITraceSentinelSrv || mat.ibSrv == kGITraceSentinelSrv) return false;
+    StructuredBuffer<GIMeshMaterialExt> extTable = ResourceDescriptorHeap[materialExtSrv];
+    GIMeshMaterialExt ext = extTable[meshId];
+    float2 uv = GITrace_HitUV(mat, primIndex, bary);
+    float2 safeUv = (isfinite(uv.x) && isfinite(uv.y)) ? uv : float2(0.0, 0.0);
+    // The path tracer's defaults: no map -> the multiplier is the value (a scalar-authored metal reads as one).
+    roughness = 1.0;
+    metallic = 1.0;
+    if ((ext.materialFlags & 4u) != 0u && ext.roughnessSrv != kGITraceSentinelSrv) {
+        Texture2D<float4> orm = ResourceDescriptorHeap[NonUniformResourceIndex(ext.roughnessSrv)];
+        float3 channels = orm.SampleLevel(UZ_GI_HIT_MATERIAL_SAMPLER, safeUv, 0.0).rgb;
+        roughness = channels.g;
+        metallic = channels.b;
+    } else {
+        if (ext.roughnessSrv != kGITraceSentinelSrv) {
+            Texture2D<float4> roughnessTex = ResourceDescriptorHeap[NonUniformResourceIndex(ext.roughnessSrv)];
+            roughness = roughnessTex.SampleLevel(UZ_GI_HIT_MATERIAL_SAMPLER, safeUv, 0.0).r;
+        }
+        if (ext.metallicSrv != kGITraceSentinelSrv) {
+            Texture2D<float4> metallicTex = ResourceDescriptorHeap[NonUniformResourceIndex(ext.metallicSrv)];
+            metallic = metallicTex.SampleLevel(UZ_GI_HIT_MATERIAL_SAMPLER, safeUv, 0.0).r;
+        }
+    }
+    roughness = saturate(roughness * ext.roughnessMultiplier);
+    metallic = saturate(metallic * ext.metallicMultiplier);
+    // Firewall: a bad read may mis-shade this hit but must never NaN-poison the path.
+    if (!isfinite(roughness)) roughness = 1.0;
+    if (!isfinite(metallic)) metallic = 0.0;
+    return true;
+}
+#endif // UZ_GI_HIT_PERMESH
+
 #endif // UZ_GI_HIT_MATERIAL_HLSLI

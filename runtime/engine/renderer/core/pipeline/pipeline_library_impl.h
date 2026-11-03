@@ -169,6 +169,9 @@
     /// The UZ_GI_HIT_UV_WRAP=1 permutations (r.GI.HitMaterial.WrapUv), indexed by GiHitUvWrapVariant;
     /// Failed() once a compile failed so it is never retried.
     RHIShaderHandle m_giHitUvWrapCS[static_cast<size_t>(GiHitUvWrapVariant::Count)] = {};
+    /// The UZ_GI_HIT_PERMESH=1 permutations (r.GI.HitMaterial.PerMesh), indexed by GiHitPerMeshVariant;
+    /// Failed() once a compile failed so it is never retried.
+    RHIShaderHandle m_giHitPerMeshCS[static_cast<size_t>(GiHitPerMeshVariant::Count)] = {};
     RHIShaderHandle m_ssgiSpatialDenoiseCS     = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssgiTemporalAccumCS      = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssgiBilateralUpsampleCS  = RHIShaderHandle::Invalid();
@@ -268,6 +271,7 @@
     RHIPipelineHandle m_ssgiUpsampleHitSpecular    = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssgiDxrUpsampleHitSpecular = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_giHitUvWrap[static_cast<size_t>(GiHitUvWrapVariant::Count)] = {};   ///< r.GI.HitMaterial.WrapUv permutations
+    RHIPipelineHandle m_giHitPerMesh[static_cast<size_t>(GiHitPerMeshVariant::Count)] = {}; ///< r.GI.HitMaterial.PerMesh permutations
     RHIPipelineHandle m_ssgiSpatialDenoise    = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssgiTemporalAccum     = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssgiBilateralUpsample = RHIPipelineHandle::Invalid();

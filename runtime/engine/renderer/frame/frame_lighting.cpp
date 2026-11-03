@@ -356,6 +356,11 @@ uint32_t SceneRenderer::UpdateGIMaterialTable(const FrameContext& ctx) {
             m_giMaterialTable = {};
             m_giMaterialTableSrv = UINT32_MAX;
         }
+        if (m_giMaterialTableExt.IsValid()) {
+            m_device->DestroyBuffer(m_giMaterialTableExt);
+            m_giMaterialTableExt = {};
+            m_giMaterialTableExtSrv = UINT32_MAX;
+        }
         RHIBufferDesc desc{};
         desc.sizeBytes = static_cast<uint64_t>(meshCap)
                        * sizeof(GIMeshMaterialGPU);
@@ -367,14 +372,29 @@ uint32_t SceneRenderer::UpdateGIMaterialTable(const FrameContext& ctx) {
         m_giMaterialTableSrv = m_giMaterialTable.IsValid()
             ? m_device->GetBufferSRVIndex(m_giMaterialTable)
             : UINT32_MAX;
+        // The per-mesh roughness / metallic sibling (r.GI.HitMaterial.PerMesh, doc 08 section 4.2):
+        // the same capacity and lifetime, bound only by the UZ_GI_HIT_PERMESH gather permutations.
+        RHIBufferDesc extDesc = desc;
+        extDesc.sizeBytes = static_cast<uint64_t>(meshCap)
+                          * sizeof(GIMeshMaterialExtGPU);
+        extDesc.stride    = sizeof(GIMeshMaterialExtGPU);
+        extDesc.debugName = "GI_MaterialTableExt";
+        m_giMaterialTableExt = m_device->CreateBuffer(extDesc);
+        m_giMaterialTableExtSrv = m_giMaterialTableExt.IsValid()
+            ? m_device->GetBufferSRVIndex(m_giMaterialTableExt)
+            : UINT32_MAX;
         m_giMaterialTableCapacity = meshCap;
     }
     if (m_giMaterialTable.IsValid()) {
         auto* entries = static_cast<GIMeshMaterialGPU*>(
             m_device->MapBuffer(m_giMaterialTable));
+        auto* extEntries = m_giMaterialTableExt.IsValid()
+            ? static_cast<GIMeshMaterialExtGPU*>(m_device->MapBuffer(m_giMaterialTableExt))
+            : nullptr;
         if (entries) {
             for (uint32_t e = 0; e < meshCap; ++e) {
                 entries[e] = {};
+                if (extEntries) extEntries[e] = {};
             }
             for (const auto& dc : ctx.drawList.GetCommands()) {
                 if (dc.meshId >= meshCap) continue;
@@ -387,6 +407,19 @@ uint32_t SceneRenderer::UpdateGIMaterialTable(const FrameContext& ctx) {
                     (dc.albedoSrvIndex != 0
                      && dc.albedoSrvIndex != UINT32_MAX)
                         ? dc.albedoSrvIndex : UINT32_MAX;
+                if (extEntries) {
+                    // The G-buffer's rule (gbuffer_ps.hlsl): an ORM-packed material binds its one
+                    // map to aoSrvIndex with materialFlags bit 2 (scene_sync.cpp), else the separate
+                    // roughness (R) and metallic (R) maps; slot 0 = unset, as the albedo above.
+                    const auto srv = [](uint32_t i) { return (i == 0 || i == UINT32_MAX) ? UINT32_MAX : i; };
+                    const bool orm = (dc.materialFlags & 0x4u) != 0u;
+                    auto& ext = extEntries[dc.meshId];
+                    ext.roughnessSrv        = srv(orm ? dc.aoSrvIndex : dc.roughnessSrvIndex);
+                    ext.metallicSrv         = orm ? UINT32_MAX : srv(dc.metallicSrvIndex);
+                    ext.materialFlags       = dc.materialFlags;
+                    ext.roughnessMultiplier = dc.roughnessMultiplier;
+                    ext.metallicMultiplier  = dc.metallicMultiplier;
+                }
                 // Phase D stage 2: the mesh's emission for the surface cache's
                 // cell lighting (colour x intensity, the LightBVH's convention;
                 // slot 0 = no texture). Unread by the path tracer.
@@ -423,6 +456,7 @@ uint32_t SceneRenderer::UpdateGIMaterialTable(const FrameContext& ctx) {
             }
             m_device->UnmapBuffer(m_giMaterialTable);
         }
+        if (extEntries) m_device->UnmapBuffer(m_giMaterialTableExt);
     }
     return m_giMaterialTableSrv;
 }

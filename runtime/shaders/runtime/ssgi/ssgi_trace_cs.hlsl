@@ -38,6 +38,13 @@ cbuffer RootConstants : register(b0) {
     // the sun lobe at the gather's hits (float bits). The DXR trio above is declared (unused) in the
     // HitSpecular-only variant too, so this DWORD sits at index 17 in every variant that declares it.
     uint g_hitSpecularRoughnessBits;
+#ifdef UZ_GI_HIT_PERMESH
+    // r.GI.HitMaterial.PerMesh (doc 08 section 7.3): the 19th and 20th DWORDs, the per-mesh roughness /
+    // metallic sibling table (StructuredBuffer<GIMeshMaterialExt> SRV, 0xffffffff = none) and the floor on
+    // a hit's authored roughness (float bits). Only the UZ_GI_HIT_PERMESH=1 permutations declare them.
+    uint g_hitMaterialExtSrv;
+    uint g_hitMinRoughnessBits;
+#endif
 #endif
 };
 
@@ -46,6 +53,10 @@ cbuffer RootConstants : register(b0) {
 #define UZ_SSGI_SURFACE_CACHE_PARAMS_SRV g_surfaceCacheParamsSrv
 #ifdef UZ_GI_HIT_SPECULAR
 #define UZ_SSGI_HIT_SPECULAR_ROUGHNESS_BITS g_hitSpecularRoughnessBits
+#ifdef UZ_GI_HIT_PERMESH
+#define UZ_SSGI_HIT_MATERIAL_EXT_SRV g_hitMaterialExtSrv
+#define UZ_SSGI_HIT_MIN_ROUGHNESS_BITS g_hitMinRoughnessBits
+#endif
 #endif
 #include "ssgi_world_gather.hlsli"
 #endif

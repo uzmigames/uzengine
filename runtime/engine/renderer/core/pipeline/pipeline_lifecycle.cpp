@@ -164,6 +164,10 @@ void PipelineLibrary::Shutdown() {
         destroyPipeline(pipeline);
         pipeline = RHIPipelineHandle::Invalid();   // a Failed() sentinel is retried after a re-Init
     }
+    for (auto& pipeline : m_giHitPerMesh) {
+        destroyPipeline(pipeline);
+        pipeline = RHIPipelineHandle::Invalid();
+    }
 
     // Destroy cached shaders
     auto destroyShader = [this](RHIShaderHandle& h) {
@@ -224,6 +228,10 @@ void PipelineLibrary::Shutdown() {
     destroyShader(m_radianceCacheTraceHitSpecularCS);
     destroyShader(m_radianceCacheTraceStabilityHitSpecularCS);
     for (auto& shader : m_giHitUvWrapCS) {
+        destroyShader(shader);
+        shader = RHIShaderHandle::Invalid();
+    }
+    for (auto& shader : m_giHitPerMeshCS) {
         destroyShader(shader);
         shader = RHIShaderHandle::Invalid();
     }

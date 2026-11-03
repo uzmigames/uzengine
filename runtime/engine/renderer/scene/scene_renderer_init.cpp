@@ -1422,6 +1422,11 @@ void SceneRenderer::Shutdown() {
         m_giMaterialTableSrv = UINT32_MAX;
         m_giMaterialTableCapacity = 0;
     }
+    if (m_giMaterialTableExt.IsValid()) {
+        m_device->DestroyBuffer(m_giMaterialTableExt);
+        m_giMaterialTableExt = RHIBufferHandle{};
+        m_giMaterialTableExtSrv = UINT32_MAX;
+    }
 
     // Destroy material graph pipeline
     if (m_materialPipeline) {

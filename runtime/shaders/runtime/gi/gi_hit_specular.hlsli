@@ -83,4 +83,70 @@ GiHitSunSpecular EvalGiHitSunSpecular(float3 N, float3 V, float3 L, float NoL, f
     return result;
 }
 
+#ifdef UZ_GI_HIT_PERMESH
+// ─── r.GI.HitMaterial.PerMesh: the same lobe with the LUT's directional albedo exposed ───
+// (docs/analysis/lumen-radiance-cache-stability/08-per-mesh-hit-material.md section 6). Only the
+// UZ_GI_HIT_PERMESH=1 gather permutations compile this block; EvalGiHitSunSpecular above is left verbatim
+// so the HitSpecular-only permutations preprocess to their committed text.
+
+/// @constants MaxBrdfCos = 3.2: the cap on `D * Vis * NoL` for the per-mesh lobe, sized to the lobe's
+/// normal-incidence peak at the r.GI.HitMaterial.PerMesh.MinRoughness default 0.4 (1 / (pi alpha^2) * 0.25 = 3.1
+/// for alpha = 0.16), so a hit at the floor keeps its energy except in the grazing sliver (peak 10.6 at NoV 0.25,
+/// trimmed to 3.2) and one hit returns at most 3.2 * F * E_sun * visibility. Doc 06's cap of 1.0 (kept verbatim for
+/// the scene-constant lobe above) was a no-op at its 0.7 roughness but removes 20-45% of a 0.4 lobe's energy and
+/// 74-87% of a 0.2 lobe's (_evidence/gi/per-mesh-hit/cap_energy.txt), which is exactly the glint that carries a
+/// metal's bounce: measured against the path tracer, 1.0 left the metal-hit ROIs at ~60% of the oracle (no lift) while
+/// 3.2 closes 77% / 56% of the gap with the per-ray p99.9 at 1.24x, no sparkles (REPORT.md section 6).
+static const float kGiHitPerMeshMaxBrdfCos = 3.2;
+
+struct GiHitMaterialSpecular {
+    float3 specularCos;    ///< f_spec(V, L) * NoL (the sun lobe toward the ray origin); zero when off.
+    float3 diffuseWeight;  ///< Per-channel (1 - E_spec - reserve) weight on the hit's Lambert terms; one when off.
+    float3 specularAlbedo; ///< E_spec = F0 * A + B at (NoV, roughness), the lobe's hemispherical albedo; zero when off.
+};
+
+/// The sun lobe at a hit with the hit's own roughness and F0 (`ComputeF0(baseColor, metallic)`), the D7
+/// weight for its Lambert terms, and `E_spec` itself so the probe-irradiance term can be coupled the same
+/// way: `(diffuseAlbedo * diffuseWeight + specularAlbedo) * E/pi` is this BRDF integrated against uniform
+/// incident radiance (the assumption the Lambert already makes of the SH probe), so a metal in shadow
+/// reflects the probe irradiance instead of going black. The early-outs are split: a sun below the hit's
+/// horizon (NoL <= 0, the common shadowed case) zeroes the lobe only and still reads the LUT, which depends
+/// on NoV and roughness, not on L; an unbound LUT, roughness <= 0 or NoV <= 0 is the full identity.
+GiHitMaterialSpecular EvalGiHitMaterialSpecular(float3 N, float3 V, float3 L, float NoL, float roughness,
+                                                float3 F0, uint lutSrv, SamplerState lutSampler) {
+    GiHitMaterialSpecular result;
+    result.specularCos = 0.0;
+    result.diffuseWeight = 1.0;
+    result.specularAlbedo = 0.0;
+    const float NoV = saturate(dot(N, V));
+    if (lutSrv == 0xffffffffu || roughness <= 0.0 || NoV <= 0.0) return result;
+
+    if (NoL > 0.0) {
+        // The lobe: GGX with the height-correlated Smith visibility and Schlick Fresnel (F90 = 1), capped at
+        // the per-mesh bound (one hit returns at most kGiHitPerMeshMaxBrdfCos * F * E_sun * visibility).
+        const float3 H = normalize(V + L);
+        const float NoH = saturate(dot(N, H));
+        const float VoH = saturate(dot(V, H));
+        const float alpha = RoughnessToAlpha(roughness);
+        const float dv = min(D_GGX(alpha, NoH) * V_SmithGGXCorrelated(alpha, NoV, NoL) * NoL,
+                             kGiHitPerMeshMaxBrdfCos);
+        result.specularCos = dv * F_Schlick(F0, VoH);
+    }
+
+    // The D7 coupling (pathtracer_shared.hlsli EvaluatePBR): the LUT's directional albedo of this same
+    // lobe, clamped to texel centres, and the Lambert's remaining energy budget per channel.
+    Texture2D<float2> brdfLut = ResourceDescriptorHeap[lutSrv];
+    uint lutWidth, lutHeight;
+    brdfLut.GetDimensions(lutWidth, lutHeight);
+    const float2 halfTexel = 0.5 / float2(lutWidth, lutHeight);
+    const float2 ab = brdfLut.SampleLevel(lutSampler,
+        clamp(float2(NoV, roughness), halfTexel, 1.0 - halfTexel), 0);
+    result.specularAlbedo = F0 * ab.x + ab.y;
+    result.diffuseWeight = float3(PathDiffuseEnergy(result.specularAlbedo.r, NoV),
+                                  PathDiffuseEnergy(result.specularAlbedo.g, NoV),
+                                  PathDiffuseEnergy(result.specularAlbedo.b, NoV));
+    return result;
+}
+#endif // UZ_GI_HIT_PERMESH
+
 #endif // UZ_GI_HIT_SPECULAR_HLSLI

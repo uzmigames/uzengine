@@ -68,6 +68,21 @@ static auto* cv_HitMaterialWrapUv = UZ_CVAR_BOOL("r.GI.HitMaterial.WrapUv", fals
     "Sample the GI hit material's albedo/emissive texture with the WRAP sampler (a tiled UV reads the tiled "
     "content instead of the texture's edge texel) in the DXR final gather, the DDGI probe trace, the "
     "surface-cache feed/indirect writers and the RT reflections, as the raster path and the path tracer do");
+// Per-mesh hit material (docs/analysis/lumen-radiance-cache-stability/08-per-mesh-hit-material): the hit-vertex
+// sun lobe landed with a scene-constant roughness and F0 = 0.04 because the GI hit material carries no
+// roughness / metallic, and the DXR gather shades a metal's base colour as a white Lambertian. Opt-in: OFF
+// dispatches the unchanged pipelines (byte-identical DXIL); ON selects the UZ_GI_HIT_PERMESH=1 permutations
+// (a superset of HitSpecular) of the DXR gather trace/upsample, which read a 32-byte sibling material record.
+static auto* cv_HitMaterialPerMesh = UZ_CVAR_BOOL("r.GI.HitMaterial.PerMesh", false,
+    "Per-mesh roughness and metallic at the DXR final gather's hits (the draw's roughness/metallic/ORM maps and "
+    "multipliers, the path tracer's rule): F0 = lerp(0.04, baseColor, metallic), diffuse x (1 - metallic), the "
+    "probe term coupled by the LUT's E_spec. Requires r.GI.FinalGather.HitSpecular 1 and r.GI.FinalGather.DXR 1; "
+    "the SDF paths keep the scene-constant lobe");
+static auto* cv_HitMaterialPerMeshMinRoughness = UZ_CVAR_FLOAT("r.GI.HitMaterial.PerMesh.MinRoughness", 0.4f,
+    "Floor on a hit's authored roughness before the sun lobe and the LUT (the secondary-bounce glossy blur: a "
+    "smooth metal's glint is spread at equal energy so one ray stays bounded). The per-mesh lobe's cap on D*Vis*NoL "
+    "(3.2, gi_hit_specular.hlsli) is sized to the 0.4 default; below it the cap trims the glint's energy",
+    0.1f, 1.0f);
 // Screen-space ReSTIR GI (Lumen-parity phase C). Opt-in: 0 dispatches the unchanged gather trace.
 // File scope so command-line overrides register before the first frame (see SampleFrameOffset).
 static auto* cv_GIReSTIR = UZ_CVAR_INT("r.GI.ReSTIR", 0,
@@ -93,6 +108,14 @@ float SSGIRenderer::HitSpecularRoughness() {
 
 bool SSGIRenderer::HitMaterialWrapUvEnabled() {
     return cv_HitMaterialWrapUv->value >= 0.5f;
+}
+
+bool SSGIRenderer::HitMaterialPerMeshEnabled() {
+    return cv_HitMaterialPerMesh->value >= 0.5f;
+}
+
+float SSGIRenderer::HitMaterialPerMeshMinRoughness() {
+    return std::clamp(cv_HitMaterialPerMeshMinRoughness->value, 0.1f, 1.0f);
 }
 
 // HistoryCB: the previous view-projection plus the world boxes where the distance field changed this
@@ -500,6 +523,31 @@ void SSGIRenderer::Render(IRHICommandList* cmdList, const SSGIRenderParams& para
         m_hitUvWrap = hitUvWrap;
         UZ_LOG(Renderer, Info, "Final gather hit material UV wrap={}", hitUvWrap);
     }
+    // r.GI.HitMaterial.PerMesh (doc 08 section 7.4): a superset of HitSpecular on the DXR gather only (the SDF
+    // gather has no mesh identity at a hit), effective when the sibling material table is bound and both gather
+    // variants of the effective UV-wrap state compiled; a change of the effective state invalidates the temporal
+    // history exactly as a DXR-mode change does.
+    bool hitPerMesh = params.worldGather && dxrMode != 0u && hitSpecular && HitMaterialPerMeshEnabled()
+                   && params.gatherMaterialExtSrv != UINT32_MAX;
+    if (hitPerMesh) {
+        using Variant = PipelineLibrary::GiHitPerMeshVariant;
+        const bool variantsValid =
+            params.pipelines->GetGiHitPerMesh(hitUvWrap ? Variant::SsgiDxrTraceWrapUv : Variant::SsgiDxrTrace).IsValid()
+            && params.pipelines->GetGiHitPerMesh(hitUvWrap ? Variant::SsgiDxrUpsampleWrapUv : Variant::SsgiDxrUpsample).IsValid();
+        if (!variantsValid) {
+            if (!m_loggedHitPerMeshFallback) {
+                m_loggedHitPerMeshFallback = true;
+                UZ_LOG(Renderer, Warning, "Final gather HitMaterial.PerMesh: a UZ_GI_HIT_PERMESH variant failed to compile (hitUvWrap={}); running the scene-constant hit-specular pipelines", hitUvWrap);
+            }
+            hitPerMesh = false;
+        }
+    }
+    if (m_hitPerMesh != hitPerMesh) {
+        m_hasHistory = false;
+        m_restirHistoryValid = false;
+        m_hitPerMesh = hitPerMesh;
+        UZ_LOG(Renderer, Info, "Final gather per-mesh hit material={} minRoughness={}", hitPerMesh, HitMaterialPerMeshMinRoughness());
+    }
 
     if (!m_resourceStatesInitialized) {
         const RHITextureHandle textures[] = {
@@ -790,6 +838,11 @@ void SSGIRenderer::DispatchTrace(IRHICommandList* cmdList, const SSGIRenderParam
     if (m_hitUvWrap)
         pso = params.pipelines->GetGiHitUvWrap(m_hitSpecular ? PipelineLibrary::GiHitUvWrapVariant::SsgiDxrTraceHitSpecular
                                                              : PipelineLibrary::GiHitUvWrapVariant::SsgiDxrTrace);
+    // r.GI.HitMaterial.PerMesh (DXR + HitSpecular only; both variants validated in Render()): a superset define
+    // set, so it supersedes the choices above; two more root DWORDs (the sibling table SRV, the roughness floor).
+    if (m_hitPerMesh)
+        pso = params.pipelines->GetGiHitPerMesh(m_hitUvWrap ? PipelineLibrary::GiHitPerMeshVariant::SsgiDxrTraceWrapUv
+                                                            : PipelineLibrary::GiHitPerMeshVariant::SsgiDxrTrace);
     if (!pso.IsValid()) return;
 
     // Transition trace outputs to UAV
@@ -808,7 +861,7 @@ void SSGIRenderer::DispatchTrace(IRHICommandList* cmdList, const SSGIRenderParam
 
     // Root constants: 14 DWORDs matching ssgi_trace_cs.hlsl RootConstants (the 14th: Phase D stage 3),
     // + 3 under UZ_GATHER_DXR, + 1 under UZ_GI_HIT_SPECULAR (the 18th; the DXR trio is declared in that
-    // variant too so the index is stable).
+    // variant too so the index is stable), + 2 under UZ_GI_HIT_PERMESH (the 19th and 20th).
     struct SSGITraceRC {
         uint32_t depthSrvIndex;
         uint32_t normalSrvIndex;
@@ -828,8 +881,10 @@ void SSGIRenderer::DispatchTrace(IRHICommandList* cmdList, const SSGIRenderParam
         uint32_t gatherMaterialSrv;
         uint32_t gatherDxrMode;
         uint32_t hitSpecularRoughnessBits; // r.GI.FinalGather.HitSpecular.Roughness as float bits
+        uint32_t hitMaterialExtSrv;        // r.GI.HitMaterial.PerMesh: StructuredBuffer<GIMeshMaterialExtGPU> SRV (the 19th)
+        uint32_t hitMinRoughnessBits;      // r.GI.HitMaterial.PerMesh.MinRoughness as float bits (the 20th)
     };
-    static_assert(sizeof(SSGITraceRC) == 72, "14 legacy + 3 DXR + 1 HitSpecular DWORDs");
+    static_assert(sizeof(SSGITraceRC) == 80, "14 legacy + 3 DXR + 1 HitSpecular + 2 PerMesh DWORDs");
 
     SSGITraceRC rc{};
     rc.depthSrvIndex     = params.depthSrvIndex;
@@ -854,8 +909,12 @@ void SSGIRenderer::DispatchTrace(IRHICommandList* cmdList, const SSGIRenderParam
     rc.gatherDxrMode = m_gatherDxrMode;
     const float hitSpecularRoughness = HitSpecularRoughness();
     std::memcpy(&rc.hitSpecularRoughnessBits, &hitSpecularRoughness, 4);
+    rc.hitMaterialExtSrv = params.gatherMaterialExtSrv;
+    const float hitMinRoughness = HitMaterialPerMeshMinRoughness();
+    std::memcpy(&rc.hitMinRoughnessBits, &hitMinRoughness, 4);
 
-    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), m_hitSpecular ? 18 : (m_gatherDxrMode ? 17 : 14));
+    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc),
+                              m_hitPerMesh ? 20 : (m_hitSpecular ? 18 : (m_gatherDxrMode ? 17 : 14)));
 
     // PerFrameCB at b1
     cmdList->SetRootCBV(kSlotPerFrame, params.perFrameBuffer,
@@ -1400,6 +1459,10 @@ void SSGIRenderer::DispatchUpsample(IRHICommandList* cmdList, const SSGIRenderPa
     if (m_hitUvWrap)
         pso = params.pipelines->GetGiHitUvWrap(m_hitSpecular ? PipelineLibrary::GiHitUvWrapVariant::SsgiDxrUpsampleHitSpecular
                                                              : PipelineLibrary::GiHitUvWrapVariant::SsgiDxrUpsample);
+    // r.GI.HitMaterial.PerMesh (DXR + HitSpecular only; both variants validated in Render()): supersedes the above.
+    if (m_hitPerMesh)
+        pso = params.pipelines->GetGiHitPerMesh(m_hitUvWrap ? PipelineLibrary::GiHitPerMeshVariant::SsgiDxrUpsampleWrapUv
+                                                            : PipelineLibrary::GiHitPerMeshVariant::SsgiDxrUpsample);
     if (!pso.IsValid()) return;
 
     const int readIdx = m_historyIndex; // Just written by temporal pass
@@ -1419,7 +1482,8 @@ void SSGIRenderer::DispatchUpsample(IRHICommandList* cmdList, const SSGIRenderPa
     cmdList->SetPipeline(pso);
 
     // Root constants: 10 DWORDs matching ssgi_upsample_cs.hlsl, + 3 under UZ_GATHER_DXR, + 1 under
-    // UZ_GI_HIT_SPECULAR (the 14th; the DXR trio is declared in that variant too so the index is stable)
+    // UZ_GI_HIT_SPECULAR (the 14th; the DXR trio is declared in that variant too so the index is stable),
+    // + 2 under UZ_GI_HIT_PERMESH (the 15th and 16th)
     struct UpsampleRC {
         uint32_t ssgiHalfSrvIndex;
         uint32_t ssgiAOHalfSrvIndex;
@@ -1435,8 +1499,10 @@ void SSGIRenderer::DispatchUpsample(IRHICommandList* cmdList, const SSGIRenderPa
         uint32_t gatherMaterialSrv;
         uint32_t gatherDxrMode;
         uint32_t hitSpecularRoughnessBits; // r.GI.FinalGather.HitSpecular.Roughness as float bits
+        uint32_t hitMaterialExtSrv;        // r.GI.HitMaterial.PerMesh: StructuredBuffer<GIMeshMaterialExtGPU> SRV (the 15th)
+        uint32_t hitMinRoughnessBits;      // r.GI.HitMaterial.PerMesh.MinRoughness as float bits (the 16th)
     };
-    static_assert(sizeof(UpsampleRC) == 56, "10 legacy + 3 DXR + 1 HitSpecular DWORDs");
+    static_assert(sizeof(UpsampleRC) == 64, "10 legacy + 3 DXR + 1 HitSpecular + 2 PerMesh DWORDs");
 
     static auto* cv_UpsDepthSigma = UZ_CVAR_FLOAT("r.SSGI.UpsampleDepthSigma", 0.5f, "Upsample depth weight sigma", 0.1f, 2.0f);
     static auto* cv_UpsNormalPow  = UZ_CVAR_FLOAT("r.SSGI.UpsampleNormalSigma", 32.0f, "Upsample normal cosine power", 4.0f, 128.0f);
@@ -1458,8 +1524,12 @@ void SSGIRenderer::DispatchUpsample(IRHICommandList* cmdList, const SSGIRenderPa
     rc.gatherDxrMode = m_gatherDxrMode;
     const float hitSpecularRoughness = HitSpecularRoughness();
     std::memcpy(&rc.hitSpecularRoughnessBits, &hitSpecularRoughness, 4);
+    rc.hitMaterialExtSrv = params.gatherMaterialExtSrv;
+    const float hitMinRoughness = HitMaterialPerMeshMinRoughness();
+    std::memcpy(&rc.hitMinRoughnessBits, &hitMinRoughness, 4);
 
-    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), m_hitSpecular ? 14 : (m_gatherDxrMode ? 13 : 10));
+    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc),
+                              m_hitPerMesh ? 16 : (m_hitSpecular ? 14 : (m_gatherDxrMode ? 13 : 10)));
 
     cmdList->SetRootCBV(kSlotPerFrame, params.perFrameBuffer,
                         params.perFrameOffset, params.perFrameCpuPtr,

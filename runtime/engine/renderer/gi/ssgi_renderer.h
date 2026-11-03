@@ -109,6 +109,9 @@ struct SSGIRenderParams {
     uint32_t gatherDxrMode = 0;
     uint32_t gatherTlasSrv = UINT32_MAX;
     uint32_t gatherMaterialSrv = UINT32_MAX;
+    /// r.GI.HitMaterial.PerMesh (doc 08 section 4.3): the StructuredBuffer<GIMeshMaterialExtGPU> SRV of the
+    /// per-mesh roughness / metallic sibling table; UINT32_MAX = none (the per-mesh variants stay unselected).
+    uint32_t gatherMaterialExtSrv = UINT32_MAX;
     uint32_t receiverFrameIndex = 0; ///< Actual frame, independent of a frozen/offset sampling phase.
     uint32_t lightingGeneration = 0; ///< Surface-cache lighting changes, including local lights.
 };
@@ -225,6 +228,17 @@ public:
     /// its hits from the clipmap), the DDGI probe trace, the surface-cache writers and the RT reflections
     /// (frame_gi_passes.cpp). One source of truth for all of them.
     [[nodiscard]] static bool HitMaterialWrapUvEnabled();
+    /// `r.GI.HitMaterial.PerMesh` (docs/analysis/lumen-radiance-cache-stability/08-per-mesh-hit-material): the DXR
+    /// final gather shades each TLAS hit with the mesh's own roughness and metallic (the draw's roughness /
+    /// metallic / ORM maps and multipliers at the triangle UV, the path tracer's rule): F0 = lerp(0.04, baseColor,
+    /// metallic), the diffuse x (1 - metallic), the sun lobe at the authored roughness and the probe term coupled
+    /// by the LUT's E_spec. A superset of HitSpecular (requires it and DXR mode); the SDF paths keep the
+    /// scene-constant lobe. Default OFF: the default pipelines compile the unchanged text; ON selects the
+    /// `UZ_GI_HIT_PERMESH=1` permutations (PipelineLibrary::GetGiHitPerMesh).
+    [[nodiscard]] static bool HitMaterialPerMeshEnabled();
+    /// `r.GI.HitMaterial.PerMesh.MinRoughness`, clamped to [0.1, 1]: the floor on a hit's authored roughness
+    /// before the lobe and the LUT (the secondary-bounce glossy blur that bounds a smooth metal's glint).
+    [[nodiscard]] static float HitMaterialPerMeshMinRoughness();
 
     /// True once Render() has produced a valid output texture. Until then the
     /// result texture has never been written and must not be bound.
@@ -376,6 +390,11 @@ private:
     /// compiled); a change invalidates the temporal history exactly as a DXR-mode change does.
     bool m_hitUvWrap = false;
     bool m_loggedHitUvWrapFallback = false;     ///< One-time log: a UZ_GI_HIT_UV_WRAP gather variant failed to compile.
+    /// The effective r.GI.HitMaterial.PerMesh state this frame (the CVar AND DXR mode AND the effective HitSpecular
+    /// AND the sibling table bound AND both gather variants compiled); a change invalidates the temporal history
+    /// exactly as a DXR-mode change does.
+    bool m_hitPerMesh = false;
+    bool m_loggedHitPerMeshFallback = false;    ///< One-time log: a UZ_GI_HIT_PERMESH gather variant failed to compile.
     bool m_hasHistory = false;
     uint64_t m_sceneRevision = 0;
     uint32_t m_lastFrame = UINT32_MAX;

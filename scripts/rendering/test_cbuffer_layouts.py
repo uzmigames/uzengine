@@ -482,6 +482,10 @@ TIER_C = [
                  'runtime/engine/renderer/gi/global_distance_field.h', 'GdfMeshSdfGPU'),
     layout_entry('gi/gi_trace_common.hlsli', 'GIMeshMaterial',
                  PASSES + 'pathtracing/path_tracer_pass.h', 'GIMeshMaterialGPU'),
+    # 32-byte per-mesh roughness / metallic sibling of GIMeshMaterial (r.GI.HitMaterial.PerMesh, doc 08):
+    # the StructuredBuffer only the UZ_GI_HIT_PERMESH gather permutations bind, same TLAS InstanceID index.
+    layout_entry('gi/gi_hit_material.hlsli', 'GIMeshMaterialExt',
+                 PASSES + 'pathtracing/path_tracer_pass.h', 'GIMeshMaterialExtGPU'),
     # 80-byte rect area light (phase3a 3.33.0): the per-frame StructuredBuffer the UZ_RECT_LIGHTS
     # lighting permutation reads through LightingCB::rectLightsSrv.
     layout_entry('lighting/light_types.hlsli', 'RectLightData', PARAMS + 'constant_buffers.h', 'RectLightData'),
