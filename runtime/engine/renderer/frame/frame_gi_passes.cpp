@@ -82,11 +82,12 @@ static auto* cv_RoughReconstruct = UZ_CVAR_BOOL("r.RayTracing.Reflections.RoughR
 // reprojected by the reflection's curvature-corrected virtual point instead of the surface motion vector,
 // so the cap under camera motion follows the lobe's parallax instead of dropping to 4 frames (the white
 // cloud on rough metals, the Sponza specular shimmer). A UZ_ROUGH_MOTION_AWARE=1 permutation; OFF is the
-// unchanged pipeline. Default OFF until the moving-camera gates of doc 09 section 6 are met.
-static auto* cv_RoughMotionAware = UZ_CVAR_BOOL("r.RayTracing.Reflections.RoughReconstruct.MotionAware", false,
+// prior pipeline. Default ON since the combined moving-camera validation with the SSR temporal fix below
+// (docs/analysis/lumen-radiance-cache-stability/09 section 6 gates; evidence gi/reflection-flip).
+static auto* cv_RoughMotionAware = UZ_CVAR_BOOL("r.RayTracing.Reflections.RoughReconstruct.MotionAware", true,
     "Rough reconstruction under camera motion: reproject the history by the curvature-corrected virtual "
     "reflected point, parallax-driven history cap, short-history firefly clamp, curvature-gated spatial "
-    "support (0 = today's surface reprojection with the 4-frame motion cap); default off");
+    "support (0 = the prior surface reprojection with the 4-frame motion cap); default on");
 static auto* cv_RoughMotionAwareFireflyK = UZ_CVAR_FLOAT("r.RayTracing.Reflections.RoughReconstruct.MotionAware.FireflyK", 8.f,
     "Motion-aware rough reconstruction: short-history firefly limit as a multiple of max(history luminance, "
     "3x3 median of the current neighbourhood); relaxes 2x per frame from half the short history", 1.f, 64.f);
@@ -108,13 +109,14 @@ static auto* cv_RoughMotionAwareDebug = UZ_CVAR_INT("r.RayTracing.Reflections.Ro
 // only 0.83-0.86x of the raw ray-texel energy once converged. A UZ_SSR_TEMPORAL_FIX=1 permutation corrects the
 // four (the virtual hit is the thin-lens image of the motion-aware reconstruction, so a curved receiver's
 // reflection reprojects too), plus a surface-distance disocclusion test, a sample count, a smoothed lens hit
-// distance and a lighting-epoch reset, which a history that now reprojects needs; OFF is the unchanged pass.
-// Default OFF until validated against the raw ray texels.
-static auto* cv_SSRTemporalFix = UZ_CVAR_BOOL("r.RayTracing.Reflections.TemporalFix", false,
+// distance and a lighting-epoch reset, which a history that now reprojects needs; OFF is the prior pass.
+// Default ON: validated against the raw ray texels static and under camera motion together with the
+// motion-aware reconstruction above (evidence gi/reflection-flip); 0 restores the prior pass.
+static auto* cv_SSRTemporalFix = UZ_CVAR_BOOL("r.RayTracing.Reflections.TemporalFix", true,
     "SSR / RT reflection temporal filter: velocity in pixels -> UV reprojection, thin-lens virtual hit behind the "
     "surface (receiver curvature from the g-buffer), g-buffer roughness history cap (4..32 frames, scaled by the "
     "lobe's parallax), variance clip widened by the texel's temporal variance so the converged energy matches the "
-    "raw ray texels, surface-distance disocclusion, lighting-epoch reset (0 = today's pass); default off");
+    "raw ray texels, surface-distance disocclusion, lighting-epoch reset (0 = the prior pass); default on");
 static auto* cv_SSRTemporalFixClipFloor = UZ_CVAR_FLOAT("r.RayTracing.Reflections.TemporalFix.ClipFloor", 2.0f,
     "SSR temporal fix: the clip box grows by gamma x this x (temporal sigma / 3), the sampling noise of the 3x3 mean "
     "of the texel's own signal; 0 = today's box", 0.0f, 8.0f);
