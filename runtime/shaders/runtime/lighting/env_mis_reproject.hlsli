@@ -62,4 +62,60 @@ bool ReprojectEnvMisHistory(int2 px, float3 worldPos, float3 N, Texture2D<float4
     return true;
 }
 
+#if UZ_ENVMIS_TEMPORAL
+/// r.EnvMIS.Temporal (the UZ_ENVMIS_TEMPORAL=1 permutation of env_mis_resolve_cs.hlsl): the fetch above on the
+/// accumulator history instead of the fp16 colour history (RGBA32F: xyz the slow running average, w the fast
+/// reference packed as two halves: the luminance accumulated at the r.EnvMIS.Denoise weights, the accumulated
+/// standard deviation of one resolved estimate). The running average's per-frame step is far below an fp16 ulp,
+/// so it is kept in fp32; the fp16 history receives the same value for the lighting pass. The loop and its
+/// validation rule are those of ReprojectEnvMisHistory, kept verbatim there so the permutations without this one
+/// compile unchanged; a change to the rule belongs in both.
+float2 UnpackEnvMisMoments(float w) {
+    uint bits = asuint(w);
+    return float2(f16tof32(bits & 0xffffu), f16tof32(bits >> 16u));
+}
+
+float PackEnvMisMoments(float2 m) {
+    return asfloat(f32tof16(m.x) | (f32tof16(m.y) << 16u));
+}
+
+bool ReprojectEnvMisAccumulator(int2 px, float3 worldPos, float3 N, Texture2D<float4> accumTex,
+                                Texture2D<float4> geometryTex, Texture2D<float2> velocityTex,
+                                out float3 historyColor, out float historyCount, out float2 historyMoments) {
+    historyColor   = float3(0, 0, 0);
+    historyCount   = 0.0;
+    historyMoments = float2(0, 0);
+    float2 prevPixel = float2(px) - velocityTex.Load(int3(px, 0));
+    if (any(prevPixel < -0.5) || any(prevPixel > float2(g_width, g_height) - 0.5)) return false;
+    int2 base = int2(floor(prevPixel));
+    float2 f = prevPixel - float2(base);
+    float3 prevCameraPos = float3(g_prevCameraPosX, g_prevCameraPosY, g_prevCameraPosZ);
+    float expectedM = length(prevCameraPos - worldPos) * 0.01;
+    float3 colorSum = float3(0, 0, 0);
+    float2 momentSum = float2(0, 0);
+    float countSum = 0.0, weightSum = 0.0;
+    [unroll] for (int y = 0; y < 2; ++y) {
+        [unroll] for (int x = 0; x < 2; ++x) {
+            int2 hp = base + int2(x, y);
+            if (any(hp < 0) || any(hp >= int2(g_width, g_height))) continue;
+            float4 g = geometryTex.Load(int3(hp, 0));
+            if (g.w <= 0.0) continue;
+            if (dot(N, OctDecode(g.xy)) < kEnvMisNormalCos) continue;
+            if (abs(g.z - expectedM) > kEnvMisDistanceTol * expectedM + kEnvMisDistanceFloorM) continue;
+            float w = (x == 0 ? 1.0 - f.x : f.x) * (y == 0 ? 1.0 - f.y : f.y);
+            float4 a = accumTex.Load(int3(hp, 0));
+            colorSum  += a.rgb * w;
+            momentSum += UnpackEnvMisMoments(a.w) * w;
+            countSum  += g.w * w;
+            weightSum += w;
+        }
+    }
+    if (weightSum <= 1e-4) return false;
+    historyColor   = colorSum / weightSum;
+    historyCount   = countSum / weightSum;
+    historyMoments = momentSum / weightSum;
+    return true;
+}
+#endif // UZ_ENVMIS_TEMPORAL
+
 #endif // UZ_ENV_MIS_REPROJECT_HLSLI

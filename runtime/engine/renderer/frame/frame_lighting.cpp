@@ -91,6 +91,19 @@ static auto* cv_EnvMISDenoiseRadius = UZ_CVAR_INT("r.EnvMIS.Denoise.Radius", 3,
     "r.EnvMIS.Denoise: kernel radius in pixels (a (2r+1)^2 footprint, Gaussian sigma 0.6 r)", 1, 4);
 static auto* cv_EnvMISDenoiseLobe = UZ_CVAR_FLOAT("r.EnvMIS.Denoise.LobeFraction", 0.5f,
     "r.EnvMIS.Denoise: angular sigma of the normal weight as a fraction of the GGX alpha (the lobe's median half-vector angle); smaller keeps more detail, larger filters more", 0.05f, 2.f);
+// The resolve leaves a residual at the 0.05 EMA floor: 16 % of the resolved estimate's noise, a slow mottle at the
+// kernel's scale that still boils in a close-up, and a lower floor alone would lag every lighting or view change by
+// as many frames. r.EnvMIS.Temporal keeps the r.EnvMIS.Denoise accumulation as a fast reference (luminance + the
+// estimate's noise, measured from the resolve footprint) and outputs a running average up to MaxCount samples whose
+// luminance is clamped every frame to that reference +- Clamp x its noise, so a stable surface converges as far as
+// the cap while a change is followed as before (env_mis_resolve_cs.hlsl, UZ_ENVMIS_TEMPORAL=1). 0 = the resolve of
+// ccf40e95.
+static auto* cv_EnvMISTemporal = UZ_CVAR_BOOL("r.EnvMIS.Temporal", true,
+    "Deepen the environment-MIS specular accumulation on stable surfaces (running average up to MaxCount, clamped to the r.EnvMIS.Denoise result +- Clamp x its noise; needs r.EnvMIS.Denoise); 0 = the 0.05 EMA floor");
+static auto* cv_EnvMISTemporalMaxCount = UZ_CVAR_INT("r.EnvMIS.Temporal.MaxCount", 256,
+    "r.EnvMIS.Temporal: sample cap of the running average (the EMA floor becomes 1/MaxCount on a stable surface)", 20, 4096);
+static auto* cv_EnvMISTemporalClamp = UZ_CVAR_FLOAT("r.EnvMIS.Temporal.Clamp", 2.5f,
+    "r.EnvMIS.Temporal: how far the output may stray from the r.EnvMIS.Denoise result, in that result's own noise standard deviations (smaller follows changes closer, larger converges deeper)", 0.5f, 16.f);
 
 namespace uz {
 
@@ -310,6 +323,9 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                 misParams.denoise             = envMisReproject && cv_EnvMISDenoise->value > 0.5f;
                 misParams.denoiseRadius       = static_cast<uint32_t>(cv_EnvMISDenoiseRadius->value);
                 misParams.denoiseLobeFraction = cv_EnvMISDenoiseLobe->value;
+                misParams.temporal            = misParams.denoise && cv_EnvMISTemporal->value > 0.5f;
+                misParams.temporalMaxCount    = static_cast<uint32_t>(cv_EnvMISTemporalMaxCount->value);
+                misParams.temporalClamp       = cv_EnvMISTemporalClamp->value;
 
                 m_envMISPass->Execute(cmd, *m_envMapSampler, misParams);
             });

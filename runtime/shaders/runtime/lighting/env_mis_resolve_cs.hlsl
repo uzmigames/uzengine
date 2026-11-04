@@ -22,7 +22,30 @@
 /// the UZ_ENVMIS_REPROJECT permutation (env_mis_reproject.hlsli), and the history, geometry and output layouts are
 /// the same, so the two paths can be switched at any frame.
 ///
-/// Root constants at b0 (21): see RootConstants. No PerFrameCB: the camera position comes with the constants.
+/// r.EnvMIS.Temporal (the UZ_ENVMIS_TEMPORAL=1 permutation) deepens that accumulation where the surface is stable:
+/// the resolve leaves a residual at the 0.05 floor (16 % of the resolved estimate's noise, a slow mottle at the
+/// kernel's scale), and a lower floor alone would lag every change by as many frames. Two histories are kept in an
+/// RGBA32F accumulator (fp32: the running average's per-frame step at 256 samples is a tenth of an fp16 ulp, which
+/// an fp16 store would round away). The FAST reference is the accumulation above, on the resolved luminance (w, a
+/// packed half), next to the accumulated noise standard deviation of one resolved estimate (w, the other half),
+/// measured each frame from the footprint itself (the weighted variance of the independent 8-spp estimates the
+/// kernel averaged, divided by the effective tap count; a spatial measure, so a changing signal cannot inflate it).
+/// The SLOW history (xyz), the output, is the plain running average 1/count with the count cap raised to
+/// g_temporalParams' MaxCount, and its luminance is clamped every frame to the fast reference +- Clamp x the fast
+/// reference's own noise (sigma x sqrt(w / (2 - w)), the steady state of an EMA of weight w): the output can never
+/// sit farther from the r.EnvMIS.Denoise result than that reference's noise band, so a light step or a sliding
+/// reflection is followed as before. The band widens with the count (full at the 64 samples of the old cap): a
+/// pixel that just restarted or was just corrected is held close to the reference while the reference itself is
+/// still converging, a settled one is left to its depth. A clamp halves the count (never below the 1/alpha the fast
+/// path is worth), so a real change collapses the slow path onto the fast one within a few frames and the deep
+/// average restarts cleanly once the surface is still again; the rare clamp of a static pixel (a 2.5-sigma
+/// excursion of the reference) costs it half its depth, which it regains in as many frames. The fp16 history
+/// receives the same output for the lighting pass, so its layout and the geometry history are those of the
+/// permutation without this.
+/// @ref Karis 2014 (neighbourhood clamping of the history), Schied et al. 2017 (luminance variance as the gate)
+///
+/// Root constants at b0 (21; 24 with UZ_ENVMIS_TEMPORAL): see RootConstants. No PerFrameCB: the camera position
+/// comes with the constants.
 
 #ifndef UZ_BINDLESS
 [numthreads(1, 1, 1)]
@@ -55,6 +78,13 @@ cbuffer RootConstants : register(b0) {
     float g_temporalAlpha;          ///< EMA floor (0.05 = 95% history, 5% new) once the count has grown past 1/alpha
     uint  g_radius;                 ///< Kernel radius in pixels (r.EnvMIS.Denoise.Radius)
     float g_lobeFraction;           ///< Normal-weight sigma as a fraction of the GGX alpha (r.EnvMIS.Denoise.LobeFraction)
+#if UZ_ENVMIS_TEMPORAL
+    // r.EnvMIS.Temporal (the UZ_ENVMIS_TEMPORAL=1 permutation): the fast-reference history and the two parameters,
+    // packed because the root signature holds 24 constants.
+    uint  g_accumSrvIdx;            ///< The previous frame's accumulator (RGBA32F; UINT32_MAX = none: start from the fp16 history)
+    uint  g_accumUavIdx;            ///< This frame's accumulator UAV
+    uint  g_temporalParams;         ///< Bits 0-15 MaxCount (r.EnvMIS.Temporal.MaxCount), bits 16-31 Clamp x 256 (r.EnvMIS.Temporal.Clamp)
+#endif
 };
 
 #include "env_mis_reproject.hlsli"
@@ -65,6 +95,10 @@ static const float kMinRoughness   = 0.04;
 /// Material weights: a roughness step changes the lobe the tap integrated, a base-colour step the F0 it carries.
 static const float kRoughnessSigma = 0.05;
 static const float kAlbedoSigma    = 0.1;
+#if UZ_ENVMIS_TEMPORAL
+/// Rec. 709 luminance: the fast reference and the clamp work on luminance; the slow history keeps its chroma.
+static const float3 kLuminance = float3(0.2126, 0.7152, 0.0722);
+#endif
 
 [numthreads(8, 8, 1)]
 void main(uint3 DTid : SV_DispatchThreadID) {
@@ -109,6 +143,11 @@ void main(uint3 DTid : SV_DispatchThreadID) {
 
     float3 colorSum  = float3(0, 0, 0);
     float  weightSum = 0.0;
+#if UZ_ENVMIS_TEMPORAL
+    // The footprint's weighted second moment and the sum of squared weights: the noise of one resolved estimate.
+    float  lum2Sum    = 0.0;
+    float  weight2Sum = 0.0;
+#endif
     for (int dy = -radius; dy <= radius; ++dy) {
         for (int dx = -radius; dx <= radius; ++dx) {
             int2 q = px + int2(dx, dy);
@@ -126,11 +165,85 @@ void main(uint3 DTid : SV_DispatchThreadID) {
                            - max(dAlb.r, max(dAlb.g, dAlb.b)) / kAlbedoSigma);
             colorSum  += rq.rgb * w;
             weightSum += w;
+#if UZ_ENVMIS_TEMPORAL
+            float lq = dot(rq.rgb, kLuminance);
+            lum2Sum    += lq * lq * w;
+            weight2Sum += w * w;
+#endif
         }
     }
     // The centre tap has weight 1, so the sum is never empty.
     float3 newSample = colorSum / weightSum;
 
+#if UZ_ENVMIS_TEMPORAL
+    // ── r.EnvMIS.Temporal: the deep accumulation clamped to the fast reference ──
+    const uint  maxCount   = g_temporalParams & 0xffffu;
+    const float clampSigma = float(g_temporalParams >> 16u) * (1.0 / 256.0);
+    const float lumNew     = dot(newSample, kLuminance);
+    // The taps are independent 8-spp estimates of (nearly) one integral, so the weighted sample variance of their
+    // luminance over the effective tap count n = (sum w)^2 / sum w^2 is the variance of the resolved estimate; with
+    // Bessel's correction, var / (n - 1). One tap alone measures nothing: the accumulated value is kept.
+    const float nEff   = weightSum * weightSum / max(weight2Sum, 1e-8);
+    const float varRaw = max(lum2Sum / weightSum - lumNew * lumNew, 0.0);
+    const bool  hasSigma = nEff > 1.5;
+    float sigmaNew = hasSigma ? sqrt(varRaw / (nEff - 1.0)) : 0.0;
+
+    RWTexture2D<float4> accumOut = ResourceDescriptorHeap[g_accumUavIdx];
+
+    float3 result = newSample;
+    float  count  = 1.0;
+    float2 moments = float2(lumNew, sigmaNew);
+    if (g_historyReusable != 0u && g_historyReadSrvIdx != kSentinelSrvIndex
+        && g_historyGeometrySrvIdx != kSentinelSrvIndex) {
+        Texture2D<float4> geometryTex = ResourceDescriptorHeap[g_historyGeometrySrvIdx];
+        Texture2D<float2> velocityTex = ResourceDescriptorHeap[g_velocitySrvIdx];
+        float3 historyColor;
+        float  historyCount;
+        float2 historyMoments;
+        bool   valid;
+        if (g_accumSrvIdx != kSentinelSrvIndex) {
+            Texture2D<float4> accumTex = ResourceDescriptorHeap[g_accumSrvIdx];
+            valid = ReprojectEnvMisAccumulator(px, worldPos, N, accumTex, geometryTex, velocityTex,
+                                               historyColor, historyCount, historyMoments);
+        } else {
+            // The first frame of this permutation: the r.EnvMIS.Denoise history is the slow history and the fast
+            // reference so far.
+            Texture2D<float4> historyTex = ResourceDescriptorHeap[g_historyReadSrvIdx];
+            valid = ReprojectEnvMisHistory(px, worldPos, N, historyTex, geometryTex, velocityTex, historyColor, historyCount);
+            historyMoments = float2(dot(historyColor, kLuminance), sigmaNew);
+        }
+        if (valid) {
+            count = min(historyCount + 1.0, float(maxCount));
+            // The fast reference: the r.EnvMIS.Denoise weights (1/count down to the alpha floor; the count only
+            // matters below 1/alpha, so the raised cap leaves them as they were).
+            const float wFast = max(1.0 / count, g_temporalAlpha);
+            if (!hasSigma) sigmaNew = historyMoments.y;
+            moments = float2(lerp(historyMoments.x, lumNew, wFast), lerp(historyMoments.y, sigmaNew, wFast));
+            // The slow history: the running average up to the raised cap.
+            result = lerp(historyColor, newSample, 1.0 / count);
+            // The clamp: the slow luminance may stray from the fast reference by Clamp x the reference's own noise,
+            // and the band widens with the count: a pixel that just restarted or was just corrected is held close to
+            // the reference while that reference is still converging, one that has been still for the old cap's 64
+            // frames is left to its depth. Up to 1/alpha samples the two paths share their weights, so no test.
+            if (count > 1.0 / g_temporalAlpha + 0.5) {
+                const float sigmaFast  = moments.y * sqrt(wFast / (2.0 - wFast));
+                const float band       = clampSigma * sigmaFast * saturate(count / kEnvMisMaxCount);
+                const float lumSlow    = dot(result, kLuminance);
+                const float lumClamped = clamp(lumSlow, moments.x - band, moments.x + band);
+                if (lumClamped != lumSlow) {
+                    result = lumSlow > 1e-8 ? result * (lumClamped / lumSlow) : newSample;
+                    // Half the depth, never below what the fast path is worth. (Holding the count while the two
+                    // still disagree was tried and traps the pixel: a clamp parks the value on the band's edge, a
+                    // held count holds the band, and the pixel never deepens again.)
+                    count  = max(0.5 * count, 1.0 / g_temporalAlpha);
+                }
+            }
+        }
+    }
+    geometryOut[px] = float4(OctEncode(N), length(cameraPos - worldPos) * 0.01, count);
+    accumOut[px]    = float4(result, PackEnvMisMoments(moments));
+    outputTex[px]   = float4(result, coverage);
+#else
     // ── Temporal accumulation (env_mis_temporal_cs.hlsl, UZ_ENVMIS_REPROJECT permutation) ──
     float3 result = newSample;
     float  count  = 1.0;
@@ -148,6 +261,7 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     }
     geometryOut[px] = float4(OctEncode(N), length(cameraPos - worldPos) * 0.01, count);
     outputTex[px]   = float4(result, coverage);
+#endif // UZ_ENVMIS_TEMPORAL
 }
 
 #endif // UZ_BINDLESS

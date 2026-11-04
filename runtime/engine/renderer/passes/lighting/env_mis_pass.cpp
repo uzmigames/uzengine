@@ -101,6 +101,29 @@ bool EnvMISPass::EnsureResolvePipeline() {
     return true;
 }
 
+// r.EnvMIS.Temporal: the UZ_ENVMIS_TEMPORAL=1 permutation of env_mis_resolve_cs.hlsl (the deep accumulation
+// clamped to the fast reference); a failed compile logs once and leaves the resolve pipeline in charge.
+bool EnvMISPass::EnsureTemporalPipeline() {
+    if (m_temporalPipeline.IsValid()) return true;
+    if (m_temporalPipelineFailed) return false;
+
+    m_temporalShaderCS = m_shaderMgr->CreateShaderWithDefines(
+        EngineShader::EnvMisResolveCS, RHIShaderStage::Compute, "UZ_ENVMIS_TEMPORAL=1");
+    if (m_temporalShaderCS.IsValid()) {
+        RHIComputePipelineDesc pd;
+        pd.computeShader = m_temporalShaderCS;
+        pd.debugName     = "EnvMIS_Resolve_Temporal";
+        m_temporalPipeline = m_device->CreateComputePipeline(pd);
+    }
+    if (!m_temporalPipeline.IsValid()) {
+        m_temporalPipelineFailed = true;
+        UZ_LOG(Renderer, Warning, "EnvMISPass: the UZ_ENVMIS_TEMPORAL permutation failed to compile; r.EnvMIS.Temporal runs the EnvMIS_Resolve pipeline");
+        return false;
+    }
+    UZ_LOG(Renderer, Info, "EnvMISPass: created EnvMIS_Resolve_Temporal pipeline");
+    return true;
+}
+
 // ─── Textures ────────────────────────────────────────────────────────────
 
 bool EnvMISPass::CreateTextures(uint32_t width, uint32_t height) {
@@ -145,6 +168,7 @@ void EnvMISPass::DestroyTextures() {
     m_historyValid = false;
     DestroyGeometryTextures();
     DestroyRawTexture();
+    DestroyAccumulatorTextures();
 }
 
 /// r.EnvMIS.Denoise: this frame's estimate before the resolve (RGBA16F: rgb the estimate, a the coverage), the
@@ -176,6 +200,47 @@ void EnvMISPass::DestroyRawTexture() {
     }
     m_rawSrv = UINT32_MAX;
     m_rawUav = UINT32_MAX;
+}
+
+/// r.EnvMIS.Temporal: the accumulator pair (RGBA32F: the slow running average, and the fast reference packed in w:
+/// the denoise accumulation's luminance, the accumulated noise of one resolved estimate), the size of the colour
+/// history; fp32 because the running average's per-frame step is below an fp16 ulp. Created the first time the
+/// permutation runs, freed with the history.
+bool EnvMISPass::EnsureAccumulatorTextures() {
+    if (m_accum[0].IsValid() && m_accum[1].IsValid()) return true;
+    DestroyAccumulatorTextures();
+    for (int i = 0; i < 2; ++i) {
+        RHITextureDesc desc;
+        desc.width     = m_width;
+        desc.height    = m_height;
+        desc.format    = RHIFormat::RGBA32Float;
+        desc.usage     = RHITextureUsage::UnorderedAccess
+                       | RHITextureUsage::ShaderResource;
+        desc.debugName = (i == 0) ? "EnvMIS_Accum0" : "EnvMIS_Accum1";
+        m_accum[i] = m_device->CreateTexture(desc);
+        if (!m_accum[i].IsValid()) {
+            UZ_LOG(Renderer, Error, "EnvMISPass: failed to create accumulator texture {}", i);
+            DestroyAccumulatorTextures();
+            return false;
+        }
+        m_accumSrv[i] = m_device->GetTextureSRVIndex(m_accum[i]);
+        m_accumUav[i] = m_device->GetTextureUAVIndex(m_accum[i]);
+    }
+    m_temporalHistoryValid = false;
+    UZ_LOG(Renderer, Info, "EnvMISPass: created {}x{} accumulator textures for r.EnvMIS.Temporal", m_width, m_height);
+    return true;
+}
+
+void EnvMISPass::DestroyAccumulatorTextures() {
+    for (int i = 0; i < 2; ++i) {
+        if (m_accum[i].IsValid()) {
+            m_device->DestroyTexture(m_accum[i]);
+            m_accum[i] = RHITextureHandle::Invalid();
+        }
+        m_accumSrv[i] = UINT32_MAX;
+        m_accumUav[i] = UINT32_MAX;
+    }
+    m_temporalHistoryValid = false;
 }
 
 /// r.EnvMIS.Reproject: the geometry history pair (RGBA16F: octahedral normal, view distance in metres, sample
@@ -264,11 +329,16 @@ void EnvMISPass::Execute(IRHICommandList* cmdList, const EnvMapSampler& sampler,
     // r.EnvMIS.Denoise builds on the reprojected accumulation: the estimate goes to the raw texture first (the
     // default pipeline with no history writes exactly its estimate), then the resolve accumulates it.
     const bool denoise = reproject && params.denoise && EnsureResolvePipeline() && EnsureRawTexture();
+    // r.EnvMIS.Temporal builds on the denoise: the resolve's UZ_ENVMIS_TEMPORAL permutation with the accumulator
+    // pair; the accumulator is reusable only when that permutation wrote it on the previous frame.
+    const bool temporal = denoise && params.temporal && EnsureTemporalPipeline() && EnsureAccumulatorTextures();
+    const bool accumReusable = temporal && reusable && m_temporalHistoryValid;
 
     // Transition write target to UAV
     m_states->Transition(cmdList, m_history[writeIdx], RHIResourceState::UnorderedAccess);
     if (reproject) m_states->Transition(cmdList, m_geometry[writeIdx], RHIResourceState::UnorderedAccess);
     if (denoise) m_states->Transition(cmdList, m_raw, RHIResourceState::UnorderedAccess);
+    if (temporal) m_states->Transition(cmdList, m_accum[writeIdx], RHIResourceState::UnorderedAccess);
 
     cmdList->SetPipeline(denoise ? m_pipeline : (reproject ? m_reprojectPipeline : m_pipeline));
 
@@ -339,7 +409,7 @@ void EnvMISPass::Execute(IRHICommandList* cmdList, const EnvMapSampler& sampler,
         // The resolve: this frame's raw estimate, resolved over the neighbouring pixels of the same lobe and
         // material, accumulated into the history where the surface point was last frame (env_mis_resolve_cs.hlsl).
         m_states->Transition(cmdList, m_raw, RHIResourceState::ShaderResource);
-        cmdList->SetPipeline(m_resolvePipeline);
+        cmdList->SetPipeline(temporal ? m_temporalPipeline : m_resolvePipeline);
 
         struct {
             uint32_t albedoIdx;
@@ -359,8 +429,12 @@ void EnvMISPass::Execute(IRHICommandList* cmdList, const EnvMapSampler& sampler,
             float    temporalAlpha;
             uint32_t radius;
             float    lobeFraction;
+            // r.EnvMIS.Temporal (UZ_ENVMIS_TEMPORAL=1 only; the resolve pipeline is pushed the 21 above)
+            uint32_t accumSrvIdx;
+            uint32_t accumUavIdx;
+            uint32_t temporalParams;
         } rr;
-        static_assert(sizeof(rr) == 21 * sizeof(uint32_t), "EnvMIS resolve root constants: 21 (the root signature holds 24)");
+        static_assert(sizeof(rr) == 24 * sizeof(uint32_t), "EnvMIS resolve root constants: 21 + 3 (the root signature holds 24)");
 
         rr.albedoIdx             = params.albedoSrvIdx;
         rr.normalIdx             = params.normalSrvIdx;
@@ -379,8 +453,15 @@ void EnvMISPass::Execute(IRHICommandList* cmdList, const EnvMapSampler& sampler,
         rr.temporalAlpha         = params.temporalAlpha;
         rr.radius                = params.denoiseRadius;
         rr.lobeFraction          = params.denoiseLobeFraction;
+        rr.accumSrvIdx           = accumReusable ? m_accumSrv[readIdx] : UINT32_MAX;
+        rr.accumUavIdx           = temporal ? m_accumUav[writeIdx] : UINT32_MAX;
+        // Bits 0-15 the count cap, bits 16-31 the clamp width in 1/256 (the shader unpacks them the same way).
+        const uint32_t maxCount  = params.temporalMaxCount < 65535u ? params.temporalMaxCount : 65535u;
+        const float    clampFx   = params.temporalClamp * 256.f;
+        const uint32_t clampBits = clampFx < 0.f ? 0u : (clampFx > 65535.f ? 65535u : static_cast<uint32_t>(clampFx + 0.5f));
+        rr.temporalParams        = maxCount | (clampBits << 16);
 
-        cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rr), 21);
+        cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rr), temporal ? 24 : 21);
         cmdList->SetDescriptorTable(4, m_historyUav[writeIdx]);
 
         cmdList->Dispatch(
@@ -392,11 +473,13 @@ void EnvMISPass::Execute(IRHICommandList* cmdList, const EnvMapSampler& sampler,
     // Transition write target to SRV (for deferred lighting to read)
     m_states->Transition(cmdList, m_history[writeIdx], RHIResourceState::ShaderResource);
     if (reproject) m_states->Transition(cmdList, m_geometry[writeIdx], RHIResourceState::ShaderResource);
+    if (temporal) m_states->Transition(cmdList, m_accum[writeIdx], RHIResourceState::ShaderResource);
 
     // Flip ping-pong
     m_writeIdx = 1 - m_writeIdx;
     m_historyValid = true;
     m_reprojectHistoryValid = reproject;
+    m_temporalHistoryValid = temporal;
     m_reprojectFrame = params.frameIndex;
     for (int i = 0; i < 3; ++i) m_prevCameraPos[i] = params.cameraPos[i];
 }

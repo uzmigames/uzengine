@@ -83,6 +83,13 @@ public:
         bool     denoise             = false;
         uint32_t denoiseRadius       = 3;        ///< Kernel radius in pixels (r.EnvMIS.Denoise.Radius).
         float    denoiseLobeFraction = 0.5f;     ///< Normal-weight sigma / GGX alpha (r.EnvMIS.Denoise.LobeFraction).
+        /// r.EnvMIS.Temporal (on top of denoise): the UZ_ENVMIS_TEMPORAL=1 permutation of the resolve keeps an
+        /// fp32 accumulator (the running average of the output up to temporalMaxCount samples, and the fast
+        /// reference: the denoise accumulation's luminance and the estimate's noise) and clamps the output every
+        /// frame to that reference +- temporalClamp x its noise. Off = the resolve above, unchanged.
+        bool     temporal            = false;
+        uint32_t temporalMaxCount    = 256;      ///< Sample cap of the running average (r.EnvMIS.Temporal.MaxCount).
+        float    temporalClamp       = 2.5f;     ///< Clamp width in fast-reference standard deviations (r.EnvMIS.Temporal.Clamp).
     };
 
     /// Dispatch the env MIS compute + temporal accumulation.
@@ -107,6 +114,9 @@ private:
     [[nodiscard]] bool EnsureResolvePipeline();
     [[nodiscard]] bool EnsureRawTexture();
     void DestroyRawTexture();
+    [[nodiscard]] bool EnsureTemporalPipeline();
+    [[nodiscard]] bool EnsureAccumulatorTextures();
+    void DestroyAccumulatorTextures();
 
     IRHIDevice*    m_device    = nullptr;
     rg::RgStateRegistry* m_states = nullptr;
@@ -141,6 +151,15 @@ private:
     RHITextureHandle  m_raw    = RHITextureHandle::Invalid();
     uint32_t          m_rawSrv = UINT32_MAX;
     uint32_t          m_rawUav = UINT32_MAX;
+
+    // ── r.EnvMIS.Temporal: the permutation and the accumulator pair (RGBA32F, allocated on first use) ──
+    RHIShaderHandle   m_temporalShaderCS = RHIShaderHandle::Invalid();
+    RHIPipelineHandle m_temporalPipeline = RHIPipelineHandle::Invalid();
+    bool              m_temporalPipelineFailed = false;
+    RHITextureHandle  m_accum[2]    = { RHITextureHandle::Invalid(), RHITextureHandle::Invalid() };
+    uint32_t          m_accumSrv[2] = { UINT32_MAX, UINT32_MAX };
+    uint32_t          m_accumUav[2] = { UINT32_MAX, UINT32_MAX };
+    bool              m_temporalHistoryValid = false;  ///< The accumulator was written by the last Execute.
 
     uint32_t m_width  = 0;
     uint32_t m_height = 0;
