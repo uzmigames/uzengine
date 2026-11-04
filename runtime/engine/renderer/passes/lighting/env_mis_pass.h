@@ -70,6 +70,13 @@ public:
         uint64_t        perFrameOffset = 0;
         const void*     perFrameCpu    = nullptr;
         uint32_t        perFrameSize   = 0;
+        /// r.EnvMIS.Reproject: run the UZ_ENVMIS_REPROJECT=1 permutation, which fetches the history where each
+        /// surface point was on the previous frame (the velocity buffer) and keeps it only where the geometry
+        /// history says it was accumulated on that surface. Off = the screen-locked fetch, unchanged.
+        bool     reproject        = false;
+        uint32_t velocitySrvIdx   = UINT32_MAX;  ///< The velocity buffer (RG16F, pixels), written this frame.
+        bool     historyReusable  = false;       ///< The frame's temporal decision (consecutive frames, no camera cut).
+        float    cameraPos[3]     = {0.f, 0.f, 0.f}; ///< This frame's camera position (cm); remembered for the next frame.
     };
 
     /// Dispatch the env MIS compute + temporal accumulation.
@@ -88,6 +95,9 @@ private:
     bool CreateTextures(uint32_t width, uint32_t height);
     void DestroyTextures();
     [[nodiscard]] bool EnsurePipeline();
+    [[nodiscard]] bool EnsureReprojectPipeline();
+    [[nodiscard]] bool EnsureGeometryTextures();
+    void DestroyGeometryTextures();
 
     IRHIDevice*    m_device    = nullptr;
     rg::RgStateRegistry* m_states = nullptr;
@@ -103,6 +113,17 @@ private:
     uint32_t         m_historyUav[2] = { UINT32_MAX, UINT32_MAX };
     uint32_t         m_writeIdx      = 0;     ///< Current write target (flips each frame).
     bool             m_historyValid  = false;  ///< False on first frame / after resize.
+
+    // ── r.EnvMIS.Reproject: the permutation and its geometry history (allocated on first use) ──
+    RHIShaderHandle   m_reprojectShaderCS = RHIShaderHandle::Invalid();
+    RHIPipelineHandle m_reprojectPipeline = RHIPipelineHandle::Invalid();
+    bool              m_reprojectPipelineFailed = false;
+    RHITextureHandle  m_geometry[2]    = { RHITextureHandle::Invalid(), RHITextureHandle::Invalid() };
+    uint32_t          m_geometrySrv[2] = { UINT32_MAX, UINT32_MAX };
+    uint32_t          m_geometryUav[2] = { UINT32_MAX, UINT32_MAX };
+    bool              m_reprojectHistoryValid = false; ///< The geometry history was written by the last Execute.
+    uint32_t          m_reprojectFrame = 0;            ///< The frame index of that Execute.
+    float             m_prevCameraPos[3] = {0.f, 0.f, 0.f};
 
     uint32_t m_width  = 0;
     uint32_t m_height = 0;

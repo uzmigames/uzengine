@@ -73,6 +73,13 @@ static auto* cv_PathTracer       = UZ_CVAR_BOOL("r.PathTracer.Enable", false,
     "Compute path tracer runtime mode (replaces deferred lighting + GI + shadows)");
 static auto* cv_PipelinePathTracer = UZ_CVAR_BOOL("r.PathTracer.Pipeline", false,
     "DXR pipeline single-bounce reference renderer (--path-trace)");
+// The environment-MIS specular (r.EnvMIS, frame_constants.cpp) accumulated its 8-spp estimate into a
+// screen-locked history: under camera motion a metal's pixels inherited whatever was on that screen pixel
+// before (a dark restarting crescent on the leading rim, another metal's mirror image ghosting inside it,
+// the raw noise along the silhouette). The permutation fetches the history where the surface point was last
+// frame and keeps it only on the same surface (env_mis_temporal_cs.hlsl, UZ_ENVMIS_REPROJECT=1).
+static auto* cv_EnvMISReproject = UZ_CVAR_BOOL("r.EnvMIS.Reproject", true,
+    "Reproject and validate the environment-MIS specular history under camera motion (velocity buffer + geometry history, count-based blend); 0 = the screen-locked accumulation");
 
 namespace uz {
 
@@ -258,13 +265,17 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         && m_envMISPass && m_envMISPass->IsInitialized()
         && m_envMapSampler && m_envMapSampler->IsReady()) {
 
+        // r.EnvMIS.Reproject needs the velocity buffer, written by the velocity pass only under a continuous
+        // previous matrix (frame_geometry.cpp); without one the history restarts (historyReusable false).
+        const bool envMisReproject = cv_EnvMISReproject->value > 0.5f && m_gbuffer.velocity.IsValid();
         rgBuilder.AddPass("EnvMIS_Temporal", [&](rg::RgPassBuilder& pb) {
             pb.Read(ctx.albedoRes,   RHIResourceState::ShaderResource);
             pb.Read(ctx.normalRes,   RHIResourceState::ShaderResource);
             pb.Read(ctx.depthRes,    RHIResourceState::ShaderResource);
             pb.Read(ctx.positionRes, RHIResourceState::ShaderResource);
+            if (envMisReproject) pb.Read(ctx.velocityRes, RHIResourceState::ShaderResource);
 
-            pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources&) {
+            pb.SetExecutionCallback([this, &ctx, envMisReproject](IRHICommandList* cmd, const rg::RgPassResources&) {
                 UZ_PROFILE_SCOPE("EnvMIS::Execute");
 
                 EnvMISPass::DispatchParams misParams;
@@ -279,6 +290,12 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                 misParams.perFrameOffset   = ctx.perFrameAlloc.offsetBytes;
                 misParams.perFrameCpu      = ctx.perFrameAlloc.cpuPtr;
                 misParams.perFrameSize     = ctx.perFrameAlloc.sizeBytes;
+                misParams.reproject        = envMisReproject;
+                misParams.velocitySrvIdx   = m_gbuffer.velocitySRV;
+                misParams.historyReusable  = ctx.temporal.matrixValid;
+                misParams.cameraPos[0]     = ctx.perFrame.cameraPos.x;
+                misParams.cameraPos[1]     = ctx.perFrame.cameraPos.y;
+                misParams.cameraPos[2]     = ctx.perFrame.cameraPos.z;
 
                 m_envMISPass->Execute(cmd, *m_envMapSampler, misParams);
             });

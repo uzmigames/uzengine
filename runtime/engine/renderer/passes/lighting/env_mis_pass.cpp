@@ -47,6 +47,29 @@ bool EnvMISPass::EnsurePipeline() {
     return true;
 }
 
+// r.EnvMIS.Reproject: the UZ_ENVMIS_REPROJECT=1 permutation of the same shader (the TAA_Resolve_SilhouetteReject
+// pattern); the default pipeline above is untouched, so the CVar off renders what it rendered before.
+bool EnvMISPass::EnsureReprojectPipeline() {
+    if (m_reprojectPipeline.IsValid()) return true;
+    if (m_reprojectPipelineFailed) return false;
+
+    m_reprojectShaderCS = m_shaderMgr->CreateShaderWithDefines(
+        EngineShader::EnvMisTemporalCS, RHIShaderStage::Compute, "UZ_ENVMIS_REPROJECT=1");
+    if (m_reprojectShaderCS.IsValid()) {
+        RHIComputePipelineDesc pd;
+        pd.computeShader = m_reprojectShaderCS;
+        pd.debugName     = "EnvMIS_Temporal_Reproject";
+        m_reprojectPipeline = m_device->CreateComputePipeline(pd);
+    }
+    if (!m_reprojectPipeline.IsValid()) {
+        m_reprojectPipelineFailed = true;
+        UZ_LOG(Renderer, Warning, "EnvMISPass: the UZ_ENVMIS_REPROJECT permutation failed to compile; r.EnvMIS.Reproject runs the default EnvMIS_Temporal pipeline");
+        return false;
+    }
+    UZ_LOG(Renderer, Info, "EnvMISPass: created EnvMIS_Temporal_Reproject pipeline");
+    return true;
+}
+
 // ─── Textures ────────────────────────────────────────────────────────────
 
 bool EnvMISPass::CreateTextures(uint32_t width, uint32_t height) {
@@ -89,6 +112,46 @@ void EnvMISPass::DestroyTextures() {
         m_historyUav[i] = UINT32_MAX;
     }
     m_historyValid = false;
+    DestroyGeometryTextures();
+}
+
+/// r.EnvMIS.Reproject: the geometry history pair (RGBA16F: octahedral normal, view distance in metres, sample
+/// count), the size of the colour history; created the first time the permutation runs, freed with the history.
+bool EnvMISPass::EnsureGeometryTextures() {
+    if (m_geometry[0].IsValid() && m_geometry[1].IsValid()) return true;
+    DestroyGeometryTextures();
+    for (int i = 0; i < 2; ++i) {
+        RHITextureDesc desc;
+        desc.width     = m_width;
+        desc.height    = m_height;
+        desc.format    = RHIFormat::RGBA16Float;
+        desc.usage     = RHITextureUsage::UnorderedAccess
+                       | RHITextureUsage::ShaderResource;
+        desc.debugName = (i == 0) ? "EnvMIS_Geometry0" : "EnvMIS_Geometry1";
+        m_geometry[i] = m_device->CreateTexture(desc);
+        if (!m_geometry[i].IsValid()) {
+            UZ_LOG(Renderer, Error, "EnvMISPass: failed to create geometry history texture {}", i);
+            DestroyGeometryTextures();
+            return false;
+        }
+        m_geometrySrv[i] = m_device->GetTextureSRVIndex(m_geometry[i]);
+        m_geometryUav[i] = m_device->GetTextureUAVIndex(m_geometry[i]);
+    }
+    m_reprojectHistoryValid = false;
+    UZ_LOG(Renderer, Info, "EnvMISPass: created {}x{} geometry history textures for r.EnvMIS.Reproject", m_width, m_height);
+    return true;
+}
+
+void EnvMISPass::DestroyGeometryTextures() {
+    for (int i = 0; i < 2; ++i) {
+        if (m_geometry[i].IsValid()) {
+            m_device->DestroyTexture(m_geometry[i]);
+            m_geometry[i] = RHITextureHandle::Invalid();
+        }
+        m_geometrySrv[i] = UINT32_MAX;
+        m_geometryUav[i] = UINT32_MAX;
+    }
+    m_reprojectHistoryValid = false;
 }
 
 // ─── Init / Shutdown / Resize ────────────────────────────────────────────
@@ -128,10 +191,19 @@ void EnvMISPass::Execute(IRHICommandList* cmdList, const EnvMapSampler& sampler,
     uint32_t writeIdx = m_writeIdx;
     uint32_t readIdx  = 1 - writeIdx;
 
+    // r.EnvMIS.Reproject: the permutation runs when its pipeline and geometry history exist; otherwise the
+    // default path below, exactly as without the CVar.
+    const bool reproject = params.reproject && EnsureReprojectPipeline() && EnsureGeometryTextures();
+    // The geometry history is reusable only when this permutation wrote it on the previous frame, under a
+    // continuous camera (the frame's temporal decision); anything else restarts the accumulation.
+    const bool reusable = reproject && m_reprojectHistoryValid && params.historyReusable
+                       && m_reprojectFrame + 1u == params.frameIndex;
+
     // Transition write target to UAV
     m_states->Transition(cmdList, m_history[writeIdx], RHIResourceState::UnorderedAccess);
+    if (reproject) m_states->Transition(cmdList, m_geometry[writeIdx], RHIResourceState::UnorderedAccess);
 
-    cmdList->SetPipeline(m_pipeline);
+    cmdList->SetPipeline(reproject ? m_reprojectPipeline : m_pipeline);
 
     // PerFrameCB at b1 (compute root slot 1): camera position, sky light tint.
     if (params.perFrameBuffer.IsValid()) {
@@ -157,7 +229,14 @@ void EnvMISPass::Execute(IRHICommandList* cmdList, const EnvMapSampler& sampler,
         uint32_t frameIndex;
         float    totalLuminance;
         float    temporalAlpha;
+        // r.EnvMIS.Reproject (UZ_ENVMIS_REPROJECT=1 only; the default pipeline is pushed the 16 above)
+        uint32_t velocitySrvIdx;
+        uint32_t historyGeometrySrvIdx;
+        uint32_t geometryUavIdx;
+        uint32_t historyReusable;
+        float    prevCameraPos[3];
     } rc;
+    static_assert(sizeof(rc) == 23 * sizeof(uint32_t), "EnvMIS root constants: 16 + 7 (the root signature holds 24)");
 
     rc.albedoIdx         = params.albedoSrvIdx;
     rc.normalIdx         = params.normalSrvIdx;
@@ -175,8 +254,13 @@ void EnvMISPass::Execute(IRHICommandList* cmdList, const EnvMapSampler& sampler,
     rc.frameIndex        = params.frameIndex;
     rc.totalLuminance    = sampler.GetTotalLuminance();
     rc.temporalAlpha     = params.temporalAlpha;
+    rc.velocitySrvIdx        = params.velocitySrvIdx;
+    rc.historyGeometrySrvIdx = reusable ? m_geometrySrv[readIdx] : UINT32_MAX;
+    rc.geometryUavIdx        = reproject ? m_geometryUav[writeIdx] : UINT32_MAX;
+    rc.historyReusable       = reusable ? 1u : 0u;
+    for (int i = 0; i < 3; ++i) rc.prevCameraPos[i] = m_prevCameraPos[i];
 
-    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 16);
+    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), reproject ? 23 : 16);
     cmdList->SetDescriptorTable(4, m_historyUav[writeIdx]);
 
     cmdList->Dispatch(
@@ -186,10 +270,14 @@ void EnvMISPass::Execute(IRHICommandList* cmdList, const EnvMapSampler& sampler,
 
     // Transition write target to SRV (for deferred lighting to read)
     m_states->Transition(cmdList, m_history[writeIdx], RHIResourceState::ShaderResource);
+    if (reproject) m_states->Transition(cmdList, m_geometry[writeIdx], RHIResourceState::ShaderResource);
 
     // Flip ping-pong
     m_writeIdx = 1 - m_writeIdx;
     m_historyValid = true;
+    m_reprojectHistoryValid = reproject;
+    m_reprojectFrame = params.frameIndex;
+    for (int i = 0; i < 3; ++i) m_prevCameraPos[i] = params.cameraPos[i];
 }
 
 uint32_t EnvMISPass::GetAccumulatedSrv() const noexcept {
