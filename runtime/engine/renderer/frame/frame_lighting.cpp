@@ -80,6 +80,17 @@ static auto* cv_PipelinePathTracer = UZ_CVAR_BOOL("r.PathTracer.Pipeline", false
 // frame and keeps it only on the same surface (env_mis_temporal_cs.hlsl, UZ_ENVMIS_REPROJECT=1).
 static auto* cv_EnvMISReproject = UZ_CVAR_BOOL("r.EnvMIS.Reproject", true,
     "Reproject and validate the environment-MIS specular history under camera motion (velocity buffer + geometry history, count-based blend); 0 = the screen-locked accumulation");
+// The reprojected accumulation converges, but its 8-spp estimate at the 0.05 EMA floor keeps a steady-state noise
+// of 16 % of the single-frame noise: a fine speckle on rough metals that boils from frame to frame, invisible at a
+// distance and plain in a close-up. r.EnvMIS.Denoise resolves each frame's estimate over the neighbouring pixels
+// whose lobes see the same environment (normal within a fraction of the GGX alpha, same material) before the same
+// accumulation (env_mis_resolve_cs.hlsl); it runs on top of r.EnvMIS.Reproject. 0 = the accumulation of 0969e0f0.
+static auto* cv_EnvMISDenoise = UZ_CVAR_BOOL("r.EnvMIS.Denoise", true,
+    "Resolve the environment-MIS specular estimate over the neighbouring pixels of the same lobe and material before the temporal accumulation (needs r.EnvMIS.Reproject); 0 = the unfiltered 8-spp accumulation");
+static auto* cv_EnvMISDenoiseRadius = UZ_CVAR_INT("r.EnvMIS.Denoise.Radius", 3,
+    "r.EnvMIS.Denoise: kernel radius in pixels (a (2r+1)^2 footprint, Gaussian sigma 0.6 r)", 1, 4);
+static auto* cv_EnvMISDenoiseLobe = UZ_CVAR_FLOAT("r.EnvMIS.Denoise.LobeFraction", 0.5f,
+    "r.EnvMIS.Denoise: angular sigma of the normal weight as a fraction of the GGX alpha (the lobe's median half-vector angle); smaller keeps more detail, larger filters more", 0.05f, 2.f);
 
 namespace uz {
 
@@ -296,6 +307,9 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                 misParams.cameraPos[0]     = ctx.perFrame.cameraPos.x;
                 misParams.cameraPos[1]     = ctx.perFrame.cameraPos.y;
                 misParams.cameraPos[2]     = ctx.perFrame.cameraPos.z;
+                misParams.denoise             = envMisReproject && cv_EnvMISDenoise->value > 0.5f;
+                misParams.denoiseRadius       = static_cast<uint32_t>(cv_EnvMISDenoiseRadius->value);
+                misParams.denoiseLobeFraction = cv_EnvMISDenoiseLobe->value;
 
                 m_envMISPass->Execute(cmd, *m_envMapSampler, misParams);
             });

@@ -540,6 +540,7 @@ UNTRACKED = {
     ("runtime/pathtracing/path_tracer_ps.hlsl", "PathTracerRC"): "Root constants: PathTracerRC; uploader-specific block, not a header-backed Tier B contract.",
     ("runtime/lighting/deferred_lighting_ps.hlsl", "gBufIndices"): "Root constants: GBufferIndices; uploader-specific block, not a header-backed Tier B contract.",
     ("runtime/lighting/env_mis_temporal_cs.hlsl", "RootConstants"): "Root constants: RootConstants; uploader-specific block, not a header-backed Tier B contract.",
+    ("runtime/lighting/env_mis_resolve_cs.hlsl", "RootConstants"): "Root constants: RootConstants; uploader-specific block, not a header-backed Tier B contract.",
     ("runtime/lighting/shadow_depth_vs.hlsl", "push"): "Root constants: PushConstants; uploader-specific block, not a header-backed Tier B contract.",
     ("runtime/ibl/brdf_lut_cs.hlsl", "RootConstants"): "Root constants: RootConstants; uploader-specific block, not a header-backed Tier B contract.",
     ("runtime/ibl/envmap_luminance_pyramid_cs.hlsl", "RootConstants"): "Root constants: RootConstants; uploader-specific block, not a header-backed Tier B contract.",

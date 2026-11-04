@@ -70,6 +70,37 @@ bool EnvMISPass::EnsureReprojectPipeline() {
     return true;
 }
 
+// r.EnvMIS.Denoise: env_mis_resolve_cs.hlsl, the spatial resolve of the raw estimate followed by the same
+// reprojected accumulation; a failed compile logs once and leaves the accumulation permutation in charge.
+bool EnvMISPass::EnsureResolvePipeline() {
+    if (m_resolvePipeline.IsValid()) return true;
+    if (m_resolvePipelineFailed) return false;
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::EnvMisResolveCS);
+    if (!bytecode.empty()) {
+        RHIShaderDesc sd;
+        sd.bytecode     = bytecode.data();
+        sd.bytecodeSize = bytecode.size();
+        sd.stage        = RHIShaderStage::Compute;
+        sd.entryPoint   = "main";
+        sd.debugName    = "env_mis_resolve_cs";
+        m_resolveShaderCS = m_device->CreateShader(sd);
+        if (m_resolveShaderCS.IsValid()) {
+            RHIComputePipelineDesc pd;
+            pd.computeShader = m_resolveShaderCS;
+            pd.debugName     = "EnvMIS_Resolve";
+            m_resolvePipeline = m_device->CreateComputePipeline(pd);
+        }
+    }
+    if (!m_resolvePipeline.IsValid()) {
+        m_resolvePipelineFailed = true;
+        UZ_LOG(Renderer, Warning, "EnvMISPass: env_mis_resolve_cs.hlsl failed to compile; r.EnvMIS.Denoise runs the EnvMIS_Temporal_Reproject pipeline");
+        return false;
+    }
+    UZ_LOG(Renderer, Info, "EnvMISPass: created EnvMIS_Resolve pipeline");
+    return true;
+}
+
 // ─── Textures ────────────────────────────────────────────────────────────
 
 bool EnvMISPass::CreateTextures(uint32_t width, uint32_t height) {
@@ -113,6 +144,38 @@ void EnvMISPass::DestroyTextures() {
     }
     m_historyValid = false;
     DestroyGeometryTextures();
+    DestroyRawTexture();
+}
+
+/// r.EnvMIS.Denoise: this frame's estimate before the resolve (RGBA16F: rgb the estimate, a the coverage), the
+/// size of the history; created the first time the resolve runs, freed with the history.
+bool EnvMISPass::EnsureRawTexture() {
+    if (m_raw.IsValid()) return true;
+    RHITextureDesc desc;
+    desc.width     = m_width;
+    desc.height    = m_height;
+    desc.format    = RHIFormat::RGBA16Float;
+    desc.usage     = RHITextureUsage::UnorderedAccess
+                   | RHITextureUsage::ShaderResource;
+    desc.debugName = "EnvMIS_Raw";
+    m_raw = m_device->CreateTexture(desc);
+    if (!m_raw.IsValid()) {
+        UZ_LOG(Renderer, Error, "EnvMISPass: failed to create the raw estimate texture");
+        return false;
+    }
+    m_rawSrv = m_device->GetTextureSRVIndex(m_raw);
+    m_rawUav = m_device->GetTextureUAVIndex(m_raw);
+    UZ_LOG(Renderer, Info, "EnvMISPass: created {}x{} raw estimate texture for r.EnvMIS.Denoise", m_width, m_height);
+    return true;
+}
+
+void EnvMISPass::DestroyRawTexture() {
+    if (m_raw.IsValid()) {
+        m_device->DestroyTexture(m_raw);
+        m_raw = RHITextureHandle::Invalid();
+    }
+    m_rawSrv = UINT32_MAX;
+    m_rawUav = UINT32_MAX;
 }
 
 /// r.EnvMIS.Reproject: the geometry history pair (RGBA16F: octahedral normal, view distance in metres, sample
@@ -198,12 +261,16 @@ void EnvMISPass::Execute(IRHICommandList* cmdList, const EnvMapSampler& sampler,
     // continuous camera (the frame's temporal decision); anything else restarts the accumulation.
     const bool reusable = reproject && m_reprojectHistoryValid && params.historyReusable
                        && m_reprojectFrame + 1u == params.frameIndex;
+    // r.EnvMIS.Denoise builds on the reprojected accumulation: the estimate goes to the raw texture first (the
+    // default pipeline with no history writes exactly its estimate), then the resolve accumulates it.
+    const bool denoise = reproject && params.denoise && EnsureResolvePipeline() && EnsureRawTexture();
 
     // Transition write target to UAV
     m_states->Transition(cmdList, m_history[writeIdx], RHIResourceState::UnorderedAccess);
     if (reproject) m_states->Transition(cmdList, m_geometry[writeIdx], RHIResourceState::UnorderedAccess);
+    if (denoise) m_states->Transition(cmdList, m_raw, RHIResourceState::UnorderedAccess);
 
-    cmdList->SetPipeline(reproject ? m_reprojectPipeline : m_pipeline);
+    cmdList->SetPipeline(denoise ? m_pipeline : (reproject ? m_reprojectPipeline : m_pipeline));
 
     // PerFrameCB at b1 (compute root slot 1): camera position, sky light tint.
     if (params.perFrameBuffer.IsValid()) {
@@ -244,8 +311,8 @@ void EnvMISPass::Execute(IRHICommandList* cmdList, const EnvMapSampler& sampler,
     rc.positionIdx       = params.positionSrvIdx;
     rc.width             = m_width;
     rc.height            = m_height;
-    rc.historyReadSrvIdx = m_historyValid ? m_historySrv[readIdx] : UINT32_MAX;
-    rc.outputUavIdx      = m_historyUav[writeIdx];
+    rc.historyReadSrvIdx = (m_historyValid && !denoise) ? m_historySrv[readIdx] : UINT32_MAX;
+    rc.outputUavIdx      = denoise ? m_rawUav : m_historyUav[writeIdx];
     rc.envCubemapSrvIdx  = params.envCubemapSrvIdx;
     rc.aliasSrvIdx       = sampler.GetAliasSrv();
     rc.lumMip0SrvIdx     = sampler.GetLuminanceMip0Srv();
@@ -260,13 +327,67 @@ void EnvMISPass::Execute(IRHICommandList* cmdList, const EnvMapSampler& sampler,
     rc.historyReusable       = reusable ? 1u : 0u;
     for (int i = 0; i < 3; ++i) rc.prevCameraPos[i] = m_prevCameraPos[i];
 
-    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), reproject ? 23 : 16);
-    cmdList->SetDescriptorTable(4, m_historyUav[writeIdx]);
+    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), (reproject && !denoise) ? 23 : 16);
+    cmdList->SetDescriptorTable(4, denoise ? m_rawUav : m_historyUav[writeIdx]);
 
     cmdList->Dispatch(
         (m_width  + kThreadGroupSize - 1) / kThreadGroupSize,
         (m_height + kThreadGroupSize - 1) / kThreadGroupSize,
         1);
+
+    if (denoise) {
+        // The resolve: this frame's raw estimate, resolved over the neighbouring pixels of the same lobe and
+        // material, accumulated into the history where the surface point was last frame (env_mis_resolve_cs.hlsl).
+        m_states->Transition(cmdList, m_raw, RHIResourceState::ShaderResource);
+        cmdList->SetPipeline(m_resolvePipeline);
+
+        struct {
+            uint32_t albedoIdx;
+            uint32_t normalIdx;
+            uint32_t positionIdx;
+            uint32_t rawSrvIdx;
+            uint32_t width;
+            uint32_t height;
+            uint32_t historyReadSrvIdx;
+            uint32_t outputUavIdx;
+            uint32_t velocitySrvIdx;
+            uint32_t historyGeometrySrvIdx;
+            uint32_t geometryUavIdx;
+            uint32_t historyReusable;
+            float    prevCameraPos[3];
+            float    cameraPos[3];
+            float    temporalAlpha;
+            uint32_t radius;
+            float    lobeFraction;
+        } rr;
+        static_assert(sizeof(rr) == 21 * sizeof(uint32_t), "EnvMIS resolve root constants: 21 (the root signature holds 24)");
+
+        rr.albedoIdx             = params.albedoSrvIdx;
+        rr.normalIdx             = params.normalSrvIdx;
+        rr.positionIdx           = params.positionSrvIdx;
+        rr.rawSrvIdx             = m_rawSrv;
+        rr.width                 = m_width;
+        rr.height                = m_height;
+        rr.historyReadSrvIdx     = m_historyValid ? m_historySrv[readIdx] : UINT32_MAX;
+        rr.outputUavIdx          = m_historyUav[writeIdx];
+        rr.velocitySrvIdx        = params.velocitySrvIdx;
+        rr.historyGeometrySrvIdx = reusable ? m_geometrySrv[readIdx] : UINT32_MAX;
+        rr.geometryUavIdx        = m_geometryUav[writeIdx];
+        rr.historyReusable       = reusable ? 1u : 0u;
+        for (int i = 0; i < 3; ++i) rr.prevCameraPos[i] = m_prevCameraPos[i];
+        for (int i = 0; i < 3; ++i) rr.cameraPos[i] = params.cameraPos[i];
+        rr.temporalAlpha         = params.temporalAlpha;
+        rr.radius                = params.denoiseRadius;
+        rr.lobeFraction          = params.denoiseLobeFraction;
+
+        cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rr), 21);
+        cmdList->SetDescriptorTable(4, m_historyUav[writeIdx]);
+
+        cmdList->Dispatch(
+            (m_width  + kThreadGroupSize - 1) / kThreadGroupSize,
+            (m_height + kThreadGroupSize - 1) / kThreadGroupSize,
+            1);
+    }
 
     // Transition write target to SRV (for deferred lighting to read)
     m_states->Transition(cmdList, m_history[writeIdx], RHIResourceState::ShaderResource);

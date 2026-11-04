@@ -77,6 +77,12 @@ public:
         uint32_t velocitySrvIdx   = UINT32_MAX;  ///< The velocity buffer (RG16F, pixels), written this frame.
         bool     historyReusable  = false;       ///< The frame's temporal decision (consecutive frames, no camera cut).
         float    cameraPos[3]     = {0.f, 0.f, 0.f}; ///< This frame's camera position (cm); remembered for the next frame.
+        /// r.EnvMIS.Denoise (on top of reproject): the estimate is written alone into a raw texture and
+        /// env_mis_resolve_cs.hlsl resolves it over the neighbouring pixels whose lobes see the same environment
+        /// before the same reprojected accumulation. Off = the accumulation above, unchanged.
+        bool     denoise             = false;
+        uint32_t denoiseRadius       = 3;        ///< Kernel radius in pixels (r.EnvMIS.Denoise.Radius).
+        float    denoiseLobeFraction = 0.5f;     ///< Normal-weight sigma / GGX alpha (r.EnvMIS.Denoise.LobeFraction).
     };
 
     /// Dispatch the env MIS compute + temporal accumulation.
@@ -98,6 +104,9 @@ private:
     [[nodiscard]] bool EnsureReprojectPipeline();
     [[nodiscard]] bool EnsureGeometryTextures();
     void DestroyGeometryTextures();
+    [[nodiscard]] bool EnsureResolvePipeline();
+    [[nodiscard]] bool EnsureRawTexture();
+    void DestroyRawTexture();
 
     IRHIDevice*    m_device    = nullptr;
     rg::RgStateRegistry* m_states = nullptr;
@@ -124,6 +133,14 @@ private:
     bool              m_reprojectHistoryValid = false; ///< The geometry history was written by the last Execute.
     uint32_t          m_reprojectFrame = 0;            ///< The frame index of that Execute.
     float             m_prevCameraPos[3] = {0.f, 0.f, 0.f};
+
+    // ── r.EnvMIS.Denoise: the resolve pipeline and the raw estimate (allocated on first use) ──
+    RHIShaderHandle   m_resolveShaderCS = RHIShaderHandle::Invalid();
+    RHIPipelineHandle m_resolvePipeline = RHIPipelineHandle::Invalid();
+    bool              m_resolvePipelineFailed = false;
+    RHITextureHandle  m_raw    = RHITextureHandle::Invalid();
+    uint32_t          m_rawSrv = UINT32_MAX;
+    uint32_t          m_rawUav = UINT32_MAX;
 
     uint32_t m_width  = 0;
     uint32_t m_height = 0;
