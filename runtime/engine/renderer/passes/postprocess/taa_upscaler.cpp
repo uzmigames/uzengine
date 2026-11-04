@@ -76,6 +76,27 @@ static auto* cv_TAAFlipVelocity = UZ_CVAR_FLOAT("r.TAA.FlipBlendVelocityPx", 4.0
 static auto* cv_TAAFlipWeight = UZ_CVAR_FLOAT("r.TAA.FlipBlendWeight", -1.0f,
     "FlipBlend optional fixed blend weight at flip pixels (-1 = inherit r.TAA.CurrentFrameWeight); "
     "lower it to slow the settling if boundary flicker rises too much.", -1.0f, 0.2f);
+// Silhouette rejection (evidence gi/silhouette-rim): the closest-depth velocity dilation makes every pixel within
+// 2 px of a silhouette reproject with the nearer surface, so under camera motion a background pixel's bicubic
+// history footprint straddles the edge and mixes the occluder's history in every frame; the 3x3 clamp box holds
+// the occluder's colours and cannot reject it, and the blend feeds the mix back, so a dark object trails a dark
+// ring over a bright background (material_showcase DarkMetal: the 1-px ring outside the sphere at 43-74 % of the
+// background under motion, 1.0 static). The resolve now accepts a history texel only when both depths it was
+// resolved with last frame - its own sample and the nearest of its dilation cross - are this pixel's surface, so
+// a background pixel takes nothing from the 2-px band of a nearer silhouette (the pixel's own texel is always
+// accepted, so a static camera's exact-texel fetch is unchanged), and restarts the history where no texel is
+// acceptable (a disocclusion). OFF renders the prior pass bit for bit and allocates nothing.
+static auto* cv_TAASilhouetteReject = UZ_CVAR_BOOL("r.TAA.SilhouetteReject", true,
+    "TAA history rejection across silhouettes: each texel of the bicubic history footprint is accepted only when "
+    "the depths it was resolved with last frame (its own sample and its dilation cross) are the same surface as "
+    "this pixel (relative tolerance r.TAA.SilhouetteReject.DepthTolerance; the pixel's own texel always), and a "
+    "footprint without acceptable support restarts the history as the off-screen case does. Removes the dark ring "
+    "a dark object trails over a bright background under camera motion; 0 = the prior resolve (bit-identical), "
+    "nothing allocated");
+static auto* cv_TAASilhouetteTolerance = UZ_CVAR_FLOAT("r.TAA.SilhouetteReject.DepthTolerance", 0.1f,
+    "r.TAA.SilhouetteReject: a history texel is the same surface when its stored reversed-Z depth is within this "
+    "relative tolerance of the pixel's own (the relative view-depth difference); the cleared far plane matches "
+    "only itself", 0.005f, 1.0f);
 
 #include <cstring>
 
@@ -125,7 +146,16 @@ bool TaaUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     auto taaPSO = m_pipelines->GetTaaResolve();
     if (!taaPSO.IsValid()) return false;
 
-    cmd->SetPipeline(taaPSO);
+    // r.TAA.SilhouetteReject: the UZ_TAA_SILHOUETTE_REJECT=1 permutation when the CVar is on and its history-depth
+    // storage exists (SceneRenderer::EnsureTaaHistoryDepthResources), else the default pipeline, whose shader text
+    // is the prior resolve: OFF renders bit for bit what it rendered before. The permutation's compile failure is
+    // logged once by the library and leaves the default in place.
+    const bool silhouetteWanted = cv_TAASilhouetteReject->value > 0.5f && input.historyDepthWriteUav != UINT32_MAX;
+    const RHIPipelineHandle silhouettePSO = silhouetteWanted ? m_pipelines->GetTaaResolveSilhouette()
+                                                             : RHIPipelineHandle::Invalid();
+    const bool silhouette = silhouettePSO.IsValid();
+
+    cmd->SetPipeline(silhouette ? silhouettePSO : taaPSO);
 
     TaaCB taaCb{};
     taaCb.jitterX      = input.jitterX;
@@ -177,6 +207,12 @@ bool TaaUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     taaCb.flipIsolationRatio    = cv_TAAFlipIsolation->value;
     taaCb.flipVelocityPx        = cv_TAAFlipVelocity->value;
     taaCb.flipBlendWeight       = cv_TAAFlipWeight->value;
+    // The storage exists only while the CVar is on (SceneRenderer::EnsureTaaHistoryDepthResources); the read index
+    // is valid only when the previous frame wrote it, so a toggle or a resize restarts the validation one frame later.
+    taaCb.silhouetteReject         = silhouette ? 1u : 0u;
+    taaCb.historyDepthSrv          = input.historyDepthReadSrv;
+    taaCb.historyDepthUav          = input.historyDepthWriteUav;
+    taaCb.silhouetteDepthTolerance = cv_TAASilhouetteTolerance->value;
 
     // Root signature slot 2 = b2 (per-object constant buffer).
     constexpr uint32_t kSlotPerObject = 2;

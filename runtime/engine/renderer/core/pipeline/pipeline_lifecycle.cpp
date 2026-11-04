@@ -138,6 +138,7 @@ void PipelineLibrary::Shutdown() {
     destroyPipeline(m_dfsCullObjects);
     destroyPipeline(m_dfsConeTrace);
     destroyPipeline(m_taaResolve);
+    destroyPipeline(m_taaResolveSilhouette);
     destroyPipeline(m_ssrTrace);
     destroyPipeline(m_ssrResolve);
     destroyPipeline(m_rtReflection);
@@ -203,6 +204,7 @@ void PipelineLibrary::Shutdown() {
     destroyShader(m_dfsCullObjectsCS);
     destroyShader(m_dfsConeTraceCS);
     destroyShader(m_taaResolveCS);
+    destroyShader(m_taaResolveSilhouetteCS);
     destroyShader(m_ssrTraceCS);
     destroyShader(m_ssrResolveCS);
     destroyShader(m_rtReflectionCS);

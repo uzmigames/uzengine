@@ -72,6 +72,42 @@ void SceneRenderer::EnsureTaaClampBoxResources(bool wanted) {
     UZ_LOG(Renderer, Info, "TAA clamp-box diagnostic storage created ({}x{})", m_width, m_height);
 }
 
+/// Creates the r.TAA.SilhouetteReject history-depth pair on demand (RG32F: the own sample depth and the dilated
+/// cross depth every history texel was resolved with, flipped with the history) and releases it when the CVar is
+/// turned off, so the OFF render owns nothing and writes nothing.
+void SceneRenderer::EnsureTaaHistoryDepthResources(bool wanted) {
+    const bool have = m_taaHistoryDepth[0].IsValid() && m_taaHistoryDepth[1].IsValid();
+    if (wanted == have) return;
+    m_taaHistoryDepthFrame = UINT32_MAX;
+    if (!wanted) {
+        for (int i = 0; i < 2; ++i) {
+            if (m_taaHistoryDepth[i].IsValid()) {
+                m_device->DestroyTexture(m_taaHistoryDepth[i]);
+                m_taaHistoryDepth[i] = RHITextureHandle{};
+                m_taaHistoryDepthSrv[i] = UINT32_MAX;
+                m_taaHistoryDepthUav[i] = UINT32_MAX;
+            }
+        }
+        return;
+    }
+    for (int i = 0; i < 2; ++i) {
+        RHITextureDesc depthDesc{};
+        depthDesc.width     = m_width;
+        depthDesc.height    = m_height;
+        depthDesc.format    = RHIFormat::RG32Float;
+        depthDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::UnorderedAccess;
+        depthDesc.debugName = (i == 0) ? "TAA_HistoryDepth_0" : "TAA_HistoryDepth_1";
+        m_taaHistoryDepth[i] = m_device->CreateTexture(depthDesc);
+        if (m_taaHistoryDepth[i].IsValid()) {
+            m_taaHistoryDepthSrv[i] = m_device->GetTextureSRVIndex(m_taaHistoryDepth[i]);
+            m_taaHistoryDepthUav[i] = m_device->GetTextureUAVIndex(m_taaHistoryDepth[i]);
+        } else {
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create TAA history depth texture {}", i);
+        }
+    }
+    UZ_LOG(Renderer, Info, "TAA history depth storage created ({}x{}, RG32F) for r.TAA.SilhouetteReject", m_width, m_height);
+}
+
 /// Loads the component-replay buffer, or releases it when the path is cleared.
 ///
 /// The file is a flat float4 array: element 0 is the rectangle (x, y, w, h), element 1 the frame
@@ -152,7 +188,14 @@ void SceneRenderer::DestroyTaaResources() {
             m_taaClampBoxSrv[i] = UINT32_MAX;
             m_taaClampBoxUav[i] = UINT32_MAX;
         }
+        if (m_taaHistoryDepth[i].IsValid()) {
+            m_device->DestroyTexture(m_taaHistoryDepth[i]);
+            m_taaHistoryDepth[i] = RHITextureHandle{};
+            m_taaHistoryDepthSrv[i] = UINT32_MAX;
+            m_taaHistoryDepthUav[i] = UINT32_MAX;
+        }
     }
+    m_taaHistoryDepthFrame = UINT32_MAX;
     m_taaHistoryIndex = 0;
     m_temporal.ResetAll(TemporalReset::ResourcesRecreated);
 }

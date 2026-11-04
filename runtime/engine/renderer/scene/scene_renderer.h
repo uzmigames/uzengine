@@ -723,6 +723,9 @@ public:
     /// Creates or releases the r.TAA.ClampFreezeAfterFrame storage (diagnostic, off by default).
     void EnsureTaaClampBoxResources(bool wanted);
 
+    /// Creates or releases the r.TAA.SilhouetteReject history-depth pair (on demand, released while the CVar is off).
+    void EnsureTaaHistoryDepthResources(bool wanted);
+
     void SetScreenPercentage(float pct);
 
     /// Returns the current screen percentage (10-200, default 100).

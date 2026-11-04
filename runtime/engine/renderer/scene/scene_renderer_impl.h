@@ -687,6 +687,12 @@
     uint32_t m_taaClampBoxSrv[2]{UINT32_MAX, UINT32_MAX};
     uint32_t m_taaClampBoxUav[2]{UINT32_MAX, UINT32_MAX};
     bool     m_taaClampBoxInitialised = false;  ///< False until the box has been written once.
+    /// r.TAA.SilhouetteReject storage: the own (un-dilated) depth every history texel was resolved at, a 0 / 1
+    /// ping-pong flipped with the history; created on demand, released while the CVar is off.
+    RHITextureHandle m_taaHistoryDepth[2]{};
+    uint32_t m_taaHistoryDepthSrv[2]{UINT32_MAX, UINT32_MAX};
+    uint32_t m_taaHistoryDepthUav[2]{UINT32_MAX, UINT32_MAX};
+    uint32_t m_taaHistoryDepthFrame = UINT32_MAX;  ///< Frame of the last depth write; the read side is valid one frame later.
     /// Component replay (diagnostic): recorded AO and specular, per frame and per pixel.
     RHIBufferHandle m_componentReplay;
     uint32_t m_componentReplaySrv = UINT32_MAX;

@@ -311,6 +311,19 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                         m_rgStates->Transition(cmd, m_taaHistory[readIdx], RHIResourceState::ShaderResource);
                     }
 
+                    // r.TAA.SilhouetteReject: the history-depth pair exists only while the CVar is on and flips
+                    // with the history; the read side is valid only when the previous frame wrote it (a toggle,
+                    // a resize or a skipped resolve restarts the validation one frame later).
+                    EnsureTaaHistoryDepthResources(CVarRegistry::Get().GetBool("r.TAA.SilhouetteReject"));
+                    const bool historyDepthReady =
+                        m_taaHistoryDepth[0].IsValid() && m_taaHistoryDepth[1].IsValid();
+                    const bool historyDepthValid = historyDepthReady && m_taaHistoryDepthFrame != UINT32_MAX
+                                                && m_taaHistoryDepthFrame + 1 == ctx.frameIndex;
+                    if (historyDepthReady) {
+                        m_rgStates->Transition(cmd, m_taaHistoryDepth[writeIdx], RHIResourceState::UnorderedAccess);
+                        m_rgStates->Transition(cmd, m_taaHistoryDepth[readIdx], RHIResourceState::ShaderResource);
+                    }
+
                     UpscalerInput input{};
                     input.sceneColorSrv       = m_hdrSceneColorSrv;
                     input.depthSrv            = m_gbuffer.depthSRV;
@@ -321,6 +334,8 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                     input.clampBoxUav[0]      = clampBoxRead ? UINT32_MAX : m_taaClampBoxUav[0];
                     input.clampBoxUav[1]      = clampBoxRead ? UINT32_MAX : m_taaClampBoxUav[1];
                     input.clampFreezeEnabled  = clampBoxReady ? 1u : 0u;
+                    input.historyDepthReadSrv  = historyDepthValid ? m_taaHistoryDepthSrv[readIdx] : UINT32_MAX;
+                    input.historyDepthWriteUav = historyDepthReady ? m_taaHistoryDepthUav[writeIdx] : UINT32_MAX;
                     input.frameIndex          = ctx.frameIndex;
                     input.historyWriteUav     = m_taaHistoryUav[writeIdx];
                     input.sceneColorTexture   = m_hdrSceneColor;
@@ -358,6 +373,7 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                         m_upscalerFailStreak);
                     if (wrote) {
                         m_temporal.MarkWritten(writeIdx);
+                        if (historyDepthReady) m_taaHistoryDepthFrame = ctx.frameIndex;
                     } else {
                         m_temporal.MarkFailed(writeIdx);
                         const uint32_t warningBit = 1u << static_cast<uint32_t>(m_upscalerType);
@@ -370,14 +386,19 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
 
                     if (CVarRegistry::Get().GetBool("r.TAA.LogDecisions")) {
                         UZ_LOG(Renderer, Info,
-                               "TemporalExecute: frame={} execute={} display={} failures={}",
+                               "TemporalExecute: frame={} execute={} display={} failures={} silhouetteDepth={}/{} (last write {})",
                                ctx.frameIndex, wrote ? "ok" : "failed",
-                               ctx.display.temporal ? "history" : "hdr", m_upscalerFailStreak);
+                               ctx.display.temporal ? "history" : "hdr", m_upscalerFailStreak,
+                               historyDepthReady ? "ready" : "off", historyDepthValid ? "read" : "no-read",
+                               m_taaHistoryDepthFrame);
                     }
 
                     // Write target → SRV for tonemap to read
                     {
                         m_rgStates->Transition(cmd, m_taaHistory[writeIdx], RHIResourceState::ShaderResource);
+                        if (historyDepthReady) {
+                            m_rgStates->Transition(cmd, m_taaHistoryDepth[writeIdx], RHIResourceState::ShaderResource);
+                        }
                     }
                 });
             });

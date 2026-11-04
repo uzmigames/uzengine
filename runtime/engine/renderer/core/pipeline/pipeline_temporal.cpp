@@ -68,6 +68,33 @@ RHIPipelineHandle PipelineLibrary::GetTaaResolve() {
     return m_taaResolve;
 }
 
+// r.TAA.SilhouetteReject: the UZ_TAA_SILHOUETTE_REJECT=1 permutation of the same shader (the UZ_SSR_TEMPORAL_FIX
+// pattern), compiled on first use. The default pipeline above is untouched: its shader text is the prior resolve.
+RHIPipelineHandle PipelineLibrary::GetTaaResolveSilhouette() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetTaaResolveSilhouette called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+    if (m_taaResolveSilhouette.IsValid()) return m_taaResolveSilhouette;
+    if (m_taaResolveSilhouetteFailed) return RHIPipelineHandle::Invalid();
+    if (!m_taaResolveSilhouetteCS.IsValid())
+        m_taaResolveSilhouetteCS = m_shaderMgr->CreateShaderWithDefines(
+            EngineShader::TaaResolveCS, RHIShaderStage::Compute, "UZ_TAA_SILHOUETTE_REJECT=1");
+    if (m_taaResolveSilhouetteCS.IsValid()) {
+        RHIComputePipelineDesc desc{};
+        desc.computeShader = m_taaResolveSilhouetteCS;
+        desc.debugName     = "TAA_Resolve_SilhouetteReject";
+        m_taaResolveSilhouette = m_device->CreateComputePipeline(desc);
+    }
+    if (!m_taaResolveSilhouette.IsValid()) {
+        m_taaResolveSilhouetteFailed = true;
+        UZ_LOG(Renderer, Warning, "PipelineLibrary: the TaaResolveCS UZ_TAA_SILHOUETTE_REJECT permutation failed to compile; r.TAA.SilhouetteReject runs the default TAA_Resolve pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created TAA_Resolve_SilhouetteReject pipeline");
+    }
+    return m_taaResolveSilhouette;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // TSR — Dilate Velocity Compute Pipeline
 // ─────────────────────────────────────────────────────────────────────────────

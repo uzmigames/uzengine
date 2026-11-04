@@ -432,6 +432,11 @@ public:
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetTaaResolve();
 
+    /// Returns the TAA resolve pipeline compiled with UZ_TAA_SILHOUETTE_REJECT=1 (r.TAA.SilhouetteReject): the
+    /// history rejection across silhouettes. Compiled on first use; a compile failure is logged once and the handle
+    /// stays invalid, so the caller keeps the default pipeline (whose shader text is the prior resolve, unchanged).
+    [[nodiscard]] RHIPipelineHandle GetTaaResolveSilhouette();
+
     /// Returns the TSR velocity dilation compute pipeline (tsr_resolve_cs.hlsl + TSR_PASS_DILATE_VELOCITY).
     ///
     /// @ref Yang et al. 2020 "Temporal Super Resolution" — closest depth search, velocity dilation

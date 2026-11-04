@@ -140,6 +140,8 @@
     RHIShaderHandle m_dfsCullObjectsCS         = RHIShaderHandle::Invalid();
     RHIShaderHandle m_dfsConeTraceCS           = RHIShaderHandle::Invalid();
     RHIShaderHandle m_taaResolveCS             = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_taaResolveSilhouetteCS   = RHIShaderHandle::Invalid();   ///< UZ_TAA_SILHOUETTE_REJECT=1 variant
+    bool            m_taaResolveSilhouetteFailed = false;                      ///< its compile failed (logged once)
     RHIShaderHandle m_tsrDilateVelocityCS      = RHIShaderHandle::Invalid();
     RHIShaderHandle m_tsrRejectShadingCS       = RHIShaderHandle::Invalid();
     RHIShaderHandle m_tsrUpdateHistoryCS       = RHIShaderHandle::Invalid();
@@ -246,6 +248,7 @@
     RHIPipelineHandle m_dfsCullObjects        = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_dfsConeTrace          = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_taaResolve            = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_taaResolveSilhouette  = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_tsrDilateVelocity    = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_tsrRejectShading     = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_tsrUpdateHistory     = RHIPipelineHandle::Invalid();
