@@ -73,6 +73,55 @@ static auto* cv_PathTracer       = UZ_CVAR_BOOL("r.PathTracer.Enable", false,
     "Compute path tracer runtime mode (replaces deferred lighting + GI + shadows)");
 static auto* cv_PipelinePathTracer = UZ_CVAR_BOOL("r.PathTracer.Pipeline", false,
     "DXR pipeline single-bounce reference renderer (--path-trace)");
+// The environment-MIS specular (r.EnvMIS, frame_constants.cpp) accumulated its 8-spp estimate into a
+// screen-locked history: under camera motion a metal's pixels inherited whatever was on that screen pixel
+// before (a dark restarting crescent on the leading rim, another metal's mirror image ghosting inside it,
+// the raw noise along the silhouette). The permutation fetches the history where the surface point was last
+// frame and keeps it only on the same surface (env_mis_temporal_cs.hlsl, UZ_ENVMIS_REPROJECT=1).
+static auto* cv_EnvMISReproject = UZ_CVAR_BOOL("r.EnvMIS.Reproject", true,
+    "Reproject and validate the environment-MIS specular history under camera motion (velocity buffer + geometry history, count-based blend); 0 = the screen-locked accumulation");
+// The reprojected accumulation converges, but its 8-spp estimate at the 0.05 EMA floor keeps a steady-state noise
+// of 16 % of the single-frame noise: a fine speckle on rough metals that boils from frame to frame, invisible at a
+// distance and plain in a close-up. r.EnvMIS.Denoise resolves each frame's estimate over the neighbouring pixels
+// whose lobes see the same environment (normal within a fraction of the GGX alpha, same material) before the same
+// accumulation (env_mis_resolve_cs.hlsl); it runs on top of r.EnvMIS.Reproject. 0 = the accumulation of 0969e0f0.
+static auto* cv_EnvMISDenoise = UZ_CVAR_BOOL("r.EnvMIS.Denoise", true,
+    "Resolve the environment-MIS specular estimate over the neighbouring pixels of the same lobe and material before the temporal accumulation (needs r.EnvMIS.Reproject); 0 = the unfiltered 8-spp accumulation");
+static auto* cv_EnvMISDenoiseRadius = UZ_CVAR_INT("r.EnvMIS.Denoise.Radius", 3,
+    "r.EnvMIS.Denoise: kernel radius in pixels (a (2r+1)^2 footprint, Gaussian sigma 0.6 r)", 1, 4);
+static auto* cv_EnvMISDenoiseLobe = UZ_CVAR_FLOAT("r.EnvMIS.Denoise.LobeFraction", 0.5f,
+    "r.EnvMIS.Denoise: angular sigma of the normal weight as a fraction of the GGX alpha (the lobe's median half-vector angle); smaller keeps more detail, larger filters more", 0.05f, 2.f);
+// The resolve leaves a residual at the 0.05 EMA floor: 16 % of the resolved estimate's noise, a slow mottle at the
+// kernel's scale that still boils in a close-up, and a lower floor alone would lag every lighting or view change by
+// as many frames. r.EnvMIS.Temporal keeps the r.EnvMIS.Denoise accumulation as a fast reference (luminance + the
+// estimate's noise, measured from the resolve footprint) and outputs a running average up to MaxCount samples whose
+// luminance is clamped every frame to that reference +- Clamp x its noise, so a stable surface converges as far as
+// the cap while a change is followed as before (env_mis_resolve_cs.hlsl, UZ_ENVMIS_TEMPORAL=1). 0 = the resolve of
+// ccf40e95.
+static auto* cv_EnvMISTemporal = UZ_CVAR_BOOL("r.EnvMIS.Temporal", true,
+    "Deepen the environment-MIS specular accumulation on stable surfaces (running average up to MaxCount, clamped to the r.EnvMIS.Denoise result +- Clamp x its noise; needs r.EnvMIS.Denoise); 0 = the 0.05 EMA floor");
+static auto* cv_EnvMISTemporalMaxCount = UZ_CVAR_INT("r.EnvMIS.Temporal.MaxCount", 256,
+    "r.EnvMIS.Temporal: sample cap of the running average (the EMA floor becomes 1/MaxCount on a stable surface)", 20, 4096);
+static auto* cv_EnvMISTemporalClamp = UZ_CVAR_FLOAT("r.EnvMIS.Temporal.Clamp", 2.5f,
+    "r.EnvMIS.Temporal: how far the output may stray from the r.EnvMIS.Denoise result, in that result's own noise standard deviations (smaller follows changes closer, larger converges deeper)", 0.5f, 16.f);
+// The directional PCSS estimates each pixel with one 16-tap kernel rotation, a fixed function of the pixel (or, with
+// r.Shadows.SoftPCSS.StableKernel, of the receiver's shadow texel): a grain of about one tap across the penumbra that
+// slides over the surface or becomes a surface texture TAA has to reconstruct under camera motion - the residual
+// penumbra tremble. r.Shadows.SoftPCSS.Denoise estimates the visibility before the lighting with a rotation that
+// advances every frame and accumulates it where each surface point was on the previous frame (geometry-validated,
+// variance-clipped, after a penumbra-sized edge-aware pre-filter), so the penumbra converges to the kernel's
+// integral and stays on the surface (sun_shadow_raw_cs.hlsl, sun_shadow_denoise_cs.hlsl); the lighting reads it in
+// its UZ_SHADOW_DENOISE permutation. 0 = the lighting estimates the visibility itself, as before.
+static auto* cv_SunShadowDenoise = UZ_CVAR_BOOL("r.Shadows.SoftPCSS.Denoise", true,
+    "Denoise the directional PCSS visibility (per-frame kernel rotation, reprojected count-based accumulation, penumbra-sized edge-aware pre-filter; needs r.Shadows.SoftPCSS and the velocity buffer); 0 = the per-pixel 16-tap estimate");
+static auto* cv_SunShadowDenoiseMaxCount = UZ_CVAR_INT("r.Shadows.SoftPCSS.Denoise.MaxCount", 32,
+    "r.Shadows.SoftPCSS.Denoise: sample cap of the accumulation (blend weight floor 1/MaxCount)", 2, 256);
+static auto* cv_SunShadowDenoiseSpatial = UZ_CVAR_FLOAT("r.Shadows.SoftPCSS.Denoise.Spatial", 0.25f,
+    "r.Shadows.SoftPCSS.Denoise: pre-filter sigma at a fresh history, as a fraction of the PCSS filter radius (divided by the sample count as the history deepens)", 0.f, 2.f);
+static auto* cv_SunShadowDenoiseClamp = UZ_CVAR_FLOAT("r.Shadows.SoftPCSS.Denoise.Clamp", 1.0f,
+    "r.Shadows.SoftPCSS.Denoise: history band half-width in noise standard deviations of the receiver's neighbourhood (the residual of a plane fit; half a pixel of the plane's slope is added for TAA jitter); smaller follows moving shadows closer, larger converges deeper", 0.25f, 8.f);
+static auto* cv_SunShadowDenoiseRotate = UZ_CVAR_BOOL("r.Shadows.SoftPCSS.Denoise.Rotate", true,
+    "r.Shadows.SoftPCSS.Denoise: advance the PCSS kernel rotation every frame (golden-ratio sequence) so the accumulation integrates it; 0 = the lighting's rotation");
 
 namespace uz {
 
@@ -258,13 +307,17 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         && m_envMISPass && m_envMISPass->IsInitialized()
         && m_envMapSampler && m_envMapSampler->IsReady()) {
 
+        // r.EnvMIS.Reproject needs the velocity buffer, written by the velocity pass only under a continuous
+        // previous matrix (frame_geometry.cpp); without one the history restarts (historyReusable false).
+        const bool envMisReproject = cv_EnvMISReproject->value > 0.5f && m_gbuffer.velocity.IsValid();
         rgBuilder.AddPass("EnvMIS_Temporal", [&](rg::RgPassBuilder& pb) {
             pb.Read(ctx.albedoRes,   RHIResourceState::ShaderResource);
             pb.Read(ctx.normalRes,   RHIResourceState::ShaderResource);
             pb.Read(ctx.depthRes,    RHIResourceState::ShaderResource);
             pb.Read(ctx.positionRes, RHIResourceState::ShaderResource);
+            if (envMisReproject) pb.Read(ctx.velocityRes, RHIResourceState::ShaderResource);
 
-            pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources&) {
+            pb.SetExecutionCallback([this, &ctx, envMisReproject](IRHICommandList* cmd, const rg::RgPassResources&) {
                 UZ_PROFILE_SCOPE("EnvMIS::Execute");
 
                 EnvMISPass::DispatchParams misParams;
@@ -279,6 +332,18 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                 misParams.perFrameOffset   = ctx.perFrameAlloc.offsetBytes;
                 misParams.perFrameCpu      = ctx.perFrameAlloc.cpuPtr;
                 misParams.perFrameSize     = ctx.perFrameAlloc.sizeBytes;
+                misParams.reproject        = envMisReproject;
+                misParams.velocitySrvIdx   = m_gbuffer.velocitySRV;
+                misParams.historyReusable  = ctx.temporal.matrixValid;
+                misParams.cameraPos[0]     = ctx.perFrame.cameraPos.x;
+                misParams.cameraPos[1]     = ctx.perFrame.cameraPos.y;
+                misParams.cameraPos[2]     = ctx.perFrame.cameraPos.z;
+                misParams.denoise             = envMisReproject && cv_EnvMISDenoise->value > 0.5f;
+                misParams.denoiseRadius       = static_cast<uint32_t>(cv_EnvMISDenoiseRadius->value);
+                misParams.denoiseLobeFraction = cv_EnvMISDenoiseLobe->value;
+                misParams.temporal            = misParams.denoise && cv_EnvMISTemporal->value > 0.5f;
+                misParams.temporalMaxCount    = static_cast<uint32_t>(cv_EnvMISTemporalMaxCount->value);
+                misParams.temporalClamp       = cv_EnvMISTemporalClamp->value;
 
                 m_envMISPass->Execute(cmd, *m_envMapSampler, misParams);
             });
@@ -294,6 +359,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         ctx.apVolumeRes = rgBuilder.ImportTrackedTexture("APVolume", m_apVolume);
     }
 
+    RegisterSunShadowDenoisePass(rgBuilder, ctx);   // r.Shadows.SoftPCSS.Denoise: the sun visibility the lighting reads
     RegisterCloudShadowPasses(rgBuilder, ctx);
     RegisterDeferredLightingPass(rgBuilder, ctx);
     RegisterAtmosphereFogCloudPasses(rgBuilder, ctx);
@@ -341,6 +407,72 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
     RegisterPassInspectorTargets(ctx);
 }
 
+// ── r.Shadows.SoftPCSS.Denoise ───────────────────────────────────────────────
+// Two compute dispatches before the deferred lighting (sun_shadow_denoise_pass.h). The output index is decided here,
+// at registration, so RegisterDeferredLightingPass can hand it to the UZ_SHADOW_DENOISE lighting permutation.
+
+void SceneRenderer::RegisterSunShadowDenoisePass(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
+    m_sunShadowDenoiseSrv = UINT32_MAX;
+    // The pass needs the bindless heap, the soft path (the hard PCF has no kernel rotation) and the velocity
+    // buffer (written by the velocity pass under a continuous previous matrix; without one the history restarts).
+    if (cv_SunShadowDenoise->value < 0.5f || !ctx.bindless || !m_gbuffer.velocity.IsValid()) return;
+    if (!CVarRegistry::Get().GetBool("r.Shadows.SoftPCSS", true)) return;
+    if (!m_sunShadowDenoisePass) {
+        m_sunShadowDenoisePass = std::make_unique<SunShadowDenoisePass>();
+        m_sunShadowDenoisePass->SetStateRegistry(m_rgStates.get());
+        if (!m_sunShadowDenoisePass->Init(m_device, m_shaderMgr.get())) {
+            m_sunShadowDenoisePass.reset();
+            return;
+        }
+    }
+    const uint32_t width  = static_cast<uint32_t>(ctx.renderWidth);
+    const uint32_t height = static_cast<uint32_t>(ctx.renderHeight);
+    const uint32_t srv = m_sunShadowDenoisePass->Prepare(width, height);
+    if (srv == UINT32_MAX) return;
+    m_sunShadowDenoiseSrv = srv;
+
+    SunShadowDenoisePass::DispatchParams p;
+    p.normalSrvIdx    = m_gbuffer.normalSRV;
+    p.depthSrvIdx     = m_gbuffer.depthSRV;
+    p.positionSrvIdx  = m_gbuffer.positionWSSRV;
+    p.velocitySrvIdx  = m_gbuffer.velocitySRV;
+    p.perFrameBuffer  = ctx.perFrameAlloc.bufferHandle;
+    p.perFrameOffset  = ctx.perFrameAlloc.offsetBytes;
+    p.perFrameCpu     = ctx.perFrameAlloc.cpuPtr;
+    p.perFrameSize    = ctx.perFrameAlloc.sizeBytes;
+    p.shadowBuffer    = ctx.shadowAlloc.bufferHandle;
+    p.shadowOffset    = ctx.shadowAlloc.offsetBytes;
+    p.shadowCpu       = ctx.shadowAlloc.cpuPtr;
+    p.shadowSize      = static_cast<uint32_t>(sizeof(ShadowDataCB));
+    p.frameIndex      = ctx.frameIndex;
+    p.historyReusable = ctx.temporal.matrixValid;
+    p.cameraPos[0]    = ctx.perFrame.cameraPos.x;
+    p.cameraPos[1]    = ctx.perFrame.cameraPos.y;
+    p.cameraPos[2]    = ctx.perFrame.cameraPos.z;
+    // World size of a pixel per unit of view distance, 2 / (P22 x height): with row vectors the y column of the
+    // view-projection's 3x3 part is the view's up axis scaled by the projection's P22 (TAA's jitter moves it by
+    // ~1/height, negligible here).
+    const auto& vp = ctx.unjitteredViewProj.m;
+    const float projY = std::sqrt(vp._12 * vp._12 + vp._22 * vp._22 + vp._32 * vp._32);
+    p.pixelAngle      = (projY > 0.f && height > 0) ? 2.f / (projY * static_cast<float>(height)) : 0.f;
+    p.rotate          = cv_SunShadowDenoiseRotate->value > 0.5f;
+    p.maxCount        = static_cast<uint32_t>(cv_SunShadowDenoiseMaxCount->value);
+    p.spatialScale    = cv_SunShadowDenoiseSpatial->value;
+    p.clampSigma      = cv_SunShadowDenoiseClamp->value;
+
+    rgBuilder.AddPass("SunShadow_Denoise", [&ctx, this, p](rg::RgPassBuilder& pb) {
+        pb.Read(ctx.normalRes,   RHIResourceState::ShaderResource);
+        pb.Read(ctx.depthRes,    RHIResourceState::ShaderResource);
+        pb.Read(ctx.positionRes, RHIResourceState::ShaderResource);
+        pb.Read(ctx.velocityRes, RHIResourceState::ShaderResource);
+        if (ctx.shadowAtlasRes.IsValid()) pb.Read(ctx.shadowAtlasRes, RHIResourceState::ShaderResource);
+        pb.SetExecutionCallback([this, p](IRHICommandList* cmd, const rg::RgPassResources&) {
+            UZ_PROFILE_SCOPE("SunShadowDenoise::Execute");
+            m_sunShadowDenoisePass->Execute(cmd, p);
+        });
+    });
+}
+
 // ── GI material table (reference path tracer bounce-hit albedo) ──
 
 uint32_t SceneRenderer::UpdateGIMaterialTable(const FrameContext& ctx) {
@@ -356,6 +488,11 @@ uint32_t SceneRenderer::UpdateGIMaterialTable(const FrameContext& ctx) {
             m_giMaterialTable = {};
             m_giMaterialTableSrv = UINT32_MAX;
         }
+        if (m_giMaterialTableExt.IsValid()) {
+            m_device->DestroyBuffer(m_giMaterialTableExt);
+            m_giMaterialTableExt = {};
+            m_giMaterialTableExtSrv = UINT32_MAX;
+        }
         RHIBufferDesc desc{};
         desc.sizeBytes = static_cast<uint64_t>(meshCap)
                        * sizeof(GIMeshMaterialGPU);
@@ -367,14 +504,29 @@ uint32_t SceneRenderer::UpdateGIMaterialTable(const FrameContext& ctx) {
         m_giMaterialTableSrv = m_giMaterialTable.IsValid()
             ? m_device->GetBufferSRVIndex(m_giMaterialTable)
             : UINT32_MAX;
+        // The per-mesh roughness / metallic sibling (r.GI.HitMaterial.PerMesh, doc 08 section 4.2):
+        // the same capacity and lifetime, bound only by the UZ_GI_HIT_PERMESH gather permutations.
+        RHIBufferDesc extDesc = desc;
+        extDesc.sizeBytes = static_cast<uint64_t>(meshCap)
+                          * sizeof(GIMeshMaterialExtGPU);
+        extDesc.stride    = sizeof(GIMeshMaterialExtGPU);
+        extDesc.debugName = "GI_MaterialTableExt";
+        m_giMaterialTableExt = m_device->CreateBuffer(extDesc);
+        m_giMaterialTableExtSrv = m_giMaterialTableExt.IsValid()
+            ? m_device->GetBufferSRVIndex(m_giMaterialTableExt)
+            : UINT32_MAX;
         m_giMaterialTableCapacity = meshCap;
     }
     if (m_giMaterialTable.IsValid()) {
         auto* entries = static_cast<GIMeshMaterialGPU*>(
             m_device->MapBuffer(m_giMaterialTable));
+        auto* extEntries = m_giMaterialTableExt.IsValid()
+            ? static_cast<GIMeshMaterialExtGPU*>(m_device->MapBuffer(m_giMaterialTableExt))
+            : nullptr;
         if (entries) {
             for (uint32_t e = 0; e < meshCap; ++e) {
                 entries[e] = {};
+                if (extEntries) extEntries[e] = {};
             }
             for (const auto& dc : ctx.drawList.GetCommands()) {
                 if (dc.meshId >= meshCap) continue;
@@ -387,6 +539,19 @@ uint32_t SceneRenderer::UpdateGIMaterialTable(const FrameContext& ctx) {
                     (dc.albedoSrvIndex != 0
                      && dc.albedoSrvIndex != UINT32_MAX)
                         ? dc.albedoSrvIndex : UINT32_MAX;
+                if (extEntries) {
+                    // The G-buffer's rule (gbuffer_ps.hlsl): an ORM-packed material binds its one
+                    // map to aoSrvIndex with materialFlags bit 2 (scene_sync.cpp), else the separate
+                    // roughness (R) and metallic (R) maps; slot 0 = unset, as the albedo above.
+                    const auto srv = [](uint32_t i) { return (i == 0 || i == UINT32_MAX) ? UINT32_MAX : i; };
+                    const bool orm = (dc.materialFlags & 0x4u) != 0u;
+                    auto& ext = extEntries[dc.meshId];
+                    ext.roughnessSrv        = srv(orm ? dc.aoSrvIndex : dc.roughnessSrvIndex);
+                    ext.metallicSrv         = orm ? UINT32_MAX : srv(dc.metallicSrvIndex);
+                    ext.materialFlags       = dc.materialFlags;
+                    ext.roughnessMultiplier = dc.roughnessMultiplier;
+                    ext.metallicMultiplier  = dc.metallicMultiplier;
+                }
                 // Phase D stage 2: the mesh's emission for the surface cache's
                 // cell lighting (colour x intensity, the LightBVH's convention;
                 // slot 0 = no texture). Unread by the path tracer.
@@ -423,6 +588,7 @@ uint32_t SceneRenderer::UpdateGIMaterialTable(const FrameContext& ctx) {
             }
             m_device->UnmapBuffer(m_giMaterialTable);
         }
+        if (extEntries) m_device->UnmapBuffer(m_giMaterialTableExt);
     }
     return m_giMaterialTableSrv;
 }

@@ -7,6 +7,9 @@
 #include "../lighting/ibl.hlsli"
 #include "rc_probe_guard.hlsli"   // cache probes kept near a surface do not reach behind it (followup-01)
 #include "surface_cache.hlsli"    // Phase D stage 3: the surface radiance cache at an SDF hit (SurfaceCacheQuerySdf)
+#ifdef UZ_GI_HIT_SPECULAR
+#include "gi_hit_specular.hlsli"  // r.GI.FinalGather.HitSpecular: the sun's GGX lobe at the hit (doc 06)
+#endif
 
 #ifndef UZ_SDF_REFLECTION_SAMPLER
 SamplerState sdfReflectionSampler : register(s2);
@@ -53,6 +56,20 @@ struct SdfReflectionScene {
     /// one element); 0xffffffff = no cache, every hit shades inline as before. Set by the caller
     /// from its own binding (LightingCB::surfaceCacheParamsSrv, the SSGI root DWORD).
     uint surfaceCacheParamsSrv;
+#ifdef UZ_GI_HIT_SPECULAR
+    /// r.GI.FinalGather.HitSpecular (doc 06 section 5.2): the scene-constant roughness of the sun lobe at
+    /// the hit and the IBL BRDF LUT for its D7 diffuse weight (0xffffffff before the IBL bake = identity).
+    /// Set by the gather shaders only; the deferred PS never compiles this permutation.
+    float hitSpecularRoughness;
+    uint hitSpecularLutSrv;
+#ifdef UZ_GI_HIT_PERMESH
+    /// r.GI.HitMaterial.PerMesh (doc 08 section 7.3): the per-mesh roughness / metallic sibling table
+    /// (StructuredBuffer<GIMeshMaterialExt> SRV, 0xffffffff = none: every hit keeps the scene constant)
+    /// and the floor on a hit's authored roughness. Set by the DXR gather permutations only.
+    uint hitMaterialExtSrv;
+    float hitMinRoughness;
+#endif
+#endif
 };
 
 /// @constants Four clipmaps; 0xffffffff invalid SRV; 65504 is the largest finite half.
@@ -162,7 +179,11 @@ float3 SdfReflectionNormal(SdfReflectionScene scene, float3 position) {
 }
 
 /// @constants Eight trilinear corners; seven float4s encode L2 SH; squared normal weights.
-float3 SdfReflectionIrradiance(SdfReflectionScene scene, float3 position, float3 normal) {
+/// `hitT` is the distance from the ray origin to `position` (the hit this irradiance lights): the
+/// stage-2 near-field exclusion (rc_probe_visibility.hlsli, `r.GI.RadianceCache.NearFieldExclude`)
+/// fades the probe term out below it; the stage-2 Chebyshev visibility (`r.GI.RadianceCache.Visibility`)
+/// weights each probe by the cache's depth atlas. Both are the identity unless their CVars are on.
+float3 SdfReflectionIrradiance(SdfReflectionScene scene, float3 position, float3 normal, float hitT) {
     if (scene.probeSrv == 0xffffffffu || scene.probesPerAxis < 2 || scene.probeExtent <= 0.0) return 0.0;
     float spacing = 2.0 * scene.probeExtent / float(scene.probesPerAxis - 1);
     float3 cell = (position - scene.probeOrigin) / spacing;
@@ -171,6 +192,9 @@ float3 SdfReflectionIrradiance(SdfReflectionScene scene, float3 position, float3
     uint3 upper = min(lower + 1, scene.probesPerAxis - 1);
     float3 fraction = frac(cell);
     StructuredBuffer<float4> probes = ResourceDescriptorHeap[scene.probeSrv];
+    const float4 rcParams = probes[ProbeParamsIndex(scene.probesPerAxis)];
+    const float nearWeight = RcNearFieldWeight(hitT, rcParams);
+    if (nearWeight <= 0.0) return 0.0;
     float3 irradiance = 0.0;
     float totalWeight = 0.0;
     [unroll] for (uint corner = 0; corner < 8; ++corner) {
@@ -183,10 +207,13 @@ float3 SdfReflectionIrradiance(SdfReflectionScene scene, float3 position, float3
         uint probeLinear = index.x + index.y * scene.probesPerAxis + index.z * scene.probesPerAxis * scene.probesPerAxis;
         const float3 gridPosition = scene.probeOrigin + float3(index) * spacing;
         const float4 guard = probes[ProbeGuardIndex(scene.probesPerAxis, probeLinear)];
-        float3 toProbe = ProbeEffectivePosition(guard, gridPosition) - position;
+        const float3 probePosition = ProbeEffectivePosition(guard, gridPosition);
+        float3 toProbe = probePosition - position;
         float distance = length(toProbe);
         float normalWeight = distance > 0.0 ? saturate(dot(normal, toProbe / distance)) : 1.0;
         weight *= normalWeight * normalWeight;
+        weight *= RcProbeVisibilityWeight(rcParams, UZ_SDF_REFLECTION_SAMPLER, probeLinear, scene.probesPerAxis,
+                                          spacing, probePosition, position, normal);
         uint base = probeLinear * 7;
         if (probes[base + 6].w <= 0.0) continue;
         if (ProbeGuardRejects(guard, gridPosition, position)) continue;
@@ -195,7 +222,12 @@ float3 SdfReflectionIrradiance(SdfReflectionScene scene, float3 position, float3
         irradiance += weight * EvalSH_L2(normal, sh);
         totalWeight += weight;
     }
-    return totalWeight > 0.0 ? irradiance / totalWeight : 0.0;
+    return totalWeight > 0.0 ? irradiance / totalWeight * nearWeight : 0.0;
+}
+
+/// The probe irradiance at a point that is not a ray's hit (no near field to exclude).
+float3 SdfReflectionIrradiance(SdfReflectionScene scene, float3 position, float3 normal) {
+    return SdfReflectionIrradiance(scene, position, normal, 1e30);
 }
 
 /// The single hit-shading point of every SDF consumer (the final gather, ReSTIR GI, the deferred
@@ -210,7 +242,8 @@ float3 SdfReflectionIrradiance(SdfReflectionScene scene, float3 position, float3
 /// its `sun` + `other` layers, or the inline sun with the cell's `other`); a miss shades inline
 /// exactly as before and, only with `SdfWrites` (diagnostic, default off), feeds the two terms into
 /// the cell — the per-mesh-average albedo must not average into the exact-material cells.
-float3 ShadeSdfReflectionHit(SdfReflectionScene scene, float3 position, float3 rayDirection) {
+/// `hitT`: the hit's distance from the ray origin, for the stage-2 near-field exclusion of the probe term.
+float3 ShadeSdfReflectionHit(SdfReflectionScene scene, float3 position, float3 rayDirection, float hitT) {
     float3 normal = SdfReflectionNormal(scene, position);
     if (dot(normal, -rayDirection) <= 0.0) return 0.0;
     float3 origin;
@@ -237,19 +270,43 @@ float3 ShadeSdfReflectionHit(SdfReflectionScene scene, float3 position, float3 r
         visibility = TraceSdfRay(scene, origin, scene.sunDirection, scene.traceDistance, 2u, normal) == -1.0 ? 1.0 : 0.0;
     }
     float3 albedo = saturate(SampleSdfReflectionSurface(scene, position).gba);
+#ifdef UZ_GI_HIT_SPECULAR
+    // r.GI.FinalGather.HitSpecular (doc 06 sections 4, 5.2): the sun Lambert weighted by the LUT's
+    // (1 - E_spec) and the sun's GGX lobe toward the ray origin (V = -rayDirection), both gated by the
+    // same visibility. The probe-irradiance Lambert and the cell's `other` layer are unchanged.
+    const float3 sunLambert = albedo * (scene.sunColor * (ndl * visibility * M_1_PI));
+    const GiHitSunSpecular hs = EvalGiHitSunSpecular(normal, -rayDirection, scene.sunDirection, ndl,
+                                                     scene.hitSpecularRoughness, kGiHitSpecularF0,
+                                                     scene.hitSpecularLutSrv, UZ_SDF_REFLECTION_SAMPLER);
+    const float3 sunShaded = sunLambert * hs.diffuseWeight + scene.sunColor * (visibility * hs.specularCos);
+    if (cellRead) {
+        // DirectMode 1: the inline sun (the field's shadow trace) with the cell's `other` layer.
+        return sunShaded + cellOther;
+    }
+    if (cellWrite) {
+        // The cell's `sun` layer is view-independent: it receives the unweighted Lambert, never the
+        // lobe or its view-dependent weight.
+        const float3 otherTerm = albedo * SdfReflectionIrradiance(scene, origin, normal, hitT);
+        SurfaceCacheUpdate(cache, cachePos, normal, SurfaceCacheCameraPos(cache), cache.sdfLodBias,
+                           sunLambert, otherTerm, kSurfaceCacheWriterSdf);
+        return sunShaded + otherTerm;
+    }
+    return sunShaded + albedo * SdfReflectionIrradiance(scene, origin, normal, hitT);
+#else
     if (cellRead) {
         // DirectMode 1: the inline sun (the field's shadow trace) with the cell's `other` layer.
         return albedo * (scene.sunColor * (ndl * visibility * M_1_PI)) + cellOther;
     }
     if (cellWrite) {
         const float3 sunTerm   = albedo * (scene.sunColor * (ndl * visibility * M_1_PI));
-        const float3 otherTerm = albedo * SdfReflectionIrradiance(scene, origin, normal);
+        const float3 otherTerm = albedo * SdfReflectionIrradiance(scene, origin, normal, hitT);
         SurfaceCacheUpdate(cache, cachePos, normal, SurfaceCacheCameraPos(cache), cache.sdfLodBias,
                            sunTerm, otherTerm, kSurfaceCacheWriterSdf);
         return sunTerm + otherTerm;
     }
     return albedo * (scene.sunColor * (ndl * visibility * M_1_PI)
-                   + SdfReflectionIrradiance(scene, origin, normal));
+                   + SdfReflectionIrradiance(scene, origin, normal, hitT));
+#endif
 }
 
 /// The surface trace with its hit distance exposed: `hitT` >= 0 on a hit, -1 when the ray escaped,
@@ -258,7 +315,7 @@ float3 TraceSdfSurfaceRadianceIdentified(SdfReflectionScene scene, float3 origin
                                         uint rayKind, float3 geometricNormal, out float hitT) {
     float t = TraceSdfRay(scene, origin, direction, scene.traceDistance, rayKind, geometricNormal);
     hitT = t;
-    if (t >= 0.0) return ShadeSdfReflectionHit(scene, origin + direction * t, direction);
+    if (t >= 0.0) return ShadeSdfReflectionHit(scene, origin + direction * t, direction, t);
     if (t == -1.0 && scene.skySrv != 0xffffffffu) {
         TextureCube<float4> sky = ResourceDescriptorHeap[scene.skySrv];
         return sky.SampleLevel(UZ_SDF_REFLECTION_SAMPLER, float3(direction.x, direction.z, direction.y), 0).rgb * scene.skyMultiplier;

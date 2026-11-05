@@ -9,6 +9,24 @@
 #ifndef UZ_SSGI_SURFACE_CACHE_PARAMS_SRV
 #define UZ_SSGI_SURFACE_CACHE_PARAMS_SRV 0xffffffffu
 #endif
+#ifdef UZ_GI_HIT_SPECULAR
+/// r.GI.FinalGather.HitSpecular (doc 06 section 5.5): the including shader names the root DWORD holding
+/// the lobe's roughness (float bits) before this include; unnamed = roughness 0 = the term is the identity.
+#ifndef UZ_SSGI_HIT_SPECULAR_ROUGHNESS_BITS
+#define UZ_SSGI_HIT_SPECULAR_ROUGHNESS_BITS 0u
+#endif
+#ifdef UZ_GI_HIT_PERMESH
+/// r.GI.HitMaterial.PerMesh (doc 08 section 7.3): the including shader names the root DWORDs holding the
+/// per-mesh material sibling table SRV and the roughness floor (float bits) before this include; an unnamed
+/// table = no per-mesh data, every hit keeps the scene constant.
+#ifndef UZ_SSGI_HIT_MATERIAL_EXT_SRV
+#define UZ_SSGI_HIT_MATERIAL_EXT_SRV 0xffffffffu
+#endif
+#ifndef UZ_SSGI_HIT_MIN_ROUGHNESS_BITS
+#define UZ_SSGI_HIT_MIN_ROUGHNESS_BITS 0u
+#endif
+#endif
+#endif
 /// @constants Four clipmaps and the shared sample count; intensity is applied once to E/pi.
 SdfReflectionScene BuildSurfaceScene() {
     SdfReflectionScene scene;
@@ -28,6 +46,14 @@ SdfReflectionScene BuildSurfaceScene() {
     scene.skyMultiplier = float3(skyLightColorR,skyLightColorG,skyLightColorB) * skyLightIntensity;
     scene.plainMean = 0u; // diffuse gather does not use the reflection estimator's weight
     scene.surfaceCacheParamsSrv = UZ_SSGI_SURFACE_CACHE_PARAMS_SRV;
+#ifdef UZ_GI_HIT_SPECULAR
+    scene.hitSpecularRoughness = asfloat(UZ_SSGI_HIT_SPECULAR_ROUGHNESS_BITS);
+    scene.hitSpecularLutSrv = brdfLutSrvIndex;   // the PerFrameCB mirror (ssgi_surface.hlsli), sentinel before the IBL bake
+#ifdef UZ_GI_HIT_PERMESH
+    scene.hitMaterialExtSrv = UZ_SSGI_HIT_MATERIAL_EXT_SRV;
+    scene.hitMinRoughness = asfloat(UZ_SSGI_HIT_MIN_ROUGHNESS_BITS);
+#endif
+#endif
     return scene;
 }
 

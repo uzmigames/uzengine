@@ -17,6 +17,30 @@
 #ifndef UZ_GI_HIT_MATERIAL_HLSLI
 #define UZ_GI_HIT_MATERIAL_HLSLI
 
+#ifdef UZ_GI_HIT_UV_WRAP
+/// r.GI.HitMaterial.WrapUv (docs/analysis/lumen-radiance-cache-stability/07-firstbounce-diffuse-decomposition): the
+/// hit's albedo / emissive texture is sampled with the shared root signature's bilinear WRAP static
+/// sampler (s3, dx12_pso_creation.cpp) instead of the bilinear CLAMP one, as the raster path
+/// (anisotropic wrap, s0) and the reference path tracer (its `linearWrap`) sample the same textures.
+/// A tiled triangle UV outside [0, 1] then reads the tiled content instead of the texture's edge
+/// texel (Sponza's floors and walls: edges 0.66-0.78x of the texture mean, which depressed every GI
+/// consumer's hit albedo and the gather's E/pi to 0.880 of the path tracer's). Only the
+/// `UZ_GI_HIT_UV_WRAP=1` permutations compile this block; the default pipelines keep the committed
+/// text. One resource per register: `gdf_surface.hlsli` / `sdf_reflections.hlsli` already bind s3
+/// under their own names when they precede this file, so reuse that declaration, else declare it
+/// here and publish it for a later include of either.
+#if defined(UZ_GDF_WRAP_SAMPLER)
+#define UZ_GI_HIT_WRAP_SAMPLER UZ_GDF_WRAP_SAMPLER
+#elif defined(UZ_SDF_REFLECTION_WRAP_SAMPLER)
+#define UZ_GI_HIT_WRAP_SAMPLER UZ_SDF_REFLECTION_WRAP_SAMPLER
+#else
+SamplerState giHitWrapSampler : register(s3);   // linear WRAP: the shared static sampler table's s3
+#define UZ_GI_HIT_WRAP_SAMPLER giHitWrapSampler
+#define UZ_GDF_WRAP_SAMPLER giHitWrapSampler
+#define UZ_SDF_REFLECTION_WRAP_SAMPLER giHitWrapSampler
+#endif
+#endif // UZ_GI_HIT_UV_WRAP
+
 /// Mirrors GIMeshMaterialGPU (path_tracer_pass.h, 64 bytes). Phase D stage 2
 /// appended the mesh's emission (`emissiveSrv`, `emissive`) for the surface
 /// radiance cache's cell lighting (`GITrace_HitEmissive`); the path tracer's
@@ -81,7 +105,12 @@ bool GITrace_HitSurface(uint meshId, uint primIndex, float2 bary,
         // every frame) would accumulate that NaN into a permanently black pixel.
         float2 safeUv = (isfinite(uv.x) && isfinite(uv.y)) ? uv : float2(0.0, 0.0);
         Texture2D<float4> albedoTex = ResourceDescriptorHeap[NonUniformResourceIndex(mat.albedoSrv)];
+#ifdef UZ_GI_HIT_UV_WRAP
+        // r.GI.HitMaterial.WrapUv: the WRAP sampler reads the tiled content at a UV outside [0, 1].
+        albedo *= albedoTex.SampleLevel(UZ_GI_HIT_WRAP_SAMPLER, safeUv, 0.0).rgb;
+#else
         albedo *= albedoTex.SampleLevel(linearClamp, safeUv, 0.0).rgb;
+#endif
     }
     // Firewall: a bad read may darken this hit but must never NaN-poison the path.
     if (!all(isfinite(albedo)))     albedo = max(mat.tint, 0.0);
@@ -125,10 +154,84 @@ float3 GITrace_HitEmissive(uint meshId, uint primIndex, float2 bary, uint materi
         float2 uv = GITrace_HitUV(mat, primIndex, bary);
         float2 safeUv = (isfinite(uv.x) && isfinite(uv.y)) ? uv : float2(0.0, 0.0);
         Texture2D<float4> emissiveTex = ResourceDescriptorHeap[NonUniformResourceIndex(mat.emissiveSrv)];
+#ifdef UZ_GI_HIT_UV_WRAP
+        // r.GI.HitMaterial.WrapUv: the albedo path's WRAP sampler at the same raw UV.
+        emissive *= emissiveTex.SampleLevel(UZ_GI_HIT_WRAP_SAMPLER, safeUv, 0.0).rgb;
+#else
         emissive *= emissiveTex.SampleLevel(linearClamp, safeUv, 0.0).rgb;
+#endif
     }
     if (!all(isfinite(emissive))) emissive = max(mat.emissive, 0.0);
     return emissive;
 }
+
+#ifdef UZ_GI_HIT_PERMESH
+// ─── r.GI.HitMaterial.PerMesh: the hit's own roughness and metallic ───
+// (docs/analysis/lumen-radiance-cache-stability/08-per-mesh-hit-material.md section 5.1). Only the
+// UZ_GI_HIT_PERMESH=1 gather permutations compile this block; the default pipelines keep the text above.
+
+/// Mirrors GIMeshMaterialExtGPU (path_tracer_pass.h, 32 bytes): the sibling of GIMeshMaterial, indexed by
+/// the same TLAS InstanceID, carrying what the primary record has no slot for.
+struct GIMeshMaterialExt {
+    uint  roughnessSrv;         ///< ORM map (G = roughness, B = metallic) under materialFlags bit 2, else the roughness map (R).
+    uint  metallicSrv;          ///< Metallic map (R); unused under ORM.
+    uint  materialFlags;        ///< DrawCommand::materialFlags (bit 2 = ORM packed).
+    uint  padding0;
+    float roughnessMultiplier;
+    float metallicMultiplier;
+    uint2 padding1;
+};
+
+/// The roughness / metallic / ORM taps follow the albedo tap's sampler exactly: the WRAP sampler under
+/// r.GI.HitMaterial.WrapUv (a tiled ORM map would otherwise read its edge texel), else the bilinear clamp.
+#ifdef UZ_GI_HIT_UV_WRAP
+#define UZ_GI_HIT_MATERIAL_SAMPLER UZ_GI_HIT_WRAP_SAMPLER
+#else
+#define UZ_GI_HIT_MATERIAL_SAMPLER linearClamp
+#endif
+
+/// The hit's roughness and metallic: the sibling table at the triangle UV, the path tracer's rule
+/// (pathtracer_closesthit.hlsl: both default to 1, the ORM map's G/B or the separate maps' R, then
+/// `saturate(x * multiplier)`, so a missing map yields the multiplier itself - the G-buffer's value).
+/// False when either table is unbound or the mesh has no raw views (the caller keeps the scene-constant
+/// path); the sentinel and firewall policies are GITrace_HitSurface's.
+bool GITrace_HitRoughnessMetallic(uint meshId, uint primIndex, float2 bary, uint materialTableSrv,
+                                  uint materialExtSrv, out float roughness, out float metallic) {
+    roughness = 1.0;
+    metallic = 0.0;
+    if (materialTableSrv == kGITraceSentinelSrv || materialExtSrv == kGITraceSentinelSrv) return false;
+    StructuredBuffer<GIMeshMaterial> table = ResourceDescriptorHeap[materialTableSrv];
+    GIMeshMaterial mat = table[meshId];
+    if (mat.vbSrv == kGITraceSentinelSrv || mat.ibSrv == kGITraceSentinelSrv) return false;
+    StructuredBuffer<GIMeshMaterialExt> extTable = ResourceDescriptorHeap[materialExtSrv];
+    GIMeshMaterialExt ext = extTable[meshId];
+    float2 uv = GITrace_HitUV(mat, primIndex, bary);
+    float2 safeUv = (isfinite(uv.x) && isfinite(uv.y)) ? uv : float2(0.0, 0.0);
+    // The path tracer's defaults: no map -> the multiplier is the value (a scalar-authored metal reads as one).
+    roughness = 1.0;
+    metallic = 1.0;
+    if ((ext.materialFlags & 4u) != 0u && ext.roughnessSrv != kGITraceSentinelSrv) {
+        Texture2D<float4> orm = ResourceDescriptorHeap[NonUniformResourceIndex(ext.roughnessSrv)];
+        float3 channels = orm.SampleLevel(UZ_GI_HIT_MATERIAL_SAMPLER, safeUv, 0.0).rgb;
+        roughness = channels.g;
+        metallic = channels.b;
+    } else {
+        if (ext.roughnessSrv != kGITraceSentinelSrv) {
+            Texture2D<float4> roughnessTex = ResourceDescriptorHeap[NonUniformResourceIndex(ext.roughnessSrv)];
+            roughness = roughnessTex.SampleLevel(UZ_GI_HIT_MATERIAL_SAMPLER, safeUv, 0.0).r;
+        }
+        if (ext.metallicSrv != kGITraceSentinelSrv) {
+            Texture2D<float4> metallicTex = ResourceDescriptorHeap[NonUniformResourceIndex(ext.metallicSrv)];
+            metallic = metallicTex.SampleLevel(UZ_GI_HIT_MATERIAL_SAMPLER, safeUv, 0.0).r;
+        }
+    }
+    roughness = saturate(roughness * ext.roughnessMultiplier);
+    metallic = saturate(metallic * ext.metallicMultiplier);
+    // Firewall: a bad read may mis-shade this hit but must never NaN-poison the path.
+    if (!isfinite(roughness)) roughness = 1.0;
+    if (!isfinite(metallic)) metallic = 0.0;
+    return true;
+}
+#endif // UZ_GI_HIT_PERMESH
 
 #endif // UZ_GI_HIT_MATERIAL_HLSLI

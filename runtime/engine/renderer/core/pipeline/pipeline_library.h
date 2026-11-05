@@ -432,6 +432,11 @@ public:
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetTaaResolve();
 
+    /// Returns the TAA resolve pipeline compiled with UZ_TAA_SILHOUETTE_REJECT=1 (r.TAA.SilhouetteReject): the
+    /// history rejection across silhouettes. Compiled on first use; a compile failure is logged once and the handle
+    /// stays invalid, so the caller keeps the default pipeline (whose shader text is the prior resolve, unchanged).
+    [[nodiscard]] RHIPipelineHandle GetTaaResolveSilhouette();
+
     /// Returns the TSR velocity dilation compute pipeline (tsr_resolve_cs.hlsl + TSR_PASS_DILATE_VELOCITY).
     ///
     /// @ref Yang et al. 2020 "Temporal Super Resolution" — closest depth search, velocity dilation
@@ -477,6 +482,11 @@ public:
     /// # Returns
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetSsrTemporal();
+
+    /// Returns the corrected SSR temporal pipeline: ssr_temporal_cs.hlsl compiled with UZ_SSR_TEMPORAL_FIX=1
+    /// (r.RayTracing.Reflections.TemporalFix). Compiled on first use; a compile failure is logged once and the
+    /// handle stays invalid, so the caller keeps the default pipeline.
+    [[nodiscard]] RHIPipelineHandle GetSsrTemporalFix();
 
     /// Returns the SSR spatial bilateral denoise compute pipeline (ssr_spatial_denoise_cs.hlsl).
     ///
@@ -623,6 +633,49 @@ public:
     /// Lazy DXR permutations; the original pipelines remain the non-DXR fallback.
     [[nodiscard]] RHIPipelineHandle GetSsgiDxrTrace();
     [[nodiscard]] RHIPipelineHandle GetSsgiDxrUpsample();
+    /// Lazy `UZ_GI_HIT_SPECULAR=1` permutations of the gather trace and upsample, plain and DXR
+    /// (`r.GI.FinalGather.HitSpecular`, docs/analysis/lumen-radiance-cache-stability/06): the sun's GGX
+    /// lobe at the gather's hit vertices. The default pipelines compile the unchanged text, so OFF is
+    /// byte-identical; invalid when the variant failed to compile (the gather runs the plain pipelines).
+    [[nodiscard]] RHIPipelineHandle GetSsgiTraceHitSpecular();
+    [[nodiscard]] RHIPipelineHandle GetSsgiDxrTraceHitSpecular();
+    [[nodiscard]] RHIPipelineHandle GetSsgiUpsampleHitSpecular();
+    [[nodiscard]] RHIPipelineHandle GetSsgiDxrUpsampleHitSpecular();
+    /// `r.GI.HitMaterial.WrapUv` (docs/analysis/lumen-radiance-cache-stability/07-firstbounce-diffuse-decomposition): the
+    /// `UZ_GI_HIT_UV_WRAP=1` permutation of every pipeline whose entry shader fetches the GI material
+    /// table's albedo / emissive at a hit (gi_hit_material.hlsli): the DXR gather trace and upsample
+    /// (plain and hit-specular), the DDGI probe trace, the surface-cache feed and indirect writers, the
+    /// RT reflections. Each is the pipeline's own define string with the wrap define appended, built on
+    /// first use (the hit-specular mechanism above), so the default pipelines compile the unchanged text
+    /// and OFF is byte-identical; invalid when the variant failed to compile (never retried; the caller
+    /// runs the default pipeline).
+    enum class GiHitUvWrapVariant : uint8_t {
+        SsgiDxrTrace,               ///< SsgiTraceCS    UZ_GATHER_DXR=1
+        SsgiDxrTraceHitSpecular,    ///< SsgiTraceCS    UZ_GATHER_DXR=1;UZ_GI_HIT_SPECULAR=1
+        SsgiDxrUpsample,            ///< SsgiUpsampleCS UZ_GATHER_DXR=1
+        SsgiDxrUpsampleHitSpecular, ///< SsgiUpsampleCS UZ_GATHER_DXR=1;UZ_GI_HIT_SPECULAR=1
+        DdgiProbeTrace,             ///< DdgiProbeTraceCS
+        SurfaceCacheFeed,           ///< SurfaceCacheFeedCS
+        SurfaceCacheIndirect,       ///< SurfaceCacheIndirectCS
+        RtReflection,               ///< RtReflectionCS
+        Count
+    };
+    [[nodiscard]] RHIPipelineHandle GetGiHitUvWrap(GiHitUvWrapVariant variant);
+    /// `r.GI.HitMaterial.PerMesh` (docs/analysis/lumen-radiance-cache-stability/08-per-mesh-hit-material): the
+    /// `UZ_GI_HIT_PERMESH=1` permutation of the DXR hit-specular gather trace and upsample (plain and UV-wrap):
+    /// the hit reads its mesh's roughness / metallic from the sibling material table and shades with the path
+    /// tracer's F0 / (1 - metallic) / E_spec coupling. A superset of the hit-specular define set, built on
+    /// first use (the UV-wrap mechanism above), so the default pipelines compile the unchanged text and OFF
+    /// is byte-identical; invalid when the variant failed to compile (never retried; the caller runs the
+    /// hit-specular pipeline).
+    enum class GiHitPerMeshVariant : uint8_t {
+        SsgiDxrTrace,          ///< SsgiTraceCS    UZ_GATHER_DXR=1;UZ_GI_HIT_SPECULAR=1;UZ_GI_HIT_PERMESH=1
+        SsgiDxrTraceWrapUv,    ///< SsgiTraceCS    the above + UZ_GI_HIT_UV_WRAP=1
+        SsgiDxrUpsample,       ///< SsgiUpsampleCS UZ_GATHER_DXR=1;UZ_GI_HIT_SPECULAR=1;UZ_GI_HIT_PERMESH=1
+        SsgiDxrUpsampleWrapUv, ///< SsgiUpsampleCS the above + UZ_GI_HIT_UV_WRAP=1
+        Count
+    };
+    [[nodiscard]] RHIPipelineHandle GetGiHitPerMesh(GiHitPerMeshVariant variant);
 
     /// Returns the SSGI spatial denoise compute pipeline.
     ///
@@ -635,6 +688,7 @@ public:
     /// Velocity-reprojected temporal accumulation with neighborhood variance clipping.
     ///
     [[nodiscard]] RHIPipelineHandle GetSsgiTemporalAccum();
+    [[nodiscard]] RHIPipelineHandle GetSsgiStableTemporalAccum();
 
     /// Returns the SSGI bilateral upsample compute pipeline.
     ///
@@ -703,6 +757,23 @@ public:
     ///
     [[nodiscard]] RHIPipelineHandle GetRadianceCacheTrace();
 
+    /// The stage-1 stability variant of the radiance cache trace (`UZ_RC_STABILITY=1`: periodic
+    /// ray rotation, count-capped blend with a change detector, classification hysteresis -
+    /// docs/analysis/lumen-radiance-cache-stability). `GetRadianceCacheTrace()` compiles the same
+    /// source without the define, i.e. exactly the text before the stage-1 additions, so with the
+    /// stability CVars at their defaults the probes stay bit-identical. The GI pass selects this
+    /// pipeline when `RadianceCache::StabilityEnabled()`; invalid when the variant failed to compile
+    /// (the caller falls back to the default pipeline).
+    [[nodiscard]] RHIPipelineHandle GetRadianceCacheTraceStability();
+
+    /// The `UZ_GI_HIT_SPECULAR=1` variants of the radiance cache trace, alone and combined with
+    /// `UZ_RC_STABILITY=1` (`r.GI.FinalGather.HitSpecular`, doc 06 section 6.2): the probe writer shades
+    /// its hits with the same sun lobe and D7 weight as the gather, so cache and gather agree. The GI
+    /// pass selects among the four trace pipelines on (RadianceCache::StabilityEnabled(),
+    /// SSGIRenderer::HitSpecularEnabled()); invalid when the variant failed to compile.
+    [[nodiscard]] RHIPipelineHandle GetRadianceCacheTraceHitSpecular();
+    [[nodiscard]] RHIPipelineHandle GetRadianceCacheTraceStabilityHitSpecular();
+
     /// Returns the DDGI probe update compute pipeline (DXR inline ray tracing).
     ///
     /// Hardware-RT counterpart to `GetRadianceCacheTrace()`. Writes into the
@@ -720,6 +791,14 @@ public:
     /// `GetDdgiProbeUpdate()` integrates per atlas texel. Before it, every atlas texel traced
     /// the probe's rays itself (292 traces of each ray).
     [[nodiscard]] RHIPipelineHandle GetDdgiProbeTrace();
+
+    /// The radiance cache's depth-moments pass (stage 2 of docs/analysis/lumen-radiance-cache-stability,
+    /// `r.GI.RadianceCache.Visibility`): `ddgi_probe_update_cs.hlsl` compiled with `UZ_RC_DEPTH=1`, the
+    /// DDGI depth pass run on the cache's own ray buffers (ray directions from the info buffer, the
+    /// cache's probe budget, a cleared texel takes the new moments). `GetDdgiProbeUpdate()` compiles the
+    /// same source without the define, i.e. exactly the DDGI writer before it. Invalid when the variant
+    /// failed to compile (the cache then runs without visibility).
+    [[nodiscard]] RHIPipelineHandle GetRadianceCacheDepthMoments();
 
     /// Returns the DDGI atlas border-fill compute pipeline (`ddgi_border_fill_cs.hlsl`):
     /// copies each probe tile's interior into its 1-texel octahedral border after the probe

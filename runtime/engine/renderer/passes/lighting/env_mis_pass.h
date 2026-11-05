@@ -70,6 +70,26 @@ public:
         uint64_t        perFrameOffset = 0;
         const void*     perFrameCpu    = nullptr;
         uint32_t        perFrameSize   = 0;
+        /// r.EnvMIS.Reproject: run the UZ_ENVMIS_REPROJECT=1 permutation, which fetches the history where each
+        /// surface point was on the previous frame (the velocity buffer) and keeps it only where the geometry
+        /// history says it was accumulated on that surface. Off = the screen-locked fetch, unchanged.
+        bool     reproject        = false;
+        uint32_t velocitySrvIdx   = UINT32_MAX;  ///< The velocity buffer (RG16F, pixels), written this frame.
+        bool     historyReusable  = false;       ///< The frame's temporal decision (consecutive frames, no camera cut).
+        float    cameraPos[3]     = {0.f, 0.f, 0.f}; ///< This frame's camera position (cm); remembered for the next frame.
+        /// r.EnvMIS.Denoise (on top of reproject): the estimate is written alone into a raw texture and
+        /// env_mis_resolve_cs.hlsl resolves it over the neighbouring pixels whose lobes see the same environment
+        /// before the same reprojected accumulation. Off = the accumulation above, unchanged.
+        bool     denoise             = false;
+        uint32_t denoiseRadius       = 3;        ///< Kernel radius in pixels (r.EnvMIS.Denoise.Radius).
+        float    denoiseLobeFraction = 0.5f;     ///< Normal-weight sigma / GGX alpha (r.EnvMIS.Denoise.LobeFraction).
+        /// r.EnvMIS.Temporal (on top of denoise): the UZ_ENVMIS_TEMPORAL=1 permutation of the resolve keeps an
+        /// fp32 accumulator (the running average of the output up to temporalMaxCount samples, and the fast
+        /// reference: the denoise accumulation's luminance and the estimate's noise) and clamps the output every
+        /// frame to that reference +- temporalClamp x its noise. Off = the resolve above, unchanged.
+        bool     temporal            = false;
+        uint32_t temporalMaxCount    = 256;      ///< Sample cap of the running average (r.EnvMIS.Temporal.MaxCount).
+        float    temporalClamp       = 2.5f;     ///< Clamp width in fast-reference standard deviations (r.EnvMIS.Temporal.Clamp).
     };
 
     /// Dispatch the env MIS compute + temporal accumulation.
@@ -88,6 +108,15 @@ private:
     bool CreateTextures(uint32_t width, uint32_t height);
     void DestroyTextures();
     [[nodiscard]] bool EnsurePipeline();
+    [[nodiscard]] bool EnsureReprojectPipeline();
+    [[nodiscard]] bool EnsureGeometryTextures();
+    void DestroyGeometryTextures();
+    [[nodiscard]] bool EnsureResolvePipeline();
+    [[nodiscard]] bool EnsureRawTexture();
+    void DestroyRawTexture();
+    [[nodiscard]] bool EnsureTemporalPipeline();
+    [[nodiscard]] bool EnsureAccumulatorTextures();
+    void DestroyAccumulatorTextures();
 
     IRHIDevice*    m_device    = nullptr;
     rg::RgStateRegistry* m_states = nullptr;
@@ -103,6 +132,34 @@ private:
     uint32_t         m_historyUav[2] = { UINT32_MAX, UINT32_MAX };
     uint32_t         m_writeIdx      = 0;     ///< Current write target (flips each frame).
     bool             m_historyValid  = false;  ///< False on first frame / after resize.
+
+    // ── r.EnvMIS.Reproject: the permutation and its geometry history (allocated on first use) ──
+    RHIShaderHandle   m_reprojectShaderCS = RHIShaderHandle::Invalid();
+    RHIPipelineHandle m_reprojectPipeline = RHIPipelineHandle::Invalid();
+    bool              m_reprojectPipelineFailed = false;
+    RHITextureHandle  m_geometry[2]    = { RHITextureHandle::Invalid(), RHITextureHandle::Invalid() };
+    uint32_t          m_geometrySrv[2] = { UINT32_MAX, UINT32_MAX };
+    uint32_t          m_geometryUav[2] = { UINT32_MAX, UINT32_MAX };
+    bool              m_reprojectHistoryValid = false; ///< The geometry history was written by the last Execute.
+    uint32_t          m_reprojectFrame = 0;            ///< The frame index of that Execute.
+    float             m_prevCameraPos[3] = {0.f, 0.f, 0.f};
+
+    // ── r.EnvMIS.Denoise: the resolve pipeline and the raw estimate (allocated on first use) ──
+    RHIShaderHandle   m_resolveShaderCS = RHIShaderHandle::Invalid();
+    RHIPipelineHandle m_resolvePipeline = RHIPipelineHandle::Invalid();
+    bool              m_resolvePipelineFailed = false;
+    RHITextureHandle  m_raw    = RHITextureHandle::Invalid();
+    uint32_t          m_rawSrv = UINT32_MAX;
+    uint32_t          m_rawUav = UINT32_MAX;
+
+    // ── r.EnvMIS.Temporal: the permutation and the accumulator pair (RGBA32F, allocated on first use) ──
+    RHIShaderHandle   m_temporalShaderCS = RHIShaderHandle::Invalid();
+    RHIPipelineHandle m_temporalPipeline = RHIPipelineHandle::Invalid();
+    bool              m_temporalPipelineFailed = false;
+    RHITextureHandle  m_accum[2]    = { RHITextureHandle::Invalid(), RHITextureHandle::Invalid() };
+    uint32_t          m_accumSrv[2] = { UINT32_MAX, UINT32_MAX };
+    uint32_t          m_accumUav[2] = { UINT32_MAX, UINT32_MAX };
+    bool              m_temporalHistoryValid = false;  ///< The accumulator was written by the last Execute.
 
     uint32_t m_width  = 0;
     uint32_t m_height = 0;

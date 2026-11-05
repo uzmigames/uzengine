@@ -62,6 +62,18 @@ cbuffer RootConstants : register(b0) {
     uint g_frameIndex;         ///< Frame counter for temporal jitter
     float g_totalLuminance;    ///< Total env luminance for PDF normalization
     float g_temporalAlpha;     ///< EMA blend factor (0.05 = 95% history, 5% new)
+#if UZ_ENVMIS_REPROJECT
+    // r.EnvMIS.Reproject (the UZ_ENVMIS_REPROJECT=1 permutation): the history is fetched where this surface
+    // point was on the previous frame and validated against the geometry it was accumulated on; the
+    // default permutation keeps the 16 constants above and the screen-locked fetch below.
+    uint  g_velocitySrvIdx;         ///< Velocity buffer (RG16F, pixels, this frame minus the previous; TAA's convention)
+    uint  g_historyGeometrySrvIdx;  ///< The previous frame's geometry history (UINT32_MAX = none: restart)
+    uint  g_geometryUavIdx;         ///< This frame's geometry history UAV
+    uint  g_historyReusable;        ///< 1 when the history was written on the previous frame by this permutation
+    float g_prevCameraPosX;         ///< The previous frame's camera position (cm): the view distance the taps were stored with
+    float g_prevCameraPosY;
+    float g_prevCameraPosZ;
+#endif
 };
 
 // ─── Camera / scene data from PerFrameCB (b1) ────────────────────────────
@@ -119,6 +131,12 @@ float MisCoverage(float metallic, float roughness) {
          * (1.0 - smoothstep(kCoverageRoughnessLo, kCoverageRoughnessHi, roughness));
 }
 
+#if UZ_ENVMIS_REPROJECT
+// r.EnvMIS.Reproject: the history fetch where the surface point was last frame, validated against the geometry
+// it was accumulated on. Shared with env_mis_resolve_cs.hlsl (r.EnvMIS.Denoise), which accumulates the same way.
+#include "env_mis_reproject.hlsli"
+#endif
+
 /// Density of the reflected direction under visible-normal sampling: p(L) = G1(V) D(H) / (4 N.V).
 float PdfGGXVisible(float alpha, float NoV, float NoH) {
     return G1_SmithGGX(alpha * alpha, NoV) * D_GGX(alpha, NoH) / max(4.0 * NoV, 1e-6);
@@ -144,9 +162,16 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     // Output target
     RWTexture2D<float4> outputTex = ResourceDescriptorHeap[g_outputUavIdx];
 
+#if UZ_ENVMIS_REPROJECT
+    RWTexture2D<float4> geometryOut = ResourceDescriptorHeap[g_geometryUavIdx];
+#endif
+
     // Sky pixels or no alias table → no coverage
     if (z <= 0.0001 || g_aliasSrvIdx == kSentinelSrvIndex) {
         outputTex[px] = float4(0, 0, 0, 0);
+#if UZ_ENVMIS_REPROJECT
+        geometryOut[px] = float4(0, 0, 0, 0);
+#endif
         return;
     }
 
@@ -236,6 +261,25 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     // alpha = 0.05 means 95% history + 5% new → converges in ~20 frames
     float3 result = newSample;
 
+#if UZ_ENVMIS_REPROJECT
+    // r.EnvMIS.Reproject: the history where this point was last frame, on this surface only, blended by its
+    // sample count; a pixel without an estimate carries count 0 so a metal that moves over it starts afresh.
+    float count = coverage > 0.0 ? 1.0 : 0.0;
+    if (coverage > 0.0 && g_historyReusable != 0u && g_historyReadSrvIdx != kSentinelSrvIndex
+        && g_historyGeometrySrvIdx != kSentinelSrvIndex) {
+        Texture2D<float4> historyTex  = ResourceDescriptorHeap[g_historyReadSrvIdx];
+        Texture2D<float4> geometryTex = ResourceDescriptorHeap[g_historyGeometrySrvIdx];
+        Texture2D<float2> velocityTex = ResourceDescriptorHeap[g_velocitySrvIdx];
+        float3 historyColor;
+        float  historyCount;
+        if (ReprojectEnvMisHistory(px, worldPos, N, historyTex, geometryTex, velocityTex, historyColor, historyCount)) {
+            count = min(historyCount + 1.0, kEnvMisMaxCount);
+            result = lerp(historyColor, newSample, max(1.0 / count, g_temporalAlpha));
+        }
+    }
+    geometryOut[px] = float4(OctEncode(N), length(cameraPos.xyz - worldPos) * 0.01, count);
+    outputTex[px] = float4(result, coverage);
+#else
     if (g_historyReadSrvIdx != kSentinelSrvIndex) {
         Texture2D<float4> historyTex = ResourceDescriptorHeap[g_historyReadSrvIdx];
         float3 history = historyTex.Load(int3(px, 0)).rgb;
@@ -243,6 +287,7 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     }
 
     outputTex[px] = float4(result, coverage);
+#endif
 }
 
 #endif // UZ_BINDLESS

@@ -138,6 +138,7 @@ void PipelineLibrary::Shutdown() {
     destroyPipeline(m_dfsCullObjects);
     destroyPipeline(m_dfsConeTrace);
     destroyPipeline(m_taaResolve);
+    destroyPipeline(m_taaResolveSilhouette);
     destroyPipeline(m_ssrTrace);
     destroyPipeline(m_ssrResolve);
     destroyPipeline(m_rtReflection);
@@ -150,7 +151,24 @@ void PipelineLibrary::Shutdown() {
     destroyPipeline(m_fxaa);
     destroyPipeline(m_gpuSkinningPipeline);
     destroyPipeline(m_ssgiDxrTrace);
+    destroyPipeline(m_ssgiStableTemporalAccum);
     destroyPipeline(m_ssgiDxrUpsample);
+    destroyPipeline(m_radianceCacheTraceStability);
+    destroyPipeline(m_radianceCacheDepthMoments);
+    destroyPipeline(m_ssgiTraceHitSpecular);
+    destroyPipeline(m_ssgiDxrTraceHitSpecular);
+    destroyPipeline(m_ssgiUpsampleHitSpecular);
+    destroyPipeline(m_ssgiDxrUpsampleHitSpecular);
+    destroyPipeline(m_radianceCacheTraceHitSpecular);
+    destroyPipeline(m_radianceCacheTraceStabilityHitSpecular);
+    for (auto& pipeline : m_giHitUvWrap) {
+        destroyPipeline(pipeline);
+        pipeline = RHIPipelineHandle::Invalid();   // a Failed() sentinel is retried after a re-Init
+    }
+    for (auto& pipeline : m_giHitPerMesh) {
+        destroyPipeline(pipeline);
+        pipeline = RHIPipelineHandle::Invalid();
+    }
 
     // Destroy cached shaders
     auto destroyShader = [this](RHIShaderHandle& h) {
@@ -186,6 +204,7 @@ void PipelineLibrary::Shutdown() {
     destroyShader(m_dfsCullObjectsCS);
     destroyShader(m_dfsConeTraceCS);
     destroyShader(m_taaResolveCS);
+    destroyShader(m_taaResolveSilhouetteCS);
     destroyShader(m_ssrTraceCS);
     destroyShader(m_ssrResolveCS);
     destroyShader(m_rtReflectionCS);
@@ -200,7 +219,24 @@ void PipelineLibrary::Shutdown() {
     destroyShader(m_velocityObjectPS);
     destroyShader(m_fxaaPS);
     destroyShader(m_ssgiDxrTraceCS);
+    destroyShader(m_ssgiStableTemporalAccumCS);
     destroyShader(m_ssgiDxrUpsampleCS);
+    destroyShader(m_radianceCacheTraceStabilityCS);
+    destroyShader(m_radianceCacheDepthMomentsCS);
+    destroyShader(m_ssgiTraceHitSpecularCS);
+    destroyShader(m_ssgiDxrTraceHitSpecularCS);
+    destroyShader(m_ssgiUpsampleHitSpecularCS);
+    destroyShader(m_ssgiDxrUpsampleHitSpecularCS);
+    destroyShader(m_radianceCacheTraceHitSpecularCS);
+    destroyShader(m_radianceCacheTraceStabilityHitSpecularCS);
+    for (auto& shader : m_giHitUvWrapCS) {
+        destroyShader(shader);
+        shader = RHIShaderHandle::Invalid();
+    }
+    for (auto& shader : m_giHitPerMeshCS) {
+        destroyShader(shader);
+        shader = RHIShaderHandle::Invalid();
+    }
 
     m_psoCache.Shutdown();
     m_psoDiskCache.reset();

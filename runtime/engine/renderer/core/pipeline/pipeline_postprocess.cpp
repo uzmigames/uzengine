@@ -292,6 +292,33 @@ RHIPipelineHandle PipelineLibrary::GetSsrTemporal() {
     return m_ssrTemporal;
 }
 
+// r.RayTracing.Reflections.TemporalFix: the UZ_SSR_TEMPORAL_FIX=1 permutation of the same shader (the
+// UZ_RC_STABILITY pattern), compiled on first use. The default pipeline above is untouched.
+RHIPipelineHandle PipelineLibrary::GetSsrTemporalFix() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetSsrTemporalFix called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+    if (m_ssrTemporalFix.IsValid()) return m_ssrTemporalFix;
+    if (m_ssrTemporalFixFailed) return RHIPipelineHandle::Invalid();
+    if (!m_ssrTemporalFixCS.IsValid())
+        m_ssrTemporalFixCS = m_shaderMgr->CreateShaderWithDefines(
+            EngineShader::SsrTemporalCS, RHIShaderStage::Compute, "UZ_SSR_TEMPORAL_FIX=1");
+    if (m_ssrTemporalFixCS.IsValid()) {
+        RHIComputePipelineDesc desc{};
+        desc.computeShader = m_ssrTemporalFixCS;
+        desc.debugName     = "SSR_Temporal_Fix";
+        m_ssrTemporalFix = m_device->CreateComputePipeline(desc);
+    }
+    if (!m_ssrTemporalFix.IsValid()) {
+        m_ssrTemporalFixFailed = true;
+        UZ_LOG(Renderer, Warning, "PipelineLibrary: the SsrTemporalCS UZ_SSR_TEMPORAL_FIX permutation failed to compile; r.RayTracing.Reflections.TemporalFix runs the default SSR_Temporal pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created SSR_Temporal_Fix pipeline");
+    }
+    return m_ssrTemporalFix;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SSR Spatial Bilateral Denoise Compute Pipeline
 // ─────────────────────────────────────────────────────────────────────────────

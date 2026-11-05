@@ -28,16 +28,36 @@ cbuffer RootConstants : register(b0) {
     uint g_thicknessBits;     // CVar r.SSGI.Thickness as float bits (default 0.5)
     uint g_maxRayDistBits;    // Max ray distance in UV space as float bits (default 0.5)
     uint g_surfaceCacheParamsSrv; // Phase D stage 3: StructuredBuffer<SurfaceCacheParams> SRV (0xffffffff = no cache)
-#ifdef UZ_GATHER_DXR
+#if defined(UZ_GATHER_DXR) || defined(UZ_GI_HIT_SPECULAR)
     uint g_gatherTlasSrv;
     uint g_gatherMaterialSrv;
     uint g_gatherDxrMode;
+#endif
+#ifdef UZ_GI_HIT_SPECULAR
+    // r.GI.FinalGather.HitSpecular (doc 06 section 6.3): the 18th DWORD, the scene-constant roughness of
+    // the sun lobe at the gather's hits (float bits). The DXR trio above is declared (unused) in the
+    // HitSpecular-only variant too, so this DWORD sits at index 17 in every variant that declares it.
+    uint g_hitSpecularRoughnessBits;
+#ifdef UZ_GI_HIT_PERMESH
+    // r.GI.HitMaterial.PerMesh (doc 08 section 7.3): the 19th and 20th DWORDs, the per-mesh roughness /
+    // metallic sibling table (StructuredBuffer<GIMeshMaterialExt> SRV, 0xffffffff = none) and the floor on
+    // a hit's authored roughness (float bits). Only the UZ_GI_HIT_PERMESH=1 permutations declare them.
+    uint g_hitMaterialExtSrv;
+    uint g_hitMinRoughnessBits;
+#endif
 #endif
 };
 
 #include "ssgi_surface.hlsli"
 #ifdef UZ_BINDLESS
 #define UZ_SSGI_SURFACE_CACHE_PARAMS_SRV g_surfaceCacheParamsSrv
+#ifdef UZ_GI_HIT_SPECULAR
+#define UZ_SSGI_HIT_SPECULAR_ROUGHNESS_BITS g_hitSpecularRoughnessBits
+#ifdef UZ_GI_HIT_PERMESH
+#define UZ_SSGI_HIT_MATERIAL_EXT_SRV g_hitMaterialExtSrv
+#define UZ_SSGI_HIT_MIN_ROUGHNESS_BITS g_hitMinRoughnessBits
+#endif
+#endif
 #include "ssgi_world_gather.hlsli"
 #endif
 

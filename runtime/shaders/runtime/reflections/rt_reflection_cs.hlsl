@@ -153,8 +153,10 @@ float2 ReflectionSample2D(uint2 pixel, uint frame, uint attempt) {
 // ─── Radiance-cache probe irradiance (E / pi) at a world point: the SDF reflections' read
 // (sdf_reflections.hlsli SdfReflectionIrradiance) on the grid rows of the b2 constants —
 // trilinear over the eight surrounding probes, each weighted by its facing, skipped when invalid
-// (record 6.w) or guarded behind a face; zero outside the grid.
-float3 ReflectionProbeIrradianceOverPi(float3 position, float3 normal) {
+// (record 6.w) or guarded behind a face; zero outside the grid. `hitT` is the reflection ray's hit
+// distance: the stage-2 near-field exclusion fades the term out below the cache's TMin and the
+// stage-2 Chebyshev visibility weights each probe (rc_probe_visibility.hlsli; identity when off).
+float3 ReflectionProbeIrradianceOverPi(float3 position, float3 normal, float hitT) {
     if (probeShSrv == kGITraceSentinelSrv || probesPerAxis < 2u || probeSpacing <= 0.0) return 0.0;
     const float3 origin = float3(gridOriginX, gridOriginY, gridOriginZ);
     const float3 cell = (position - origin) / probeSpacing;
@@ -163,6 +165,9 @@ float3 ReflectionProbeIrradianceOverPi(float3 position, float3 normal) {
     const uint3  upper    = min(lower + 1u, probesPerAxis - 1u);
     const float3 fraction = frac(cell);
     StructuredBuffer<float4> probes = ResourceDescriptorHeap[probeShSrv];
+    const float4 rcParams = probes[ProbeParamsIndex(probesPerAxis)];
+    const float nearWeight = RcNearFieldWeight(hitT, rcParams);
+    if (nearWeight <= 0.0) return 0.0;
     float3 irradiance = 0.0;
     float  totalWeight = 0.0;
     [unroll]
@@ -176,7 +181,10 @@ float3 ReflectionProbeIrradianceOverPi(float3 position, float3 normal) {
         const uint   probeLinear  = index.x + index.y * probesPerAxis + index.z * probesPerAxis * probesPerAxis;
         const float3 gridPosition = origin + float3(index) * probeSpacing;
         const float4 guard        = probes[ProbeGuardIndex(probesPerAxis, probeLinear)];
-        weight *= ReflectionProbeFacingWeight(normal, ProbeEffectivePosition(guard, gridPosition) - position);
+        const float3 probePosition = ProbeEffectivePosition(guard, gridPosition);
+        weight *= ReflectionProbeFacingWeight(normal, probePosition - position);
+        weight *= RcProbeVisibilityWeight(rcParams, linearClamp, probeLinear, probesPerAxis, probeSpacing,
+                                          probePosition, position, normal);
         const uint base = probeLinear * 7u;
         if (probes[base + 6].w <= 0.0) continue;
         if (ProbeGuardRejects(guard, gridPosition, position)) continue;
@@ -186,7 +194,7 @@ float3 ReflectionProbeIrradianceOverPi(float3 position, float3 normal) {
         irradiance  += weight * EvalSH_L2(normal, sh);
         totalWeight += weight;
     }
-    return totalWeight > 0.0 ? irradiance / totalWeight : 0.0;
+    return totalWeight > 0.0 ? irradiance / totalWeight * nearWeight : 0.0;
 }
 
 void WriteHitDistance(uint2 pixel, float t) {
@@ -402,7 +410,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
         // The diffuse bounce the reflected surface receives (the radiance cache's E / pi at the
         // hit, read from the biased hit point as the SDF reflections do): the term the path
         // tracer's multi-bounce carries and stage 1 left out.
-        const float3 probeIrradianceOverPi = ReflectionProbeIrradianceOverPi(cachePos, hitN);
+        const float3 probeIrradianceOverPi = ReflectionProbeIrradianceOverPi(cachePos, hitN, q.CommittedRayT());
         radiance  = ReflectionHitRadiance(albedo, sunRad, probeIrradianceOverPi);
         otherTerm = albedo * probeIrradianceOverPi;
     }

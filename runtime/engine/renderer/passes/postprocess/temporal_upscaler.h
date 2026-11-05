@@ -99,6 +99,10 @@ struct UpscalerInput {
     uint32_t frameIndex     = 0;    ///< Absolute frame index, for the freeze threshold.
     uint32_t clampFreezeEnabled = 0; ///< 1 only while the diagnostic is on; otherwise the shader must not touch the storage.
 
+    // r.TAA.SilhouetteReject: the own depth every history texel was resolved at (TAA only; TSR ignores both).
+    uint32_t historyDepthReadSrv  = UINT32_MAX; ///< Last frame's depth per history texel; UINT32_MAX = none valid yet.
+    uint32_t historyDepthWriteUav = UINT32_MAX; ///< This frame's write target; UINT32_MAX = storage not allocated (CVar off).
+
     // Region dump (diagnostics) — TAA resolve writes per-pixel intermediates for this rectangle.
     uint32_t debugRegionUav = UINT32_MAX;   ///< Dump buffer UAV; UINT32_MAX = off.
     uint32_t debugRegionSrv = UINT32_MAX;   ///< Rect table SRV.

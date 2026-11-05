@@ -256,6 +256,188 @@ RHIPipelineHandle PipelineLibrary::GetSsgiDxrUpsample() {
     return m_ssgiDxrUpsample;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Hit-vertex sun specular permutations (r.GI.FinalGather.HitSpecular, doc 06 section 6.2):
+// the same sources with UZ_GI_HIT_SPECULAR=1, built on first use only.
+// ─────────────────────────────────────────────────────────────────────────────
+
+RHIPipelineHandle PipelineLibrary::GetSsgiTraceHitSpecular() {
+    if (!m_initialized) return RHIPipelineHandle::Invalid();
+    if (m_ssgiTraceHitSpecular.IsValid()) return m_ssgiTraceHitSpecular;
+    if (!m_ssgiTraceHitSpecularCS.IsValid())
+        m_ssgiTraceHitSpecularCS = m_shaderMgr->CreateShaderWithDefines(
+            EngineShader::SsgiTraceCS, RHIShaderStage::Compute, "UZ_GI_HIT_SPECULAR=1");
+    if (!m_ssgiTraceHitSpecularCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile the SsgiTraceCS hit-specular variant");
+        return RHIPipelineHandle::Invalid();
+    }
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_ssgiTraceHitSpecularCS;
+    desc.debugName = "SSGI_Trace_HitSpecular";
+    m_ssgiTraceHitSpecular = m_device->CreateComputePipeline(desc);
+    return m_ssgiTraceHitSpecular;
+}
+
+RHIPipelineHandle PipelineLibrary::GetSsgiDxrTraceHitSpecular() {
+    if (!m_initialized || !m_device->SupportsRayTracing()) return RHIPipelineHandle::Invalid();
+    if (m_ssgiDxrTraceHitSpecular.IsValid()) return m_ssgiDxrTraceHitSpecular;
+    if (!m_ssgiDxrTraceHitSpecularCS.IsValid())
+        m_ssgiDxrTraceHitSpecularCS = m_shaderMgr->CreateShaderWithDefines(
+            EngineShader::SsgiTraceCS, RHIShaderStage::Compute, "UZ_GATHER_DXR=1;UZ_GI_HIT_SPECULAR=1");
+    if (!m_ssgiDxrTraceHitSpecularCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile the SsgiTraceCS DXR hit-specular variant");
+        return RHIPipelineHandle::Invalid();
+    }
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_ssgiDxrTraceHitSpecularCS;
+    desc.debugName = "SSGI_DXRTrace_HitSpecular";
+    m_ssgiDxrTraceHitSpecular = m_device->CreateComputePipeline(desc);
+    return m_ssgiDxrTraceHitSpecular;
+}
+
+RHIPipelineHandle PipelineLibrary::GetSsgiUpsampleHitSpecular() {
+    if (!m_initialized) return RHIPipelineHandle::Invalid();
+    if (m_ssgiUpsampleHitSpecular.IsValid()) return m_ssgiUpsampleHitSpecular;
+    if (!m_ssgiUpsampleHitSpecularCS.IsValid())
+        m_ssgiUpsampleHitSpecularCS = m_shaderMgr->CreateShaderWithDefines(
+            EngineShader::SsgiUpsampleCS, RHIShaderStage::Compute, "UZ_GI_HIT_SPECULAR=1");
+    if (!m_ssgiUpsampleHitSpecularCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile the SsgiUpsampleCS hit-specular variant");
+        return RHIPipelineHandle::Invalid();
+    }
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_ssgiUpsampleHitSpecularCS;
+    desc.debugName = "SSGI_Upsample_HitSpecular";
+    m_ssgiUpsampleHitSpecular = m_device->CreateComputePipeline(desc);
+    return m_ssgiUpsampleHitSpecular;
+}
+
+RHIPipelineHandle PipelineLibrary::GetSsgiDxrUpsampleHitSpecular() {
+    if (!m_initialized || !m_device->SupportsRayTracing()) return RHIPipelineHandle::Invalid();
+    if (m_ssgiDxrUpsampleHitSpecular.IsValid()) return m_ssgiDxrUpsampleHitSpecular;
+    if (!m_ssgiDxrUpsampleHitSpecularCS.IsValid())
+        m_ssgiDxrUpsampleHitSpecularCS = m_shaderMgr->CreateShaderWithDefines(
+            EngineShader::SsgiUpsampleCS, RHIShaderStage::Compute, "UZ_GATHER_DXR=1;UZ_GI_HIT_SPECULAR=1");
+    if (!m_ssgiDxrUpsampleHitSpecularCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile the SsgiUpsampleCS DXR hit-specular variant");
+        return RHIPipelineHandle::Invalid();
+    }
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_ssgiDxrUpsampleHitSpecularCS;
+    desc.debugName = "SSGI_DXRUpsample_HitSpecular";
+    m_ssgiDxrUpsampleHitSpecular = m_device->CreateComputePipeline(desc);
+    return m_ssgiDxrUpsampleHitSpecular;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// r.GI.HitMaterial.WrapUv permutations (UZ_GI_HIT_UV_WRAP=1; reference/rendering/
+// firstbounce-diffuse-decomposition-2026-11-02): every entry shader that fetches the GI material
+// table's albedo / emissive at a hit, each with its own define string plus the wrap define, built on
+// first use only - the same mechanism as the hit-specular permutations above.
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace {
+struct GiHitUvWrapSource {
+    EngineShader shader;
+    const char*  defines;
+    const char*  debugName;
+};
+// Indexed by PipelineLibrary::GiHitUvWrapVariant.
+constexpr GiHitUvWrapSource kGiHitUvWrapSources[] = {
+    {EngineShader::SsgiTraceCS,            "UZ_GATHER_DXR=1;UZ_GI_HIT_UV_WRAP=1",                      "SSGI_DXRTrace_WrapUv"},
+    {EngineShader::SsgiTraceCS,            "UZ_GATHER_DXR=1;UZ_GI_HIT_SPECULAR=1;UZ_GI_HIT_UV_WRAP=1", "SSGI_DXRTrace_HitSpecular_WrapUv"},
+    {EngineShader::SsgiUpsampleCS,         "UZ_GATHER_DXR=1;UZ_GI_HIT_UV_WRAP=1",                      "SSGI_DXRUpsample_WrapUv"},
+    {EngineShader::SsgiUpsampleCS,         "UZ_GATHER_DXR=1;UZ_GI_HIT_SPECULAR=1;UZ_GI_HIT_UV_WRAP=1", "SSGI_DXRUpsample_HitSpecular_WrapUv"},
+    {EngineShader::DdgiProbeTraceCS,       "UZ_GI_HIT_UV_WRAP=1",                                      "DDGI_ProbeTrace_WrapUv"},
+    {EngineShader::SurfaceCacheFeedCS,     "UZ_GI_HIT_UV_WRAP=1",                                      "SurfaceCache_Feed_WrapUv"},
+    {EngineShader::SurfaceCacheIndirectCS, "UZ_GI_HIT_UV_WRAP=1",                                      "SurfaceCache_Indirect_WrapUv"},
+    {EngineShader::RtReflectionCS,         "UZ_GI_HIT_UV_WRAP=1",                                      "RTReflection_WrapUv"},
+};
+static_assert(sizeof(kGiHitUvWrapSources) / sizeof(kGiHitUvWrapSources[0])
+                  == static_cast<size_t>(PipelineLibrary::GiHitUvWrapVariant::Count),
+              "one source per GiHitUvWrapVariant");
+} // namespace
+
+RHIPipelineHandle PipelineLibrary::GetGiHitUvWrap(GiHitUvWrapVariant variant) {
+    // Every entry traces the scene TLAS with an inline RayQuery.
+    if (!m_initialized || !m_device->SupportsRayTracing()) return RHIPipelineHandle::Invalid();
+    const size_t i = static_cast<size_t>(variant);
+    const GiHitUvWrapSource& source = kGiHitUvWrapSources[i];
+    if (m_giHitUvWrap[i].IsValid()) return m_giHitUvWrap[i];
+    if (m_giHitUvWrap[i].IsFailed() || m_giHitUvWrapCS[i].IsFailed()) return RHIPipelineHandle::Invalid();
+    if (!m_giHitUvWrapCS[i].IsValid()) {
+        m_giHitUvWrapCS[i] = m_shaderMgr->CreateShaderWithDefines(source.shader, RHIShaderStage::Compute, source.defines);
+        if (!m_giHitUvWrapCS[i].IsValid()) {
+            UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile the {} variant ({}); the pass keeps its default pipeline (clamp-sampled hit albedo)",
+                   source.debugName, source.defines);
+            m_giHitUvWrapCS[i] = RHIShaderHandle::Failed();
+            return RHIPipelineHandle::Invalid();
+        }
+    }
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_giHitUvWrapCS[i];
+    desc.debugName     = source.debugName;
+    m_giHitUvWrap[i] = m_device->CreateComputePipeline(desc);
+    if (!m_giHitUvWrap[i].IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create {} pipeline", source.debugName);
+        m_giHitUvWrap[i] = RHIPipelineHandle::Failed();
+        return RHIPipelineHandle::Invalid();
+    }
+    UZ_LOG(Renderer, Info, "PipelineLibrary: created {} pipeline", source.debugName);
+    return m_giHitUvWrap[i];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// r.GI.HitMaterial.PerMesh permutations (UZ_GI_HIT_PERMESH=1; docs/analysis/
+// lumen-radiance-cache-stability/08-per-mesh-hit-material section 7.2): the DXR hit-specular gather
+// trace and upsample, plain and UV-wrap, each with its own define string plus the per-mesh define,
+// built on first use only - the same mechanism as the UV-wrap permutations above. Only the DXR
+// gather is permuted: an SDF hit has no mesh identity, and the TLAS writers have no HitSpecular
+// variant to extend yet.
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace {
+// Indexed by PipelineLibrary::GiHitPerMeshVariant.
+constexpr GiHitUvWrapSource kGiHitPerMeshSources[] = {
+    {EngineShader::SsgiTraceCS,    "UZ_GATHER_DXR=1;UZ_GI_HIT_SPECULAR=1;UZ_GI_HIT_PERMESH=1",                      "SSGI_DXRTrace_HitSpecular_PerMesh"},
+    {EngineShader::SsgiTraceCS,    "UZ_GATHER_DXR=1;UZ_GI_HIT_SPECULAR=1;UZ_GI_HIT_PERMESH=1;UZ_GI_HIT_UV_WRAP=1", "SSGI_DXRTrace_HitSpecular_WrapUv_PerMesh"},
+    {EngineShader::SsgiUpsampleCS, "UZ_GATHER_DXR=1;UZ_GI_HIT_SPECULAR=1;UZ_GI_HIT_PERMESH=1",                      "SSGI_DXRUpsample_HitSpecular_PerMesh"},
+    {EngineShader::SsgiUpsampleCS, "UZ_GATHER_DXR=1;UZ_GI_HIT_SPECULAR=1;UZ_GI_HIT_PERMESH=1;UZ_GI_HIT_UV_WRAP=1", "SSGI_DXRUpsample_HitSpecular_WrapUv_PerMesh"},
+};
+static_assert(sizeof(kGiHitPerMeshSources) / sizeof(kGiHitPerMeshSources[0])
+                  == static_cast<size_t>(PipelineLibrary::GiHitPerMeshVariant::Count),
+              "one source per GiHitPerMeshVariant");
+} // namespace
+
+RHIPipelineHandle PipelineLibrary::GetGiHitPerMesh(GiHitPerMeshVariant variant) {
+    // Every entry traces the scene TLAS with an inline RayQuery.
+    if (!m_initialized || !m_device->SupportsRayTracing()) return RHIPipelineHandle::Invalid();
+    const size_t i = static_cast<size_t>(variant);
+    const GiHitUvWrapSource& source = kGiHitPerMeshSources[i];
+    if (m_giHitPerMesh[i].IsValid()) return m_giHitPerMesh[i];
+    if (m_giHitPerMesh[i].IsFailed() || m_giHitPerMeshCS[i].IsFailed()) return RHIPipelineHandle::Invalid();
+    if (!m_giHitPerMeshCS[i].IsValid()) {
+        m_giHitPerMeshCS[i] = m_shaderMgr->CreateShaderWithDefines(source.shader, RHIShaderStage::Compute, source.defines);
+        if (!m_giHitPerMeshCS[i].IsValid()) {
+            UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile the {} variant ({}); the pass keeps its hit-specular pipeline (scene-constant hit material)",
+                   source.debugName, source.defines);
+            m_giHitPerMeshCS[i] = RHIShaderHandle::Failed();
+            return RHIPipelineHandle::Invalid();
+        }
+    }
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_giHitPerMeshCS[i];
+    desc.debugName     = source.debugName;
+    m_giHitPerMesh[i] = m_device->CreateComputePipeline(desc);
+    if (!m_giHitPerMesh[i].IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create {} pipeline", source.debugName);
+        m_giHitPerMesh[i] = RHIPipelineHandle::Failed();
+        return RHIPipelineHandle::Invalid();
+    }
+    UZ_LOG(Renderer, Info, "PipelineLibrary: created {} pipeline", source.debugName);
+    return m_giHitPerMesh[i];
+}
+
 bool PipelineLibrary::EnsureSsgiSpatialDenoiseShader() {
     if (m_ssgiSpatialDenoiseCS.IsValid()) return true;
 
@@ -348,6 +530,24 @@ RHIPipelineHandle PipelineLibrary::GetSsgiTemporalAccum() {
         UZ_LOG(Renderer, Info, "PipelineLibrary: created SSGI_TemporalAccum pipeline");
     }
     return m_ssgiTemporalAccum;
+}
+
+RHIPipelineHandle PipelineLibrary::GetSsgiStableTemporalAccum() {
+    if (!m_initialized) return RHIPipelineHandle::Invalid();
+    if (m_ssgiStableTemporalAccum.IsValid()) return m_ssgiStableTemporalAccum;
+    if (!m_ssgiStableTemporalAccumCS.IsValid()) {
+        m_ssgiStableTemporalAccumCS = m_shaderMgr->CreateShader(
+            EngineShader::SsgiStableTemporalAccumCS, RHIShaderStage::Compute);
+        if (!m_ssgiStableTemporalAccumCS.IsValid()) return RHIPipelineHandle::Invalid();
+    }
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_ssgiStableTemporalAccumCS;
+    desc.debugName = "SSGI_StableTemporalAccum";
+    m_ssgiStableTemporalAccum = m_device->CreateComputePipeline(desc);
+    if (!m_ssgiStableTemporalAccum.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SSGI_StableTemporalAccum pipeline");
+    }
+    return m_ssgiStableTemporalAccum;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -639,8 +839,103 @@ RHIPipelineHandle PipelineLibrary::GetRadianceCacheTrace() {
     } else {
         UZ_LOG(Renderer, Info, "PipelineLibrary: created RadianceCache_Trace pipeline");
     }
-
     return m_radianceCacheTrace;
+}
+
+// r.GI.FinalGather.HitSpecular (doc 06 sections 6.2, 7): the probe writer with the hit-vertex sun lobe,
+// alone and combined with the stage-1/2 stability variant; built on first use only.
+RHIPipelineHandle PipelineLibrary::GetRadianceCacheTraceHitSpecular() {
+    if (!m_initialized) return RHIPipelineHandle::Invalid();
+    if (m_radianceCacheTraceHitSpecular.IsValid()) return m_radianceCacheTraceHitSpecular;
+    if (!m_radianceCacheTraceHitSpecularCS.IsValid())
+        m_radianceCacheTraceHitSpecularCS = m_shaderMgr->CreateShaderWithDefines(
+            EngineShader::RadianceCacheTraceCS, RHIShaderStage::Compute, "UZ_GI_HIT_SPECULAR=1");
+    if (!m_radianceCacheTraceHitSpecularCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile the RadianceCacheTraceCS hit-specular variant");
+        return RHIPipelineHandle::Invalid();
+    }
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_radianceCacheTraceHitSpecularCS;
+    desc.debugName     = "RadianceCache_Trace_HitSpecular";
+    m_radianceCacheTraceHitSpecular = m_device->CreateComputePipeline(desc);
+    if (!m_radianceCacheTraceHitSpecular.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create RadianceCache_Trace_HitSpecular pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created RadianceCache_Trace_HitSpecular pipeline");
+    }
+    return m_radianceCacheTraceHitSpecular;
+}
+
+RHIPipelineHandle PipelineLibrary::GetRadianceCacheTraceStabilityHitSpecular() {
+    if (!m_initialized) return RHIPipelineHandle::Invalid();
+    if (m_radianceCacheTraceStabilityHitSpecular.IsValid()) return m_radianceCacheTraceStabilityHitSpecular;
+    if (!m_radianceCacheTraceStabilityHitSpecularCS.IsValid())
+        m_radianceCacheTraceStabilityHitSpecularCS = m_shaderMgr->CreateShaderWithDefines(
+            EngineShader::RadianceCacheTraceCS, RHIShaderStage::Compute, "UZ_RC_STABILITY=1;UZ_GI_HIT_SPECULAR=1");
+    if (!m_radianceCacheTraceStabilityHitSpecularCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile the RadianceCacheTraceCS stability+hit-specular variant");
+        return RHIPipelineHandle::Invalid();
+    }
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_radianceCacheTraceStabilityHitSpecularCS;
+    desc.debugName     = "RadianceCache_Trace_Stability_HitSpecular";
+    m_radianceCacheTraceStabilityHitSpecular = m_device->CreateComputePipeline(desc);
+    if (!m_radianceCacheTraceStabilityHitSpecular.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create RadianceCache_Trace_Stability_HitSpecular pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created RadianceCache_Trace_Stability_HitSpecular pipeline");
+    }
+    return m_radianceCacheTraceStabilityHitSpecular;
+}
+
+RHIPipelineHandle PipelineLibrary::GetRadianceCacheTraceStability() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetRadianceCacheTraceStability called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+    if (m_radianceCacheTraceStability.IsValid()) return m_radianceCacheTraceStability;
+    if (!m_radianceCacheTraceStabilityCS.IsValid())
+        m_radianceCacheTraceStabilityCS = m_shaderMgr->CreateShaderWithDefines(
+            EngineShader::RadianceCacheTraceCS, RHIShaderStage::Compute, "UZ_RC_STABILITY=1");
+    if (!m_radianceCacheTraceStabilityCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile the RadianceCacheTraceCS stability variant");
+        return RHIPipelineHandle::Invalid();
+    }
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_radianceCacheTraceStabilityCS;
+    desc.debugName     = "RadianceCache_Trace_Stability";
+    m_radianceCacheTraceStability = m_device->CreateComputePipeline(desc);
+    if (!m_radianceCacheTraceStability.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create RadianceCache_Trace_Stability pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created RadianceCache_Trace_Stability pipeline");
+    }
+    return m_radianceCacheTraceStability;
+}
+
+RHIPipelineHandle PipelineLibrary::GetRadianceCacheDepthMoments() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetRadianceCacheDepthMoments called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+    if (m_radianceCacheDepthMoments.IsValid()) return m_radianceCacheDepthMoments;
+    if (!m_radianceCacheDepthMomentsCS.IsValid())
+        m_radianceCacheDepthMomentsCS = m_shaderMgr->CreateShaderWithDefines(
+            EngineShader::DdgiProbeUpdateCS, RHIShaderStage::Compute, "UZ_RC_DEPTH=1");
+    if (!m_radianceCacheDepthMomentsCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile the DdgiProbeUpdateCS radiance-cache depth variant");
+        return RHIPipelineHandle::Invalid();
+    }
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_radianceCacheDepthMomentsCS;
+    desc.debugName     = "RadianceCache_DepthMoments";
+    m_radianceCacheDepthMoments = m_device->CreateComputePipeline(desc);
+    if (!m_radianceCacheDepthMoments.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create RadianceCache_DepthMoments pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created RadianceCache_DepthMoments pipeline");
+    }
+    return m_radianceCacheDepthMoments;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

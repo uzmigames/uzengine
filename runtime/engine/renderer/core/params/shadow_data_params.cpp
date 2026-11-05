@@ -44,6 +44,7 @@ const ShaderParameterMetadata& ShadowDataParams::GetMetadata()
         {"cascadePcssDepthToTexels", ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(ShadowDataParams, cascadePcssDepthToTexels)), sizeof(float) * 8, 0},
         {"localSoftPCSS",          ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(ShadowDataParams, localSoftPCSS)),          sizeof(uint32_t), 0},
         {"localPcssSourceRadius", ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(ShadowDataParams, localPcssSourceRadius)), sizeof(float), 0},
+        {"pcssStableKernel",      ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(ShadowDataParams, pcssStableKernel)),      sizeof(uint32_t), 0},
 
         // ── Resource members (drive texture binding on SM5) ──
         // Only shadowAtlas (t3) and localShadowAtlas (t11) are bound as SM5

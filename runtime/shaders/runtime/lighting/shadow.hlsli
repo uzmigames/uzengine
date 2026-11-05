@@ -50,7 +50,8 @@ cbuffer ShadowDataCB : register(b4) {
     float4 cascadePcssDepthToTexelsPacked[2];  // 8 floats: penumbra texels per unit depth gap (shadow_pcss.h)
     uint   localSoftPCSS;                      // r.Shadows.SoftPCSS.Local
     float  localPcssSourceRadius;              // emitter radius in cm
-    float2 _shadowPad1;                        // pad to 768
+    uint   pcssStableKernel;                   // r.Shadows.SoftPCSS.StableKernel: 0 = screen-seeded rotation
+    float  _shadowPad1;                        // pad to 768
     // 16 entries x 6 float4: [0..3] viewProj rows, [4] (atlasOffsetX, atlasOffsetY, atlasScale,
     // bias cm), [5] (light position xyz, radius). Tiles store distance / radius.
     float4 localShadowRaw[96];                 // 1536B
@@ -247,6 +248,33 @@ float ShadowKernelRotationNoise(float2 pixelPos) {
     return frac(52.9829189 * frac(0.06711056 * pixelPos.x + 0.00583715 * pixelPos.y));
 }
 
+/// r.Shadows.SoftPCSS.StableKernel: the same noise seeded by the receiver's cell on the cascade's
+/// world-anchored texel lattice instead of the screen pixel. A pixel-seeded rotation is constant
+/// for a still camera, but under camera motion every surface point is reached by a different pixel
+/// each frame, so its 16-tap estimate is redrawn every frame and the dither slides across the
+/// penumbra (the tremble TAA only partly absorbs). The lattice coordinate is the receiver projected
+/// on the light's image plane in cascade texels without the cascade's camera-following (texel-
+/// snapped) translation, so a surface point keeps its cell, its rotation and its result while the
+/// camera moves. `cellsPerTexel` subdivides the texel so the cells stay near pixel size.
+float ShadowKernelRotationNoiseStable(float2 lightPlaneTexel, uint cellsPerTexel) {
+    return ShadowKernelRotationNoise(floor(lightPlaneTexel * float(cellsPerTexel)));
+}
+
+// r.Shadows.SoftPCSS.Denoise: sun_shadow_raw_cs.hlsl compiles the soft sampler below with
+// UZ_PCSS_DENOISE_INPUT, which adds two parameters to it: a per-frame offset of the kernel rotation
+// (frac(frame x golden ratio), the same for every pixel, so that the denoiser's reprojected
+// accumulation integrates the kernel over many rotations instead of keeping one rotation's grain)
+// and the filter radius it chose, in world units (the penumbra width that guides the denoiser; 0
+// where no blocker was found). Every other includer expands the macros to nothing and compiles the
+// token stream it compiled before.
+#ifdef UZ_PCSS_DENOISE_INPUT
+#define UZ_PCSS_DENOISE_PARAMS , float rotationOffset, inout float penumbraWorld
+#define UZ_PCSS_DENOISE_ARGS(radius) , rotationOffset, radius
+#else
+#define UZ_PCSS_DENOISE_PARAMS
+#define UZ_PCSS_DENOISE_ARGS(radius)
+#endif
+
 /// Penumbra radius in atlas texels: the receiver/average-blocker depth gap times the cascade's
 /// constant (tan(half source angle) * r.Shadows.SoftPCSS.LightSize * ortho depth range / texel
 /// size, uploaded by SetupShadowFrame). Mirrors PcssPenumbraTexels in shadow_pcss.h, which derives
@@ -272,6 +300,7 @@ float2 RotateShadowTap(float2 tap, float2 rot) {
 /// the atlas, so the search and filter below run once, for the selected cascade only.
 struct CascadeReceiver {
     float2 atlasUV;     ///< Receiver position in atlas UV.
+    float2 lightPlaneTexel; ///< Receiver on the light image plane, cascade texels, camera-independent.
     float2 tileOffset;  ///< Cascade tile origin in atlas UV.
     float2 tileSize;    ///< Cascade tile extent in atlas UV.
     float  cmpDepth;    ///< Biased comparison depth (SampleShadowCascade's cmpDepth).
@@ -317,6 +346,9 @@ CascadeReceiver ProjectCascadeReceiver(float3 worldPos, float3 N, float NdotL, u
     float3 cx = float3(M._11, M._21, M._31);
     float3 cy = float3(M._12, M._22, M._32);
     float3 cz = float3(M._13, M._23, M._33);
+    // NDC x/y without the translation row (_41/_42: the cascade centre that follows the camera,
+    // snapped to whole texels), in texels: fixed per surface point, aligned with the texel grid.
+    r.lightPlaneTexel = float2(dot(biasedPos, cx), dot(biasedPos, cy)) * (0.5 * shadowMapSize);
     float3 tu = cross(cy, N);   // world direction of a pure +u step along the plane (up to scale)
     float3 tv = cross(cx, N);   // world direction of a pure +v step along the plane
     float du = dot(tu, cx);
@@ -342,14 +374,20 @@ CascadeReceiver ProjectCascadeReceiver(float3 worldPos, float3 N, float NdotL, u
 /// @ref Fernando 2005 "Percentage-Closer Soft Shadows"
 float SampleShadowCascadeSoft(CascadeReceiver r, uint cascadeIdx,
                               Texture2D<float> shadowAtlas, SamplerComparisonState smplr,
-                              float2 pixelPos) {
+                              float2 pixelPos UZ_PCSS_DENOISE_PARAMS) {
     float2 atlasDims;
     shadowAtlas.GetDimensions(atlasDims.x, atlasDims.y);
     float2 texelUV  = 1.0 / atlasDims;
     float2 atlasMin = r.tileOffset + 0.5 * texelUV;
     float2 atlasMax = r.tileOffset + r.tileSize - 0.5 * texelUV;
 
-    float angle = ShadowKernelRotationNoise(pixelPos) * 6.28318530718;
+    float noise = (pcssStableKernel != 0u)
+        ? ShadowKernelRotationNoiseStable(r.lightPlaneTexel, pcssStableKernel)
+        : ShadowKernelRotationNoise(pixelPos);
+#ifdef UZ_PCSS_DENOISE_INPUT
+    noise = frac(noise + rotationOffset);
+#endif
+    float angle = noise * 6.28318530718;
     float2 rot = float2(cos(angle), sin(angle));
 
     // 1. Blocker search. The depth gap cannot exceed the receiver depth, so the search radius
@@ -384,13 +422,22 @@ float SampleShadowCascadeSoft(CascadeReceiver r, uint cascadeIdx,
         }
         shadow = lit / 16.0;
     }
+#ifdef UZ_PCSS_DENOISE_INPUT
+    // The filter radius on the light's image plane in world units: one cascade texel spans 2 / shadowMapSize
+    // of NDC, and the NDC gradient of an orthographic cascade along its x axis is the first column of the
+    // view-projection (ProjectCascadeReceiver's cx).
+    float4x4 M = cascadeViewProj[cascadeIdx];
+    float texelWorld = 2.0 / (shadowMapSize * max(length(float3(M._11, M._21, M._31)), 1e-12));
+    penumbraWorld = (blockerCount != 0u) ? filterTexels * texelWorld : 0.0;
+#endif
     return shadow;
 }
 
 /// CascadeShadow with the soft sampler: the same cascade selection, outward walk, split-boundary
 /// blend and distance fade. The walk projects only; the selected cascade (and the next one in
 /// the blend band) is sampled once.
-float CascadeShadowSoft(float3 worldPos, float viewDepth, float3 N, float NdotL, float2 pixelPos) {
+float CascadeShadowSoft(float3 worldPos, float viewDepth, float3 N, float NdotL, float2 pixelPos
+                        UZ_PCSS_DENOISE_PARAMS) {
     if (cascadeCount == 0) return 1.0;
 
 #ifdef UZ_BINDLESS
@@ -418,7 +465,8 @@ float CascadeShadowSoft(float3 worldPos, float viewDepth, float3 N, float NdotL,
     // Outside the whole CSM coverage: fully lit, as CascadeShadow.
     float shadow = 1.0;
     if (sel < cascadeCount) {
-        shadow = SampleShadowCascadeSoft(rec, sel, shadowAtlas, shadowSampler, pixelPos);
+        shadow = SampleShadowCascadeSoft(rec, sel, shadowAtlas, shadowSampler, pixelPos
+                                         UZ_PCSS_DENOISE_ARGS(penumbraWorld));
 
         // Split-boundary blend toward sel + 1 when it covers the pixel too.
         if (sel < cascadeCount - 1) {
@@ -429,8 +477,15 @@ float CascadeShadowSoft(float3 worldPos, float viewDepth, float3 N, float NdotL,
                 float bf = saturate((viewDepth - fadeStart) / blendRange);
                 CascadeReceiver rn = ProjectCascadeReceiver(worldPos, N, NdotL, sel + 1);
                 if (rn.covered) {
-                    float next = SampleShadowCascadeSoft(rn, sel + 1, shadowAtlas, shadowSampler, pixelPos);
+#ifdef UZ_PCSS_DENOISE_INPUT
+                    float nextPenumbraWorld = 0.0;
+#endif
+                    float next = SampleShadowCascadeSoft(rn, sel + 1, shadowAtlas, shadowSampler, pixelPos
+                                                         UZ_PCSS_DENOISE_ARGS(nextPenumbraWorld));
                     shadow = lerp(shadow, next, bf);
+#ifdef UZ_PCSS_DENOISE_INPUT
+                    penumbraWorld = lerp(penumbraWorld, nextPenumbraWorld, bf);
+#endif
                 }
             }
         }

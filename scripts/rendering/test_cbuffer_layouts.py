@@ -132,7 +132,7 @@ ENTRIES = [
                 'pcssMinPenumbraTexels': 'pcssMinPenumbraTexels', 'pcssMaxPenumbraTexels': 'pcssMaxPenumbraTexels',
                 'cascadePcssDepthToTexelsPacked': 'cascadePcssDepthToTexels',
                 'localSoftPCSS': 'localSoftPCSS', 'localPcssSourceRadius': 'localPcssSourceRadius',
-                'localShadowRaw': 'localShadows'},
+                'pcssStableKernel': 'pcssStableKernel', 'localShadowRaw': 'localShadows'},
         # The struct text alone does not compile: the nested struct and the array bound come from the same header.
         'extra_structs': ['LocalLightShadowData'], 'extra_constants': ['kMaxLocalLightShadows'],
     },
@@ -225,7 +225,7 @@ for shader in (
     'gbuffer/translucent_ps.hlsl', 'lighting/deferred_lighting_ps.hlsl',
     'postprocess/tonemap_ps.hlsl', 'postprocess/velocity_ps.hlsl', 'ssgi/ssgi_surface.hlsli',
     'ssgi/ssgi_trace_cs.hlsl', 'ssgi/ssgi_spatial_denoise_cs.hlsl',
-    'ssgi/ssgi_temporal_accum_cs.hlsl', 'ssgi/ssgi_upsample_cs.hlsl',
+    'ssgi/ssgi_temporal_accum_cs.hlsl', 'ssgi/ssgi_stable_temporal_accum_cs.hlsl', 'ssgi/ssgi_upsample_cs.hlsl',
     'vfx/decal_forward_ps.hlsl', 'vfx/particle_billboard_ps.hlsl', 'vfx/particle_billboard_vs.hlsl',
     'vfx/particle_mesh_ps.hlsl', 'vfx/particle_mesh_vs.hlsl', 'vfx/trail_ps.hlsl', 'vfx/trail_vs.hlsl',
     'postprocess/ssr_composite_cs.hlsl', 'postprocess/ssr_resolve_cs.hlsl',
@@ -234,16 +234,30 @@ for shader in (
     'postprocess/svgf_atrous_cs.hlsl', 'postprocess/svgf_filter_moments_cs.hlsl',
     'postprocess/velocity_object_vs.hlsl', 'pathtracing/path_tracer_ps.hlsl',
     'pathtracing/pathtracer_shared.hlsli',
-    'lighting/cluster_assign_cs.hlsl', 'lighting/env_mis_temporal_cs.hlsl',
+    'lighting/cluster_assign_cs.hlsl', 'lighting/env_mis_temporal_cs.hlsl', 'lighting/sun_shadow_raw_cs.hlsl',
     'debug/debug_view_ps.hlsl', 'atmosphere/height_fog_ps.hlsl',
     'atmosphere/skybox_cubemap_ps.hlsl', 'atmosphere/sky_atmosphere_ps.hlsl',
 ):
     TIER_A.append(layout_entry(shader, 'PerFrameCB', PARAMS + 'constant_buffers.h'))
+# The hit-specular gather permutation (r.GI.FinalGather.HitSpecular, docs/analysis/
+# lumen-radiance-cache-stability/06 section 5.6) declares the IBL BRDF LUT in the sparse PerFrameCB
+# mirror only under UZ_GI_HIT_SPECULAR, so the default text stays the one before it; check that mirror too.
+TIER_A.append(layout_entry('ssgi/ssgi_surface.hlsli', 'PerFrameCB', PARAMS + 'constant_buffers.h',
+                           defines=('-D', 'UZ_GI_HIT_SPECULAR=1')))
 for shader in ('gbuffer/gbuffer_ps.hlsl', 'gbuffer/mesh_vs.hlsl', 'gbuffer/mesh_ps.hlsl',
                'gbuffer/translucent_ps.hlsl', 'lighting/shadow_depth_vs.hlsl'):
     TIER_A.append(layout_entry(shader, 'PerObjectCB', PARAMS + 'constant_buffers.h',
                                before='gbuffer_ps.perobject.before.hlsl' if shader == 'gbuffer/gbuffer_ps.hlsl' else None))
 TIER_A += [
+    layout_entry('denoising/rough_specular_common.hlsli', 'RoughSpecularConfig',
+                 PASSES + 'gi/rough_specular_reconstruction.cpp'),
+    # The motion-aware permutation (docs/analysis/lumen-radiance-cache-stability/09 section 4.1) declares
+    # the matrices, the previous camera and the tunables only under UZ_ROUGH_MOTION_AWARE; the OFF text is
+    # the entry above. Check that mirror too.
+    layout_entry('denoising/rough_specular_common.hlsli', 'RoughSpecularConfig',
+                 PASSES + 'gi/rough_specular_reconstruction.cpp', defines=('-D', 'UZ_ROUGH_MOTION_AWARE=1')),
+    layout_entry('denoising/rough_specular_common.hlsli', 'RoughSpecularFrame',
+                 PARAMS + 'constant_buffers.h', 'PerFrameCB'),
     layout_entry('denoising/realtime_common.hlsli', 'RealtimePolicyCB',
                  PASSES + 'realtime_denoiser.h', 'RealtimeDenoiseConfig'),
     layout_entry('denoising/realtime_common.hlsli', 'RealtimeFrameCB',
@@ -303,6 +317,8 @@ TIER_A += [
                           'depthSrvIndex': 'depthSrv', 'historySrvIndex': 'historySrv', 'velocitySrvIndex': 'velocitySrv'}),
     layout_entry('ssgi/ssgi_temporal_accum_cs.hlsl', 'HistoryCB', 'runtime/engine/renderer/gi/ssgi_renderer.cpp',
                  aliases={'g_regionCount': 'regionCount', '_regionPad': '_pad', 'g_regionLo': 'regionLo', 'g_regionHi': 'regionHi'}),
+    layout_entry('ssgi/ssgi_stable_temporal_accum_cs.hlsl', 'HistoryCB', 'runtime/engine/renderer/gi/ssgi_renderer.cpp',
+                 aliases={'g_regionCount': 'regionCount', '_regionPad': '_pad', 'g_regionLo': 'regionLo', 'g_regionHi': 'regionHi'}),
     # The same block as the screen-space ReSTIR GI temporal pass binds it at b2 (phase C).
     layout_entry('ssgi/ssgi_restir_gi.hlsli', 'SSGIRestirHistory', 'runtime/engine/renderer/gi/ssgi_renderer.cpp', 'HistoryCB',
                  aliases={'g_previousViewProj': 'previousViewProj', 'g_regionCount': 'regionCount', '_regionPad': '_pad',
@@ -319,6 +335,12 @@ TIER_A += [
                      'gi/probe_reach_cs.hlsl', 'gi/radiance_cache_trace_cs.hlsl',
                      'gi/ddgi_probe_trace_cs.hlsl', 'gi/ddgi_probe_update_cs.hlsl',
                      'pathtracing/path_tracer_ps.hlsl')],
+    # The stage-1 stability variant of the trace declares the two trailing rows (30-31) only under
+    # UZ_RC_STABILITY, so the default pipeline's text stays the one before them; check them too.
+    layout_entry('gi/radiance_cache_trace_cs.hlsl', 'TraceConstants', 'runtime/engine/renderer/gi/radiance_cache.h',
+                 'RadianceCacheTraceConstants',
+                 {'_shBufferUav': 'shBufferUav', '_firstWrite': 'firstWrite', '_historyShiftPad': 'regionCount'},
+                 extra_constants=['kMaxFieldRegions'], defines=('-D', 'UZ_RC_STABILITY=1')),
     layout_entry('vfx/vfx_camera.hlsli', 'VfxCameraCB', 'runtime/engine/vfx/data_interfaces/vfx_camera_di.h',
                  'VfxCameraConstants', {'vfxCameraView': 'viewMatrix', 'vfxCameraProj': 'projMatrix',
                  'vfxCameraPos': 'cameraPos', '_vfxCameraPadPos': '_padPos', 'vfxCameraForward': 'cameraFwd',
@@ -327,6 +349,11 @@ TIER_A += [
                  'vfxCameraScreenSize': 'screenSize', '_vfxCameraPadScreen': '_padScreen'}),
     layout_entry('postprocess/ssr_temporal_cs.hlsl', 'SsrTemporalPrevVP',
                  'runtime/engine/renderer/frame/frame_gi_passes.cpp'),
+    # The SSR temporal fix permutation (r.RayTracing.Reflections.TemporalFix, UZ_SSR_TEMPORAL_FIX=1) declares the
+    # previous camera, the resource indices and the tunables after the matrix only under the define; the OFF text
+    # is the entry above. Check that mirror too.
+    layout_entry('postprocess/ssr_temporal_cs.hlsl', 'SsrTemporalPrevVP',
+                 'runtime/engine/renderer/frame/frame_gi_passes.cpp', defines=('-D', 'UZ_SSR_TEMPORAL_FIX=1')),
     layout_entry('../editor/gizmo_vs.hlsl', 'GizmoCB', 'runtime/editor/gizmo/gizmo_renderer.h'),
     layout_entry('../editor/grid_ps.hlsl', 'GridCB', 'runtime/editor/grid/editor_grid.cpp'),
     layout_entry('../editor/outline_detect_ps.hlsl', 'OutlineCB', 'runtime/editor/outline/outline_pass.cpp',
@@ -345,6 +372,8 @@ TIER_A += [
 ]
 
 TIER_B = [
+    layout_entry('denoising/rough_specular_common.hlsli', 'RoughSpecularRoot',
+                 PASSES + 'gi/rough_specular_reconstruction.cpp'),
     layout_entry('denoising/realtime_common.hlsli', 'RealtimeRootCB',
                  PASSES + 'realtime_denoiser.h', 'RealtimeDenoiseRoot'),
     layout_entry('pathtracing/nrd_common.hlsli', 'NrdRoot',
@@ -463,6 +492,10 @@ TIER_C = [
                  'runtime/engine/renderer/gi/global_distance_field.h', 'GdfMeshSdfGPU'),
     layout_entry('gi/gi_trace_common.hlsli', 'GIMeshMaterial',
                  PASSES + 'pathtracing/path_tracer_pass.h', 'GIMeshMaterialGPU'),
+    # 32-byte per-mesh roughness / metallic sibling of GIMeshMaterial (r.GI.HitMaterial.PerMesh, doc 08):
+    # the StructuredBuffer only the UZ_GI_HIT_PERMESH gather permutations bind, same TLAS InstanceID index.
+    layout_entry('gi/gi_hit_material.hlsli', 'GIMeshMaterialExt',
+                 PASSES + 'pathtracing/path_tracer_pass.h', 'GIMeshMaterialExtGPU'),
     # 80-byte rect area light (phase3a 3.33.0): the per-frame StructuredBuffer the UZ_RECT_LIGHTS
     # lighting permutation reads through LightingCB::rectLightsSrv.
     layout_entry('lighting/light_types.hlsli', 'RectLightData', PARAMS + 'constant_buffers.h', 'RectLightData'),
@@ -494,6 +527,7 @@ UNTRACKED = {
     ("runtime/ssgi/prev_color_reduce_cs.hlsl", "RootConstants"): "Root constants: RootConstants; uploader-specific block, not a header-backed Tier B contract.",
     ("runtime/ssgi/ssgi_spatial_denoise_cs.hlsl", "RootConstants"): "Root constants: RootConstants; uploader-specific block, not a header-backed Tier B contract.",
     ("runtime/ssgi/ssgi_temporal_accum_cs.hlsl", "RootConstants"): "Root constants: RootConstants; uploader-specific block, not a header-backed Tier B contract.",
+    ("runtime/ssgi/ssgi_stable_temporal_accum_cs.hlsl", "RootConstants"): "Root constants: RootConstants; uploader-specific block, not a header-backed Tier B contract.",
     ("runtime/ssgi/ssgi_trace_cs.hlsl", "RootConstants"): "Root constants: RootConstants; uploader-specific block, not a header-backed Tier B contract.",
     ("runtime/ssgi/ssgi_upsample_cs.hlsl", "RootConstants"): "Root constants: RootConstants; uploader-specific block, not a header-backed Tier B contract.",
     ("runtime/postprocess/cas_sharpen_ps.hlsl", "RootConstants"): "Root constants: RootConstants; uploader-specific block, not a header-backed Tier B contract.",
@@ -506,6 +540,9 @@ UNTRACKED = {
     ("runtime/pathtracing/path_tracer_ps.hlsl", "PathTracerRC"): "Root constants: PathTracerRC; uploader-specific block, not a header-backed Tier B contract.",
     ("runtime/lighting/deferred_lighting_ps.hlsl", "gBufIndices"): "Root constants: GBufferIndices; uploader-specific block, not a header-backed Tier B contract.",
     ("runtime/lighting/env_mis_temporal_cs.hlsl", "RootConstants"): "Root constants: RootConstants; uploader-specific block, not a header-backed Tier B contract.",
+    ("runtime/lighting/env_mis_resolve_cs.hlsl", "RootConstants"): "Root constants: RootConstants; uploader-specific block, not a header-backed Tier B contract.",
+    ("runtime/lighting/sun_shadow_raw_cs.hlsl", "RootConstants"): "Root constants: RootConstants; uploader-specific block, not a header-backed Tier B contract.",
+    ("runtime/lighting/sun_shadow_denoise_cs.hlsl", "RootConstants"): "Root constants: RootConstants; uploader-specific block, not a header-backed Tier B contract.",
     ("runtime/lighting/shadow_depth_vs.hlsl", "push"): "Root constants: PushConstants; uploader-specific block, not a header-backed Tier B contract.",
     ("runtime/ibl/brdf_lut_cs.hlsl", "RootConstants"): "Root constants: RootConstants; uploader-specific block, not a header-backed Tier B contract.",
     ("runtime/ibl/envmap_luminance_pyramid_cs.hlsl", "RootConstants"): "Root constants: RootConstants; uploader-specific block, not a header-backed Tier B contract.",
@@ -687,7 +724,7 @@ def members(text):
     return result
 
 
-def reflect_declaration(shader_path, name, workdir, kind='cbuffer', extra_structs=()):
+def reflect_declaration(shader_path, name, workdir, kind='cbuffer', extra_structs=(), defines=()):
     source_text = Path(shader_path).read_text(encoding='utf-8')
     try:
         text = declaration(source_text, kind, name)
@@ -707,7 +744,7 @@ def reflect_declaration(shader_path, name, workdir, kind='cbuffer', extra_struct
         source = os.path.join(workdir, 'conditional.hlsl')
         preprocessed = os.path.join(workdir, 'conditional.preprocessed.hlsl')
         Path(source).write_text(text, encoding='utf-8')
-        out = subprocess.run([DXC, '-P', preprocessed, '-D', 'UZ_BINDLESS=1', source],
+        out = subprocess.run([DXC, '-P', preprocessed, '-D', 'UZ_BINDLESS=1', *defines, source],
                              capture_output=True, text=True, timeout=30)
         if out.returncode:
             raise ValueError(f'{shader_path}: DXC preprocessing failed:\n{out.stderr}')
@@ -743,7 +780,7 @@ def reflect_declaration(shader_path, name, workdir, kind='cbuffer', extra_struct
 
 
 def compare_isolated(entry, shader_path, workdir):
-    declared, hl, _ = reflect_declaration(shader_path, entry['name'], workdir)
+    declared, hl, _ = reflect_declaration(shader_path, entry['name'], workdir, defines=entry.get('defines', ()))
     header_path = os.path.join(REPO, entry['header'])
     cpp_text = struct_text(header_path, entry['struct'])
     aliases = {**ALIASES.get(entry['name'], {}), **entry['aliases']}

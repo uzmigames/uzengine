@@ -76,6 +76,53 @@ static auto* cv_RTReflectionsRough = UZ_CVAR_BOOL("r.RayTracing.Reflections.Roug
     "split-sum so rough surfaces receive the path tracer's specular energy; default off");
 static auto* cv_UnifiedDenoiser = UZ_CVAR_BOOL("r.Denoiser.Unified", false,
     "Opt-in unified standalone RT reflection reconstruction (requires RT denoise; default off)");
+static auto* cv_RoughReconstruct = UZ_CVAR_BOOL("r.RayTracing.Reflections.RoughReconstruct", true,
+    "Reconstruct rough RT specular before scene-color TAA using lobe guides and estimator variance; default on");
+// Motion-aware rough reconstruction (docs/analysis/lumen-radiance-cache-stability/09): the history is
+// reprojected by the reflection's curvature-corrected virtual point instead of the surface motion vector,
+// so the cap under camera motion follows the lobe's parallax instead of dropping to 4 frames (the white
+// cloud on rough metals, the Sponza specular shimmer). A UZ_ROUGH_MOTION_AWARE=1 permutation; OFF is the
+// prior pipeline. Default ON since the combined moving-camera validation with the SSR temporal fix below
+// (docs/analysis/lumen-radiance-cache-stability/09 section 6 gates; evidence gi/reflection-flip).
+static auto* cv_RoughMotionAware = UZ_CVAR_BOOL("r.RayTracing.Reflections.RoughReconstruct.MotionAware", true,
+    "Rough reconstruction under camera motion: reproject the history by the curvature-corrected virtual "
+    "reflected point, parallax-driven history cap, short-history firefly clamp, curvature-gated spatial "
+    "support (0 = the prior surface reprojection with the 4-frame motion cap); default on");
+static auto* cv_RoughMotionAwareFireflyK = UZ_CVAR_FLOAT("r.RayTracing.Reflections.RoughReconstruct.MotionAware.FireflyK", 8.f,
+    "Motion-aware rough reconstruction: short-history firefly limit as a multiple of max(history luminance, "
+    "3x3 median of the current neighbourhood); relaxes 2x per frame from half the short history", 1.f, 64.f);
+static auto* cv_RoughMotionAwareShortHistory = UZ_CVAR_FLOAT("r.RayTracing.Reflections.RoughReconstruct.MotionAware.ShortHistory", 8.f,
+    "Motion-aware rough reconstruction: history length (frames) below which the firefly limit is active", 0.f, 64.f);
+static auto* cv_RoughMotionAwareParallaxPower = UZ_CVAR_FLOAT("r.RayTracing.Reflections.RoughReconstruct.MotionAware.ParallaxPower", 2.f,
+    "Motion-aware rough reconstruction: exponent of the parallax-driven history cap, static cap x "
+    "(1 - lobe rotation / lobe half angle)^power, floor 4", 0.5f, 8.f);
+static auto* cv_RoughMotionAwareCurvatureGate = UZ_CVAR_BOOL("r.RayTracing.Reflections.RoughReconstruct.MotionAware.CurvatureGate", true,
+    "Motion-aware rough reconstruction: keep the 25-tap spatial support inside the lobe's angular footprint "
+    "on curved receivers (radius <= lobe half angle / (4 curvature world step))");
+static auto* cv_RoughMotionAwareDebug = UZ_CVAR_INT("r.RayTracing.Reflections.RoughReconstruct.MotionAware.Debug", 0,
+    "Diagnostic: the motion-aware reconstruction writes its decisions instead of the colour. 1 = (trusted "
+    "virtual history, camera-only motion, accepted weight); 2 = (curvature x 100, lens image distance / 100 cm, "
+    "lobe 1/t x 1000); 3 = (used - surface motion + 4 px, surface motion x + 8 px)", 0, 3);
+// SSR temporal fix (the motion-aware lane's report section 7, doc 09 section 8.1): ssr_temporal_cs.hlsl read the
+// pixel-space velocity as UV (no reprojection under motion), placed the virtual hit in front of the surface, drove
+// its history cap by the blend weight instead of the roughness, and its 1.25-sigma 3x3 clip on 1-spp input held
+// only 0.83-0.86x of the raw ray-texel energy once converged. A UZ_SSR_TEMPORAL_FIX=1 permutation corrects the
+// four (the virtual hit is the thin-lens image of the motion-aware reconstruction, so a curved receiver's
+// reflection reprojects too), plus a surface-distance disocclusion test, a sample count, a smoothed lens hit
+// distance and a lighting-epoch reset, which a history that now reprojects needs; OFF is the prior pass.
+// Default ON: validated against the raw ray texels static and under camera motion together with the
+// motion-aware reconstruction above (evidence gi/reflection-flip); 0 restores the prior pass.
+static auto* cv_SSRTemporalFix = UZ_CVAR_BOOL("r.RayTracing.Reflections.TemporalFix", true,
+    "SSR / RT reflection temporal filter: velocity in pixels -> UV reprojection, thin-lens virtual hit behind the "
+    "surface (receiver curvature from the g-buffer), g-buffer roughness history cap (4..32 frames, scaled by the "
+    "lobe's parallax), variance clip widened by the texel's temporal variance so the converged energy matches the "
+    "raw ray texels, surface-distance disocclusion, lighting-epoch reset (0 = the prior pass); default on");
+static auto* cv_SSRTemporalFixClipFloor = UZ_CVAR_FLOAT("r.RayTracing.Reflections.TemporalFix.ClipFloor", 2.0f,
+    "SSR temporal fix: the clip box grows by gamma x this x (temporal sigma / 3), the sampling noise of the 3x3 mean "
+    "of the texel's own signal; 0 = today's box", 0.0f, 8.0f);
+static auto* cv_SSRTemporalFixRoughnessFull = UZ_CVAR_FLOAT("r.RayTracing.Reflections.TemporalFix.RoughnessFull", 0.3f,
+    "SSR temporal fix: roughness from which the history cap is the full 32 frames (4 at the mirror threshold)",
+    0.04f, 1.0f);
 
 /// Selects DXR ray-traced probe update over the SDF sphere-trace path.
 /// Requires DXR 1.1 (`RayQuery<>`) and a built TLAS. When the device does not
@@ -89,6 +136,7 @@ static const uz::CVar* RayTracingGICVar() {
 }
 
 #include <algorithm>
+#include <cfloat>
 #include <cstring>
 
 static auto* cv_RCFreezeAfter = UZ_CVAR_INT("r.GI.RadianceCache.FreezeAfterFrame", -1,
@@ -109,6 +157,26 @@ static auto* cv_GDFCentrePhase = UZ_CVAR_FLOAT("r.GI.GDF.CenterPhaseOffset", 0.f
     "grid-boundary effect from a feature of the trajectory.", -1000.f, 1000.f);
 
 namespace uz {
+
+// Defined next to the lighting hash it extends (below RegisterSSRDenoisePasses, which reads it).
+static uint64_t SsrTemporalFixEpoch(const FrameContext& ctx, const PerFrameCB& perFrame);
+
+// r.GI.HitMaterial.WrapUv (docs/analysis/lumen-radiance-cache-stability/07-firstbounce-diffuse-decomposition): the pass's
+// UZ_GI_HIT_UV_WRAP=1 permutation when the CVar is on and it compiled, else its default pipeline (the
+// clamp-sampled hit albedo), logged once per variant. The gather selects its own variants (ssgi_renderer.cpp).
+static RHIPipelineHandle GiHitUvWrapOrDefault(PipelineLibrary* pipelines, PipelineLibrary::GiHitUvWrapVariant variant,
+                                              RHIPipelineHandle pipeline) {
+    if (!pipeline.IsValid() || !SSGIRenderer::HitMaterialWrapUvEnabled()) return pipeline;
+    const RHIPipelineHandle wrapped = pipelines->GetGiHitUvWrap(variant);
+    if (wrapped.IsValid()) return wrapped;
+    static bool logged[static_cast<size_t>(PipelineLibrary::GiHitUvWrapVariant::Count)] = {};
+    if (!logged[static_cast<size_t>(variant)]) {
+        logged[static_cast<size_t>(variant)] = true;
+        UZ_LOG(Renderer, Warning, "r.GI.HitMaterial.WrapUv: the UZ_GI_HIT_UV_WRAP variant {} failed to compile; the pass runs its default pipeline (clamp-sampled hit albedo)",
+               static_cast<int>(variant));
+    }
+    return pipeline;
+}
 
 // Shared diffuse gather follows GDF/RC updates and precedes lighting.
 // World mode uses current surface rays; legacy SSGI also reduces previous HDR.
@@ -137,17 +205,20 @@ void SceneRenderer::RegisterSSGIPasses(rg::RgBuilder& rgBuilder, FrameContext& c
     const uint32_t requestedDxr = dxrCvar ? static_cast<uint32_t>(dxrCvar->value) : 0u;
     const bool dxrReady = m_rtManager && m_rtManager->IsReady();
     const uint32_t materialSrv = requestedDxr && dxrReady ? UpdateGIMaterialTable(ctx) : UINT32_MAX;
+    // r.GI.HitMaterial.PerMesh (doc 08 section 4.3): the sibling roughness / metallic table built by the
+    // same call; bound only by the UZ_GI_HIT_PERMESH gather permutations (SSGIRenderer decides).
+    const uint32_t materialExtSrv = requestedDxr && dxrReady ? GetGIMaterialTableExtSrv() : UINT32_MAX;
     const uint32_t tlasSrv = dxrReady ? m_rtManager->GetTLASSRVIndex() : UINT32_MAX;
     const uint32_t dxrMode = SelectFinalGatherDxrMode(requestedDxr, ctx.perFrame.sdfDiffuseSamples != 0,
         restirCvar && restirCvar->value >= 1.0f, dxrReady,
         dxrReady ? m_rtManager->GetTLASInstanceCount() : 0u, tlasSrv, materialSrv);
 
-    rgBuilder.AddPass("SSGI", [&, dxrMode, tlasSrv, materialSrv](rg::RgPassBuilder& pb) {
+    rgBuilder.AddPass("SSGI", [&, dxrMode, tlasSrv, materialSrv, materialExtSrv](rg::RgPassBuilder& pb) {
         pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);
         pb.Read(ctx.normalRes, RHIResourceState::ShaderResource);
         pb.Read(ctx.velocityRes, RHIResourceState::ShaderResource);
 
-        pb.SetExecutionCallback([this, &ctx, dxrMode, tlasSrv, materialSrv](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
+        pb.SetExecutionCallback([this, &ctx, dxrMode, tlasSrv, materialSrv, materialExtSrv](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
             UZ_PROFILE_SCOPE("SSGI::Execute");
 
             SSGIRenderParams ssgiParams{};
@@ -168,6 +239,7 @@ void SceneRenderer::RegisterSSGIPasses(rg::RgBuilder& rgBuilder, FrameContext& c
             // Diagnostic (followup-12): `r.GI.Reflections.FreezeSeed` also freezes the world
             // gather's sampling seed, otherwise "freeze the seed" would only cover the deferred
             // reflections and the gather would keep re-sampling every frame.
+            ssgiParams.receiverFrameIndex = ctx.frameIndex;
             ssgiParams.frameIndex      = ctx.perFrame.timeParams.w >= 0.f
                                        ? static_cast<uint32_t>(ctx.perFrame.timeParams.w)
                                        : ctx.frameIndex;
@@ -175,8 +247,10 @@ void SceneRenderer::RegisterSSGIPasses(rg::RgBuilder& rgBuilder, FrameContext& c
             ssgiParams.gatherDxrMode = dxrMode;
             ssgiParams.gatherTlasSrv = tlasSrv;
             ssgiParams.gatherMaterialSrv = materialSrv;
+            ssgiParams.gatherMaterialExtSrv = materialExtSrv;
             ssgiParams.resetHistory = !ctx.temporal.matrixValid;
             ssgiParams.sceneRevision = m_globalDistanceField.GetSceneRevision();
+            ssgiParams.lightingGeneration = m_surfaceCache.GetLightingGeneration();
             ssgiParams.changedRegions = &m_globalDistanceField.GetChangedRegions();   // read at execution (block B.2)
             ssgiParams.renderWidth     = static_cast<uint32_t>(ctx.renderWidth);
             ssgiParams.renderHeight    = static_cast<uint32_t>(ctx.renderHeight);
@@ -357,13 +431,63 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
 
             // Always run the SDF SH path so the existing deferred lighting
             // SH sample stays populated regardless of DXR availability.
+            // Stage-1 stability (docs/analysis/lumen-radiance-cache-stability): the UZ_RC_STABILITY
+            // variant only when one of its CVars is on; the default pipeline is the unchanged trace,
+            // and a variant that failed to compile falls back to it. r.GI.FinalGather.HitSpecular
+            // (doc 06 section 6.4) adds the UZ_GI_HIT_SPECULAR variants, alone or combined with the
+            // stability one; a missing combined variant falls back to the stability variant (the
+            // stage-2 state records must stay maintained), logged once so a run that silently lost
+            // the cache term is visible.
             auto rcPipeline = ctx.pipelines->GetRadianceCacheTrace();
+            {
+                const bool stability = RadianceCache::StabilityEnabled();
+                const bool hitSpecular = SSGIRenderer::HitSpecularEnabled();
+                RHIPipelineHandle variant = RHIPipelineHandle::Invalid();
+                if (stability && hitSpecular) variant = ctx.pipelines->GetRadianceCacheTraceStabilityHitSpecular();
+                else if (hitSpecular)         variant = ctx.pipelines->GetRadianceCacheTraceHitSpecular();
+                if (hitSpecular && !variant.IsValid()) {
+                    static bool loggedHitSpecularFallback = false;
+                    if (!loggedHitSpecularFallback) {
+                        loggedHitSpecularFallback = true;
+                        UZ_LOG(Renderer, Warning, "Radiance cache trace: the HitSpecular variant (stability={}) failed to compile; the probe writer runs without the hit-vertex sun lobe", stability);
+                    }
+                }
+                if (!variant.IsValid() && stability) variant = ctx.pipelines->GetRadianceCacheTraceStability();
+                if (variant.IsValid()) rcPipeline = variant;
+            }
             if (ctx.frameIndex % 120 == 0) {
                 UZ_LOG(Renderer, Debug, "SDF GI trace: frame={}, pipelineValid={}",
                        ctx.frameIndex, rcPipeline.IsValid());
             }
             if (rcPipeline.IsValid()) {
                 Vec3 camPos = ctx.perFrame.cameraPos.xyz();
+                // r.GI.RadianceCache.FitScene: the grid is placed against the union world AABB of this
+                // frame's GI occluders (the distance field / TLAS membership, the mesh bounds through the
+                // draw's transform). Off = no bounds, and Update() keeps the camera-centred placement.
+                if (RadianceCache::FitSceneEnabled()) {
+                    Vec3 sceneMin(FLT_MAX, FLT_MAX, FLT_MAX);
+                    Vec3 sceneMax(-FLT_MAX, -FLT_MAX, -FLT_MAX);
+                    for (const auto& draw : ctx.drawList.GetCommands()) {
+                        if (!IsGIOccluder(draw) || draw.meshId >= m_meshes.size()) continue;
+                        const GPUMesh& mesh = m_meshes[draw.meshId];
+                        for (uint32_t corner = 0; corner < 8; ++corner) {
+                            const Vec3 p = draw.worldMatrix.TransformPoint(Vec3(
+                                (corner & 1) ? mesh.boundsMax.x : mesh.boundsMin.x,
+                                (corner & 2) ? mesh.boundsMax.y : mesh.boundsMin.y,
+                                (corner & 4) ? mesh.boundsMax.z : mesh.boundsMin.z));
+                            sceneMin.x = std::min(sceneMin.x, p.x);
+                            sceneMin.y = std::min(sceneMin.y, p.y);
+                            sceneMin.z = std::min(sceneMin.z, p.z);
+                            sceneMax.x = std::max(sceneMax.x, p.x);
+                            sceneMax.y = std::max(sceneMax.y, p.y);
+                            sceneMax.z = std::max(sceneMax.z, p.z);
+                        }
+                    }
+                    if (sceneMin.x <= sceneMax.x) m_radianceCache.SetSceneBounds(sceneMin, sceneMax);
+                    else                          m_radianceCache.ClearSceneBounds();
+                } else {
+                    m_radianceCache.ClearSceneBounds();
+                }
                 m_radianceCache.Update(camPos);
                 if (m_radianceCache.IsDirty() && m_radianceCache.HasProducedResult()) {
                     const Vec3 o = m_radianceCache.GetGridOrigin();
@@ -387,6 +511,13 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
                     ? m_device->GetTextureSRVIndex(res.GetTexture(ctx.positionRes)) : UINT32_MAX;
                 m_radianceCache.SetVisibleSeedSource(positionSrv,
                     visibleSeeds ? ctx.renderWidth : 0u, visibleSeeds ? ctx.renderHeight : 0u);
+                // Stage-2 visibility (r.GI.RadianceCache.Visibility): the UZ_RC_DEPTH DDGI depth pass and
+                // the DDGI border fill on the cache's own depth atlas; invalid handles = no visibility.
+                const bool rcVisibility = RadianceCache::VisibilityEnabled();
+                const RHIPipelineHandle rcDepthPipeline = rcVisibility
+                    ? ctx.pipelines->GetRadianceCacheDepthMoments() : RHIPipelineHandle::Invalid();
+                const RHIPipelineHandle rcBorderPipeline = rcVisibility
+                    ? ctx.pipelines->GetDdgiBorderFill() : RHIPipelineHandle::Invalid();
                 m_radianceCache.UpdateProbes(
                     cmd, m_globalDistanceField, rcPipeline,
                     m_cbRing.get(),
@@ -396,7 +527,9 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
                     sizeof(PerFrameCB),
                     ctx.frameIndex,
                     sidePipeline,
-                    probeCacheSrv);
+                    probeCacheSrv,
+                    rcDepthPipeline,
+                    rcBorderPipeline);
             }
 
             // DDGI atlas writer — only when DXR is ON (master switch `r.RayTracing`
@@ -418,7 +551,11 @@ void SceneRenderer::RegisterSDFGIPasses(rg::RgBuilder& rgBuilder, FrameContext& 
             }
             if (wantDdgi) {
                 auto ddgiPipeline   = ctx.pipelines->GetDdgiProbeUpdate();
-                auto tracePipeline  = ctx.pipelines->GetDdgiProbeTrace();   // block B.6; invalid = per-texel trace
+                // block B.6; invalid = per-texel trace. The trace is the only DDGI writer that reads the
+                // material table (the per-texel fallback traces with the sentinel), so it alone is permuted
+                // for r.GI.HitMaterial.WrapUv.
+                auto tracePipeline  = GiHitUvWrapOrDefault(ctx.pipelines, PipelineLibrary::GiHitUvWrapVariant::DdgiProbeTrace,
+                                                           ctx.pipelines->GetDdgiProbeTrace());
                 auto borderPipeline = ctx.pipelines->GetDdgiBorderFill();
                 if (ddgiPipeline.IsValid() && borderPipeline.IsValid()) {
                     const uint32_t tlasSrv = m_rtManager->GetTLASSRVIndex();
@@ -755,8 +892,12 @@ void SceneRenderer::RegisterSSRDenoisePasses(rg::RgBuilder& rgBuilder, FrameCont
         const uint32_t ssrReadIdx  = 1 - m_ssrHistoryIndex;
         const bool ssrFirstFrame = !ctx.temporal.matrixValid
                                  || !m_ssrHistory[ssrReadIdx].IsValid();
+        // r.RayTracing.Reflections.TemporalFix: the corrected permutation and its moments / lens guide pairs (created
+        // on first use). While off nothing else changes on this path but the size of the b2 block below.
+        const bool ssrTemporalFix = cv_SSRTemporalFix->value > 0.5f && ctx.bindless
+                                 && EnsureSsrTemporalFixResources();
 
-        rgBuilder.AddPass("SSR_Temporal", [&, ssrWriteIdx, ssrReadIdx, ssrFirstFrame](rg::RgPassBuilder& pb) {
+        rgBuilder.AddPass("SSR_Temporal", [&, ssrWriteIdx, ssrReadIdx, ssrFirstFrame, ssrTemporalFix](rg::RgPassBuilder& pb) {
             // Block B.5: the depth read was undeclared, so the graph (which orders passes only through
             // the resources they declare) scheduled this pass right after the velocity pass, before the
             // trace and the resolve; it read last frame's resolved texture, the denoise then read its
@@ -765,18 +906,28 @@ void SceneRenderer::RegisterSSRDenoisePasses(rg::RgBuilder& rgBuilder, FrameCont
             pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);
             pb.Read(ctx.velocityRes, RHIResourceState::ShaderResource);
 
-            pb.SetExecutionCallback([this, &ctx, ssrWriteIdx, ssrReadIdx, ssrFirstFrame](IRHICommandList* cmd, const rg::RgPassResources&) {
+            pb.SetExecutionCallback([this, &ctx, ssrWriteIdx, ssrReadIdx, ssrFirstFrame, ssrTemporalFix](IRHICommandList* cmd, const rg::RgPassResources&) {
                 UZ_PROFILE_SCOPE("SSR::Temporal");
 
                 auto ssrTemporalPSO = ctx.pipelines->GetSsrTemporal();
                 if (!ssrTemporalPSO.IsValid() || cv_SSRTemporal->value < 0.5f) return;
+                // The fix's permutation, or the default pipeline if it failed to compile (logged once).
+                const RHIPipelineHandle fixPSO = ssrTemporalFix ? ctx.pipelines->GetSsrTemporalFix()
+                                                                : RHIPipelineHandle::Invalid();
+                const bool fix = fixPSO.IsValid();
 
                 {
                     m_rgStates->Transition(cmd, m_ssrHistory[ssrWriteIdx], RHIResourceState::UnorderedAccess);
                     m_rgStates->Transition(cmd, m_ssrHistory[ssrReadIdx], RHIResourceState::ShaderResource);
+                    if (fix) {
+                        m_rgStates->Transition(cmd, m_ssrMoments[ssrWriteIdx], RHIResourceState::UnorderedAccess);
+                        m_rgStates->Transition(cmd, m_ssrMoments[ssrReadIdx], RHIResourceState::ShaderResource);
+                        m_rgStates->Transition(cmd, m_ssrLens[ssrWriteIdx], RHIResourceState::UnorderedAccess);
+                        m_rgStates->Transition(cmd, m_ssrLens[ssrReadIdx], RHIResourceState::ShaderResource);
+                    }
                 }
 
-                cmd->SetPipeline(ssrTemporalPSO);
+                cmd->SetPipeline(fix ? fixPSO : ssrTemporalPSO);
 
                 struct SsrTemporalConstants {
                     uint32_t currentSsrSrvIdx, historySsrSrvIdx, velocitySrvIdx, depthSrvIdx;
@@ -800,13 +951,39 @@ void SceneRenderer::RegisterSSRDenoisePasses(rg::RgBuilder& rgBuilder, FrameCont
 
                 // Bind prevViewProj matrix at slot 2 (b2) via CBV from the CB ring.
                 // @ref AMD FidelityFX SSSR — prevVP needed for virtual hit reprojection.
+                // The default permutation declares and reads the matrix only; the UZ_SSR_TEMPORAL_FIX=1
+                // permutation declares the rest (ssr_temporal_cs.hlsl).
                 struct SsrTemporalPrevVP {
                     Mat4 prevViewProj;
+                    float prevCameraPos[4];
+                    uint32_t normalSrvIdx, momentsSrvIdx, momentsUavIdx, resetHistory;
+                    float clipFloorK, roughnessFull;
+                    uint32_t lensSrvIdx, lensUavIdx;
                 };
+                static_assert(sizeof(SsrTemporalPrevVP) == 112);
+                const auto* perFrame = static_cast<const PerFrameCB*>(ctx.perFrameAlloc.cpuPtr);
+                const uint64_t fixEpoch = (fix && perFrame) ? SsrTemporalFixEpoch(ctx, *perFrame) : 0ull;
                 auto prevVPAlloc = m_cbRing->Allocate(sizeof(SsrTemporalPrevVP));
                 if (prevVPAlloc.cpuPtr) {
                     auto* pvp = reinterpret_cast<SsrTemporalPrevVP*>(prevVPAlloc.cpuPtr);
+                    *pvp = {};
                     pvp->prevViewProj = ctx.temporal.prevViewProj;
+                    if (fix) {
+                        // The moments the pass reads must be last frame's, written under the same lighting /
+                        // reflection-mode epoch (a light step restarts the history instead of trailing through it).
+                        const bool reusable = RealtimeHistoryReusable(m_ssrTemporalFixFrame, ctx.frameIndex,
+                                                                      m_ssrTemporalFixEpoch, fixEpoch, /*reset=*/false);
+                        for (int i = 0; i < 3; ++i) pvp->prevCameraPos[i] = m_ssrTemporalFixPrevCameraPos[i];
+                        pvp->prevCameraPos[3] = 1.f;
+                        pvp->normalSrvIdx  = m_gbuffer.normalSRV;
+                        pvp->momentsSrvIdx = m_ssrMomentsSrv[ssrReadIdx];
+                        pvp->momentsUavIdx = m_ssrMomentsUav[ssrWriteIdx];
+                        pvp->resetHistory  = reusable ? 0u : 1u;
+                        pvp->clipFloorK    = cv_SSRTemporalFixClipFloor->value;
+                        pvp->roughnessFull = cv_SSRTemporalFixRoughnessFull->value;
+                        pvp->lensSrvIdx    = m_ssrLensSrv[ssrReadIdx];
+                        pvp->lensUavIdx    = m_ssrLensUav[ssrWriteIdx];
+                    }
                     cmd->SetRootCBV(kSlotPerObject, prevVPAlloc.bufferHandle,
                                     prevVPAlloc.offsetBytes, prevVPAlloc.cpuPtr,
                                     sizeof(SsrTemporalPrevVP));
@@ -820,6 +997,19 @@ void SceneRenderer::RegisterSSRDenoisePasses(rg::RgBuilder& rgBuilder, FrameCont
 
                 {
                     m_rgStates->Transition(cmd, m_ssrHistory[ssrWriteIdx], RHIResourceState::ShaderResource);
+                    if (fix) {
+                        m_rgStates->Transition(cmd, m_ssrMoments[ssrWriteIdx], RHIResourceState::ShaderResource);
+                        m_rgStates->Transition(cmd, m_ssrLens[ssrWriteIdx], RHIResourceState::ShaderResource);
+                    }
+                }
+                if (fix) {
+                    m_ssrTemporalFixFrame = ctx.frameIndex;
+                    m_ssrTemporalFixEpoch = fixEpoch;
+                    if (perFrame) {
+                        m_ssrTemporalFixPrevCameraPos[0] = perFrame->cameraPos.x;
+                        m_ssrTemporalFixPrevCameraPos[1] = perFrame->cameraPos.y;
+                        m_ssrTemporalFixPrevCameraPos[2] = perFrame->cameraPos.z;
+                    }
                 }
             });
         });
@@ -883,6 +1073,7 @@ void SceneRenderer::RegisterSSRDenoisePasses(rg::RgBuilder& rgBuilder, FrameCont
             });
         });
     }
+    RegisterRoughSpecularReconstruction(rgBuilder, ctx);
 }
 
 // ── Hardware Ray-Traced Reflections (stage 1) ───────────────────────────────────
@@ -961,6 +1152,51 @@ static uint64_t SurfaceCacheLightingHash(const FrameContext& ctx, const PerFrame
     return hash;
 }
 
+// The epoch of the corrected SSR temporal history (r.RayTracing.Reflections.TemporalFix): the lighting hash the
+// surface cache and the rough reconstruction reset on, the reflection-mode CVars and the fix's own tunables. A
+// change restarts the history (the pass's resetHistory), as the reconstruction's epoch does for its own.
+static uint64_t SsrTemporalFixEpoch(const FrameContext& ctx, const PerFrameCB& perFrame) {
+    uint64_t hash = SurfaceCacheLightingHash(ctx, perFrame);
+    const float modes[] = {float(cv_RTReflectionsGlossy->value), float(cv_RTReflectionsIndirect->value),
+        float(cv_RTReflectionsRough->value), cv_RTReflectionsMaxRoughness->value, cv_SSRIntensity->value,
+        cv_RTReflectionsMaxDistance->value, cv_SSRMaxRoughness->value,
+        cv_SSRTemporalFixClipFloor->value, cv_SSRTemporalFixRoughnessFull->value};
+    return SurfaceCacheHashBytes(modes, sizeof(modes), hash);
+}
+
+void SceneRenderer::RegisterRoughSpecularReconstruction(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
+    // Preserve the current reflection estimator's energy normalization and the
+    // entire mirror route. The raw SSR+RT route remains raw when denoise is off.
+    RoughSpecularReconstruction::MotionAware motionAware{};
+    motionAware.enabled = cv_RoughMotionAware->value > 0.5f;
+    motionAware.fireflyK = cv_RoughMotionAwareFireflyK->value;
+    motionAware.shortHistory = cv_RoughMotionAwareShortHistory->value;
+    motionAware.parallaxPower = cv_RoughMotionAwareParallaxPower->value;
+    motionAware.curvatureGate = cv_RoughMotionAwareCurvatureGate->value > 0.5f ? 1.f : 0.f;
+    motionAware.debugMode = cv_RoughMotionAwareDebug->value;
+    if (!cv_RoughReconstruct->value || !cv_RTReflectionsRough->value || !ctx.bindless
+        || !RTReflectionRaysAvailable()
+        || (!cv_RTReflectionsDenoise->value && !RTReflectionsStandalone())
+        || !m_roughSpecularReconstruction.Prepare(m_device, m_shaderMgr.get(), m_renderWidth, m_renderHeight,
+                                                  motionAware.enabled)) return;
+    // The motion-aware tunables are part of the epoch: a toggle restarts the history instead of blending
+    // two estimators.
+    auto epoch = [this, &ctx, motionAware]() {
+        const auto* frame = static_cast<const PerFrameCB*>(ctx.perFrameAlloc.cpuPtr);
+        uint64_t hash = frame ? SurfaceCacheLightingHash(ctx, *frame) : 0ull;
+        const float modes[] = {float(cv_RTReflectionsGlossy->value), float(cv_RTReflectionsIndirect->value),
+            cv_RTReflectionsMaxRoughness->value, cv_SSRIntensity->value, cv_RTReflectionsMaxDistance->value,
+            motionAware.enabled ? 1.f : 0.f, motionAware.fireflyK, motionAware.shortHistory,
+            motionAware.parallaxPower, motionAware.curvatureGate, motionAware.debugMode};
+        return SurfaceCacheHashBytes(modes, sizeof(modes), hash);
+    };
+    m_roughSpecularReconstruction.Register(rgBuilder, ctx, m_cbRing.get(), ctx.unifiedReflectionRes,
+        m_ssrResolvedOutputSrv, m_gbuffer.depthSRV, m_gbuffer.normalSRV, m_gbuffer.velocitySRV,
+        m_ssrHitDistanceSrv, epoch, motionAware);
+    m_roughSpecularReconstruction.Apply(rgBuilder, ctx, ctx.unifiedReflectionRes, m_ssrResolvedOutput,
+        m_ssrResolvedOutputUav, m_gbuffer.normalSRV, m_rgStates.get());
+}
+
 void SceneRenderer::RegisterSurfaceCacheResolvePass(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
     if (!SurfaceRadianceCache::Enabled() || !m_device || !m_device->IsBindless() || !RTReflectionRaysAvailable()) return;
     // Once per frame: RegisterSDFGIPasses registers it between the GDF composite and the probe
@@ -1021,7 +1257,12 @@ void SceneRenderer::RegisterSurfaceCacheResolvePass(rg::RgBuilder& rgBuilder, Fr
                 if (paramsSrv == UINT32_MAX || !m_rtManager || !m_rtManager->IsReady()) return;
                 const auto* perFrame = static_cast<const PerFrameCB*>(ctx.perFrameAlloc.cpuPtr);
                 if (!perFrame) return;
-                const auto pso = indirect ? ctx.pipelines->GetSurfaceCacheIndirect() : ctx.pipelines->GetSurfaceCacheRelight();
+                // r.GI.HitMaterial.WrapUv: the indirect pass re-shades its cold hits from the material table;
+                // the relight pass reads the cells' stored attributes only.
+                const auto pso = indirect
+                    ? GiHitUvWrapOrDefault(ctx.pipelines, PipelineLibrary::GiHitUvWrapVariant::SurfaceCacheIndirect,
+                                           ctx.pipelines->GetSurfaceCacheIndirect())
+                    : ctx.pipelines->GetSurfaceCacheRelight();
                 if (!pso.IsValid()) return;
                 RadianceCacheTraceConstants trace{};
                 FillRTReflectionTraceConstants(trace, m_globalDistanceField, *perFrame, ctx.frameIndex);
@@ -1085,7 +1326,8 @@ void SceneRenderer::RegisterSurfaceCacheFeedPass(rg::RgBuilder& rgBuilder, Frame
             if (paramsSrv == UINT32_MAX) return;
             const uint32_t rays = SurfaceRadianceCache::FeedRays();
             if (rays == 0u || !m_rtManager || !m_rtManager->IsReady() || m_rtManager->GetTLASInstanceCount() == 0u) return;
-            const RHIPipelineHandle pso = ctx.pipelines->GetSurfaceCacheFeed();
+            const RHIPipelineHandle pso = GiHitUvWrapOrDefault(ctx.pipelines, PipelineLibrary::GiHitUvWrapVariant::SurfaceCacheFeed,
+                                                               ctx.pipelines->GetSurfaceCacheFeed());
             if (!pso.IsValid()) return;
             const auto* perFrame = static_cast<const PerFrameCB*>(ctx.perFrameAlloc.cpuPtr);
             if (perFrame == nullptr) return;
@@ -1174,7 +1416,8 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
         pb.SetExecutionCallback([this, &ctx, materialTableSrv, ownsOutput, unified, denoise, rough](IRHICommandList* cmd, const rg::RgPassResources&) {
             UZ_PROFILE_SCOPE("RTReflections::Trace");
 
-            auto rtReflectionPSO = ctx.pipelines->GetRtReflection();
+            auto rtReflectionPSO = GiHitUvWrapOrDefault(ctx.pipelines, PipelineLibrary::GiHitUvWrapVariant::RtReflection,
+                                                        ctx.pipelines->GetRtReflection());
             if (!rtReflectionPSO.IsValid()) return;
 
             // The shared b2 trace constants, built at execution time like the path tracer's:
@@ -1291,6 +1534,7 @@ void SceneRenderer::RegisterRTReflectionPass(rg::RgBuilder& rgBuilder, FrameCont
         m_realtimeDenoiser.Register(rgBuilder, ctx, m_cbRing.get(), ctx.unifiedReflectionRes,
             m_ssrResolvedOutputSrv, m_ssrResolvedOutputUav, m_gbuffer.depthSRV, m_gbuffer.normalSRV,
             m_gbuffer.velocitySRV, epoch, RealtimeDenoiser::Policy{});
+        RegisterRoughSpecularReconstruction(rgBuilder, ctx);
     } else if (standalone && denoise) RegisterSSRDenoisePasses(rgBuilder, ctx);
 }
 

@@ -53,6 +53,10 @@ cbuffer RootConstants : register(b0) {
     uint g_knownDistanceMode;  ///< 0 = constant D; 1 = D * (0.75 + 0.25 dot(dir, d0)).
     uint g_farDepth;           ///< Diagnostic: 1 = the DEPTH pass stores the far distance for every ray
                                ///< (visibility 1 at the consumer) while the radiance stays real.
+#if UZ_RC_DEPTH
+    uint g_rcProbeBudget;      ///< Radiance-cache depth atlas (UZ_RC_DEPTH): probes updated this frame,
+                               ///< from g_probeOffset wrapping over the grid (the cache's trace cursor).
+#endif
 };
 
 // Trace constants (b2), helpers, sky, GDF surface and `TraceProbeRay` — shared with the
@@ -89,6 +93,12 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     // Linear probe index (matches `ProbeAtlasOrigin` packing).
     uint probeIdx = tileY * (g_probesPerAxis * g_probesPerAxis) + tileX;
     if (probeIdx >= totalProbes) return;
+#if UZ_RC_DEPTH
+    // Radiance-cache depth atlas (stage 2, docs/analysis/lumen-radiance-cache-stability/04 §4): this
+    // variant runs the depth pass UNCHANGED on the cache's ray buffers, for the probes the cache traced
+    // this frame only (its budget sweeps the grid from a cursor); the others keep their moments.
+    if (((probeIdx + totalProbes - g_probeOffset) % totalProbes) >= g_rcProbeBudget) return;
+#endif
 
     // Octahedral coordinate inside the tile, [0,1).
     float2 octUV = (float2(float(localX - 1u) + 0.5,
@@ -151,6 +161,11 @@ void main(uint3 DTid : SV_DispatchThreadID) {
             StructuredBuffer<float4> rayInfoBuf  = ResourceDescriptorHeap[ddgiRayInfoSrv];
             rt      = rayRadiance[rayBase + i];
             hitInfo = rayInfoBuf[rayBase + i];
+#if UZ_RC_DEPTH
+            // The cache's trace writes each ray's direction (its stage-1 JitterCycle rotation is not
+            // the sequence above) in the info record's xyz.
+            rayDir = hitInfo.xyz;
+#endif
         } else {
             float3 hitP, hitN, hitAlbedo;
             uint   unusedMeshId, unusedPrimIndex;
@@ -323,6 +338,11 @@ void main(uint3 DTid : SV_DispatchThreadID) {
 
         float2 prev = depthTex[atlasXY];
         float a = saturate(temporalBlendAlpha);
+#if UZ_RC_DEPTH
+        // A cleared texel takes the new moments outright (RTXGI's cleared-probe rule): blending them
+        // in from zero would read as a wall at the probe for ~8 updates.
+        if (all(prev == 0.0)) a = 1.0;
+#endif
         float2 blended = lerp(prev, float2(meanD, meanD2), a);
         depthTex[atlasXY] = blended;
     }

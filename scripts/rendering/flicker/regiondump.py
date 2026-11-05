@@ -69,7 +69,7 @@ CHANNELS = {
     'taa_raw':             (FIELD_TAA, 0, 'final blend weight'),
     'taa_filtered':        (FIELD_TAA, 1, 'velocity.x in output pixels'),
     'taa_history':         (FIELD_TAA, 2, 'velocity.y in output pixels'),
-    'taa_clamped':         (FIELD_TAA, 3, '1.0 when the history was rejected as off-screen'),
+    'taa_clamped':         (FIELD_TAA, 3, '1.0 when the history was rejected as off-screen, 2.0 when r.TAA.SilhouetteReject found no acceptable footprint (disocclusion), 3.0 + rejected weight when it dropped part of the footprint'),
     'taa_output':          (FIELD_TAA, 4, 'exposure used by the TAA HDR weights'),
     'output':              (FIELD_OUTPUT, 0, 'exposure used by the TAA HDR weights'),
     'taa_clip_min':        (FIELD_TAA_EXTRA, 0, 'centre depth (reversed-Z)'),

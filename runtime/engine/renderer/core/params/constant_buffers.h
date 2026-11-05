@@ -280,7 +280,7 @@ struct PerFrameCB {
     /// @ref Lagarde & de Rousiers 2014 "Moving Frostbite to PBR" — §4.9.3
     float    indirectAOExponent = 2.0f;     ///< CVar r.IndirectAO.Exponent — default 2.0.
 
-    uint32_t sdfReflectionsEnabled = 0;
+    uint32_t sdfReflectionsEnabled = 0;   ///< Bit 0: SDF reflection trace on (r.GI.Reflections). Bit 1: r.GI.Reflections.SkipWhenRT armed (ray-traced reflections available) - the lighting skips the trace where the ray texel's blend weight is 1.
     uint32_t sdfReflectionSkySrv = UINT32_MAX;
     uint32_t sdfReflectionSamples = 4;
     Vec4     sdfReflectionClipmaps[4] = {};
@@ -717,7 +717,8 @@ struct ShadowDataCB {
     float    cascadePcssDepthToTexels[8] = {}; ///< Per-cascade penumbra texels per unit depth gap (shadow_pcss.h).
     uint32_t localSoftPCSS = 0;     ///< r.Shadows.SoftPCSS.Local; 0 preserves the hard local sampler.
     float    localPcssSourceRadius = 5.0f; ///< Local emitter radius in cm (spot and zero-radius point lights).
-    float    _pad2[2] = {};         ///< Pad CSM section to 768 bytes.
+    uint32_t pcssStableKernel = 0;  ///< r.Shadows.SoftPCSS.StableKernel: 0 = pixel-seeded kernel rotation, N = world-anchored, N cells per texel.
+    float    _pad2[1] = {};         ///< Pad CSM section to 768 bytes.
 
     // ── Local Light Shadow Data (appended after CSM section) ──────────────
     // Up to 16 local light shadows. Each entry stores the light-space viewProj

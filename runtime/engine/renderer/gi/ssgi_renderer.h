@@ -37,6 +37,19 @@ class PipelineLibrary;
         && tlasSrv != UINT32_MAX && materialSrv != UINT32_MAX ? requested : 0u;
 }
 
+/// Fraction of the old lighting retained by the legacy weight, including its 64-frame cap.
+[[nodiscard]] inline float GatherLightingHistoryRemainder(float previous, bool changed,
+                                                         float temporalAlpha) noexcept {
+    const float alpha = temporalAlpha > 1.0f / 64.0f ? temporalAlpha : 1.0f / 64.0f;
+    return (changed ? 1.0f : previous) * (1.0f - alpha);
+}
+
+/// Stable reconstruction validates the receiver timeline, never the stochastic sample phase.
+[[nodiscard]] inline uint32_t SelectGatherReceiverFrame(bool stable, uint32_t receiverFrame,
+                                                       uint32_t sampleFrame) noexcept {
+    return stable ? receiverFrame : sampleFrame;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SSGISettings — runtime-tunable parameters
 // ─────────────────────────────────────────────────────────────────────────────
@@ -96,6 +109,11 @@ struct SSGIRenderParams {
     uint32_t gatherDxrMode = 0;
     uint32_t gatherTlasSrv = UINT32_MAX;
     uint32_t gatherMaterialSrv = UINT32_MAX;
+    /// r.GI.HitMaterial.PerMesh (doc 08 section 4.3): the StructuredBuffer<GIMeshMaterialExtGPU> SRV of the
+    /// per-mesh roughness / metallic sibling table; UINT32_MAX = none (the per-mesh variants stay unselected).
+    uint32_t gatherMaterialExtSrv = UINT32_MAX;
+    uint32_t receiverFrameIndex = 0; ///< Actual frame, independent of a frozen/offset sampling phase.
+    uint32_t lightingGeneration = 0; ///< Surface-cache lighting changes, including local lights.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -192,6 +210,36 @@ public:
         return m_initialized && settings.enabled;
     }
 
+    /// `r.GI.FinalGather.HitSpecular` (docs/analysis/lumen-radiance-cache-stability/06): the sun's GGX
+    /// lobe at the gather's hit vertices and in the radiance-cache probe writer, with the hit's sun
+    /// Lambert weighted by the IBL LUT's (1 - E_spec) (the path tracer's D7 coupling). Default OFF: the
+    /// default pipelines compile the unchanged text; ON selects the `UZ_GI_HIT_SPECULAR=1` permutations
+    /// (PipelineLibrary::Get*HitSpecular). One source of truth for the gather (this renderer) and the
+    /// radiance-cache pipeline selection (frame_gi_passes.cpp) and root DWORDs (radiance_cache.cpp).
+    [[nodiscard]] static bool HitSpecularEnabled();
+    /// `r.GI.FinalGather.HitSpecular.Roughness`, clamped to [0.4, 1]: the scene-constant roughness of
+    /// that lobe (the GI material table and the SDF clipmap carry no roughness).
+    [[nodiscard]] static float HitSpecularRoughness();
+    /// `r.GI.HitMaterial.WrapUv` (docs/analysis/lumen-radiance-cache-stability/07-firstbounce-diffuse-decomposition): every GI
+    /// consumer samples a hit's albedo / emissive texture with the bilinear WRAP static sampler instead of the
+    /// CLAMP one, so a tiled triangle UV reads the tiled content rather than the texture's edge texel. Default
+    /// OFF: the default pipelines compile the unchanged text; ON selects the `UZ_GI_HIT_UV_WRAP=1` permutations
+    /// (PipelineLibrary::GetGiHitUvWrap) in the gather (this renderer, DXR mode only: the SDF gather shades
+    /// its hits from the clipmap), the DDGI probe trace, the surface-cache writers and the RT reflections
+    /// (frame_gi_passes.cpp). One source of truth for all of them.
+    [[nodiscard]] static bool HitMaterialWrapUvEnabled();
+    /// `r.GI.HitMaterial.PerMesh` (docs/analysis/lumen-radiance-cache-stability/08-per-mesh-hit-material): the DXR
+    /// final gather shades each TLAS hit with the mesh's own roughness and metallic (the draw's roughness /
+    /// metallic / ORM maps and multipliers at the triangle UV, the path tracer's rule): F0 = lerp(0.04, baseColor,
+    /// metallic), the diffuse x (1 - metallic), the sun lobe at the authored roughness and the probe term coupled
+    /// by the LUT's E_spec. A superset of HitSpecular (requires it and DXR mode); the SDF paths keep the
+    /// scene-constant lobe. Default OFF: the default pipelines compile the unchanged text; ON selects the
+    /// `UZ_GI_HIT_PERMESH=1` permutations (PipelineLibrary::GetGiHitPerMesh).
+    [[nodiscard]] static bool HitMaterialPerMeshEnabled();
+    /// `r.GI.HitMaterial.PerMesh.MinRoughness`, clamped to [0.1, 1]: the floor on a hit's authored roughness
+    /// before the lobe and the LUT (the secondary-bounce glossy blur that bounds a smooth metal's glint).
+    [[nodiscard]] static float HitMaterialPerMeshMinRoughness();
+
     /// True once Render() has produced a valid output texture. Until then the
     /// result texture has never been written and must not be bound.
     [[nodiscard]] bool HasProducedResult() const noexcept { return m_hasProducedResult; }
@@ -243,7 +291,14 @@ private:
     void DestroyRestirBuffers();
     void DispatchRestir(IRHICommandList* cmdList, const SSGIRenderParams& params);
     void DispatchSpatialDenoise(IRHICommandList* cmdList, const SSGIRenderParams& params);
+    void SetStableTemporalMode(bool enabled);
+    void UpdateStableTemporalState(IRHICommandList* cmdList, const SSGIRenderParams& params);
+    void EnsureStableTemporalTextures(IRHICommandList* cmdList);
+    void ResetStableTemporalHistory(const SSGIRenderParams& params);
+    void StoreStableTemporalState(const SSGIRenderParams& params);
+    void FillStableTemporalHistory(uint32_t (&pad)[3], const SSGIRenderParams& params);
     void DispatchTemporalAccum(IRHICommandList* cmdList, const SSGIRenderParams& params);
+    void DispatchStableTemporalAccum(IRHICommandList* cmdList, const SSGIRenderParams& params);
     void DispatchUpsample(IRHICommandList* cmdList, const SSGIRenderParams& params);
 
     IRHIDevice* m_device = nullptr;
@@ -326,6 +381,20 @@ private:
     uint32_t m_loggedWorldSamples = 0;
     bool m_worldGather = false;
     uint32_t m_gatherDxrMode = 0;
+    /// The effective HitSpecular state this frame (the CVar AND both gather variants compiled); a
+    /// change invalidates the temporal history exactly as a DXR-mode change does.
+    bool m_hitSpecular = false;
+    bool m_loggedHitSpecularFallback = false;   ///< One-time log: a HitSpecular variant failed to compile.
+    bool m_loggedHitSpecularRestir = false;     ///< One-time log: HitSpecular is not applied under r.GI.ReSTIR=1.
+    /// The effective r.GI.HitMaterial.WrapUv state this frame (the CVar AND DXR mode AND both gather variants
+    /// compiled); a change invalidates the temporal history exactly as a DXR-mode change does.
+    bool m_hitUvWrap = false;
+    bool m_loggedHitUvWrapFallback = false;     ///< One-time log: a UZ_GI_HIT_UV_WRAP gather variant failed to compile.
+    /// The effective r.GI.HitMaterial.PerMesh state this frame (the CVar AND DXR mode AND the effective HitSpecular
+    /// AND the sibling table bound AND both gather variants compiled); a change invalidates the temporal history
+    /// exactly as a DXR-mode change does.
+    bool m_hitPerMesh = false;
+    bool m_loggedHitPerMeshFallback = false;    ///< One-time log: a UZ_GI_HIT_PERMESH gather variant failed to compile.
     bool m_hasHistory = false;
     uint64_t m_sceneRevision = 0;
     uint32_t m_lastFrame = UINT32_MAX;
@@ -335,6 +404,20 @@ private:
     std::vector<GlobalDistanceField::ChangedRegion> m_previousRegions;
 
     static constexpr uint32_t kThreadGroupSize = 8;
+
+    // Append opt-in state so legacy members retain their original offsets.
+    RHITextureHandle m_historyMoments[2];
+    uint32_t m_historyMomentsSrv[2] = {UINT32_MAX, UINT32_MAX};
+    uint32_t m_historyMomentsUav[2] = {UINT32_MAX, UINT32_MAX};
+    RHITextureHandle m_stableHistory[2];
+    uint32_t m_stableHistorySrv[2] = {UINT32_MAX, UINT32_MAX};
+    uint32_t m_stableHistoryUav[2] = {UINT32_MAX, UINT32_MAX};
+    bool m_stableTemporal = false;
+    float m_previousCamera[4] = {};
+    float m_previousLighting[12] = {};
+    uint32_t m_previousLightingGeneration = 0;
+    float m_lightingHistoryRemainder = 0.0f; ///< Keep legacy response until old lighting has decayed.
+    uint32_t m_lastSampleFrame = UINT32_MAX;
 };
 
 } // namespace uz

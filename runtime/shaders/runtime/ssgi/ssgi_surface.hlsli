@@ -16,6 +16,9 @@ cbuffer PerFrameCB : register(b1) {
     row_major float4x4 invViewProj : packoffset(c9);
     float nearPlane : packoffset(c13.x);
     float farPlane : packoffset(c13.y);
+#ifdef UZ_GI_HIT_SPECULAR
+    uint brdfLutSrvIndex : packoffset(c14.x);   // byte 224 (constant_buffers.h): the IBL BRDF LUT for the hit lobe's D7 weight
+#endif
     float skyLightIntensity : packoffset(c14.z);
     float skyLightColorR : packoffset(c14.w);
     float skyLightColorG : packoffset(c15.x);

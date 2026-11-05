@@ -12,7 +12,8 @@
 ///
 /// # Field groups (fixed order, each present only when its bit is set in `fields`)
 ///   bit 0 `LIGHTING` (2 records, deferred lighting PS, RENDER resolution domain)
-///     +0 SDF reflection radiance (rgb, linear HDR, before the SSR blend) + roughness
+///     +0 SDF reflection radiance (rgb, linear HDR, before the SSR blend) + roughness; zero, with
+///        path bit 1 clear, on a pixel the r.GI.Reflections.SkipWhenRT gate skipped the trace on
 ///     +1 shading normal (xyz, world) + view distance (cm); (0,0,0,-1) on both = sky/no geometry
 ///   bit 1 `TAA` (5 records, TAA resolve CS, OUTPUT resolution domain, linear HDR RGB)
 ///     +0 raw centre sample (rgb) + final blend weight

@@ -83,6 +83,33 @@ static_assert(offsetof(GIMeshMaterialGPU, emissiveR) == 48);
 static_assert(offsetof(GIMeshMaterialGPU, emissiveB) == 56);
 static_assert(offsetof(GIMeshMaterialGPU, padding) == 60);
 
+/// Per-mesh roughness / metallic for the GI hit material (`r.GI.HitMaterial.PerMesh`,
+/// docs/analysis/lumen-radiance-cache-stability/08-per-mesh-hit-material.md section 4): a 32-byte
+/// sibling of `GIMeshMaterialGPU`, indexed by the same TLAS `InstanceID()`, built in the same loop
+/// (SceneRenderer::UpdateGIMaterialTable) from the same DrawCommand. A sibling rather than a grown
+/// record: the 64-byte stride is baked into the DXIL of every reader of `GIMeshMaterialGPU`, so only
+/// the `UZ_GI_HIT_PERMESH=1` gather permutations bind this table (one root DWORD) and the default
+/// pipelines stay byte-identical. Mirrored by `GIMeshMaterialExt` in gi_hit_material.hlsli.
+struct alignas(16) GIMeshMaterialExtGPU {
+    uint32_t roughnessSrv        = UINT32_MAX; ///< ORM map when materialFlags bit 2 is set (R = AO, G = roughness, B = metallic:
+                                               ///< the G-buffer's aoIndex), else the roughness map (R). UINT32_MAX = none.
+    uint32_t metallicSrv         = UINT32_MAX; ///< Metallic map (R); unused under ORM. UINT32_MAX = none.
+    uint32_t materialFlags       = 0;          ///< DrawCommand::materialFlags verbatim (bit 2 = ORM packed).
+    uint32_t padding0            = 0;
+    float    roughnessMultiplier = 1.f;        ///< No map: the value itself (gbuffer_ps.hlsl).
+    float    metallicMultiplier  = 0.f;        ///< No map: the value itself. Default 0 = dielectric, never a metal by accident.
+    uint32_t padding1            = 0;
+    uint32_t padding2            = 0;
+};
+
+static_assert(sizeof(GIMeshMaterialExtGPU) == 32, "GIMeshMaterialExtGPU must be 32 bytes");
+static_assert(alignof(GIMeshMaterialExtGPU) == 16);
+static_assert(offsetof(GIMeshMaterialExtGPU, roughnessSrv) == 0);
+static_assert(offsetof(GIMeshMaterialExtGPU, metallicSrv) == 4);
+static_assert(offsetof(GIMeshMaterialExtGPU, materialFlags) == 8);
+static_assert(offsetof(GIMeshMaterialExtGPU, roughnessMultiplier) == 16);
+static_assert(offsetof(GIMeshMaterialExtGPU, metallicMultiplier) == 20);
+
 /// Configuration for the path tracer pass.
 struct PathTracerPassDesc {
     rg::RgResourceId  hdrTarget;        ///< HDR scene color RT[1] (write, RenderTarget).

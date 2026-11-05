@@ -68,6 +68,14 @@
     RHIPipelineHandle m_rectLightLightingPipeline[8];
     bool              m_rectLightPipelineFailed[8] = {};
     RHIPipelineHandle EnsureRectLightLightingPipeline(bool cloudGroundShadows, bool shapedLights, bool areaShadows);
+    /// r.Shadows.SoftPCSS.Denoise: the UZ_SHADOW_DENOISE permutations of the lighting pipelines above (slot bits:
+    /// cloud ground shadows, rect lights, shaped lights, area-light shadows), built on first use
+    /// (frame_lighting_pass.cpp); the stock pipelines stay byte-identical.
+    RHIShaderHandle   m_sunShadowDenoiseLightingPS[16];
+    RHIPipelineHandle m_sunShadowDenoiseLightingPipeline[16];
+    bool              m_sunShadowDenoisePipelineFailed[16] = {};
+    RHIPipelineHandle EnsureSunShadowDenoiseLightingPipeline(bool cloudGroundShadows, bool rectLights,
+                                                             bool shapedLights, bool areaShadows);
 
     // ── GBuffer + Shadow Atlas ─────────────────────────────────────────────
 
@@ -193,6 +201,12 @@
     std::unique_ptr<EnvMapSampler> m_envMapSampler;  ///< Alias table + luminance pyramid for MIS.
     std::unique_ptr<EnvMISPass>    m_envMISPass;     ///< Temporal accumulation pass for env MIS specular.
     bool m_envMisEnabled = true;                     ///< r.EnvMIS, read once per frame (frame_constants.cpp).
+
+    // ── r.Shadows.SoftPCSS.Denoise ────────────────────────────────────────
+    std::unique_ptr<SunShadowDenoisePass> m_sunShadowDenoisePass;  ///< Created the first frame the CVar is on.
+    /// SRV of the denoised sun visibility this frame's denoiser writes (UINT32_MAX = the stock lighting); set by
+    /// RegisterSunShadowDenoisePass, read by RegisterDeferredLightingPass.
+    uint32_t m_sunShadowDenoiseSrv = UINT32_MAX;
 
     // ── HDRI environment override ────────────────────────────────────────
     RHITextureHandle m_hdriCubemap;            ///< Cubemap converted from HDRI equirect (owned, must destroy).
@@ -459,6 +473,11 @@
     RHIBufferHandle m_giMaterialTable{};
     uint32_t        m_giMaterialTableSrv = UINT32_MAX;
     uint32_t        m_giMaterialTableCapacity = 0;  ///< Entries allocated.
+    /// The 32-byte sibling record (GIMeshMaterialExtGPU: per-mesh roughness / metallic maps and
+    /// multipliers, `r.GI.HitMaterial.PerMesh`, doc 08 section 4), same capacity, filled by the
+    /// same UpdateGIMaterialTable loop; bound only by the UZ_GI_HIT_PERMESH gather permutations.
+    RHIBufferHandle m_giMaterialTableExt{};
+    uint32_t        m_giMaterialTableExtSrv = UINT32_MAX;
 
     // ── Brixelizer GI (AMD FidelityFX sparse SDF voxel GI) ─────────────────
     std::unique_ptr<BrixelizerGIPass> m_brixelizerGI;  ///< FFX Brixelizer GI pass (diffuse + specular indirect).
@@ -496,6 +515,21 @@
     RHITextureHandle m_ssrHitDistance;              ///< R16F hit distance (screen-space ray t).
     uint32_t m_ssrHitDistanceSrv = UINT32_MAX;     ///< SRV for temporal pass to read.
     uint32_t m_ssrHitDistanceUav = UINT32_MAX;     ///< UAV for trace pass to write.
+
+    /// r.RayTracing.Reflections.TemporalFix: the corrected temporal pass's moments / guide pair (RGBA32F: Y mean,
+    /// Y^2 mean, sample count, surface distance) and its lens guide pair (R32F: the lobe's smoothed inverse hit
+    /// distance), ping-pong in step with m_ssrHistory; created on first use by EnsureSsrTemporalFixResources, so
+    /// nothing is allocated while the CVar is off.
+    RHITextureHandle m_ssrMoments[2];
+    uint32_t m_ssrMomentsSrv[2] = {UINT32_MAX, UINT32_MAX};
+    uint32_t m_ssrMomentsUav[2] = {UINT32_MAX, UINT32_MAX};
+    RHITextureHandle m_ssrLens[2];
+    uint32_t m_ssrLensSrv[2] = {UINT32_MAX, UINT32_MAX};
+    uint32_t m_ssrLensUav[2] = {UINT32_MAX, UINT32_MAX};
+    uint32_t m_ssrTemporalFixFrame = UINT32_MAX;   ///< Last frame the corrected pass ran: its moments are one frame old.
+    uint64_t m_ssrTemporalFixEpoch = 0;            ///< Lighting / reflection-mode epoch of that frame (a change restarts the history).
+    float    m_ssrTemporalFixPrevCameraPos[3] = {0.f, 0.f, 0.f};   ///< Camera position of that frame (the disocclusion test).
+    bool EnsureSsrTemporalFixResources();
 
     /// STBN (Spatiotemporal Blue Noise) 128x128x64 RG8 volume texture.
     /// Each slice is a blue noise pattern; consecutive slices are temporally decorrelated.
@@ -667,6 +701,12 @@
     uint32_t m_taaClampBoxSrv[2]{UINT32_MAX, UINT32_MAX};
     uint32_t m_taaClampBoxUav[2]{UINT32_MAX, UINT32_MAX};
     bool     m_taaClampBoxInitialised = false;  ///< False until the box has been written once.
+    /// r.TAA.SilhouetteReject storage: the own (un-dilated) depth every history texel was resolved at, a 0 / 1
+    /// ping-pong flipped with the history; created on demand, released while the CVar is off.
+    RHITextureHandle m_taaHistoryDepth[2]{};
+    uint32_t m_taaHistoryDepthSrv[2]{UINT32_MAX, UINT32_MAX};
+    uint32_t m_taaHistoryDepthUav[2]{UINT32_MAX, UINT32_MAX};
+    uint32_t m_taaHistoryDepthFrame = UINT32_MAX;  ///< Frame of the last depth write; the read side is valid one frame later.
     /// Component replay (diagnostic): recorded AO and specular, per frame and per pixel.
     RHIBufferHandle m_componentReplay;
     uint32_t m_componentReplaySrv = UINT32_MAX;
@@ -1003,6 +1043,8 @@
     /// buffer is Upload-heap and grows on demand. Returns the table SRV
     /// (UINT32_MAX when no meshes / creation failed).
     uint32_t UpdateGIMaterialTable(const FrameContext& ctx);
+    /// The sibling table's SRV after UpdateGIMaterialTable has run this frame (UINT32_MAX = none).
+    [[nodiscard]] uint32_t GetGIMaterialTableExtSrv() const noexcept { return m_giMaterialTableExtSrv; }
 
     /// Registers AMD FidelityFX Brixelizer GI passes (SDF bake + GI dispatch).
     void RegisterBrixelizerGIPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
@@ -1042,6 +1084,7 @@
 
     /// Registers the deferred lighting pass (or debug view / GBuffer debug).
     void RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, FrameContext& ctx);
+    void RegisterSunShadowDenoisePass(rg::RgBuilder& rgBuilder, FrameContext& ctx);
     /// Block B.7: the light cull compute pass (clusters of the view frustum -> light index lists).
     void RegisterLightCullPass(rg::RgBuilder& rgBuilder, FrameContext& ctx);
 
@@ -1051,6 +1094,7 @@
 
     /// Copies current HDR scene color to SSGI prev-frame buffer.
     void RegisterSSGIPrevColorCopy(rg::RgBuilder& rgBuilder, FrameContext& ctx);
+    void RegisterRoughSpecularReconstruction(rg::RgBuilder& rgBuilder, FrameContext& ctx);
 
     /// Registers intermediate render targets with the PassInspector for visualization.
     void RegisterPassInspectorTargets(FrameContext& ctx);
@@ -1075,3 +1119,6 @@
     /// Reads CVars and applies changes (screen percentage, upscaler type, dynres).
     /// Called once per frame at the start of SetupFrameData().
     void ApplyCVars();
+
+    // Appended so the opt-in feature does not move existing renderer members.
+    RoughSpecularReconstruction m_roughSpecularReconstruction;

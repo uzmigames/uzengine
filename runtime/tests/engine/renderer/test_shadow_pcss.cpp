@@ -171,6 +171,7 @@ TEST(ShadowDataCB, PcssFieldOffsetsMatchShadowHlsli) {
     EXPECT_EQ(offsetof(ShadowDataCB, cascadePcssDepthToTexels), 720u);
     EXPECT_EQ(offsetof(ShadowDataCB, localSoftPCSS), 752u);
     EXPECT_EQ(offsetof(ShadowDataCB, localPcssSourceRadius), 756u);
+    EXPECT_EQ(offsetof(ShadowDataCB, pcssStableKernel), 760u);
     EXPECT_EQ(offsetof(ShadowDataCB, localShadows), 768u);
     EXPECT_EQ(sizeof(ShadowDataCB), 2304u);
 
@@ -180,6 +181,7 @@ TEST(ShadowDataCB, PcssFieldOffsetsMatchShadowHlsli) {
     EXPECT_EQ(offsetof(ShadowDataParams, cascadePcssDepthToTexels), 720u);
     EXPECT_EQ(offsetof(ShadowDataParams, localSoftPCSS), 752u);
     EXPECT_EQ(offsetof(ShadowDataParams, localPcssSourceRadius), 756u);
+    EXPECT_EQ(offsetof(ShadowDataParams, pcssStableKernel), 760u);
     EXPECT_EQ(offsetof(ShadowDataParams, localShadows), 768u);
 }
 
@@ -189,6 +191,7 @@ TEST(ShadowDataCB, PcssDefaultsSelectTheFixedPcfPath) {
     const ShadowDataCB cb{};
     EXPECT_EQ(cb.softPCSS, 0u);
     EXPECT_EQ(cb.localSoftPCSS, 0u);
+    EXPECT_EQ(cb.pcssStableKernel, 0u);   // pixel-seeded rotation unless the CVar is applied
     EXPECT_FLOAT_EQ(cb.pcssMinPenumbraTexels, 0.5f);
     EXPECT_FLOAT_EQ(cb.pcssMaxPenumbraTexels, 16.0f);
     for (float k : cb.cascadePcssDepthToTexels) EXPECT_FLOAT_EQ(k, 0.0f);

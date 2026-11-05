@@ -24,18 +24,12 @@ float3 WorldToCubemap(float3 dir) { return float3(dir.x, dir.z, dir.y); }
 
 /// Octahedral direction encode — must mirror `OctEncodeDir` in
 /// `ddgi_probe_update_cs.hlsl` so the deferred sampler reads the texel that
-/// the writer produced for the corresponding direction.
+/// the writer produced for the corresponding direction. The body lives in
+/// `gi/rc_probe_visibility.hlsli` (`ProbeOctEncode`), shared with the radiance
+/// cache's Chebyshev consumer.
 /// @ref Cigolle 2014 "A Survey of Efficient Representations for Independent
 ///                    Unit Vectors"
-float2 DDGIOctEncode(float3 n) {
-    n /= (abs(n.x) + abs(n.y) + abs(n.z));
-    float2 e = n.xy;
-    if (n.z < 0.0) {
-        e = (1.0 - abs(e.yx)) * float2(e.x >= 0.0 ? 1.0 : -1.0,
-                                       e.y >= 0.0 ? 1.0 : -1.0);
-    }
-    return e * 0.5 + 0.5;
-}
+float2 DDGIOctEncode(float3 n) { return ProbeOctEncode(n); }
 // NOTE: shadow.hlsli and contact_shadows.hlsli are included AFTER PerFrameCB
 // because they reference CVar fields (shadowPCFPenumbra, etc.) from the CB.
 
@@ -55,6 +49,9 @@ struct GBufferIndices {
 #ifdef UZ_CLOUD_GROUND_SHADOWS
     uint cloudShadowBufferSrv;
     uint cloudShadowCascadeCount;
+#endif
+#ifdef UZ_SHADOW_DENOISE
+    uint sunShadowSrvIdx;      ///< r.Shadows.SoftPCSS.Denoise: this frame's denoised sun visibility (R32F).
 #endif
 };
 ConstantBuffer<GBufferIndices> gBufIndices : register(b0);
@@ -832,10 +829,21 @@ LightingOutput main(FSInput input) {
     // in enclosed interiors. @ref UE5 ShadowProjectionPixelShader — N·L cull.
     // r.Shadows.SoftPCSS (ShadowDataCB.softPCSS, uniform): PCSS variable penumbra, or the fixed-radius
     // PCF it replaced. The pixel position seeds the soft kernel's spatially stable rotation.
+#if defined(UZ_SHADOW_DENOISE) && defined(UZ_BINDLESS)
+    // r.Shadows.SoftPCSS.Denoise: the soft visibility of this receiver was estimated, reprojected and filtered
+    // before this pass (sun_shadow_raw_cs.hlsl, sun_shadow_denoise_cs.hlsl: the same G-buffer position and normal);
+    // the back faces and the hard path are as below.
+    Texture2D<float> sunShadowTex = ResourceDescriptorHeap[gBufIndices.sunShadowSrvIdx];
+    float  shadow = (sunNoL > 0.0)
+        ? ((softPCSS != 0u) ? sunShadowTex.Load(int3(px, 0))
+                            : CascadeShadow(worldPos, viewDepth, N, sunNoL))
+        : 0.0;
+#else
     float  shadow = (sunNoL > 0.0)
         ? ((softPCSS != 0u) ? CascadeShadowSoft(worldPos, viewDepth, N, sunNoL, float2(px))
                             : CascadeShadow(worldPos, viewDepth, N, sunNoL))
         : 0.0;
+#endif
 #if defined(UZ_BINDLESS) && defined(UZ_CLOUD_GROUND_SHADOWS)
     if (gBufIndices.cloudShadowCascadeCount != 0 && gBufIndices.cloudShadowBufferSrv != 0xFFFFFFFF)
         shadow *= SampleCloudShadow(worldPos * 0.00001f, sunL,
@@ -1064,15 +1072,12 @@ LightingOutput main(FSInput input) {
                                          int(_ddgiProbesPerAxis)-1));
             float3 ddgiFrac   = saturate(ddgiCell - float3(ddgi0));
 
-            // Atlas tile constants — must match DDGISystem in C++.
+            // Atlas tile constants — must match DDGISystem in C++ (the depth tile's live in
+            // gi/rc_probe_visibility.hlsli with the Chebyshev test).
             const uint kIrradTile = 6u;
-            const uint kDepthTile = 16u;
             const uint kIrradStride = kIrradTile + 2u;
-            const uint kDepthStride = kDepthTile + 2u;
             const uint atlasIrradW = _ddgiProbesPerAxis * _ddgiProbesPerAxis * kIrradStride;
             const uint atlasIrradH = _ddgiProbesPerAxis * kIrradStride;
-            const uint atlasDepthW = _ddgiProbesPerAxis * _ddgiProbesPerAxis * kDepthStride;
-            const uint atlasDepthH = _ddgiProbesPerAxis * kDepthStride;
 
             float2 octIrrad = DDGIOctEncode(N);
 
@@ -1107,13 +1112,6 @@ LightingOutput main(FSInput input) {
 
                 // ── Chebyshev visibility (Majercik 2019 §3.4) ────────
                 {
-                    float2 dirOct = DDGIOctEncode(normalize(-toProbe));
-                    float2 depthOrigin = float2(
-                        float(tileX * kDepthStride + 1u),
-                        float(tileY * kDepthStride + 1u));
-                    float2 depthUV = (depthOrigin + dirOct * float(kDepthTile))
-                                   / float2(float(atlasDepthW),
-                                            float(atlasDepthH));
                     // The writer stores both moments normalised by
                     // maxTraceDistance so the squared term fits FP16 (see
                     // ddgi_probe_update_cs.hlsl). Rescale with the same
@@ -1121,21 +1119,12 @@ LightingOutput main(FSInput input) {
                     //   maxTraceDistance = probeSpacing * probesPerAxis * 2
                     const float ddgiMaxTrace = _ddgiProbeSpacing
                                              * float(_ddgiProbesPerAxis) * 2.0;
-                    float2 momentT = ddgiDepthTex.SampleLevel(linearSampler, depthUV, 0);
-                    float meanD  = momentT.x * ddgiMaxTrace;
-                    float meanD2 = momentT.y * (ddgiMaxTrace * ddgiMaxTrace);
-                    float variance = max(meanD2 - meanD * meanD, 1e-4);
-                    // VSM-style Chebyshev — fully visible if probe is closer
-                    // than the surface, otherwise upper-bound the visibility
-                    // by p_max = variance / (variance + diff²).
-                    float visibility = 1.0;
-                    if (distToProbe > meanD) {
-                        float diff = distToProbe - meanD;
-                        visibility = variance / (variance + diff * diff);
-                        // Sharpen — Majercik recommends pow(p_max, 8) to
-                        // remove residual leakage.
-                        visibility = visibility * visibility * visibility;
-                    }
+                    // The test itself (octahedral lookup, VSM-style upper bound, cubed) is
+                    // `ProbeChebyshevVisibility` in gi/rc_probe_visibility.hlsli, shared with
+                    // the radiance cache's depth atlas since stage 2.
+                    float visibility = ProbeChebyshevVisibility(ddgiDepthTex, linearSampler, probeLinear,
+                                                                _ddgiProbesPerAxis, ddgiMaxTrace,
+                                                                toProbe, distToProbe);
                     if (visibility > 1e-3) ddgiCntVis += 1.0; else ddgiCntRej += 1.0;
                     wTri *= visibility;
                 }
@@ -1169,6 +1158,11 @@ LightingOutput main(FSInput input) {
 #ifdef UZ_BINDLESS
         if (!irradianceFromGI && _rcEnabled != 0 && _rcProbesSrv != 0xFFFFFFFFu) {
             StructuredBuffer<float4> probeSH = ResourceDescriptorHeap[_rcProbesSrv];
+            // Stage 2 (docs/analysis/lumen-radiance-cache-stability): the cache's parameter record
+            // (zero at the defaults). The Chebyshev visibility from the cache's own depth atlas
+            // (r.GI.RadianceCache.Visibility) weights the eight probes below; there is no ray here,
+            // so the near-field exclusion does not apply to this receiver.
+            const float4 rcParams = probeSH[ProbeParamsIndex(_rcProbesPerAxis)];
 
             float3 gridOrigin = float3(_rcOriginX, _rcOriginY, _rcOriginZ);
             float  gridSize   = _rcExtent * 2.0;
@@ -1213,12 +1207,16 @@ LightingOutput main(FSInput input) {
                                  + uint(idx3.z) * _rcProbesPerAxis * _rcProbesPerAxis;
                 // A relocated probe (rc_probe_guard.hlsli) is weighted where it was traced.
                 const float4 probeGuard = probeSH[ProbeGuardIndex(_rcProbesPerAxis, probeLinear)];
-                float3 toProbe = ProbeEffectivePosition(probeGuard, probePosition) - worldPos;
+                const float3 probeEffective = ProbeEffectivePosition(probeGuard, probePosition);
+                float3 toProbe = probeEffective - worldPos;
                 float probeDistance = length(toProbe);
                 float3 probeFacing = dot(geometricNormal, geometricNormal) > 0.5 ? geometricNormal : N;
                 float normalWeight = probeDistance > 0.0 ? saturate(dot(probeFacing, toProbe / probeDistance)) : 1.0;
                 w *= normalWeight * normalWeight;
                 if (normalWeight > 0.0) rcCntFacing += 1.0;
+                // Stage 2: Chebyshev visibility of this receiver from the probe (identity when off).
+                w *= RcProbeVisibilityWeight(rcParams, linearSampler, probeLinear, _rcProbesPerAxis,
+                                             gridSize / (ppa - 1.0), probeEffective, worldPos, probeFacing);
 
                 uint base = probeLinear * 7u;
                 // Record 6.w carries validity: a probe buried inside geometry
@@ -1416,6 +1414,23 @@ LightingOutput main(FSInput input) {
         // cubemap lookup, with SSR blended in *before* the BRDF rather than
         // summed after TAA. Both neutralise their sky tint because the traced
         // radiance already carries the sky it hit.
+        //
+        // Block B.5's screen / ray-traced reflection texel (rgb radiance, a = blend weight) is read
+        // here, ahead of the gather, so the gate below can see its weight; the blend itself stays
+        // after the gather, unchanged.
+        if (ssrSrvIndex != kSentinelSrvIndex) {
+            Texture2D<float4> screenReflections = ResourceDescriptorHeap[ssrSrvIndex];
+            ssrHit = screenReflections.SampleLevel(clampSampler, input.texcoord, 0);
+            ssrHit.a = saturate(ssrHit.a);
+        }
+        // r.GI.Reflections.SkipWhenRT (bit 1 of _sdfReflectionsEnabled, set by the CPU only while the
+        // ray-traced reflection pass runs): where the texel's blend weight is 1 the lerp below discards
+        // the SDF gather entirely - lerp(sdf, ray, 1) = ray - so the cone trace is skipped on that pixel
+        // and the lighting is what it was, up to the rounding of that lerp. A weight below 1 (a
+        // roughness fade, no ray, an ineligible surface) keeps the trace: the SDF layer still shows
+        // through there.
+        const bool sdfReflectionSkipped = (_sdfReflectionsEnabled & 2u) != 0u
+            && ssrSrvIndex != kSentinelSrvIndex && ssrHit.a >= 1.0;
         if (_sdfReflectionsEnabled != 0 || _sdfDiffuseSamples != 0) {
             SdfReflectionScene scene;
             [unroll] for (uint cascade = 0; cascade < 4; ++cascade)
@@ -1448,13 +1463,16 @@ LightingOutput main(FSInput input) {
                 dbgPath |= 2u;
             }
             if (_sdfReflectionsEnabled != 0) {
-                // timeParams.w < 0 is production (seed = frame count); a non-negative value is the
-                // diagnostic seed freeze of `r.GI.Reflections.FreezeSeed`.
-                const uint reflectionSeed = timeParams.w >= 0.0 ? uint(timeParams.w) : uint(timeParams.z);
-                radiance = GatherSdfReflections(scene, worldPos, N, geometricNormal, reflect(-V, N), roughness,
-                    uint2(px), reflectionSeed, _sdfReflectionSamples) * _sdfReflectionIntensity;
-                dbgReflection = radiance;
-                dbgPath |= 1u;
+                // The record and path bit stay clear on a pixel the gate skipped: the trace did not run.
+                if (!sdfReflectionSkipped) {
+                    // timeParams.w < 0 is production (seed = frame count); a non-negative value is the
+                    // diagnostic seed freeze of `r.GI.Reflections.FreezeSeed`.
+                    const uint reflectionSeed = timeParams.w >= 0.0 ? uint(timeParams.w) : uint(timeParams.z);
+                    radiance = GatherSdfReflections(scene, worldPos, N, geometricNormal, reflect(-V, N), roughness,
+                        uint2(px), reflectionSeed, _sdfReflectionSamples) * _sdfReflectionIntensity;
+                    dbgReflection = radiance;
+                    dbgPath |= 1u;
+                }
                 skyTintSpecular = 1.0;
             }
         }
@@ -1465,9 +1483,6 @@ LightingOutput main(FSInput input) {
         // terms below weight every layer alike (SSR -> SDF -> IBL by confidence). The additive post-TAA
         // composite that used to carry the IBL case is off by default (r.SSR.Composite).
         if (ssrSrvIndex != kSentinelSrvIndex) {
-            Texture2D<float4> screenReflections = ResourceDescriptorHeap[ssrSrvIndex];
-            ssrHit = screenReflections.SampleLevel(clampSampler, input.texcoord, 0);
-            ssrHit.a = saturate(ssrHit.a);
             radiance = lerp(radiance, ssrHit.rgb, ssrHit.a);
             if (ssrHit.a > 0.0) dbgPath |= 128u;
         }

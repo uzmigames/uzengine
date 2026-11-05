@@ -43,6 +43,7 @@
 #include "ibl/env_map_sampler.h"
 #include "ibl/sh_projection.h"
 #include "env_mis_pass.h"
+#include "sun_shadow_denoise_pass.h"
 #include "probes/reflection_probe_renderer.h"
 #include "postprocess/auto_exposure.h"
 #include "postprocess/bloom_pass.h"
@@ -63,6 +64,7 @@
 #include "engine/ecs/environment/light_probe_volume_component.h"
 #include "passes/gi/brixelizer_gi_pass.h"
 #include "passes/realtime_denoiser.h"
+#include "passes/rough_specular_reconstruction.h"
 #include "async_texture_decoder.h"  // TextureDecodeResult for m_deferredDecoded
 #include "async_mesh_loader.h"      // MeshLoadResultCPU for m_asyncMeshReady
 #include "gi/mesh_sdf_bake_queue.h" // MeshSdfBakeQueue (block B.3)
@@ -721,6 +723,9 @@ public:
 
     /// Creates or releases the r.TAA.ClampFreezeAfterFrame storage (diagnostic, off by default).
     void EnsureTaaClampBoxResources(bool wanted);
+
+    /// Creates or releases the r.TAA.SilhouetteReject history-depth pair (on demand, released while the CVar is off).
+    void EnsureTaaHistoryDepthResources(bool wanted);
 
     void SetScreenPercentage(float pct);
 

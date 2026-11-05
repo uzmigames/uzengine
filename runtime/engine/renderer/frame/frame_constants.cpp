@@ -79,6 +79,12 @@ static auto* cv_TonemapBlackClip   = UZ_CVAR_FLOAT("r.Tonemap.BlackClip", 0.f, "
 static auto* cv_TonemapWhiteClip   = UZ_CVAR_FLOAT("r.Tonemap.WhiteClip", 0.04f, "ACES white clip", 0.f, 1.f);
 static auto* cv_MipBias            = UZ_CVAR_FLOAT("r.MipBias", 0.f, "Global mipmap LOD bias", -4.f, 4.f);
 static auto* cv_SdfReflections = UZ_CVAR_INT("r.GI.Reflections", 0, "Trace scene reflections through the global distance field", 0, 1);
+// The lighting blends the screen / ray-traced reflection texel over the SDF trace by the texel's weight
+// (lerp(sdf, ray, a)); where a is 1 the trace is discarded, so with the ray-traced reflections on the
+// shader skips it on those pixels (deferred_lighting_ps.hlsl, `sdfReflectionSkipped`). On Sponza with
+// the ray pass in rough mode that is nearly every pixel: the lighting pass drops from ~28 ms to ~1 ms.
+static auto* cv_SdfReflectionsSkipWhenRT = UZ_CVAR_BOOL("r.GI.Reflections.SkipWhenRT", true,
+    "Skip the SDF reflection trace on the pixels the ray-traced reflections already resolve (blend weight 1, where the lighting discards the trace anyway); 0 = trace every pixel");
 static auto* cv_EnvMIS = UZ_CVAR_BOOL("r.EnvMIS", true,
     "Environment-MIS specular on smooth metals (replaces the split-sum term by its coverage; off = split-sum only). Inactive while r.GI.Reflections is on.");
 static auto* cv_SdfFinalGather = UZ_CVAR_INT("r.GI.FinalGather", 0, "Gather diffuse illumination from surface hemisphere rays", 0, 1);
@@ -869,7 +875,11 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
         }
         const auto& nearClipmap = m_globalDistanceField.GetClipmap(0);
         const bool hasDistanceField = nearClipmap.hasData && nearClipmap.rawSrvIndex != UINT32_MAX;
-        perFrame.sdfReflectionsEnabled = hasDistanceField && cv_SdfReflections->value != 0 ? 1u : 0u;
+        // Bit 0: the SDF reflection trace is on. Bit 1 (r.GI.Reflections.SkipWhenRT): the ray-traced
+        // reflection pass is available this frame, so the lighting may skip the trace on every pixel
+        // whose ray texel owns the reflection layer (blend weight 1). The C++ readers test != 0 only.
+        perFrame.sdfReflectionsEnabled = hasDistanceField && cv_SdfReflections->value != 0
+            ? (1u | (cv_SdfReflectionsSkipWhenRT->value && RTReflectionRaysAvailable() ? 2u : 0u)) : 0u;
         perFrame.sdfDiffuseSamples = hasDistanceField && cv_SdfFinalGather->value != 0
             ? static_cast<uint32_t>(cv_SdfDiffuseSamples->value) : 0u;
         perFrame.sdfReflectionSkySrv = perFrame.prefilteredSrvIndex;
@@ -1154,6 +1164,8 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
         CVarRegistry::Get().GetBool("r.Shadows.SoftPCSS.Local", true) ? 1u : 0u;
     reinterpret_cast<ShadowDataCB*>(ctx.shadowAlloc.cpuPtr)->localPcssSourceRadius =
         CVarRegistry::Get().GetFloat("r.Shadows.SoftPCSS.Local.SourceRadius", 5.0f);
+    reinterpret_cast<ShadowDataCB*>(ctx.shadowAlloc.cpuPtr)->pcssStableKernel =
+        static_cast<uint32_t>(std::max(CVarRegistry::Get().GetInt("r.Shadows.SoftPCSS.StableKernel", 0), 0));
 
     // ── Build ShadowDataParams for binder path ──────────────────────────
     // Copy the 768-byte scalar section from the CB allocation, then attach

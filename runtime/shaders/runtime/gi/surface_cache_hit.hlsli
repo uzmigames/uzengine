@@ -50,8 +50,10 @@ bool SurfaceCacheHitAttributes(uint meshId, uint primIndex, float2 bary, float3x
 
 // ─── Radiance-cache probe irradiance (E / pi) at a world point: the reflection pass's read ─────
 // (trilinear over the eight surrounding probes, each weighted by its facing, skipped when invalid
-// or guarded behind a face; zero outside the grid or without a buffer).
-float3 SurfaceCacheProbeIrradianceOverPi(uint probeShSrv, float3 position, float3 normal) {
+// or guarded behind a face; zero outside the grid or without a buffer). `hitT` is the hit's distance
+// from the ray origin: the stage-2 near-field exclusion fades the term out below the cache's TMin and
+// the stage-2 Chebyshev visibility weights each probe (rc_probe_visibility.hlsli; identity when off).
+float3 SurfaceCacheProbeIrradianceOverPi(uint probeShSrv, float3 position, float3 normal, float hitT) {
     if (probeShSrv == kGITraceSentinelSrv || probesPerAxis < 2u || probeSpacing <= 0.0) return 0.0;
     const float3 origin = float3(gridOriginX, gridOriginY, gridOriginZ);
     const float3 cell = (position - origin) / probeSpacing;
@@ -60,6 +62,9 @@ float3 SurfaceCacheProbeIrradianceOverPi(uint probeShSrv, float3 position, float
     const uint3  upper    = min(lower + 1u, probesPerAxis - 1u);
     const float3 fraction = frac(cell);
     StructuredBuffer<float4> probes = ResourceDescriptorHeap[probeShSrv];
+    const float4 rcParams = probes[ProbeParamsIndex(probesPerAxis)];
+    const float nearWeight = RcNearFieldWeight(hitT, rcParams);
+    if (nearWeight <= 0.0) return 0.0;
     float3 irradiance = 0.0;
     float  totalWeight = 0.0;
     [unroll]
@@ -73,10 +78,13 @@ float3 SurfaceCacheProbeIrradianceOverPi(uint probeShSrv, float3 position, float
         const uint   probeLinear  = index.x + index.y * probesPerAxis + index.z * probesPerAxis * probesPerAxis;
         const float3 gridPosition = origin + float3(index) * probeSpacing;
         const float4 guard        = probes[ProbeGuardIndex(probesPerAxis, probeLinear)];
-        const float3 toProbe      = ProbeEffectivePosition(guard, gridPosition) - position;
+        const float3 probePosition = ProbeEffectivePosition(guard, gridPosition);
+        const float3 toProbe      = probePosition - position;
         const float  d2           = dot(toProbe, toProbe);
         const float  facing       = d2 > 0.0 ? saturate(dot(normal, toProbe) * rsqrt(d2)) : 1.0;
         weight *= facing * facing;
+        weight *= RcProbeVisibilityWeight(rcParams, linearClamp, probeLinear, probesPerAxis, probeSpacing,
+                                          probePosition, position, normal);
         const uint base = probeLinear * 7u;
         if (probes[base + 6].w <= 0.0) continue;
         if (ProbeGuardRejects(guard, gridPosition, position)) continue;
@@ -86,7 +94,7 @@ float3 SurfaceCacheProbeIrradianceOverPi(uint probeShSrv, float3 position, float
         irradiance  += weight * EvalSH_L2(normal, sh);
         totalWeight += weight;
     }
-    return totalWeight > 0.0 ? irradiance / totalWeight : 0.0;
+    return totalWeight > 0.0 ? irradiance / totalWeight * nearWeight : 0.0;
 }
 
 // ─── Direct sun with a shadow ray from a lifted surface point ─────────────────────────────────
@@ -120,13 +128,14 @@ float3 SurfaceCacheDirectLayer(SurfaceCacheParams cache, RaytracingAccelerationS
 }
 
 // ─── The two layers of a committed hit (the feed's and the cell-indirect fallback's shading) ──
-// `origin` is the hit lifted by kSurfaceCacheSurfaceBias (the point the cell is keyed from).
+// `origin` is the hit lifted by kSurfaceCacheSurfaceBias (the point the cell is keyed from); `hitT` the
+// hit's distance from the ray origin (the stage-2 near-field exclusion of the probe term).
 void SurfaceCacheShadeHit(SurfaceCacheParams cache, RaytracingAccelerationStructure tlas, float3 origin, float3 hitN,
                           float3 albedo, uint meshId, uint primIndex, float2 bary, uint materialTableSrv,
-                          uint probeShSrv, float2 areaSample,
+                          uint probeShSrv, float2 areaSample, float hitT,
                           out float3 sunTerm, out float3 otherTerm, out float3 emissive) {
     sunTerm   = SurfaceCacheDirectLayer(cache, tlas, origin, hitN, albedo, areaSample);
-    otherTerm = albedo * SurfaceCacheProbeIrradianceOverPi(probeShSrv, origin, hitN);
+    otherTerm = albedo * SurfaceCacheProbeIrradianceOverPi(probeShSrv, origin, hitN, hitT);
     emissive  = 0.0;
     if ((cache.flags & kSurfaceCacheFlagEmissive) != 0u) {
         emissive   = GITrace_HitEmissive(meshId, primIndex, bary, materialTableSrv);

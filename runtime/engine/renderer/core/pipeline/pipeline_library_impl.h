@@ -140,12 +140,16 @@
     RHIShaderHandle m_dfsCullObjectsCS         = RHIShaderHandle::Invalid();
     RHIShaderHandle m_dfsConeTraceCS           = RHIShaderHandle::Invalid();
     RHIShaderHandle m_taaResolveCS             = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_taaResolveSilhouetteCS   = RHIShaderHandle::Invalid();   ///< UZ_TAA_SILHOUETTE_REJECT=1 variant
+    bool            m_taaResolveSilhouetteFailed = false;                      ///< its compile failed (logged once)
     RHIShaderHandle m_tsrDilateVelocityCS      = RHIShaderHandle::Invalid();
     RHIShaderHandle m_tsrRejectShadingCS       = RHIShaderHandle::Invalid();
     RHIShaderHandle m_tsrUpdateHistoryCS       = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssrTraceCS               = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssrResolveCS             = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssrTemporalCS            = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_ssrTemporalFixCS         = RHIShaderHandle::Invalid();   ///< UZ_SSR_TEMPORAL_FIX=1 variant
+    bool            m_ssrTemporalFixFailed     = false;                        ///< its compile failed (logged once)
     RHIShaderHandle m_ssrSpatialDenoiseCS     = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssrCompositeCS          = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssrTileClassifyCS       = RHIShaderHandle::Invalid();
@@ -162,6 +166,16 @@
     RHIShaderHandle m_ssgiTraceCS              = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssgiDxrTraceCS           = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssgiDxrUpsampleCS        = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_ssgiTraceHitSpecularCS       = RHIShaderHandle::Invalid();   ///< UZ_GI_HIT_SPECULAR=1
+    RHIShaderHandle m_ssgiDxrTraceHitSpecularCS    = RHIShaderHandle::Invalid();   ///< UZ_GATHER_DXR=1;UZ_GI_HIT_SPECULAR=1
+    RHIShaderHandle m_ssgiUpsampleHitSpecularCS    = RHIShaderHandle::Invalid();   ///< UZ_GI_HIT_SPECULAR=1
+    RHIShaderHandle m_ssgiDxrUpsampleHitSpecularCS = RHIShaderHandle::Invalid();   ///< UZ_GATHER_DXR=1;UZ_GI_HIT_SPECULAR=1
+    /// The UZ_GI_HIT_UV_WRAP=1 permutations (r.GI.HitMaterial.WrapUv), indexed by GiHitUvWrapVariant;
+    /// Failed() once a compile failed so it is never retried.
+    RHIShaderHandle m_giHitUvWrapCS[static_cast<size_t>(GiHitUvWrapVariant::Count)] = {};
+    /// The UZ_GI_HIT_PERMESH=1 permutations (r.GI.HitMaterial.PerMesh), indexed by GiHitPerMeshVariant;
+    /// Failed() once a compile failed so it is never retried.
+    RHIShaderHandle m_giHitPerMeshCS[static_cast<size_t>(GiHitPerMeshVariant::Count)] = {};
     RHIShaderHandle m_ssgiSpatialDenoiseCS     = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssgiTemporalAccumCS      = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssgiBilateralUpsampleCS  = RHIShaderHandle::Invalid();
@@ -176,7 +190,11 @@
     RHIShaderHandle m_gdfCompositeCS            = RHIShaderHandle::Invalid();
     RHIShaderHandle m_meshSdfBakeCS             = RHIShaderHandle::Invalid();
     RHIShaderHandle m_radianceCacheTraceCS      = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_radianceCacheTraceStabilityCS = RHIShaderHandle::Invalid();   ///< UZ_RC_STABILITY=1 variant
+    RHIShaderHandle m_radianceCacheTraceHitSpecularCS          = RHIShaderHandle::Invalid();   ///< UZ_GI_HIT_SPECULAR=1 variant
+    RHIShaderHandle m_radianceCacheTraceStabilityHitSpecularCS = RHIShaderHandle::Invalid();   ///< UZ_RC_STABILITY=1;UZ_GI_HIT_SPECULAR=1 variant
     RHIShaderHandle m_ddgiProbeUpdateCS         = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_radianceCacheDepthMomentsCS = RHIShaderHandle::Invalid();   ///< DdgiProbeUpdateCS, UZ_RC_DEPTH=1 variant
     RHIShaderHandle m_ddgiProbeTraceCS          = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ddgiBorderFillCS          = RHIShaderHandle::Invalid();
     RHIShaderHandle m_rtReflectionCS            = RHIShaderHandle::Invalid();
@@ -230,12 +248,14 @@
     RHIPipelineHandle m_dfsCullObjects        = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_dfsConeTrace          = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_taaResolve            = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_taaResolveSilhouette  = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_tsrDilateVelocity    = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_tsrRejectShading     = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_tsrUpdateHistory     = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssrTrace              = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssrResolve            = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssrTemporal           = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_ssrTemporalFix        = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssrSpatialDenoise    = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssrComposite         = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssrTileClassify      = RHIPipelineHandle::Invalid();
@@ -252,6 +272,12 @@
     RHIPipelineHandle m_ssgiTrace             = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssgiDxrTrace          = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssgiDxrUpsample       = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_ssgiTraceHitSpecular       = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_ssgiDxrTraceHitSpecular    = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_ssgiUpsampleHitSpecular    = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_ssgiDxrUpsampleHitSpecular = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_giHitUvWrap[static_cast<size_t>(GiHitUvWrapVariant::Count)] = {};   ///< r.GI.HitMaterial.WrapUv permutations
+    RHIPipelineHandle m_giHitPerMesh[static_cast<size_t>(GiHitPerMeshVariant::Count)] = {}; ///< r.GI.HitMaterial.PerMesh permutations
     RHIPipelineHandle m_ssgiSpatialDenoise    = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssgiTemporalAccum     = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssgiBilateralUpsample = RHIPipelineHandle::Invalid();
@@ -266,6 +292,10 @@
     RHIPipelineHandle m_gdfComposite          = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_meshSdfBake           = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_radianceCacheTrace    = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_radianceCacheTraceStability = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_radianceCacheTraceHitSpecular          = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_radianceCacheTraceStabilityHitSpecular = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_radianceCacheDepthMoments = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ddgiProbeUpdate       = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ddgiProbeTrace        = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ddgiBorderFill        = RHIPipelineHandle::Invalid();
@@ -281,3 +311,5 @@
     RHIPipelineHandle m_volFogInject          = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_volFogScatter         = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_volFogComposite       = RHIPipelineHandle::Invalid();
+    RHIShaderHandle m_ssgiStableTemporalAccumCS = RHIShaderHandle::Invalid();
+    RHIPipelineHandle m_ssgiStableTemporalAccum = RHIPipelineHandle::Invalid();

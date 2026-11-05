@@ -1422,6 +1422,11 @@ void SceneRenderer::Shutdown() {
         m_giMaterialTableSrv = UINT32_MAX;
         m_giMaterialTableCapacity = 0;
     }
+    if (m_giMaterialTableExt.IsValid()) {
+        m_device->DestroyBuffer(m_giMaterialTableExt);
+        m_giMaterialTableExt = RHIBufferHandle{};
+        m_giMaterialTableExtSrv = UINT32_MAX;
+    }
 
     // Destroy material graph pipeline
     if (m_materialPipeline) {
@@ -1462,6 +1467,14 @@ void SceneRenderer::Shutdown() {
         pipeline = {};
     }
     for (auto& shader : m_rectLightLightingPS) {
+        if (shader.IsValid()) m_device->DestroyShader(shader);
+        shader = {};
+    }
+    for (auto& pipeline : m_sunShadowDenoiseLightingPipeline) {
+        if (pipeline.IsValid()) m_device->DestroyPipeline(pipeline);
+        pipeline = {};
+    }
+    for (auto& shader : m_sunShadowDenoiseLightingPS) {
         if (shader.IsValid()) m_device->DestroyShader(shader);
         shader = {};
     }
@@ -1541,6 +1554,7 @@ void SceneRenderer::Shutdown() {
     // ── Env MIS Pass + Sampler ──────────────────────────────────────────
     if (m_envMISPass) m_envMISPass->Shutdown();
     if (m_envMapSampler) m_envMapSampler->Shutdown();
+    if (m_sunShadowDenoisePass) m_sunShadowDenoisePass->Shutdown();
 
     // ── IBL resources ──────────────────────────────────────────────────
     // Destroy caller-owned IBL textures (baker no longer auto-destroys)
@@ -1615,6 +1629,7 @@ void SceneRenderer::Shutdown() {
     // ── SSGI cleanup ──────────────────────────────────────────────────
     m_ssgiRenderer.DestroyResources();
     m_realtimeDenoiser.DestroyResources();
+    m_roughSpecularReconstruction.DestroyResources();
 
     // ── SDF GI cleanup ───────────────────────────────────────────────
     m_surfaceCache.DestroyResources();

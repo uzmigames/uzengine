@@ -59,6 +59,10 @@ cbuffer TaaCB : register(b2) {
     float  flipIsolationRatio;    ///< CVar r.TAA.FlipBlendIsolationRatio (firefly guard, 2.0).
     float  flipVelocityPx;        ///< CVar r.TAA.FlipBlendVelocityPx (gate fades to 0, 4.0).
     float  flipBlendWeight;       ///< CVar r.TAA.FlipBlendWeight (-1 = inherit CurrentFrameWeight).
+    uint   silhouetteReject;      ///< CVar r.TAA.SilhouetteReject: 1 = validate the history footprint + write this frame's depth.
+    uint   historyDepthSrv;       ///< Bindless SRV: last frame's (own, dilated) depth per history texel (0xffffffff = none valid yet).
+    uint   historyDepthUav;       ///< Bindless UAV: this frame's (own, dilated) depth per history texel (0xffffffff = no storage).
+    float  silhouetteDepthTolerance; ///< CVar r.TAA.SilhouetteReject.DepthTolerance (relative view depth).
 };
 
 SamplerState LinearClampSampler : register(s0);
@@ -121,6 +125,19 @@ float HdrWeightY(float Y, float Exposure)
 {
     return rcp(Y * Exposure + 4.0);
 }
+
+#ifdef UZ_TAA_SILHOUETTE_REJECT
+/// r.TAA.SilhouetteReject (the UZ_TAA_SILHOUETTE_REJECT=1 permutation; the default permutation is the prior
+/// resolve, text-identical) — same surface test between two reversed-Z device depths. The device depth is
+/// (up to the far-plane term) proportional to 1 / view depth, so the relative difference of the device values
+/// is the relative difference of the view depths; the cleared far plane (the sky, 0) matches only itself.
+bool TaaDepthCompatible(float a, float b, float tolerance)
+{
+    float largest = max(a, b);
+    if (largest <= 1e-7) return true;
+    return abs(a - b) <= tolerance * largest;
+}
+#endif
 
 /// @ref Karis 2014 "High Quality Temporal Supersampling" — WeightedLerpFactors
 float2 WeightedLerpFactors(float WeightA, float WeightB, float Blend)
@@ -273,6 +290,11 @@ void main(uint2 DTid : SV_DispatchThreadID)
     /// @ref Karis 2014 "High Quality Temporal Supersampling" — AA_CROSS=2 depth dilation
     /// Find nearest depth in 5-sample cross for silhouette-correct reprojection.
     float centerDepth = DepthTex.Load(int3(centerCoord, 0)).x;
+#ifdef UZ_TAA_SILHOUETTE_REJECT
+    // The pixel's own (un-dilated) depth: the surface its sample belongs to, stored for next frame's
+    // silhouette rejection and compared against the stored one (r.TAA.SilhouetteReject).
+    const float ownDepth = centerDepth;
+#endif
     float2 velocityOffset = float2(0, 0);
 
     {
@@ -367,6 +389,91 @@ void main(uint2 DTid : SV_DispatchThreadID)
         rawHistory *= finalMultiplier;
     }
 
+    // ── Silhouette rejection (r.TAA.SilhouetteReject, evidence gi/silhouette-rim) ──────────────
+    // The closest-depth dilation above makes every pixel within 2 px of a silhouette reproject with the
+    // nearer surface, so under camera motion a background pixel's bicubic footprint straddles the edge
+    // and mixes the occluder's history in every frame; the 3x3 box holds the occluder's colours and
+    // cannot reject it, and the blend feeds the mix back, so a dark object trails a dark ring over a
+    // bright background (and a bright fringe inside its own edge) for as long as the camera moves. The
+    // band itself carries it too: a texel whose jittered sample flips across the edge holds the
+    // anti-aliased (mixed) colour, and its neighbours accept it on the frames its sample lands on their
+    // side. So a history texel is acceptable only when BOTH depths it was resolved with last frame - its
+    // own sample and the nearest depth of its dilation cross - are this pixel's own surface: a
+    // background pixel takes no history from the 2-px band of a nearer silhouette, and an object's edge
+    // pixel none from the background beyond it. The pixel's own texel (its own previous value, which
+    // this rule keeps clean) needs only its own sample to match, so a pixel that stayed on its surface
+    // keeps its history and one the silhouette just uncovered (a disocclusion) does not. Where the 4x4
+    // Catmull-Rom footprint holds an unacceptable texel the history is re-fetched as the convex
+    // (bilinear, non-negative) combination of its acceptable 2x2 texels: the bicubic's negative lobes
+    // cannot be renormalised without their positive partners, which would bias the fetch darker than
+    // the pixel's own previous value. A static camera (velocity 0: an exact-texel fetch of the pixel's
+    // own value) skips the test, so it and every footprint that stays on one surface keep the 5-tap
+    // result above bit for bit. A footprint with no acceptable support is a disocclusion: the current
+    // frame restarts the history, as the off-screen case does.
+#if defined(UZ_TAA_SILHOUETTE_REJECT) && defined(UZ_BINDLESS)
+    bool silhouetteDisoccluded = false;
+    float silhouetteRejected = 0.0;   // the bicubic footprint weight found unacceptable (region dump diagnostics)
+    if (silhouetteReject != 0u && historyDepthSrv != 0xffffffffu && !offScreen && historyReadMode == 0u
+        && velocityMag > 1e-3) {
+        Texture2D<float2> HistoryDepth = ResourceDescriptorHeap[historyDepthSrv];
+        const float2 samplePos = clampedHistoryUV * float2(outputWidth, outputHeight);
+        const float2 f  = samplePos - (floor(samplePos - 0.5) + 0.5);
+        const float2 f2 = f * f;
+        const float2 f3 = f2 * f;
+        const float2 w0 = f2 - 0.5 * (f3 + f);
+        const float2 w1 = 1.5 * f3 - 2.5 * f2 + 1.0;
+        const float2 w3 = 0.5 * (f3 - f2);
+        const float2 w2 = 1.0 - w0 - w1 - w3;
+        const float wx[4] = { w0.x, w1.x, w2.x, w3.x };
+        const float wy[4] = { w0.y, w1.y, w2.y, w3.y };
+        const int2 base = int2(floor(samplePos - 0.5)) - 1;   // the texel of tc - 1
+        const int2 maxCoord = int2(outW - 1, outH - 1);
+        float rejectedWeight = 0.0;
+        [unroll]
+        for (int ty = 0; ty < 4; ++ty) {
+            [unroll]
+            for (int tx = 0; tx < 4; ++tx) {
+                const float w = wx[tx] * wy[ty];
+                if (w == 0.0) continue;
+                const int2 q = clamp(base + int2(tx, ty), int2(0, 0), maxCoord);
+                const float2 stored = HistoryDepth.Load(int3(q, 0)).xy;   // (own sample, dilated cross) last frame
+                const bool acceptable = TaaDepthCompatible(stored.x, ownDepth, silhouetteDepthTolerance)
+                    && (all(q == int2(DTid)) || TaaDepthCompatible(stored.y, ownDepth, silhouetteDepthTolerance));
+                if (!acceptable) rejectedWeight += abs(w);
+            }
+        }
+        silhouetteRejected = rejectedWeight;
+        if (rejectedWeight > 0.0) {
+            // The bilinear 2x2 of the sample position: non-negative weights, so the acceptable subset is a
+            // convex combination (never darker or brighter than the texels it is made of).
+            const float2 fraction = f;                 // samplePos - (tc), tc the centre of texel base + 1
+            const int2 bilinearBase = base + 1;
+            float4 acceptedSum = float4(0, 0, 0, 0);
+            float acceptedWeight = 0.0;
+            [unroll]
+            for (int by = 0; by < 2; ++by) {
+                [unroll]
+                for (int bx = 0; bx < 2; ++bx) {
+                    const float w = (bx == 0 ? 1.0 - fraction.x : fraction.x) * (by == 0 ? 1.0 - fraction.y : fraction.y);
+                    if (w <= 0.0) continue;
+                    const int2 q = clamp(bilinearBase + int2(bx, by), int2(0, 0), maxCoord);
+                    const float2 stored = HistoryDepth.Load(int3(q, 0)).xy;
+                    if (TaaDepthCompatible(stored.x, ownDepth, silhouetteDepthTolerance)
+                        && (all(q == int2(DTid)) || TaaDepthCompatible(stored.y, ownDepth, silhouetteDepthTolerance))) {
+                        acceptedSum    += HistoryTex.Load(int3(q, 0)) * w;
+                        acceptedWeight += w;
+                    }
+                }
+            }
+            if (acceptedWeight > 0.05) rawHistory = acceptedSum * rcp(acceptedWeight);
+            else                       silhouetteDisoccluded = true;
+        }
+    }
+    const bool historyInvalid = offScreen || silhouetteDisoccluded;
+#else
+    const bool historyInvalid = offScreen;
+#endif
+
     if (historyReadMode == 1u) {
         int2 historyCoord = clamp(int2(clampedHistoryUV * float2(outputWidth, outputHeight)),
                                   int2(0, 0), int2(outputWidth, outputHeight) - 1);
@@ -383,7 +490,7 @@ void main(uint2 DTid : SV_DispatchThreadID)
     const float centreY = neighbors[4].x;
     float stableConf = 0.0;
     const bool stableGateLive = stableReconEnabled != 0u && reconstructionMode == 0u
-                             && stableReconReset == 0u && !offScreen;
+                             && stableReconReset == 0u && !historyInvalid;
     if (stableGateLive) {
         float lumaDev = abs(centreY - rawLumaMean) / max(max(centreY, rawLumaMean), 1e-4);
         stableConf = saturate(1.0 - lumaDev / stableReconTolerance)
@@ -395,7 +502,7 @@ void main(uint2 DTid : SV_DispatchThreadID)
     // firefly; give it the spatial-only reconstruction, which drops the HDR weighting that drains
     // ~48% of the rear-door glass energy. Isolated bright samples and moving pixels keep Karis.
     float flipConf = 0.0;
-    if (flipBlendEnabled != 0u && reconstructionMode == 0u && stableReconReset == 0u && !offScreen) {
+    if (flipBlendEnabled != 0u && reconstructionMode == 0u && stableReconReset == 0u && !historyInvalid) {
         float nMax8 = max(max(max(neighbors[0].x, neighbors[1].x), max(neighbors[2].x, neighbors[3].x)),
                           max(max(neighbors[5].x, neighbors[6].x), max(neighbors[7].x, neighbors[8].x)));
         bool isolated = centreY > flipIsolationRatio * nMax8;
@@ -425,6 +532,49 @@ void main(uint2 DTid : SV_DispatchThreadID)
     // Intersect variance box with AABB for robustness.
     // `clampMode` is a diagnostic switch (r.TAA.ClampMode, 0 = production): 1 lets the history
     // through unclamped, 2 keeps only the variance box, 3 only the neighbourhood AABB.
+    // r.TAA.SilhouetteReject, the clamp: a pixel within 2 px of a silhouette reprojects with the nearer
+    // surface's velocity (the dilation above), so under camera motion a background pixel beside an object
+    // fetches its own previous value at a blend of ~0.04 while the background behind the object sweeps
+    // on; its 3x3 box holds the object's colours, so the stale (dark) history is never clamped to the
+    // background's range and lags for tens of frames - the ring the pixels beyond the band do not show,
+    // because their box is the background alone. So under motion the box is built from the neighbours on
+    // the pixel's own surface only (a 3x3 depth test against its own sample; the centre always counts),
+    // widened to hold the pixel's own filtered sample - the value the resolve would output with no
+    // history - so a coverage-flip pixel on the silhouette keeps its anti-aliased mix instead of snapping
+    // to the side its jittered sample landed on. A pixel whose 3x3 is one surface keeps the box above bit
+    // for bit.
+#if defined(UZ_TAA_SILHOUETTE_REJECT) && defined(UZ_BINDLESS)
+    if (silhouetteReject != 0u && velocityMag > 1e-3 && historyReadMode == 0u) {
+        bool sameSurface[9];
+        bool anyOther = false;
+        [unroll]
+        for (uint si = 0; si < 9; si++) {
+            int2 coord = clamp(centerCoord + kOffsets3x3[si], int2(0, 0), int2(sceneW - 1, sceneH - 1));
+            sameSurface[si] = (si == 4u) || TaaDepthCompatible(DepthTex.Load(int3(coord, 0)).x, ownDepth, silhouetteDepthTolerance);
+            anyOther = anyOther || !sameSurface[si];
+        }
+        if (anyOther) {
+            float3 sMin = neighbors[4], sMax = neighbors[4], sMu = float3(0, 0, 0), sSq = float3(0, 0, 0);
+            float sN = 0.0;
+            [unroll]
+            for (uint sj = 0; sj < 9; sj++) {
+                if (!sameSurface[sj]) continue;
+                sMin = min(sMin, neighbors[sj]);
+                sMax = max(sMax, neighbors[sj]);
+                sMu += neighbors[sj];
+                sSq += neighbors[sj] * neighbors[sj];
+                sN += 1.0;
+            }
+            sMu /= sN;
+            float3 sSigma = sqrt(abs(sSq / sN - sMu * sMu));
+            neighborMin = min(sMin, filteredColor);
+            neighborMax = max(sMax, filteredColor);
+            varianceMin = min(sMu - kVarianceClipGamma * sSigma, filteredColor);
+            varianceMax = max(sMu + kVarianceClipGamma * sSigma, filteredColor);
+        }
+    }
+#endif
+
     float3 clipMin = max(neighborMin, varianceMin);
     float3 clipMax = min(neighborMax, varianceMax);
     if (clampMode == 2u) { clipMin = varianceMin; clipMax = varianceMax; }
@@ -487,8 +637,8 @@ void main(uint2 DTid : SV_DispatchThreadID)
     // NaN guard
     blendFinal = -min(-blendFinal, 0.0);
 
-    // ── Off-screen reset ────────────────────────────────────────────────────
-    if (offScreen)
+    // ── Off-screen / disocclusion reset ────────────────────────────────────
+    if (historyInvalid)
         clampedHistory = filteredColor;
 
     // ── HDR-Weighted Blend ──────────────────────────────────────────────────
@@ -508,6 +658,14 @@ void main(uint2 DTid : SV_DispatchThreadID)
     taaOutput[DTid] = float4(outputRGB, newLumaMean);
 
 #ifdef UZ_BINDLESS
+#ifdef UZ_TAA_SILHOUETTE_REJECT
+    // r.TAA.SilhouetteReject: the depths this texel was resolved with (its own sample, the nearest of its
+    // dilation cross), next frame's validation guide.
+    if (silhouetteReject != 0u && historyDepthUav != 0xffffffffu) {
+        RWTexture2D<float2> HistoryDepthOut = ResourceDescriptorHeap[historyDepthUav];
+        HistoryDepthOut[DTid] = float2(ownDepth, centerDepth);
+    }
+#endif
     // Region dump (diagnostics): resolve-side records, see common/region_dump.hlsli.
     // Every colour is written as linear HDR RGB (the YCoCg working values are converted back),
     // so the analysis never has to know this shader's internal colour space.
@@ -525,7 +683,15 @@ void main(uint2 DTid : SV_DispatchThreadID)
                 dump[rec + 0] = float4(YCoCgToRGB(neighbors[4]), blendFinal);
                 dump[rec + 1] = float4(YCoCgToRGB(filteredColor), velocityPixels.x);
                 dump[rec + 2] = float4(rawHistory.rgb, velocityPixels.y);
+#ifdef UZ_TAA_SILHOUETTE_REJECT
+                // w: 1 = the history was rejected as off-screen, 2 = r.TAA.SilhouetteReject found no acceptable
+                // footprint (disocclusion), 3 + rejected weight = it dropped part of the footprint.
+                dump[rec + 3] = float4(YCoCgToRGB(clampedHistory),
+                                       offScreen ? 1.0 : silhouetteDisoccluded ? 2.0
+                                                 : silhouetteRejected > 0.0 ? 3.0 + silhouetteRejected : 0.0);
+#else
                 dump[rec + 3] = float4(YCoCgToRGB(clampedHistory), offScreen ? 1.0 : 0.0);
+#endif
                 dump[rec + 4] = float4(outputRGB, FrameExposureScale);
             }
             if ((debugRegionFields & UZ_REGION_FIELD_OUTPUT) != 0u) {

@@ -160,7 +160,7 @@ void main(uint3 DTid : SV_DispatchThreadID) {
             SurfaceCacheRadicalInverse(((entry + i) ^ 0x9e3779b9u) + frameIndex));
         float3 sunTerm, otherTerm, hitEmissive;
         SurfaceCacheShadeHit(cache, tlas, hitPos, hitN, saturate(hitAlbedo), meshId, prim, bary,
-            materialTableSrv, kGITraceSentinelSrv, areaSample, sunTerm, otherTerm, hitEmissive);
+            materialTableSrv, kGITraceSentinelSrv, areaSample, q.CommittedRayT(), sunTerm, otherTerm, hitEmissive);
         sum += max(sunTerm + otherTerm, 0.0);
     }
     SurfaceCacheStatSum(cache, kSurfaceCacheStatIndirectRays, rays);

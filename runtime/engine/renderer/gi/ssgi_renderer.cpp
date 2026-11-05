@@ -43,6 +43,46 @@ static auto* cv_SSGIStepSize     = UZ_CVAR_FLOAT("r.SSGI.StepSize", 0.02f, "UV-s
 // value. Brixelizer GI is the preferred indoor GI.
 static auto* cv_SSGIThickness    = UZ_CVAR_FLOAT("r.SSGI.Thickness", 50.0f, "Depth comparison thickness (cm)", 0.01f, 1000.0f);
 static auto* cv_SSGITemporalAlpha = UZ_CVAR_FLOAT("r.SSGI.TemporalAlpha", 0.05f, "Temporal accumulation alpha (0=full history, 1=no history)", 0.01f, 0.5f);
+static auto* cv_StableTemporal = UZ_CVAR_BOOL("r.GI.FinalGather.StableTemporal", true,
+    "Variance/confidence-guided diffuse gather accumulation beyond 64 frames");
+// Hit-vertex sun specular (docs/analysis/lumen-radiance-cache-stability/06): the gather shades its
+// secondary hits Lambert-only, which is 33.5% of the measured real-time indirect deficit. Default ON:
+// OFF dispatches the unchanged pipelines (byte-identical DXIL); ON selects the UZ_GI_HIT_SPECULAR=1
+// permutations of the gather trace/upsample and the radiance-cache trace.
+static auto* cv_HitSpecular = UZ_CVAR_BOOL("r.GI.FinalGather.HitSpecular", true,
+    "Sun GGX lobe at the final gather's hit vertices and in the radiance-cache probe writer (F0 0.04), with the "
+    "hit's sun Lambert weighted by the IBL LUT's (1 - E_spec) as the path tracer does (D7), so the hit's sun "
+    "energy stays <= 1. Scene-constant roughness (.Roughness); metals stay under-lit, never over-lit");
+static auto* cv_HitSpecularRoughness = UZ_CVAR_FLOAT("r.GI.FinalGather.HitSpecular.Roughness", 0.7f,
+    "Roughness of the hit-vertex sun lobe (the GI material table and the SDF clipmap carry none; Sponza's ORM "
+    "averages 0.6-0.8). The lobe's D*Vis*NoL is capped at 1: a no-op from 0.74 up, below that it trims only the "
+    "grazing-mirror configuration (19% at 0.7, the whole low end at 0.4)",
+    0.4f, 1.0f);
+// Hit-material UV wrap (docs/analysis/lumen-radiance-cache-stability/07-firstbounce-diffuse-decomposition): every GI consumer
+// fetches a hit's albedo with the bilinear CLAMP sampler at the raw triangle UV, so a tiled surface reads the
+// texture's edge texel (Sponza's floors and walls: 0.66-0.78x of the texture mean; 28% of the measured
+// first-bounce deficit, the gather's E/pi at 0.880 of the path tracer's). Default ON: OFF dispatches the
+// unchanged pipelines (byte-identical DXIL); ON selects the UZ_GI_HIT_UV_WRAP=1 permutations, which sample
+// with the shared WRAP static sampler as the raster path and the path tracer do.
+static auto* cv_HitMaterialWrapUv = UZ_CVAR_BOOL("r.GI.HitMaterial.WrapUv", true,
+    "Sample the GI hit material's albedo/emissive texture with the WRAP sampler (a tiled UV reads the tiled "
+    "content instead of the texture's edge texel) in the DXR final gather, the DDGI probe trace, the "
+    "surface-cache feed/indirect writers and the RT reflections, as the raster path and the path tracer do");
+// Per-mesh hit material (docs/analysis/lumen-radiance-cache-stability/08-per-mesh-hit-material): the hit-vertex
+// sun lobe landed with a scene-constant roughness and F0 = 0.04 because the GI hit material carries no
+// roughness / metallic, and the DXR gather shades a metal's base colour as a white Lambertian. Default ON: OFF
+// dispatches the unchanged pipelines (byte-identical DXIL); ON selects the UZ_GI_HIT_PERMESH=1 permutations
+// (a superset of HitSpecular) of the DXR gather trace/upsample, which read a 32-byte sibling material record.
+static auto* cv_HitMaterialPerMesh = UZ_CVAR_BOOL("r.GI.HitMaterial.PerMesh", true,
+    "Per-mesh roughness and metallic at the DXR final gather's hits (the draw's roughness/metallic/ORM maps and "
+    "multipliers, the path tracer's rule): F0 = lerp(0.04, baseColor, metallic), diffuse x (1 - metallic), the "
+    "probe term coupled by the LUT's E_spec. Requires r.GI.FinalGather.HitSpecular 1 and r.GI.FinalGather.DXR 1; "
+    "the SDF paths keep the scene-constant lobe");
+static auto* cv_HitMaterialPerMeshMinRoughness = UZ_CVAR_FLOAT("r.GI.HitMaterial.PerMesh.MinRoughness", 0.4f,
+    "Floor on a hit's authored roughness before the sun lobe and the LUT (the secondary-bounce glossy blur: a "
+    "smooth metal's glint is spread at equal energy so one ray stays bounded). The per-mesh lobe's cap on D*Vis*NoL "
+    "(3.2, gi_hit_specular.hlsli) is sized to the 0.4 default; below it the cap trims the glint's energy",
+    0.1f, 1.0f);
 // Screen-space ReSTIR GI (Lumen-parity phase C). Opt-in: 0 dispatches the unchanged gather trace.
 // File scope so command-line overrides register before the first frame (see SampleFrameOffset).
 static auto* cv_GIReSTIR = UZ_CVAR_INT("r.GI.ReSTIR", 0,
@@ -58,13 +98,33 @@ static auto* cv_GIReSTIRSpatialRadius = UZ_CVAR_FLOAT("r.GI.ReSTIR.SpatialRadius
 
 namespace uz {
 
+bool SSGIRenderer::HitSpecularEnabled() {
+    return cv_HitSpecular->value >= 0.5f;
+}
+
+float SSGIRenderer::HitSpecularRoughness() {
+    return std::clamp(cv_HitSpecularRoughness->value, 0.4f, 1.0f);
+}
+
+bool SSGIRenderer::HitMaterialWrapUvEnabled() {
+    return cv_HitMaterialWrapUv->value >= 0.5f;
+}
+
+bool SSGIRenderer::HitMaterialPerMeshEnabled() {
+    return cv_HitMaterialPerMesh->value >= 0.5f;
+}
+
+float SSGIRenderer::HitMaterialPerMeshMinRoughness() {
+    return std::clamp(cv_HitMaterialPerMeshMinRoughness->value, 0.1f, 1.0f);
+}
+
 // HistoryCB: the previous view-projection plus the world boxes where the distance field changed this
 // frame or the last one (the gather reads the radiance cache one frame late): pixels inside reject
 // their history (block B.2 phase 4). Mirrors ssgi_temporal_accum_cs.hlsl and ssgi_restir_gi.hlsli.
 struct HistoryCB {
     float    previousViewProj[16];
     uint32_t regionCount;
-    uint32_t _pad[3];
+    uint32_t _pad[3]; // Stable temporal mode and moment SRV/UAV; legacy ABI unchanged.
     float    regionLo[16][4];
     float    regionHi[16][4];
 };
@@ -333,6 +393,12 @@ void SSGIRenderer::DestroyTextures() {
         destroyTex(m_historyGeometry[i]);
         m_historyGeometrySrv[i] = UINT32_MAX;
         m_historyGeometryUav[i] = UINT32_MAX;
+        destroyTex(m_historyMoments[i]);
+        m_historyMomentsSrv[i] = UINT32_MAX;
+        m_historyMomentsUav[i] = UINT32_MAX;
+        destroyTex(m_stableHistory[i]);
+        m_stableHistorySrv[i] = UINT32_MAX;
+        m_stableHistoryUav[i] = UINT32_MAX;
         destroyTex(m_ssgiHistory[i]);
         m_ssgiHistorySrv[i] = UINT32_MAX;
         m_ssgiHistoryUav[i] = UINT32_MAX;
@@ -377,7 +443,8 @@ bool SSGIRenderer::PrepareFrame(PipelineLibrary* pipelines, bool worldGather, bo
     }
     const bool ready = pipelines->GetSsgiTrace().IsValid()
         && pipelines->GetSsgiSpatialDenoise().IsValid()
-        && pipelines->GetSsgiTemporalAccum().IsValid()
+        && (worldGather && cv_StableTemporal->value >= 0.5f
+            ? pipelines->GetSsgiStableTemporalAccum() : pipelines->GetSsgiTemporalAccum()).IsValid()
         && pipelines->GetSsgiBilateralUpsample().IsValid()
         && (worldGather || pipelines->GetSsgiPrevColorReduce().IsValid());
     if (!ready) { LogGatherActivation(0); settings.enabled = false; m_hasHistory = false; m_hasProducedResult = false; }
@@ -395,6 +462,9 @@ void SSGIRenderer::Render(IRHICommandList* cmdList, const SSGIRenderParams& para
 
     // Skip if no previous frame color is available yet (first frame).
     if (!params.worldGather && !m_hasPrevColor) return;
+    const bool stableTemporal = params.worldGather && cv_StableTemporal->value >= 0.5f;
+    if (stableTemporal != m_stableTemporal) SetStableTemporalMode(stableTemporal);
+    if (m_stableTemporal) UpdateStableTemporalState(cmdList, params);
     const uint32_t dxrMode = params.gatherDxrMode
         && params.pipelines->GetSsgiDxrTrace().IsValid()
         && params.pipelines->GetSsgiDxrUpsample().IsValid() ? params.gatherDxrMode : 0u;
@@ -403,6 +473,80 @@ void SSGIRenderer::Render(IRHICommandList* cmdList, const SSGIRenderParams& para
         m_restirHistoryValid = false;
         m_gatherDxrMode = dxrMode;
         UZ_LOG(Renderer, Info, "Final gather DXR mode={} (0=SDF, 1=full, 2=shadow only)", dxrMode);
+    }
+    // r.GI.FinalGather.HitSpecular (doc 06 section 6.3): effective only when BOTH gather variants of the
+    // selected DXR mode compiled (the DXR precedent above); a change of the effective state invalidates
+    // the temporal history exactly as a DXR-mode change does, so the accumulator never blends OFF
+    // frames with ON frames.
+    bool hitSpecular = params.worldGather && HitSpecularEnabled();
+    if (hitSpecular) {
+        const bool variantsValid = dxrMode
+            ? params.pipelines->GetSsgiDxrTraceHitSpecular().IsValid()
+              && params.pipelines->GetSsgiDxrUpsampleHitSpecular().IsValid()
+            : params.pipelines->GetSsgiTraceHitSpecular().IsValid()
+              && params.pipelines->GetSsgiUpsampleHitSpecular().IsValid();
+        if (!variantsValid) {
+            if (!m_loggedHitSpecularFallback) {
+                m_loggedHitSpecularFallback = true;
+                UZ_LOG(Renderer, Warning, "Final gather HitSpecular: a UZ_GI_HIT_SPECULAR variant failed to compile (dxrMode={}); running the plain pipelines", dxrMode);
+            }
+            hitSpecular = false;
+        }
+    }
+    if (m_hitSpecular != hitSpecular) {
+        m_hasHistory = false;
+        m_restirHistoryValid = false;
+        m_hitSpecular = hitSpecular;
+        UZ_LOG(Renderer, Info, "Final gather hit specular={} roughness={}", hitSpecular, HitSpecularRoughness());
+    }
+    // r.GI.HitMaterial.WrapUv: only the DXR permutations fetch the hit albedo through gi_hit_material.hlsli
+    // (the SDF gather shades its hits from the clipmap), so the wrap is effective under DXR only, and only
+    // when both gather variants of the effective hit-specular state compiled; a change of the effective
+    // state invalidates the temporal history exactly as a DXR-mode change does.
+    bool hitUvWrap = params.worldGather && dxrMode != 0u && HitMaterialWrapUvEnabled();
+    if (hitUvWrap) {
+        using Variant = PipelineLibrary::GiHitUvWrapVariant;
+        const bool variantsValid =
+            params.pipelines->GetGiHitUvWrap(hitSpecular ? Variant::SsgiDxrTraceHitSpecular : Variant::SsgiDxrTrace).IsValid()
+            && params.pipelines->GetGiHitUvWrap(hitSpecular ? Variant::SsgiDxrUpsampleHitSpecular : Variant::SsgiDxrUpsample).IsValid();
+        if (!variantsValid) {
+            if (!m_loggedHitUvWrapFallback) {
+                m_loggedHitUvWrapFallback = true;
+                UZ_LOG(Renderer, Warning, "Final gather HitMaterial.WrapUv: a UZ_GI_HIT_UV_WRAP variant failed to compile (hitSpecular={}); running the clamp-sampled pipelines", hitSpecular);
+            }
+            hitUvWrap = false;
+        }
+    }
+    if (m_hitUvWrap != hitUvWrap) {
+        m_hasHistory = false;
+        m_restirHistoryValid = false;
+        m_hitUvWrap = hitUvWrap;
+        UZ_LOG(Renderer, Info, "Final gather hit material UV wrap={}", hitUvWrap);
+    }
+    // r.GI.HitMaterial.PerMesh (doc 08 section 7.4): a superset of HitSpecular on the DXR gather only (the SDF
+    // gather has no mesh identity at a hit), effective when the sibling material table is bound and both gather
+    // variants of the effective UV-wrap state compiled; a change of the effective state invalidates the temporal
+    // history exactly as a DXR-mode change does.
+    bool hitPerMesh = params.worldGather && dxrMode != 0u && hitSpecular && HitMaterialPerMeshEnabled()
+                   && params.gatherMaterialExtSrv != UINT32_MAX;
+    if (hitPerMesh) {
+        using Variant = PipelineLibrary::GiHitPerMeshVariant;
+        const bool variantsValid =
+            params.pipelines->GetGiHitPerMesh(hitUvWrap ? Variant::SsgiDxrTraceWrapUv : Variant::SsgiDxrTrace).IsValid()
+            && params.pipelines->GetGiHitPerMesh(hitUvWrap ? Variant::SsgiDxrUpsampleWrapUv : Variant::SsgiDxrUpsample).IsValid();
+        if (!variantsValid) {
+            if (!m_loggedHitPerMeshFallback) {
+                m_loggedHitPerMeshFallback = true;
+                UZ_LOG(Renderer, Warning, "Final gather HitMaterial.PerMesh: a UZ_GI_HIT_PERMESH variant failed to compile (hitUvWrap={}); running the scene-constant hit-specular pipelines", hitUvWrap);
+            }
+            hitPerMesh = false;
+        }
+    }
+    if (m_hitPerMesh != hitPerMesh) {
+        m_hasHistory = false;
+        m_restirHistoryValid = false;
+        m_hitPerMesh = hitPerMesh;
+        UZ_LOG(Renderer, Info, "Final gather per-mesh hit material={} minRoughness={}", hitPerMesh, HitMaterialPerMeshMinRoughness());
     }
 
     if (!m_resourceStatesInitialized) {
@@ -421,7 +565,9 @@ void SSGIRenderer::Render(IRHICommandList* cmdList, const SSGIRenderParams& para
         m_resourceStatesInitialized = true;
     }
     // Pass 1: Downsample prev scene color to half-res
-    if (params.resetHistory || m_lastFrame + 1 != params.frameIndex || m_sceneRevision != params.sceneRevision) {
+    if (m_stableTemporal) {
+        ResetStableTemporalHistory(params);
+    } else if (params.resetHistory || m_lastFrame + 1 != params.frameIndex || m_sceneRevision != params.sceneRevision) {
         m_hasHistory = false;
         m_restirHistoryValid = false;   // the reservoirs were accumulated against a frame that no longer follows
     }
@@ -430,6 +576,12 @@ void SSGIRenderer::Render(IRHICommandList* cmdList, const SSGIRenderParams& para
 
     // Pass 2: SSGI trace (half-res), or the opt-in screen-space ReSTIR GI writing the same textures
     if (params.worldGather && cv_GIReSTIR->value >= 1.0f && EnsureRestirResources(params.pipelines)) {
+        // The ReSTIR pipelines are not permuted in pass one (doc 06 section 8.6): their candidates and
+        // re-traces are shaded without the hit-specular term.
+        if (m_hitSpecular && !m_loggedHitSpecularRestir) {
+            m_loggedHitSpecularRestir = true;
+            UZ_LOG(Renderer, Warning, "Final gather HitSpecular not applied under r.GI.ReSTIR=1 (the ReSTIR pipelines have no UZ_GI_HIT_SPECULAR variant)");
+        }
         DispatchRestir(cmdList, params);
     } else {
         m_restirHistoryValid = false;
@@ -452,7 +604,96 @@ void SSGIRenderer::Render(IRHICommandList* cmdList, const SSGIRenderParams& para
     LogGatherActivation(params.worldGather ? frameConstants->sdfDiffuseSamples : 0u);
     m_hasHistory = true;
     m_lastFrame = params.frameIndex;
+    m_lastSampleFrame = params.frameIndex;
     std::memcpy(m_previousViewProj, params.perFrameCpuPtr, sizeof(m_previousViewProj));
+    if (m_stableTemporal) StoreStableTemporalState(params);
+}
+
+
+[[gnu::noinline]] void SSGIRenderer::SetStableTemporalMode(bool enabled) {
+    m_hasHistory = false;
+    m_stableTemporal = enabled;
+    m_lightingHistoryRemainder = 0.0f;
+}
+
+[[gnu::noinline]] void SSGIRenderer::UpdateStableTemporalState(IRHICommandList* cmdList, const SSGIRenderParams& params) {
+    const auto* frame = static_cast<const PerFrameCB*>(params.perFrameCpuPtr);
+    const bool lightingChanged = m_hasHistory
+        && (std::memcmp(m_previousLighting, &frame->lightDir, sizeof(m_previousLighting)) != 0
+            || (m_previousLightingGeneration != 0
+                && params.lightingGeneration != m_previousLightingGeneration));
+    // At alpha .05, 128 frames leave <.15% of a lighting step. Re-arm only
+    // after this catch-up, rather than treating slow Monte Carlo drift as a light change.
+    m_lightingHistoryRemainder = GatherLightingHistoryRemainder(
+        m_lightingHistoryRemainder, lightingChanged, cv_SSGITemporalAlpha->value);
+    EnsureStableTemporalTextures(cmdList);
+}
+
+[[gnu::noinline]] void SSGIRenderer::EnsureStableTemporalTextures(IRHICommandList* cmdList) {
+    if (!m_historyMoments[0].IsValid()) {
+        for (int i = 0; i < 2; ++i) {
+            RHITextureDesc desc{};
+            desc.width = m_halfWidth;
+            desc.height = m_halfHeight;
+            desc.format = RHIFormat::RGBA32Float;
+            desc.usage = RHITextureUsage::ShaderResource | RHITextureUsage::UnorderedAccess;
+            desc.debugName = "SSGI_HistoryMoments";
+            m_historyMoments[i] = m_device->CreateTexture(desc);
+            UZ_VERIFY(m_historyMoments[i].IsValid());
+            m_historyMomentsSrv[i] = m_device->GetTextureSRVIndex(m_historyMoments[i]);
+            m_historyMomentsUav[i] = m_device->GetTextureUAVIndex(m_historyMoments[i]);
+            RHIBarrierDesc barrier{};
+            barrier.texture = m_historyMoments[i];
+            barrier.stateBefore = RHIResourceState::Common;
+            barrier.stateAfter = RHIResourceState::ShaderResource;
+            cmdList->ResourceBarrier(&barrier, 1);
+            // FP16 would eventually round away small updates and falsely freeze the signal.
+            desc.debugName = "SSGI_StableHistory";
+            m_stableHistory[i] = m_device->CreateTexture(desc);
+            UZ_VERIFY(m_stableHistory[i].IsValid());
+            m_stableHistorySrv[i] = m_device->GetTextureSRVIndex(m_stableHistory[i]);
+            m_stableHistoryUav[i] = m_device->GetTextureUAVIndex(m_stableHistory[i]);
+            barrier.texture = m_stableHistory[i];
+            cmdList->ResourceBarrier(&barrier, 1);
+        }
+    }
+}
+
+[[gnu::noinline]] void SSGIRenderer::ResetStableTemporalHistory(const SSGIRenderParams& params) {
+    const uint32_t receiverFrame = params.receiverFrameIndex;
+    const bool historyReset = params.resetHistory || m_sceneRevision != params.sceneRevision;
+    if (historyReset || m_lastFrame + 1 != receiverFrame) {
+        m_hasHistory = false;
+    }
+    // Keep the producer's existing diagnostic seed/reset behaviour; only the
+    // gather reconstruction opts into the independent receiver timeline.
+    if (historyReset || m_lastSampleFrame + 1 != params.frameIndex) m_restirHistoryValid = false;
+}
+
+[[gnu::noinline]] void SSGIRenderer::StoreStableTemporalState(const SSGIRenderParams& params) {
+    m_lastFrame = params.receiverFrameIndex;
+    const auto* frameConstants = static_cast<const PerFrameCB*>(params.perFrameCpuPtr);
+    std::memcpy(m_previousCamera, &frameConstants->cameraPos, sizeof(m_previousCamera));
+    std::memcpy(m_previousLighting, &frameConstants->lightDir, sizeof(m_previousLighting));
+    m_previousLightingGeneration = params.lightingGeneration;
+}
+
+[[gnu::noinline]] void SSGIRenderer::FillStableTemporalHistory(uint32_t (&pad)[3], const SSGIRenderParams& params) {
+    const int writeIdx = m_historyIndex;
+    const int readIdx = 1 - m_historyIndex;
+    const auto* frame = static_cast<const PerFrameCB*>(params.perFrameCpuPtr);
+    // Projective w (the forward direction) is unaffected by TAA jitter.
+    bool stationary = std::memcmp(m_previousCamera, &frame->cameraPos, sizeof(m_previousCamera)) == 0;
+    stationary = stationary
+        && std::memcmp(m_previousLighting, &frame->lightDir, sizeof(m_previousLighting)) == 0
+        && params.lightingGeneration == m_previousLightingGeneration
+        && m_lightingHistoryRemainder < 0.0015f;
+    const auto* matrix = reinterpret_cast<const float*>(&frame->viewProj);
+    for (int i = 3; i < 16; i += 4)
+        stationary = stationary && matrix[i] == m_previousViewProj[i];
+    pad[0] = stationary ? 1u : 2u;
+    pad[1] = m_historyMomentsSrv[readIdx];
+    pad[2] = m_historyMomentsUav[writeIdx];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -590,7 +831,18 @@ void SSGIRenderer::DispatchPrevColorReduce(IRHICommandList* cmdList, const SSGIR
 void SSGIRenderer::DispatchTrace(IRHICommandList* cmdList, const SSGIRenderParams& params) {
     UZ_PROFILE_SCOPE("SSGI::Trace");
 
-    auto pso = m_gatherDxrMode ? params.pipelines->GetSsgiDxrTrace() : params.pipelines->GetSsgiTrace();
+    auto pso = m_hitSpecular
+        ? (m_gatherDxrMode ? params.pipelines->GetSsgiDxrTraceHitSpecular() : params.pipelines->GetSsgiTraceHitSpecular())
+        : (m_gatherDxrMode ? params.pipelines->GetSsgiDxrTrace() : params.pipelines->GetSsgiTrace());
+    // r.GI.HitMaterial.WrapUv (DXR only; both variants validated in Render()): the same root constants.
+    if (m_hitUvWrap)
+        pso = params.pipelines->GetGiHitUvWrap(m_hitSpecular ? PipelineLibrary::GiHitUvWrapVariant::SsgiDxrTraceHitSpecular
+                                                             : PipelineLibrary::GiHitUvWrapVariant::SsgiDxrTrace);
+    // r.GI.HitMaterial.PerMesh (DXR + HitSpecular only; both variants validated in Render()): a superset define
+    // set, so it supersedes the choices above; two more root DWORDs (the sibling table SRV, the roughness floor).
+    if (m_hitPerMesh)
+        pso = params.pipelines->GetGiHitPerMesh(m_hitUvWrap ? PipelineLibrary::GiHitPerMeshVariant::SsgiDxrTraceWrapUv
+                                                            : PipelineLibrary::GiHitPerMeshVariant::SsgiDxrTrace);
     if (!pso.IsValid()) return;
 
     // Transition trace outputs to UAV
@@ -607,7 +859,9 @@ void SSGIRenderer::DispatchTrace(IRHICommandList* cmdList, const SSGIRenderParam
 
     cmdList->SetPipeline(pso);
 
-    // Root constants: 14 DWORDs matching ssgi_trace_cs.hlsl RootConstants (the 14th: Phase D stage 3)
+    // Root constants: 14 DWORDs matching ssgi_trace_cs.hlsl RootConstants (the 14th: Phase D stage 3),
+    // + 3 under UZ_GATHER_DXR, + 1 under UZ_GI_HIT_SPECULAR (the 18th; the DXR trio is declared in that
+    // variant too so the index is stable), + 2 under UZ_GI_HIT_PERMESH (the 19th and 20th).
     struct SSGITraceRC {
         uint32_t depthSrvIndex;
         uint32_t normalSrvIndex;
@@ -626,8 +880,11 @@ void SSGIRenderer::DispatchTrace(IRHICommandList* cmdList, const SSGIRenderParam
         uint32_t gatherTlasSrv;
         uint32_t gatherMaterialSrv;
         uint32_t gatherDxrMode;
+        uint32_t hitSpecularRoughnessBits; // r.GI.FinalGather.HitSpecular.Roughness as float bits
+        uint32_t hitMaterialExtSrv;        // r.GI.HitMaterial.PerMesh: StructuredBuffer<GIMeshMaterialExtGPU> SRV (the 19th)
+        uint32_t hitMinRoughnessBits;      // r.GI.HitMaterial.PerMesh.MinRoughness as float bits (the 20th)
     };
-    static_assert(sizeof(SSGITraceRC) == 68, "14 legacy + 3 DXR DWORDs");
+    static_assert(sizeof(SSGITraceRC) == 80, "14 legacy + 3 DXR + 1 HitSpecular + 2 PerMesh DWORDs");
 
     SSGITraceRC rc{};
     rc.depthSrvIndex     = params.depthSrvIndex;
@@ -650,8 +907,14 @@ void SSGIRenderer::DispatchTrace(IRHICommandList* cmdList, const SSGIRenderParam
     rc.gatherTlasSrv = params.gatherTlasSrv;
     rc.gatherMaterialSrv = params.gatherMaterialSrv;
     rc.gatherDxrMode = m_gatherDxrMode;
+    const float hitSpecularRoughness = HitSpecularRoughness();
+    std::memcpy(&rc.hitSpecularRoughnessBits, &hitSpecularRoughness, 4);
+    rc.hitMaterialExtSrv = params.gatherMaterialExtSrv;
+    const float hitMinRoughness = HitMaterialPerMeshMinRoughness();
+    std::memcpy(&rc.hitMinRoughnessBits, &hitMinRoughness, 4);
 
-    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), m_gatherDxrMode ? 17 : 14);
+    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc),
+                              m_hitPerMesh ? 20 : (m_hitSpecular ? 18 : (m_gatherDxrMode ? 17 : 14)));
 
     // PerFrameCB at b1
     cmdList->SetRootCBV(kSlotPerFrame, params.perFrameBuffer,
@@ -960,6 +1223,11 @@ void SSGIRenderer::DispatchSpatialDenoise(IRHICommandList* cmdList, const SSGIRe
 void SSGIRenderer::DispatchTemporalAccum(IRHICommandList* cmdList, const SSGIRenderParams& params) {
     UZ_PROFILE_SCOPE("SSGI::TemporalAccum");
 
+    if (m_stableTemporal) {
+        DispatchStableTemporalAccum(cmdList, params);
+        return;
+    }
+
     auto pso = params.pipelines->GetSsgiTemporalAccum();
     if (!pso.IsValid()) return;
 
@@ -1059,6 +1327,123 @@ void SSGIRenderer::DispatchTemporalAccum(IRHICommandList* cmdList, const SSGIRen
     }
 }
 
+
+[[gnu::noinline]] void SSGIRenderer::DispatchStableTemporalAccum(IRHICommandList* cmdList, const SSGIRenderParams& params) {
+    auto pso = m_stableTemporal ? params.pipelines->GetSsgiStableTemporalAccum()
+                               : params.pipelines->GetSsgiTemporalAccum();
+    if (!pso.IsValid()) return;
+
+    // Write index = current m_historyIndex, read index = 1 - m_historyIndex
+    const int writeIdx = m_historyIndex;
+    const int readIdx  = 1 - m_historyIndex;
+    if (m_stableTemporal) {
+        RHIBarrierDesc barrier{};
+        barrier.texture = m_historyMoments[writeIdx];
+        barrier.stateBefore = RHIResourceState::ShaderResource;
+        barrier.stateAfter = RHIResourceState::UnorderedAccess;
+        cmdList->ResourceBarrier(&barrier, 1);
+    }
+
+    // Transition write targets to UAV, read targets to SRV
+    {
+        RHIBarrierDesc barriers[3] = {};
+        barriers[0].texture     = m_stableTemporal ? m_stableHistory[writeIdx] : m_ssgiHistory[writeIdx];
+        barriers[0].stateBefore = RHIResourceState::ShaderResource;
+        barriers[0].stateAfter  = RHIResourceState::UnorderedAccess;
+        barriers[1].texture     = m_ssgiHistoryAO[writeIdx];
+        barriers[1].stateBefore = RHIResourceState::ShaderResource;
+        barriers[1].stateAfter  = RHIResourceState::UnorderedAccess;
+        barriers[2].texture = m_historyGeometry[writeIdx];
+        barriers[2].stateBefore = barriers[0].stateBefore;
+        barriers[2].stateAfter = barriers[0].stateAfter;
+        cmdList->ResourceBarrier(barriers, 3);
+    }
+
+    cmdList->SetPipeline(pso);
+
+    // Fifteen DWORDs plus the previous jittered view-projection at b2.
+    struct TemporalAccumRC {
+        uint32_t currentSrvIndex;
+        uint32_t currentAOSrvIndex;
+        uint32_t historySrvIndex;
+        uint32_t historyAOSrvIndex;
+        uint32_t velocitySrvIndex;
+        uint32_t outputUavIndex;
+        uint32_t aoOutputUavIndex;
+        uint32_t packedDimensions;  // low 16 = width, high 16 = height
+        uint32_t temporalAlphaBits;
+        uint32_t varianceClipGammaBits;
+        uint32_t depthSrv;
+        uint32_t normalSrv;
+        uint32_t historyGeometrySrv;
+        uint32_t geometryUav;
+        uint32_t historyValid;
+    };
+    static_assert(sizeof(TemporalAccumRC) == 60, "Must fit 16 root DWORDs");
+
+    HistoryCB history{};
+    FillHistoryCB(history, m_previousViewProj, m_previousRegions, params.changedRegions);
+    if (m_stableTemporal) FillStableTemporalHistory(history._pad, params);
+    m_previousRegions = params.changedRegions ? *params.changedRegions : std::vector<GlobalDistanceField::ChangedRegion>{};
+    auto historyAllocation = params.cbRing->Allocate(sizeof(HistoryCB));
+    UZ_VERIFY(historyAllocation.cpuPtr != nullptr);
+    std::memcpy(historyAllocation.cpuPtr, &history, sizeof(HistoryCB));
+    cmdList->SetRootCBV(kSlotPerObject, historyAllocation.bufferHandle, historyAllocation.offsetBytes,
+                       historyAllocation.cpuPtr, sizeof(HistoryCB));
+    TemporalAccumRC rc{};
+    rc.depthSrv = params.depthSrvIndex;
+    rc.normalSrv = params.normalSrvIndex;
+    rc.historyGeometrySrv = m_historyGeometrySrv[readIdx];
+    rc.geometryUav = m_historyGeometryUav[writeIdx];
+    rc.historyValid = m_hasHistory ? 1u : 0u;
+    rc.currentSrvIndex   = m_ssgiDenoisedSrv;
+    rc.currentAOSrvIndex = m_ssgiDenoisedAOSrv;
+    rc.historySrvIndex   = m_stableTemporal ? m_stableHistorySrv[readIdx] : m_ssgiHistorySrv[readIdx];
+    rc.historyAOSrvIndex = m_ssgiHistoryAOSrv[readIdx];
+    rc.velocitySrvIndex  = params.velocitySrvIndex;
+    rc.outputUavIndex    = m_stableTemporal ? m_stableHistoryUav[writeIdx] : m_ssgiHistoryUav[writeIdx];
+    rc.aoOutputUavIndex  = m_ssgiHistoryAOUav[writeIdx];
+    rc.packedDimensions  = (m_halfWidth & 0xFFFF) | ((m_halfHeight & 0xFFFF) << 16);
+    float temporalAlpha = cv_SSGITemporalAlpha->value;
+    float varClipGamma = 1.0f; // Reserved ABI slot; geometric history rejection replaces color clipping.
+    std::memcpy(&rc.temporalAlphaBits, &temporalAlpha, 4);
+    std::memcpy(&rc.varianceClipGammaBits, &varClipGamma, 4);
+
+    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 15);
+
+    cmdList->SetRootCBV(kSlotPerFrame, params.perFrameBuffer,
+                        params.perFrameOffset, params.perFrameCpuPtr,
+                        params.perFrameSize);
+
+    cmdList->SetDescriptorTable(4, rc.outputUavIndex);
+
+    const uint32_t groupsX = (m_halfWidth  + kThreadGroupSize - 1) / kThreadGroupSize;
+    const uint32_t groupsY = (m_halfHeight + kThreadGroupSize - 1) / kThreadGroupSize;
+    cmdList->Dispatch(groupsX, groupsY, 1);
+
+    // Transition write targets: UAV -> SRV for upsample pass
+    if (m_stableTemporal) {
+        RHIBarrierDesc barrier{};
+        barrier.texture = m_historyMoments[writeIdx];
+        barrier.stateBefore = RHIResourceState::UnorderedAccess;
+        barrier.stateAfter = RHIResourceState::ShaderResource;
+        cmdList->ResourceBarrier(&barrier, 1);
+    }
+    {
+        RHIBarrierDesc barriers[3] = {};
+        barriers[0].texture     = m_stableTemporal ? m_stableHistory[writeIdx] : m_ssgiHistory[writeIdx];
+        barriers[0].stateBefore = RHIResourceState::UnorderedAccess;
+        barriers[0].stateAfter  = RHIResourceState::ShaderResource;
+        barriers[1].texture     = m_ssgiHistoryAO[writeIdx];
+        barriers[1].stateBefore = RHIResourceState::UnorderedAccess;
+        barriers[1].stateAfter  = RHIResourceState::ShaderResource;
+        barriers[2].texture = m_historyGeometry[writeIdx];
+        barriers[2].stateBefore = barriers[0].stateBefore;
+        barriers[2].stateAfter = barriers[0].stateAfter;
+        cmdList->ResourceBarrier(barriers, 3);
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Pass 5: Bilateral Upsample
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1067,8 +1452,17 @@ void SSGIRenderer::DispatchTemporalAccum(IRHICommandList* cmdList, const SSGIRen
 void SSGIRenderer::DispatchUpsample(IRHICommandList* cmdList, const SSGIRenderParams& params) {
     UZ_PROFILE_SCOPE("SSGI::BilateralUpsample");
 
-    auto pso = m_gatherDxrMode ? params.pipelines->GetSsgiDxrUpsample()
-                             : params.pipelines->GetSsgiBilateralUpsample();
+    auto pso = m_hitSpecular
+        ? (m_gatherDxrMode ? params.pipelines->GetSsgiDxrUpsampleHitSpecular() : params.pipelines->GetSsgiUpsampleHitSpecular())
+        : (m_gatherDxrMode ? params.pipelines->GetSsgiDxrUpsample() : params.pipelines->GetSsgiBilateralUpsample());
+    // r.GI.HitMaterial.WrapUv (DXR only; both variants validated in Render()): the same root constants.
+    if (m_hitUvWrap)
+        pso = params.pipelines->GetGiHitUvWrap(m_hitSpecular ? PipelineLibrary::GiHitUvWrapVariant::SsgiDxrUpsampleHitSpecular
+                                                             : PipelineLibrary::GiHitUvWrapVariant::SsgiDxrUpsample);
+    // r.GI.HitMaterial.PerMesh (DXR + HitSpecular only; both variants validated in Render()): supersedes the above.
+    if (m_hitPerMesh)
+        pso = params.pipelines->GetGiHitPerMesh(m_hitUvWrap ? PipelineLibrary::GiHitPerMeshVariant::SsgiDxrUpsampleWrapUv
+                                                            : PipelineLibrary::GiHitPerMeshVariant::SsgiDxrUpsample);
     if (!pso.IsValid()) return;
 
     const int readIdx = m_historyIndex; // Just written by temporal pass
@@ -1087,7 +1481,9 @@ void SSGIRenderer::DispatchUpsample(IRHICommandList* cmdList, const SSGIRenderPa
 
     cmdList->SetPipeline(pso);
 
-    // Root constants: 10 DWORDs matching ssgi_upsample_cs.hlsl
+    // Root constants: 10 DWORDs matching ssgi_upsample_cs.hlsl, + 3 under UZ_GATHER_DXR, + 1 under
+    // UZ_GI_HIT_SPECULAR (the 14th; the DXR trio is declared in that variant too so the index is stable),
+    // + 2 under UZ_GI_HIT_PERMESH (the 15th and 16th)
     struct UpsampleRC {
         uint32_t ssgiHalfSrvIndex;
         uint32_t ssgiAOHalfSrvIndex;
@@ -1102,14 +1498,17 @@ void SSGIRenderer::DispatchUpsample(IRHICommandList* cmdList, const SSGIRenderPa
         uint32_t gatherTlasSrv;
         uint32_t gatherMaterialSrv;
         uint32_t gatherDxrMode;
+        uint32_t hitSpecularRoughnessBits; // r.GI.FinalGather.HitSpecular.Roughness as float bits
+        uint32_t hitMaterialExtSrv;        // r.GI.HitMaterial.PerMesh: StructuredBuffer<GIMeshMaterialExtGPU> SRV (the 15th)
+        uint32_t hitMinRoughnessBits;      // r.GI.HitMaterial.PerMesh.MinRoughness as float bits (the 16th)
     };
-    static_assert(sizeof(UpsampleRC) == 52, "10 legacy + 3 DXR DWORDs");
+    static_assert(sizeof(UpsampleRC) == 64, "10 legacy + 3 DXR + 1 HitSpecular + 2 PerMesh DWORDs");
 
     static auto* cv_UpsDepthSigma = UZ_CVAR_FLOAT("r.SSGI.UpsampleDepthSigma", 0.5f, "Upsample depth weight sigma", 0.1f, 2.0f);
     static auto* cv_UpsNormalPow  = UZ_CVAR_FLOAT("r.SSGI.UpsampleNormalSigma", 32.0f, "Upsample normal cosine power", 4.0f, 128.0f);
 
     UpsampleRC rc{};
-    rc.ssgiHalfSrvIndex   = m_ssgiHistorySrv[readIdx];
+    rc.ssgiHalfSrvIndex   = m_stableTemporal ? m_stableHistorySrv[readIdx] : m_ssgiHistorySrv[readIdx];
     rc.ssgiAOHalfSrvIndex = m_ssgiHistoryAOSrv[readIdx];
     rc.depthFullSrvIndex  = params.depthSrvIndex;
     rc.normalFullSrvIndex = params.normalSrvIndex;
@@ -1123,8 +1522,14 @@ void SSGIRenderer::DispatchUpsample(IRHICommandList* cmdList, const SSGIRenderPa
     rc.gatherTlasSrv = params.gatherTlasSrv;
     rc.gatherMaterialSrv = params.gatherMaterialSrv;
     rc.gatherDxrMode = m_gatherDxrMode;
+    const float hitSpecularRoughness = HitSpecularRoughness();
+    std::memcpy(&rc.hitSpecularRoughnessBits, &hitSpecularRoughness, 4);
+    rc.hitMaterialExtSrv = params.gatherMaterialExtSrv;
+    const float hitMinRoughness = HitMaterialPerMeshMinRoughness();
+    std::memcpy(&rc.hitMinRoughnessBits, &hitMinRoughness, 4);
 
-    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), m_gatherDxrMode ? 13 : 10);
+    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc),
+                              m_hitPerMesh ? 16 : (m_hitSpecular ? 14 : (m_gatherDxrMode ? 13 : 10)));
 
     cmdList->SetRootCBV(kSlotPerFrame, params.perFrameBuffer,
                         params.perFrameOffset, params.perFrameCpuPtr,

@@ -124,7 +124,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
                                      FeedRadicalInverseVdC((DTid.x ^ 0x9e3779b9u) + frameIndex));
     float3 sunTerm, otherTerm, emissive;
     SurfaceCacheShadeHit(cache, tlas, cachePos, hitN, albedo, meshId, primIndex, bary, materialTableSrv, probeShSrv,
-                         areaSample, sunTerm, otherTerm, emissive);
+                         areaSample, q.CommittedRayT(), sunTerm, otherTerm, emissive);
     SurfaceCacheUpdateSurface(cache, cachePos, hitN, SurfaceCacheCameraPos(cache), cache.sdfLodBias, sunTerm, otherTerm,
                               kSurfaceCacheWriterFeed, albedo, emissive);
 }

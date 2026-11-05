@@ -61,9 +61,14 @@ struct TaaCB {
     float    flipIsolationRatio;
     float    flipVelocityPx;
     float    flipBlendWeight;
+    // r.TAA.SilhouetteReject: reject the history texels across a depth discontinuity (silhouette-rim lane).
+    uint32_t silhouetteReject;        // 1 = validate the history footprint against the stored depth and write this frame's
+    uint32_t historyDepthSrv;         // last frame's own depth per history texel (0xffffffff = none valid yet)
+    uint32_t historyDepthUav;         // this frame's write target (0xffffffff = storage not allocated)
+    float    silhouetteDepthTolerance; // r.TAA.SilhouetteReject.DepthTolerance (relative view depth)
 };
 
-static_assert(sizeof(TaaCB) == 172, "TaaCB must match the 43 shader scalar fields");
+static_assert(sizeof(TaaCB) == 188, "TaaCB must match the 47 shader scalar fields");
 
 /// Legacy temporal anti-aliasing upscaler.
 ///

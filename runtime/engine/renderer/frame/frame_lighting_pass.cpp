@@ -168,6 +168,56 @@ RHIPipelineHandle SceneRenderer::EnsureRectLightLightingPipeline(bool cloudGroun
     return m_rectLightLightingPipeline[slot];
 }
 
+// r.Shadows.SoftPCSS.Denoise: the UZ_SHADOW_DENOISE permutation of whichever lighting shader the frame uses (stock,
+// cloud ground shadows, rect lights with their shaped / area-shadow variants), built on first use; it reads the sun
+// visibility the denoiser wrote (frame_lighting.cpp) instead of estimating it. The stock pipelines and their DXIL are
+// untouched, so the CVar off renders what it rendered before.
+RHIPipelineHandle SceneRenderer::EnsureSunShadowDenoiseLightingPipeline(bool cloudGroundShadows, bool rectLights,
+                                                                        bool shapedLights, bool areaShadows) {
+    const int slot = (cloudGroundShadows ? 1 : 0) + (rectLights ? 2 : 0) + (shapedLights ? 4 : 0) + (areaShadows ? 8 : 0);
+    if (m_sunShadowDenoiseLightingPipeline[slot].IsValid()) return m_sunShadowDenoiseLightingPipeline[slot];
+    if (m_sunShadowDenoisePipelineFailed[slot]) return RHIPipelineHandle::Invalid();
+
+    if (!m_rectLightFullscreenVS.IsValid()) {
+        m_rectLightFullscreenVS = m_shaderMgr->CreateShader(EngineShader::FullscreenVS, RHIShaderStage::Vertex);
+    }
+    std::string defines;
+    if (cloudGroundShadows) defines += "UZ_CLOUD_GROUND_SHADOWS=1;";
+    if (rectLights) {
+        defines += "UZ_RECT_LIGHTS=1;";
+        if (shapedLights) defines += "UZ_SHAPED_LIGHTS=1;";
+        if (areaShadows) defines += "UZ_AREA_LIGHT_SHADOWS=1;";
+    }
+    defines += "UZ_SHADOW_DENOISE=1";
+    m_sunShadowDenoiseLightingPS[slot] = m_shaderMgr->CreateShaderWithDefines(EngineShader::DeferredLightingPS,
+        RHIShaderStage::Pixel, defines.c_str());
+    if (!m_rectLightFullscreenVS.IsValid() || !m_sunShadowDenoiseLightingPS[slot].IsValid()) {
+        UZ_LOG(Renderer, Error, "SceneRenderer: lighting permutation '{}' failed to compile; r.Shadows.SoftPCSS.Denoise "
+               "keeps the stock lighting", defines);
+        m_sunShadowDenoisePipelineFailed[slot] = true;
+        return RHIPipelineHandle::Invalid();
+    }
+    // Same state as PipelineLibrary::GetLighting (and EnsureRectLightLightingPipeline above).
+    RHIGraphicsPipelineDesc desc{};
+    desc.vertexShader = m_rectLightFullscreenVS;
+    desc.pixelShader  = m_sunShadowDenoiseLightingPS[slot];
+    desc.topology     = RHIPrimitiveTopology::TriangleList;
+    desc.rasterizer.cullMode      = RHICullMode::None;
+    desc.depthStencil.depthEnable = false;
+    desc.depthStencil.depthWrite  = false;
+    desc.renderTargetCount        = 4;
+    for (uint32_t i = 0; i < 4; ++i) desc.renderTargetFormats[i] = RHIFormat::RGBA16Float;
+    desc.debugName = "DeferredLighting_SunShadowDenoise";
+    m_sunShadowDenoiseLightingPipeline[slot] = m_device->CreateGraphicsPipeline(desc);
+    if (!m_sunShadowDenoiseLightingPipeline[slot].IsValid()) {
+        UZ_LOG(Renderer, Error, "SceneRenderer: failed to create the lighting pipeline '{}'", defines);
+        m_sunShadowDenoisePipelineFailed[slot] = true;
+    } else {
+        UZ_LOG(Renderer, Info, "SceneRenderer: created the lighting pipeline '{}'", defines);
+    }
+    return m_sunShadowDenoiseLightingPipeline[slot];
+}
+
 void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
     // ── Deferred Lighting / Debug View / GBuffer Debug ──────────────────
     const bool debugActive = false; // Legacy GBufferDebug force-off — kept for safety
@@ -252,6 +302,7 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
         }
         // Rect area lights (phase3a 3.33.0): the UZ_RECT_LIGHTS permutation, only for frames that
         // carry one, so the stock pipeline (and its output) is untouched for every other scene.
+        bool rectPermutation = false, rectShaped = false, rectAreaShadows = false;
         if (ctx.bindless && lightingCB && lightingCB->rectLightCount > 0
             && lightingCB->rectLightsSrv != UINT32_MAX && m_ltcLut.IsReady()) {
             const bool areaShadows = m_rtManager && m_rtManager->AreaLightShadowsAvailable();
@@ -259,7 +310,22 @@ void SceneRenderer::RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, Frame
             const RHIPipelineHandle rectPso =
                 EnsureRectLightLightingPipeline(lightDesc.cloudShadowCascadeCount != 0,
                                                 ctx.lightData.shapedLightCount > 0, areaShadows);
-            if (rectPso.IsValid()) lightDesc.pipeline = rectPso;
+            if (rectPso.IsValid()) {
+                lightDesc.pipeline = rectPso;
+                rectPermutation = true;
+                rectShaped = ctx.lightData.shapedLightCount > 0;
+                rectAreaShadows = areaShadows;
+            }
+        }
+        // r.Shadows.SoftPCSS.Denoise: the same permutation with UZ_SHADOW_DENOISE when the denoiser registered its
+        // output for this frame (RegisterSunShadowDenoisePass); a failed build keeps the pipeline chosen above.
+        if (ctx.bindless && m_sunShadowDenoiseSrv != UINT32_MAX) {
+            const RHIPipelineHandle denoisePso = EnsureSunShadowDenoiseLightingPipeline(
+                lightDesc.cloudShadowCascadeCount != 0, rectPermutation, rectShaped, rectAreaShadows);
+            if (denoisePso.IsValid()) {
+                lightDesc.pipeline          = denoisePso;
+                lightDesc.sunShadowSrvIndex = m_sunShadowDenoiseSrv;
+            }
         }
         lightDesc.albedoSrvIndex      = m_gbuffer.albedoSRV;
         lightDesc.normalSrvIndex      = m_gbuffer.normalSRV;
