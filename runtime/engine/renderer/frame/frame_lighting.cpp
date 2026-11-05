@@ -104,6 +104,24 @@ static auto* cv_EnvMISTemporalMaxCount = UZ_CVAR_INT("r.EnvMIS.Temporal.MaxCount
     "r.EnvMIS.Temporal: sample cap of the running average (the EMA floor becomes 1/MaxCount on a stable surface)", 20, 4096);
 static auto* cv_EnvMISTemporalClamp = UZ_CVAR_FLOAT("r.EnvMIS.Temporal.Clamp", 2.5f,
     "r.EnvMIS.Temporal: how far the output may stray from the r.EnvMIS.Denoise result, in that result's own noise standard deviations (smaller follows changes closer, larger converges deeper)", 0.5f, 16.f);
+// The directional PCSS estimates each pixel with one 16-tap kernel rotation, a fixed function of the pixel (or, with
+// r.Shadows.SoftPCSS.StableKernel, of the receiver's shadow texel): a grain of about one tap across the penumbra that
+// slides over the surface or becomes a surface texture TAA has to reconstruct under camera motion - the residual
+// penumbra tremble. r.Shadows.SoftPCSS.Denoise estimates the visibility before the lighting with a rotation that
+// advances every frame and accumulates it where each surface point was on the previous frame (geometry-validated,
+// variance-clipped, after a penumbra-sized edge-aware pre-filter), so the penumbra converges to the kernel's
+// integral and stays on the surface (sun_shadow_raw_cs.hlsl, sun_shadow_denoise_cs.hlsl); the lighting reads it in
+// its UZ_SHADOW_DENOISE permutation. 0 = the lighting estimates the visibility itself, as before.
+static auto* cv_SunShadowDenoise = UZ_CVAR_BOOL("r.Shadows.SoftPCSS.Denoise", false,
+    "Denoise the directional PCSS visibility (per-frame kernel rotation, reprojected count-based accumulation, penumbra-sized edge-aware pre-filter; needs r.Shadows.SoftPCSS and the velocity buffer); 0 = the per-pixel 16-tap estimate");
+static auto* cv_SunShadowDenoiseMaxCount = UZ_CVAR_INT("r.Shadows.SoftPCSS.Denoise.MaxCount", 32,
+    "r.Shadows.SoftPCSS.Denoise: sample cap of the accumulation (blend weight floor 1/MaxCount)", 2, 256);
+static auto* cv_SunShadowDenoiseSpatial = UZ_CVAR_FLOAT("r.Shadows.SoftPCSS.Denoise.Spatial", 0.25f,
+    "r.Shadows.SoftPCSS.Denoise: pre-filter sigma at a fresh history, as a fraction of the PCSS filter radius (divided by the sample count as the history deepens)", 0.f, 2.f);
+static auto* cv_SunShadowDenoiseClamp = UZ_CVAR_FLOAT("r.Shadows.SoftPCSS.Denoise.Clamp", 1.0f,
+    "r.Shadows.SoftPCSS.Denoise: history band half-width in noise standard deviations of the receiver's neighbourhood (the residual of a plane fit; half a pixel of the plane's slope is added for TAA jitter); smaller follows moving shadows closer, larger converges deeper", 0.25f, 8.f);
+static auto* cv_SunShadowDenoiseRotate = UZ_CVAR_BOOL("r.Shadows.SoftPCSS.Denoise.Rotate", true,
+    "r.Shadows.SoftPCSS.Denoise: advance the PCSS kernel rotation every frame (golden-ratio sequence) so the accumulation integrates it; 0 = the lighting's rotation");
 
 namespace uz {
 
@@ -341,6 +359,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         ctx.apVolumeRes = rgBuilder.ImportTrackedTexture("APVolume", m_apVolume);
     }
 
+    RegisterSunShadowDenoisePass(rgBuilder, ctx);   // r.Shadows.SoftPCSS.Denoise: the sun visibility the lighting reads
     RegisterCloudShadowPasses(rgBuilder, ctx);
     RegisterDeferredLightingPass(rgBuilder, ctx);
     RegisterAtmosphereFogCloudPasses(rgBuilder, ctx);
@@ -386,6 +405,72 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
 
     // ── PassInspector: register intermediate targets for visualization ──
     RegisterPassInspectorTargets(ctx);
+}
+
+// ── r.Shadows.SoftPCSS.Denoise ───────────────────────────────────────────────
+// Two compute dispatches before the deferred lighting (sun_shadow_denoise_pass.h). The output index is decided here,
+// at registration, so RegisterDeferredLightingPass can hand it to the UZ_SHADOW_DENOISE lighting permutation.
+
+void SceneRenderer::RegisterSunShadowDenoisePass(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
+    m_sunShadowDenoiseSrv = UINT32_MAX;
+    // The pass needs the bindless heap, the soft path (the hard PCF has no kernel rotation) and the velocity
+    // buffer (written by the velocity pass under a continuous previous matrix; without one the history restarts).
+    if (cv_SunShadowDenoise->value < 0.5f || !ctx.bindless || !m_gbuffer.velocity.IsValid()) return;
+    if (!CVarRegistry::Get().GetBool("r.Shadows.SoftPCSS", true)) return;
+    if (!m_sunShadowDenoisePass) {
+        m_sunShadowDenoisePass = std::make_unique<SunShadowDenoisePass>();
+        m_sunShadowDenoisePass->SetStateRegistry(m_rgStates.get());
+        if (!m_sunShadowDenoisePass->Init(m_device, m_shaderMgr.get())) {
+            m_sunShadowDenoisePass.reset();
+            return;
+        }
+    }
+    const uint32_t width  = static_cast<uint32_t>(ctx.renderWidth);
+    const uint32_t height = static_cast<uint32_t>(ctx.renderHeight);
+    const uint32_t srv = m_sunShadowDenoisePass->Prepare(width, height);
+    if (srv == UINT32_MAX) return;
+    m_sunShadowDenoiseSrv = srv;
+
+    SunShadowDenoisePass::DispatchParams p;
+    p.normalSrvIdx    = m_gbuffer.normalSRV;
+    p.depthSrvIdx     = m_gbuffer.depthSRV;
+    p.positionSrvIdx  = m_gbuffer.positionWSSRV;
+    p.velocitySrvIdx  = m_gbuffer.velocitySRV;
+    p.perFrameBuffer  = ctx.perFrameAlloc.bufferHandle;
+    p.perFrameOffset  = ctx.perFrameAlloc.offsetBytes;
+    p.perFrameCpu     = ctx.perFrameAlloc.cpuPtr;
+    p.perFrameSize    = ctx.perFrameAlloc.sizeBytes;
+    p.shadowBuffer    = ctx.shadowAlloc.bufferHandle;
+    p.shadowOffset    = ctx.shadowAlloc.offsetBytes;
+    p.shadowCpu       = ctx.shadowAlloc.cpuPtr;
+    p.shadowSize      = static_cast<uint32_t>(sizeof(ShadowDataCB));
+    p.frameIndex      = ctx.frameIndex;
+    p.historyReusable = ctx.temporal.matrixValid;
+    p.cameraPos[0]    = ctx.perFrame.cameraPos.x;
+    p.cameraPos[1]    = ctx.perFrame.cameraPos.y;
+    p.cameraPos[2]    = ctx.perFrame.cameraPos.z;
+    // World size of a pixel per unit of view distance, 2 / (P22 x height): with row vectors the y column of the
+    // view-projection's 3x3 part is the view's up axis scaled by the projection's P22 (TAA's jitter moves it by
+    // ~1/height, negligible here).
+    const auto& vp = ctx.unjitteredViewProj.m;
+    const float projY = std::sqrt(vp._12 * vp._12 + vp._22 * vp._22 + vp._32 * vp._32);
+    p.pixelAngle      = (projY > 0.f && height > 0) ? 2.f / (projY * static_cast<float>(height)) : 0.f;
+    p.rotate          = cv_SunShadowDenoiseRotate->value > 0.5f;
+    p.maxCount        = static_cast<uint32_t>(cv_SunShadowDenoiseMaxCount->value);
+    p.spatialScale    = cv_SunShadowDenoiseSpatial->value;
+    p.clampSigma      = cv_SunShadowDenoiseClamp->value;
+
+    rgBuilder.AddPass("SunShadow_Denoise", [&ctx, this, p](rg::RgPassBuilder& pb) {
+        pb.Read(ctx.normalRes,   RHIResourceState::ShaderResource);
+        pb.Read(ctx.depthRes,    RHIResourceState::ShaderResource);
+        pb.Read(ctx.positionRes, RHIResourceState::ShaderResource);
+        pb.Read(ctx.velocityRes, RHIResourceState::ShaderResource);
+        if (ctx.shadowAtlasRes.IsValid()) pb.Read(ctx.shadowAtlasRes, RHIResourceState::ShaderResource);
+        pb.SetExecutionCallback([this, p](IRHICommandList* cmd, const rg::RgPassResources&) {
+            UZ_PROFILE_SCOPE("SunShadowDenoise::Execute");
+            m_sunShadowDenoisePass->Execute(cmd, p);
+        });
+    });
 }
 
 // ── GI material table (reference path tracer bounce-hit albedo) ──

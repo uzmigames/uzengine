@@ -161,7 +161,7 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
             if (desc.bindless) {
                 // SM6.6: push descriptor indices for G-Buffer SRVs.
                 // Must match GBufferIndices in deferred_lighting_ps.hlsl.
-                const uint32_t indices[11] = {
+                uint32_t indices[12] = {
                     desc.albedoSrvIndex,
                     desc.normalSrvIndex,
                     desc.depthSrvIndex,
@@ -176,8 +176,10 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
                 };
                 static_assert(sizeof(indices) / sizeof(indices[0]) <= 24);
                 // Default path pushes the original nine DWORDs and uses the original PSO.
-                cmd->SetRootConstants(kSlotRootConstants, indices,
-                    desc.cloudShadowCascadeCount != 0 ? 11 : 9);
+                uint32_t count = desc.cloudShadowCascadeCount != 0 ? 11u : 9u;
+                // r.Shadows.SoftPCSS.Denoise: GBufferIndices::sunShadowSrvIdx follows the fields above.
+                if (desc.sunShadowSrvIndex != UINT32_MAX) indices[count++] = desc.sunShadowSrvIndex;
+                cmd->SetRootConstants(kSlotRootConstants, indices, count);
             } else {
                 // SM5: bind G-Buffer textures directly at fragment texture slots t0-t4, t10.
                 cmd->SetFragmentTexture(0, desc.albedoTexture);

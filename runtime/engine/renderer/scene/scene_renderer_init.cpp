@@ -1470,6 +1470,14 @@ void SceneRenderer::Shutdown() {
         if (shader.IsValid()) m_device->DestroyShader(shader);
         shader = {};
     }
+    for (auto& pipeline : m_sunShadowDenoiseLightingPipeline) {
+        if (pipeline.IsValid()) m_device->DestroyPipeline(pipeline);
+        pipeline = {};
+    }
+    for (auto& shader : m_sunShadowDenoiseLightingPS) {
+        if (shader.IsValid()) m_device->DestroyShader(shader);
+        shader = {};
+    }
     if (m_rectLightFullscreenVS.IsValid()) {
         m_device->DestroyShader(m_rectLightFullscreenVS);
         m_rectLightFullscreenVS = {};
@@ -1546,6 +1554,7 @@ void SceneRenderer::Shutdown() {
     // ── Env MIS Pass + Sampler ──────────────────────────────────────────
     if (m_envMISPass) m_envMISPass->Shutdown();
     if (m_envMapSampler) m_envMapSampler->Shutdown();
+    if (m_sunShadowDenoisePass) m_sunShadowDenoisePass->Shutdown();
 
     // ── IBL resources ──────────────────────────────────────────────────
     // Destroy caller-owned IBL textures (baker no longer auto-destroys)

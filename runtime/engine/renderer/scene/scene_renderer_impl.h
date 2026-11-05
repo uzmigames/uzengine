@@ -68,6 +68,14 @@
     RHIPipelineHandle m_rectLightLightingPipeline[8];
     bool              m_rectLightPipelineFailed[8] = {};
     RHIPipelineHandle EnsureRectLightLightingPipeline(bool cloudGroundShadows, bool shapedLights, bool areaShadows);
+    /// r.Shadows.SoftPCSS.Denoise: the UZ_SHADOW_DENOISE permutations of the lighting pipelines above (slot bits:
+    /// cloud ground shadows, rect lights, shaped lights, area-light shadows), built on first use
+    /// (frame_lighting_pass.cpp); the stock pipelines stay byte-identical.
+    RHIShaderHandle   m_sunShadowDenoiseLightingPS[16];
+    RHIPipelineHandle m_sunShadowDenoiseLightingPipeline[16];
+    bool              m_sunShadowDenoisePipelineFailed[16] = {};
+    RHIPipelineHandle EnsureSunShadowDenoiseLightingPipeline(bool cloudGroundShadows, bool rectLights,
+                                                             bool shapedLights, bool areaShadows);
 
     // ── GBuffer + Shadow Atlas ─────────────────────────────────────────────
 
@@ -193,6 +201,12 @@
     std::unique_ptr<EnvMapSampler> m_envMapSampler;  ///< Alias table + luminance pyramid for MIS.
     std::unique_ptr<EnvMISPass>    m_envMISPass;     ///< Temporal accumulation pass for env MIS specular.
     bool m_envMisEnabled = true;                     ///< r.EnvMIS, read once per frame (frame_constants.cpp).
+
+    // ── r.Shadows.SoftPCSS.Denoise ────────────────────────────────────────
+    std::unique_ptr<SunShadowDenoisePass> m_sunShadowDenoisePass;  ///< Created the first frame the CVar is on.
+    /// SRV of the denoised sun visibility this frame's denoiser writes (UINT32_MAX = the stock lighting); set by
+    /// RegisterSunShadowDenoisePass, read by RegisterDeferredLightingPass.
+    uint32_t m_sunShadowDenoiseSrv = UINT32_MAX;
 
     // ── HDRI environment override ────────────────────────────────────────
     RHITextureHandle m_hdriCubemap;            ///< Cubemap converted from HDRI equirect (owned, must destroy).
@@ -1070,6 +1084,7 @@
 
     /// Registers the deferred lighting pass (or debug view / GBuffer debug).
     void RegisterDeferredLightingPass(rg::RgBuilder& rgBuilder, FrameContext& ctx);
+    void RegisterSunShadowDenoisePass(rg::RgBuilder& rgBuilder, FrameContext& ctx);
     /// Block B.7: the light cull compute pass (clusters of the view frustum -> light index lists).
     void RegisterLightCullPass(rg::RgBuilder& rgBuilder, FrameContext& ctx);
 

@@ -50,6 +50,9 @@ struct GBufferIndices {
     uint cloudShadowBufferSrv;
     uint cloudShadowCascadeCount;
 #endif
+#ifdef UZ_SHADOW_DENOISE
+    uint sunShadowSrvIdx;      ///< r.Shadows.SoftPCSS.Denoise: this frame's denoised sun visibility (R32F).
+#endif
 };
 ConstantBuffer<GBufferIndices> gBufIndices : register(b0);
 #else
@@ -826,10 +829,21 @@ LightingOutput main(FSInput input) {
     // in enclosed interiors. @ref UE5 ShadowProjectionPixelShader — N·L cull.
     // r.Shadows.SoftPCSS (ShadowDataCB.softPCSS, uniform): PCSS variable penumbra, or the fixed-radius
     // PCF it replaced. The pixel position seeds the soft kernel's spatially stable rotation.
+#if defined(UZ_SHADOW_DENOISE) && defined(UZ_BINDLESS)
+    // r.Shadows.SoftPCSS.Denoise: the soft visibility of this receiver was estimated, reprojected and filtered
+    // before this pass (sun_shadow_raw_cs.hlsl, sun_shadow_denoise_cs.hlsl: the same G-buffer position and normal);
+    // the back faces and the hard path are as below.
+    Texture2D<float> sunShadowTex = ResourceDescriptorHeap[gBufIndices.sunShadowSrvIdx];
+    float  shadow = (sunNoL > 0.0)
+        ? ((softPCSS != 0u) ? sunShadowTex.Load(int3(px, 0))
+                            : CascadeShadow(worldPos, viewDepth, N, sunNoL))
+        : 0.0;
+#else
     float  shadow = (sunNoL > 0.0)
         ? ((softPCSS != 0u) ? CascadeShadowSoft(worldPos, viewDepth, N, sunNoL, float2(px))
                             : CascadeShadow(worldPos, viewDepth, N, sunNoL))
         : 0.0;
+#endif
 #if defined(UZ_BINDLESS) && defined(UZ_CLOUD_GROUND_SHADOWS)
     if (gBufIndices.cloudShadowCascadeCount != 0 && gBufIndices.cloudShadowBufferSrv != 0xFFFFFFFF)
         shadow *= SampleCloudShadow(worldPos * 0.00001f, sunL,

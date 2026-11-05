@@ -78,6 +78,9 @@ struct LightingPassDesc {
     uint32_t          lightingDebugMode = 0;
     uint32_t          cloudShadowBufferSrv = UINT32_MAX;
     uint32_t          cloudShadowCascadeCount = 0;
+    /// r.Shadows.SoftPCSS.Denoise: SRV of this frame's denoised sun visibility, read by the UZ_SHADOW_DENOISE
+    /// permutation in `pipeline` (UINT32_MAX = the stock lighting, which estimates the visibility itself).
+    uint32_t          sunShadowSrvIndex = UINT32_MAX;
     rg::RgResourceId  cloudShadowResources[3]{};
     RHITextureHandle  albedoTexture;    ///< Physical albedo texture handle (SM5 fallback binding).
     RHITextureHandle  normalTexture;     ///< Physical normal texture handle (SM5 fallback binding).

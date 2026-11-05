@@ -234,7 +234,7 @@ for shader in (
     'postprocess/svgf_atrous_cs.hlsl', 'postprocess/svgf_filter_moments_cs.hlsl',
     'postprocess/velocity_object_vs.hlsl', 'pathtracing/path_tracer_ps.hlsl',
     'pathtracing/pathtracer_shared.hlsli',
-    'lighting/cluster_assign_cs.hlsl', 'lighting/env_mis_temporal_cs.hlsl',
+    'lighting/cluster_assign_cs.hlsl', 'lighting/env_mis_temporal_cs.hlsl', 'lighting/sun_shadow_raw_cs.hlsl',
     'debug/debug_view_ps.hlsl', 'atmosphere/height_fog_ps.hlsl',
     'atmosphere/skybox_cubemap_ps.hlsl', 'atmosphere/sky_atmosphere_ps.hlsl',
 ):
@@ -541,6 +541,8 @@ UNTRACKED = {
     ("runtime/lighting/deferred_lighting_ps.hlsl", "gBufIndices"): "Root constants: GBufferIndices; uploader-specific block, not a header-backed Tier B contract.",
     ("runtime/lighting/env_mis_temporal_cs.hlsl", "RootConstants"): "Root constants: RootConstants; uploader-specific block, not a header-backed Tier B contract.",
     ("runtime/lighting/env_mis_resolve_cs.hlsl", "RootConstants"): "Root constants: RootConstants; uploader-specific block, not a header-backed Tier B contract.",
+    ("runtime/lighting/sun_shadow_raw_cs.hlsl", "RootConstants"): "Root constants: RootConstants; uploader-specific block, not a header-backed Tier B contract.",
+    ("runtime/lighting/sun_shadow_denoise_cs.hlsl", "RootConstants"): "Root constants: RootConstants; uploader-specific block, not a header-backed Tier B contract.",
     ("runtime/lighting/shadow_depth_vs.hlsl", "push"): "Root constants: PushConstants; uploader-specific block, not a header-backed Tier B contract.",
     ("runtime/ibl/brdf_lut_cs.hlsl", "RootConstants"): "Root constants: RootConstants; uploader-specific block, not a header-backed Tier B contract.",
     ("runtime/ibl/envmap_luminance_pyramid_cs.hlsl", "RootConstants"): "Root constants: RootConstants; uploader-specific block, not a header-backed Tier B contract.",
