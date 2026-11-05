@@ -112,7 +112,7 @@ static auto* cv_EnvMISTemporalClamp = UZ_CVAR_FLOAT("r.EnvMIS.Temporal.Clamp", 2
 // variance-clipped, after a penumbra-sized edge-aware pre-filter), so the penumbra converges to the kernel's
 // integral and stays on the surface (sun_shadow_raw_cs.hlsl, sun_shadow_denoise_cs.hlsl); the lighting reads it in
 // its UZ_SHADOW_DENOISE permutation. 0 = the lighting estimates the visibility itself, as before.
-static auto* cv_SunShadowDenoise = UZ_CVAR_BOOL("r.Shadows.SoftPCSS.Denoise", false,
+static auto* cv_SunShadowDenoise = UZ_CVAR_BOOL("r.Shadows.SoftPCSS.Denoise", true,
     "Denoise the directional PCSS visibility (per-frame kernel rotation, reprojected count-based accumulation, penumbra-sized edge-aware pre-filter; needs r.Shadows.SoftPCSS and the velocity buffer); 0 = the per-pixel 16-tap estimate");
 static auto* cv_SunShadowDenoiseMaxCount = UZ_CVAR_INT("r.Shadows.SoftPCSS.Denoise.MaxCount", 32,
     "r.Shadows.SoftPCSS.Denoise: sample cap of the accumulation (blend weight floor 1/MaxCount)", 2, 256);
