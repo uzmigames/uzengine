@@ -50,7 +50,8 @@ cbuffer ShadowDataCB : register(b4) {
     float4 cascadePcssDepthToTexelsPacked[2];  // 8 floats: penumbra texels per unit depth gap (shadow_pcss.h)
     uint   localSoftPCSS;                      // r.Shadows.SoftPCSS.Local
     float  localPcssSourceRadius;              // emitter radius in cm
-    float2 _shadowPad1;                        // pad to 768
+    uint   pcssStableKernel;                   // r.Shadows.SoftPCSS.StableKernel: 0 = screen-seeded rotation
+    float  _shadowPad1;                        // pad to 768
     // 16 entries x 6 float4: [0..3] viewProj rows, [4] (atlasOffsetX, atlasOffsetY, atlasScale,
     // bias cm), [5] (light position xyz, radius). Tiles store distance / radius.
     float4 localShadowRaw[96];                 // 1536B
@@ -247,6 +248,18 @@ float ShadowKernelRotationNoise(float2 pixelPos) {
     return frac(52.9829189 * frac(0.06711056 * pixelPos.x + 0.00583715 * pixelPos.y));
 }
 
+/// r.Shadows.SoftPCSS.StableKernel: the same noise seeded by the receiver's cell on the cascade's
+/// world-anchored texel lattice instead of the screen pixel. A pixel-seeded rotation is constant
+/// for a still camera, but under camera motion every surface point is reached by a different pixel
+/// each frame, so its 16-tap estimate is redrawn every frame and the dither slides across the
+/// penumbra (the tremble TAA only partly absorbs). The lattice coordinate is the receiver projected
+/// on the light's image plane in cascade texels without the cascade's camera-following (texel-
+/// snapped) translation, so a surface point keeps its cell, its rotation and its result while the
+/// camera moves. `cellsPerTexel` subdivides the texel so the cells stay near pixel size.
+float ShadowKernelRotationNoiseStable(float2 lightPlaneTexel, uint cellsPerTexel) {
+    return ShadowKernelRotationNoise(floor(lightPlaneTexel * float(cellsPerTexel)));
+}
+
 /// Penumbra radius in atlas texels: the receiver/average-blocker depth gap times the cascade's
 /// constant (tan(half source angle) * r.Shadows.SoftPCSS.LightSize * ortho depth range / texel
 /// size, uploaded by SetupShadowFrame). Mirrors PcssPenumbraTexels in shadow_pcss.h, which derives
@@ -272,6 +285,7 @@ float2 RotateShadowTap(float2 tap, float2 rot) {
 /// the atlas, so the search and filter below run once, for the selected cascade only.
 struct CascadeReceiver {
     float2 atlasUV;     ///< Receiver position in atlas UV.
+    float2 lightPlaneTexel; ///< Receiver on the light image plane, cascade texels, camera-independent.
     float2 tileOffset;  ///< Cascade tile origin in atlas UV.
     float2 tileSize;    ///< Cascade tile extent in atlas UV.
     float  cmpDepth;    ///< Biased comparison depth (SampleShadowCascade's cmpDepth).
@@ -317,6 +331,9 @@ CascadeReceiver ProjectCascadeReceiver(float3 worldPos, float3 N, float NdotL, u
     float3 cx = float3(M._11, M._21, M._31);
     float3 cy = float3(M._12, M._22, M._32);
     float3 cz = float3(M._13, M._23, M._33);
+    // NDC x/y without the translation row (_41/_42: the cascade centre that follows the camera,
+    // snapped to whole texels), in texels: fixed per surface point, aligned with the texel grid.
+    r.lightPlaneTexel = float2(dot(biasedPos, cx), dot(biasedPos, cy)) * (0.5 * shadowMapSize);
     float3 tu = cross(cy, N);   // world direction of a pure +u step along the plane (up to scale)
     float3 tv = cross(cx, N);   // world direction of a pure +v step along the plane
     float du = dot(tu, cx);
@@ -349,7 +366,10 @@ float SampleShadowCascadeSoft(CascadeReceiver r, uint cascadeIdx,
     float2 atlasMin = r.tileOffset + 0.5 * texelUV;
     float2 atlasMax = r.tileOffset + r.tileSize - 0.5 * texelUV;
 
-    float angle = ShadowKernelRotationNoise(pixelPos) * 6.28318530718;
+    float noise = (pcssStableKernel != 0u)
+        ? ShadowKernelRotationNoiseStable(r.lightPlaneTexel, pcssStableKernel)
+        : ShadowKernelRotationNoise(pixelPos);
+    float angle = noise * 6.28318530718;
     float2 rot = float2(cos(angle), sin(angle));
 
     // 1. Blocker search. The depth gap cannot exceed the receiver depth, so the search radius

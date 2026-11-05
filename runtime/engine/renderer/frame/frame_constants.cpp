@@ -1164,6 +1164,8 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
         CVarRegistry::Get().GetBool("r.Shadows.SoftPCSS.Local", true) ? 1u : 0u;
     reinterpret_cast<ShadowDataCB*>(ctx.shadowAlloc.cpuPtr)->localPcssSourceRadius =
         CVarRegistry::Get().GetFloat("r.Shadows.SoftPCSS.Local.SourceRadius", 5.0f);
+    reinterpret_cast<ShadowDataCB*>(ctx.shadowAlloc.cpuPtr)->pcssStableKernel =
+        static_cast<uint32_t>(std::max(CVarRegistry::Get().GetInt("r.Shadows.SoftPCSS.StableKernel", 0), 0));
 
     // ── Build ShadowDataParams for binder path ──────────────────────────
     // Copy the 768-byte scalar section from the CB allocation, then attach
