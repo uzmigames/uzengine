@@ -79,6 +79,39 @@ Key HLSL functions have C++ mirrors in `engine/renderer/lighting/brdf_math.h` fo
 | `V_SmithGGXCorrelated_Aniso()` | `brdf::V_SmithGGXCorrelated_Aniso()` | `test_brdf_parity.cpp` |
 | `RemapAnisotropy()` | `brdf::RemapAnisotropy()` | `test_brdf_parity.cpp` |
 
+## Froxel Volumetric Fog (`atmosphere/volumetric_fog_*`)
+
+Three shaders share one 512-byte `VolumetricFogCB` at **b2** (scalars only — an HLSL `float3` at a 4-byte-aligned offset would move to the next 16-byte row; `scripts/rendering/test_cbuffer_layouts.py` checks every offset against `VolumetricFogCB` in `volumetric_fog_pass.h`, `test_volumetric_fog.cpp` checks the C++ side). @ref Hillaire 2015 "Physically Based & Unified Volumetric Rendering in Frostbite"; Wronski 2014.
+
+| Shader | Threads | Bindings | Writes |
+|--------|---------|----------|--------|
+| `volumetric_fog_inject_cs.hlsl` | `[8,8,4]`, one per froxel | b1 `LightingCB` (point / spot arrays, the prefix of `constant_buffers.h`), b2, b4 `ShadowDataCB`, CSM + local shadow atlases via `shadow.hlsli` | injected volume: rgb in-scatter, a extinction (per unit length) |
+| `volumetric_fog_scatter_cs.hlsl` | `[8,8,1]`, one per column | b2, s2 history sampler (bilinear clamp), injected + history SRVs | integrated volume: rgb in-scatter, a transmittance; this frame's filtered history |
+| `volumetric_fog_composite_ps.hlsl` | fullscreen | b0 root constants (depth SRV, integrated SRV), b2, s0 linear | HDR target, SrcAlpha / InvSrcAlpha |
+
+Functions (the depth-slice set is copied identically into each shader that needs it):
+
+| Function | Shader | Meaning |
+|----------|--------|---------|
+| `SliceCoordToDepth(t)` | inject | `startZ * (farZ / startZ)^t`, `startZ = max(nearZ, fogStartDistance)`: the exponential slice distribution (UE5 `GetVolumetricFogGridZParams`); `t = (slice + 0.5 + jitter) / gridZ` |
+| `SliceToDepth(slice, n)` | scatter, composite | the slice centre's view depth, `t = (slice + 0.5) / n` |
+| `DepthToSliceCoord(d)` | scatter | inverse: `log(d / startZ) / log(farZ / startZ)` (the history fetch) |
+| `SliceThickness(slice, n)` | scatter | centre-to-centre span, slice 0 from `startZ`: the integration step |
+| `DepthToFroxelUVW(uv, d)` | composite | `(uv, saturate(log(max(d, startZ) / startZ) / log(farZ / startZ)))`: sky and geometry beyond the grid read the far edge |
+| `UnprojectFar(ndc)`, `FroxelWorldPos(uv, d)` | inject, scatter | the point on the camera ray through the froxel column whose view depth is `d` (unjittered inverse view-projection) |
+| `HenyeyGreenstein(cosTheta, g)` | inject | `(1 - g^2) / (4 pi (1 + g^2 - 2 g cosTheta)^1.5)` |
+| `Pcg3d(v)`, `FroxelJitter(froxel)` | inject | froxel hash + the frame's R3 point: a `[-0.5, 0.5]^3` sample offset the temporal average integrates (Jarzynski & Olano 2020; Roberts 2018) |
+| `LocalLightAttenuation(distSq, radius, exponent, flags)` | inject | the deferred pass's windowed inverse-square / custom-exponent falloff (Karis 2013) |
+| `LocalShadowVolumeTap(entry, worldPos)`, `PointLightFace(d)` | inject | one linear-distance comparison tap in a local light's atlas tile (no normal offset), the point light's cube face by major axis |
+| `LocalLightsInscatter(worldPos, viewDir, shadowed)` | inject | sum over the frame's point and spot lights of colour x attenuation x cone x shadow x HG |
+| `CascadeShadowVolume(worldPos, dist)` | `lighting/shadow.hlsli` | one CSM comparison tap for a point in mid-air (the sun's volumetric shadow) |
+| `TemporalFilter(injected, history, froxel, cur)` | scatter | reproject the froxel centre with `prevViewProj`, trilinear history, 3x3x3 min/max box intersected with the mean +- `temporalClamp` sigma band, `lerp(hist, cur, temporalAlpha)`; returns `cur` behind the previous camera or outside its frustum / grid |
+| `LinearizeDepthReversedZ(depth, near, far)` | `include/depth_common.hlsli` | the composite's finite-far-plane depth linearisation |
+
+The integration per slice (scatter) is Hillaire 2015 eq. 5: `S_int = fade * (S - S * T_slice) / max(sigma, 1e-6)`, `accum += T * S_int`, `T *= lerp(1, T_slice, fade)`, `T_slice = exp(-sigma * thickness)`, `fade = saturate(accumDepth / nearFadeInDistance)`.
+
+CPU mirror for tests: the depth-slice functions and the composite's W coordinate are mirrored in `runtime/tests/engine/renderer/test_volumetric_fog.cpp` (`SliceParams`); the froxel placement and the whole scatter loop are ported per pixel by `scripts/rendering/test_froxel_fog.py` (compiled from the HLSL text with `zig c++`, and in NumPy).
+
 ## Vertex Formats
 
 | Format | Size | Fields | Shader Struct |

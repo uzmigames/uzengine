@@ -78,7 +78,11 @@ cbuffer VolumetricFogCB : register(b2) {
     row_major float4x4 _prevViewProj; // offset 272
 };
 
-SamplerState linearSampler : register(s0);
+/// s2: bilinear CLAMP (the static sampler the scatter's history fetch uses). s0 is the anisotropic
+/// WRAP sampler: with it the far edge (w = 1: sky and geometry beyond the grid) blended the last slice
+/// 50/50 with slice 0, halving the column's fog, and the outer half-froxel of every screen edge blended
+/// with the opposite edge (phase2_froxel-volumetric-fog session 2, 2.2.2 / 2.2.3).
+SamplerState linearSampler : register(s2);
 
 /// @ref Hillaire 2015 — exponential depth distribution (must match inject/scatter)
 /// @ref UE5 — startZ = max(nearZ, fogStartDistance)
