@@ -1,7 +1,9 @@
 /// UzEngine Froxel Volumetric Fog — Composite (pixel shader).
 ///
 /// Fullscreen pass that samples the integrated froxel volume at scene depth
-/// and applies inscattering + transmittance via alpha blending.
+/// and applies inscattering + transmittance via alpha blending. Sky pixels (reversed-Z depth 0)
+/// and geometry beyond the grid take the far edge of the grid (the whole column); the analytic
+/// height fog, which runs before this pass, starts where the grid ends, so the two do not overlap.
 ///
 /// PSO uses SrcAlpha / InvSrcAlpha blending:
 ///   output.rgb = inscattering (fog color)
@@ -59,6 +61,21 @@ cbuffer VolumetricFogCB : register(b2) {
     float  cameraFarZ;                // camera far plane (cm): finite reversed-Z linearisation
     uint   sunShadowEnabled;
     uint   debugMode;                 // r.VolumetricFog.Debug: 1 = (view depth cm, slice coordinate, transmittance), 2 = (raw depth, in-scatter r, g)
+    uint   _historySrvIdx;            // temporal / local-light fields of the shared block (scatter + inject)
+    uint   _historyUavIdx;
+    uint   _temporalEnabled;
+    uint   _localLightsEnabled;
+    uint   _localShadowEnabled;
+    uint   _jitterEnabled;
+    uint   _debugStage;
+    float  _temporalClamp;
+    float  _ambientR;
+    float  _ambientG;
+    float  _ambientB;
+    float  _localLightScale;
+    float  _fogPad0b;
+    float  _fogPad0c;
+    row_major float4x4 _prevViewProj; // offset 272
 };
 
 SamplerState linearSampler : register(s0);
@@ -95,13 +112,12 @@ float4 main(FSInput input) : SV_Target
     float depth = sceneDepth.Load(int3(px, 0)).r;
 #endif
 
-    // Skip sky pixels — fog applies to geometry only
-    // (Sky fog is handled separately by the height fog / atmosphere passes)
-    if (depth <= 0.0001) discard;
-
-    // Linearize reversed-Z depth → view-space distance in cm with the camera's finite far plane
-    // (nearZ / depth assumes an infinite far plane: 11 % off at 10 m, 2x at 50 m with far 10000).
-    float viewDepthCm = LinearizeDepthReversedZ(depth, nearZ, cameraFarZ);   // depth_common, fixed in block B.4b
+    // Sky pixels (reversed-Z depth 0) take the far edge of the grid: the whole fog column lies in
+    // front of the sky. Otherwise linearize the reversed-Z depth to the view-space distance in cm
+    // with the camera's finite far plane (nearZ / depth assumes an infinite far plane: 11 % off at
+    // 10 m, 2x at 50 m with far 10000); depth beyond the grid clamps to its last slice below.
+    float viewDepthCm = (depth <= 0.0001) ? farZ
+                      : LinearizeDepthReversedZ(depth, nearZ, cameraFarZ);   // depth_common, fixed in block B.4b
 
     // Sample integrated froxel volume
     float3 uvw = DepthToFroxelUVW(input.texcoord, viewDepthCm);

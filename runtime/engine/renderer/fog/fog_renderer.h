@@ -38,6 +38,9 @@ namespace rg { class RgBuilder; }
 /// * `vpWidth`        — Viewport width.
 /// * `vpHeight`       — Viewport height.
 /// @param skyLightColorR/G/B — Sky light average color from SH L0 (for sky→fog injection).
+/// @param volumetricFogDistance — Far edge (cm) of the froxel volumetric fog grid rendered this frame, or 0.
+///        The height fog then starts no nearer than that edge, so the two fogs do not overlap
+///        (phase2_froxel-volumetric-fog; the froxel composite blends over the height-fogged scene).
 void AddHeightFogFromECS(
     rg::RgBuilder& rgBuilder,
     rg::RgResourceId hdrRes,
@@ -54,6 +57,7 @@ void AddHeightFogFromECS(
     float vpHeight,
     float skyLightColorR = 0.f,
     float skyLightColorG = 0.f,
-    float skyLightColorB = 0.f);
+    float skyLightColorB = 0.f,
+    float volumetricFogDistance = 0.f);
 
 } // namespace uz

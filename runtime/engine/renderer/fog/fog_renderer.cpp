@@ -307,7 +307,8 @@ void AddHeightFogFromECS(
     float vpHeight,
     float skyLightColorR,
     float skyLightColorG,
-    float skyLightColorB)
+    float skyLightColorB,
+    float volumetricFogDistance)
 {
     if (!world) return;
 
@@ -350,6 +351,11 @@ void AddHeightFogFromECS(
         PopulateHeightFogCB(fogCB, fogComp, camera, skyAtmoPtr,
                             skyLightColorR, skyLightColorG, skyLightColorB,
                             sunDir, sunColor, sunIntensity, hasSun);
+        // The froxel volumetric fog covers [0, volumetricFogDistance] this frame: the analytic fog
+        // starts where the grid ends (the shader's start-distance exclusion), as UE5's height fog
+        // does beyond its volumetric fog distance. 0 (froxel fog off) leaves the height fog as is.
+        if (volumetricFogDistance > 0.f)
+            fogCB.fogStartDistance = std::max(fogCB.fogStartDistance, volumetricFogDistance);
 
         // ── Upload to GPU and register render graph pass ────────────────
         CBAllocation fogAlloc = cbRing.Allocate(sizeof(HeightFogCB));
