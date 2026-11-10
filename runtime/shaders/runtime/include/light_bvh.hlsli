@@ -19,6 +19,8 @@ struct LightBVHLight {
 };
 struct LightBVHConfig {
     uint nodesSrv; uint lightsSrv; uint lightCount; uint uniformSampling;
+    // r.ReSTIR.Readback diagnostic histogram UAV index + 1 (0 = none); see light_bvh.h.
+    uint histogramUav; uint histogramPadding0; uint histogramPadding1; uint histogramPadding2;
 };
 struct LightBVHSample {
     uint lightId;

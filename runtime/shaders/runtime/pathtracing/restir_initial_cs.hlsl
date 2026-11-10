@@ -34,6 +34,11 @@ void main(uint3 id : SV_DispatchThreadID) {
                     float3(selectionU,
                            RestirRandom(index, sampleIndex, d + 1u),
                            RestirRandom(index, sampleIndex, d + 2u)), config, nodes, emitters);
+                if (config.histogramUav != 0u) {
+                    // r.ReSTIR.Readback diagnostic: cumulative per-emitter candidate counts.
+                    RWStructuredBuffer<uint> histogram = ResourceDescriptorHeap[config.histogramUav - 1u];
+                    InterlockedAdd(histogram[chosen.lightId], 1u);
+                }
                 LightBVHLight light = emitters[chosen.lightId];
                 s.lightIndex = chosen.lightId;
                 s.emission = light.emission;
@@ -72,12 +77,24 @@ void main(uint3 id : SV_DispatchThreadID) {
                             RestirRandom(index, sampleIndex, d + 6u));
         }
         r.W = RestirWeight(r.weightSum, r.M, RestirTarget(RestirContribution(surface, r.sample)));
+        bool selected = r.W > 0.0;
         // Test only the selected RIS sample. E[V W g(Y)] = integral_visible g:
         // keep the visible weight unchanged, zero an occluded weight, retain M.
         // Null outcomes still represent their domain during subsequent MIS.
         r.visibility = r.W > 0.0 ? RestirVisibility(surface, r.sample) : 0.0;
         r.W *= r.visibility;
         r.weightSum *= r.visibility;
+        if (configIndex != 0u && selected) {
+            // Diagnostic histogram regions 2 and 3: RIS-selected, and selected + visible.
+            StructuredBuffer<LightBVHConfig> configurations = ResourceDescriptorHeap[configIndex - 1u];
+            LightBVHConfig config = configurations[0];
+            if (config.histogramUav != 0u) {
+                RWStructuredBuffer<uint> histogram = ResourceDescriptorHeap[config.histogramUav - 1u];
+                InterlockedAdd(histogram[config.lightCount + r.sample.lightIndex], 1u);
+                if (r.visibility > 0.0)
+                    InterlockedAdd(histogram[2u * config.lightCount + r.sample.lightIndex], 1u);
+            }
+        }
     }
     output[index] = r;
 }

@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <map>
 #include <vector>
 
 #ifdef _WIN32
@@ -152,6 +153,15 @@ struct PipelinePathTracerPass::Impl {
     RHIBufferHandle readback;
     bool readbackPending = false;
     uint32_t readbackFrame = 0;
+    // r.ReSTIR.Readback light-BVH selection histogram: the shader counts
+    // cumulatively; the CPU differences consecutive readbacks and checks the
+    // candidate distribution against the CPU hierarchy on the copied surfaces.
+    RHIBufferHandle bvhHistogram, bvhHistogramReadback, surfaceReadback;
+    uint32_t bvhHistogramLights = 0, bvhHistogramPixels = 0, histogramFrames = 0;
+    bool histogramPending = false;
+    std::vector<uint32_t> histogramPrevious;
+    std::vector<uint64_t> histogramTotals;
+    void LogLightBVHHistogram();
 
     ~Impl() {
         if (!device) return;
@@ -174,8 +184,79 @@ struct PipelinePathTracerPass::Impl {
         for (auto buffer : giReservoirs)
             if (buffer.IsValid()) device->DestroyBuffer(buffer);
         if (readback.IsValid()) device->DestroyBuffer(readback);
+        for (auto buffer : {bvhHistogram, bvhHistogramReadback, surfaceReadback})
+            if (buffer.IsValid()) device->DestroyBuffer(buffer);
     }
 };
+
+// Diagnostic only (r.ReSTIR.Readback with r.LightBVH): per-frame deltas of the
+// cumulative GPU histogram are summed per emitter draw and compared with the
+// CPU LightBVH::Sample distribution over the same primary surfaces, so the
+// GPU traversal's selection density is checked against the proven CPU model.
+void PipelinePathTracerPass::Impl::LogLightBVHHistogram() {
+    const uint32_t lightCount = bvhHistogramLights;
+    if (lightCount == 0u || lightBVH.lights.size() != lightCount) return;
+    const auto* counts = static_cast<const uint32_t*>(device->MapBuffer(bvhHistogramReadback));
+    if (!counts) return;
+    for (uint32_t i = 0; i < 3u * lightCount; ++i) {
+        histogramTotals[i] += uint32_t(counts[i] - histogramPrevious[i]); // modular per-frame delta
+        histogramPrevious[i] = counts[i];
+    }
+    device->UnmapBuffer(bvhHistogramReadback);
+    if (++histogramFrames % 64u != 1u) return;
+    const bool uniform = CVarRegistry::Get().GetBool("r.LightBVH.Uniform", false);
+    // CPU model: 32 stratified selections per primary surface (every other pixel).
+    std::vector<double> cpu(lightCount, 0.0);
+    uint32_t cpuPixels = 0;
+    double cpuCandidates = 0;
+    if (const auto* surfaces = static_cast<const RestirSurface*>(device->MapBuffer(surfaceReadback))) {
+        for (uint32_t y = 0; y < height; y += 2) {
+            for (uint32_t x = 0; x < width; x += 2) {
+                const auto& s = surfaces[y * width + x];
+                if (!s.valid) continue;
+                ++cpuPixels;
+                const Vec3 position{s.position[0], s.position[1], s.position[2]};
+                const Vec3 normal{s.normal[0], s.normal[1], s.normal[2]};
+                for (uint32_t i = 0; i < 32u; ++i) {
+                    uint32_t h = (y * width + x) * 1973u + i * 26699u + 911u;
+                    h = (h ^ (h >> 16u)) * 0x7feb352du;
+                    h = (h ^ (h >> 15u)) * 0x846ca68bu;
+                    h ^= h >> 16u;
+                    const float u = (float(i) + float(h >> 8u) / 16777216.f) / 32.f;
+                    float pdf = 1.f;
+                    const uint32_t light = uniform ? std::min(uint32_t(u * lightCount), lightCount - 1u)
+                                                   : lightBVH.Sample(position, normal, u, pdf);
+                    cpu[light] += 1.0;
+                    cpuCandidates += 1.0;
+                }
+            }
+        }
+        device->UnmapBuffer(surfaceReadback);
+    }
+    struct Row { uint32_t triangles = 0; double power = 0, candidates = 0, selected = 0, visible = 0, cpu = 0; };
+    std::map<uint32_t, Row> rows; // keyed by source draw; directional lights share key UINT32_MAX
+    double totalPower = 0, totalCandidates = 0, totalSelected = 0, totalVisible = 0;
+    for (uint32_t i = 0; i < lightCount; ++i) {
+        const auto& l = lightBVH.lights[i];
+        auto& row = rows[l.type == 0u ? l.sourceIndex : UINT32_MAX];
+        const double power = (l.emission.x * .2126 + l.emission.y * .7152 + l.emission.z * .0722)
+                           * (l.type == 0u ? l.area : 1.f);
+        ++row.triangles;
+        row.power += power; totalPower += power;
+        row.candidates += double(histogramTotals[i]); totalCandidates += double(histogramTotals[i]);
+        row.selected += double(histogramTotals[lightCount + i]); totalSelected += double(histogramTotals[lightCount + i]);
+        row.visible += double(histogramTotals[2u * lightCount + i]); totalVisible += double(histogramTotals[2u * lightCount + i]);
+        row.cpu += cpu[i];
+    }
+    auto share = [](double value, double total) { return total > 0 ? 100.0 * value / total : 0.0; };
+    UZ_LOG(Renderer, Info, "LightBVH histogram frames={} lights={} emitters={} candidates={} selected={} visible={} cpuPixels={} cpuCandidates={} uniform={}",
+        histogramFrames, lightCount, rows.size(), totalCandidates, totalSelected, totalVisible, cpuPixels, cpuCandidates, uniform ? 1 : 0);
+    for (const auto& [source, row] : rows)
+        UZ_LOG(Renderer, Info, "LightBVH histogram emitter={} triangles={} power={} powerShare={} candidates={} candidateShare={} cpuShare={} selected={} selectedShare={} visible={} visibleShare={}",
+            source, row.triangles, row.power, share(row.power, totalPower), row.candidates,
+            share(row.candidates, totalCandidates), share(row.cpu, cpuCandidates), row.selected,
+            share(row.selected, totalSelected), row.visible, share(row.visible, totalSelected));
+}
 
 PipelinePathTracerPass::PipelinePathTracerPass() : m_impl(std::make_unique<Impl>()) {}
 PipelinePathTracerPass::~PipelinePathTracerPass() = default;
@@ -405,6 +486,10 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
             p.device->UnmapBuffer(p.readback);
         }
         p.readbackPending = false;
+        if (p.histogramPending) {
+            p.LogLightBVHHistogram();
+            p.histogramPending = false;
+        }
     }
     std::vector<PipelinePathMaterial> entries;
     // Match TLASManager::Rebuild's order and inclusion rules, using its
@@ -522,9 +607,10 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
         }
     }
     const uint32_t lightCount = static_cast<uint32_t>(directionalLights.size());
-    uint32_t bvhConfigSrv = 0;
+    uint32_t bvhConfigSrv = 0, histogramUav = 0;
     const bool lightBVHEnabled = CVarRegistry::Get().GetBool("r.LightBVH", false);
     const uint32_t bvhUniform = CVarRegistry::Get().GetBool("r.LightBVH.Uniform", false);
+    const bool histogramRequested = cv_RestirDI->value >= 0.5f && cv_RestirReadback->value >= 0.5f;
     if (lightBVHEnabled) {
         if (p.lightBVH.Gather(draws, meshes, world)) {
             UZ_LOG(Renderer, Info, "LightBVH: Morton build {} lights, {} nodes, root power={}",
@@ -558,9 +644,42 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
                 || !upload(p.bvhLights[slot],p.bvhLightCapacity[slot],p.lightBVH.lights.data(),
                         uint32_t(p.lightBVH.lights.size()),sizeof(LightBVHLight),"LightBVH_Lights"))
                 return false;
+            if (histogramRequested) {
+                // Pass-private diagnostic buffers; sized by emitter count and pixel count.
+                const uint32_t emitterCount = uint32_t(p.lightBVH.lights.size());
+                if (p.bvhHistogramLights != emitterCount || p.bvhHistogramPixels != width * height) {
+                    p.device->WaitIdle();
+                    for (auto* buffer : {&p.bvhHistogram, &p.bvhHistogramReadback, &p.surfaceReadback}) {
+                        if (buffer->IsValid()) p.device->DestroyBuffer(*buffer);
+                        *buffer = {};
+                    }
+                    RHIBufferDesc desc{};
+                    desc.sizeBytes = uint64_t(3u * emitterCount) * sizeof(uint32_t);
+                    desc.stride = sizeof(uint32_t);
+                    desc.usage = RHIBufferUsage::StructuredBuffer | RHIBufferUsage::UnorderedAccess;
+                    desc.debugName = "LightBVH_Histogram";
+                    p.bvhHistogram = p.device->CreateBuffer(desc);
+                    RHIBufferDesc readback{};
+                    readback.sizeBytes = desc.sizeBytes;
+                    readback.memory = RHIMemoryType::Readback;
+                    readback.debugName = "LightBVH_HistogramReadback";
+                    p.bvhHistogramReadback = p.device->CreateBuffer(readback);
+                    readback.sizeBytes = uint64_t(width) * height * sizeof(RestirSurface);
+                    readback.debugName = "ReSTIR_SurfaceReadback";
+                    p.surfaceReadback = p.device->CreateBuffer(readback);
+                    p.bvhHistogramLights = emitterCount;
+                    p.bvhHistogramPixels = width * height;
+                    p.histogramPrevious.assign(3u * emitterCount, 0u);
+                    p.histogramTotals.assign(3u * emitterCount, 0u);
+                    p.histogramFrames = 0u;
+                    p.histogramPending = false;
+                }
+                if (p.bvhHistogram.IsValid() && p.bvhHistogramReadback.IsValid() && p.surfaceReadback.IsValid())
+                    histogramUav = p.device->GetBufferUAVIndex(p.bvhHistogram) + 1u;
+            }
             LightBVHConfig config{p.device->GetBufferSRVIndex(p.bvhNodes[slot]),
                 p.device->GetBufferSRVIndex(p.bvhLights[slot]),
-                uint32_t(p.lightBVH.lights.size()), bvhUniform};
+                uint32_t(p.lightBVH.lights.size()), bvhUniform, histogramUav, 0u, 0u, 0u};
             if (!upload(p.bvhConfigs[slot],p.bvhConfigCapacity[slot],&config,1,
                         sizeof(config),"LightBVH_Config")) return false;
             bvhConfigSrv = p.device->GetBufferSRVIndex(p.bvhConfigs[slot])+1u;
@@ -833,6 +952,9 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
         initial = builder.ImportTrackedBuffer("ReSTIR_Initial", p.restirInitial);
         current = builder.ImportTrackedBuffer("ReSTIR_Current", currentBuffer);
         previous = builder.ImportTrackedBuffer("ReSTIR_Previous", previousBuffer);
+        const bool histogramActive = restirBVH && histogramUav != 0u;
+        rg::RgResourceId histogram;
+        if (histogramActive) histogram = builder.ImportTrackedBuffer("LightBVH_Histogram", p.bvhHistogram);
         restirConstants.restirSurfaceUav = p.device->GetBufferUAVIndex(p.restirSurface);
         restirConstants.restirInitialUav = p.device->GetBufferUAVIndex(p.restirInitial);
         restirConstants.restirCurrentUav = p.device->GetBufferUAVIndex(currentBuffer);
@@ -880,7 +1002,10 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
                     pb.Read(initial, RHIResourceState::UnorderedAccess);
                     pb.Read(previous, RHIResourceState::UnorderedAccess);
                     pb.Write(current, RHIResourceState::UnorderedAccess);
-                } else pb.Write(initial, RHIResourceState::UnorderedAccess);
+                } else {
+                    pb.Write(initial, RHIResourceState::UnorderedAccess);
+                    if (histogramActive) pb.Write(histogram, RHIResourceState::UnorderedAccess);
+                }
                 pb.SetExecutionCallback([=, this](IRHICommandList* cmd, const rg::RgPassResources&) {
 #ifdef _WIN32
                     auto* native = static_cast<DX12CommandList*>(cmd)->GetNative();
@@ -901,6 +1026,25 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
                                 : restirBVH ? "initial BVH-sourced RIS (joint source PDF, visibility-aware reuse)" : "initial",
                             (width + 7) / 8, (height + 7) / 8, restirConstants.restirHistory);
 #endif
+                });
+            });
+        }
+        if (histogramActive) {
+            // Copy the cumulative selection histogram and the primary surfaces
+            // it was taken on; the CPU reads both next frame after WaitIdle.
+            const auto histogramReadback = builder.ImportTrackedBuffer("LightBVH_HistogramReadback", p.bvhHistogramReadback);
+            const auto surfaceReadback = builder.ImportTrackedBuffer("ReSTIR_SurfaceReadback", p.surfaceReadback);
+            builder.AddPass("LightBVH_HistogramReadback", [=, this](rg::RgPassBuilder& pb) {
+                pb.Read(histogram, RHIResourceState::CopySrc);
+                pb.Read(surface, RHIResourceState::CopySrc);
+                pb.Write(histogramReadback, RHIResourceState::CopyDst);
+                pb.Write(surfaceReadback, RHIResourceState::CopyDst);
+                pb.SetExecutionCallback([=, this](IRHICommandList* cmd, const rg::RgPassResources&) {
+                    cmd->CopyBuffer(m_impl->bvhHistogram, 0, m_impl->bvhHistogramReadback, 0,
+                        uint64_t(3u * m_impl->bvhHistogramLights) * sizeof(uint32_t));
+                    cmd->CopyBuffer(m_impl->restirSurface, 0, m_impl->surfaceReadback, 0,
+                        uint64_t(width) * height * sizeof(RestirSurface));
+                    m_impl->histogramPending = true;
                 });
             });
         }

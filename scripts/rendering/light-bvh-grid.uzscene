@@ -1,0 +1,3169 @@
+{
+  "name": "Light BVH grid: 100 emissive cubes, 10 log-spaced intensity levels",
+  "version": "1.0",
+  "entities": [
+    {
+      "name": "Camera",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            -400,
+            640
+          ]
+        },
+        "camera": {
+          "fov": 45,
+          "near": 1,
+          "far": 10000,
+          "active": true,
+          "look_at": [
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "Black environment",
+      "components": {
+        "sky_light": {
+          "intensity": 0,
+          "light_color": [
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "Floor",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            -5
+          ],
+          "scale": [
+            600,
+            600,
+            5
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0.65,
+          "baseColorG": 0.65,
+          "baseColorB": 0.65,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0
+        }
+      }
+    },
+    {
+      "name": "Emitter 0 level 0",
+      "components": {
+        "transform": {
+          "position": [
+            -270.0,
+            -270.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.02
+        }
+      }
+    },
+    {
+      "name": "Emitter 1 level 3",
+      "components": {
+        "transform": {
+          "position": [
+            -210.0,
+            -270.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.1329
+        }
+      }
+    },
+    {
+      "name": "Emitter 2 level 6",
+      "components": {
+        "transform": {
+          "position": [
+            -150.0,
+            -270.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.883
+        }
+      }
+    },
+    {
+      "name": "Emitter 3 level 9",
+      "components": {
+        "transform": {
+          "position": [
+            -90.0,
+            -270.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 5.8675
+        }
+      }
+    },
+    {
+      "name": "Emitter 4 level 2",
+      "components": {
+        "transform": {
+          "position": [
+            -30.0,
+            -270.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.0707
+        }
+      }
+    },
+    {
+      "name": "Emitter 5 level 5",
+      "components": {
+        "transform": {
+          "position": [
+            30.0,
+            -270.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.4697
+        }
+      }
+    },
+    {
+      "name": "Emitter 6 level 8",
+      "components": {
+        "transform": {
+          "position": [
+            90.0,
+            -270.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 3.121
+        }
+      }
+    },
+    {
+      "name": "Emitter 7 level 1",
+      "components": {
+        "transform": {
+          "position": [
+            150.0,
+            -270.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.0376
+        }
+      }
+    },
+    {
+      "name": "Emitter 8 level 4",
+      "components": {
+        "transform": {
+          "position": [
+            210.0,
+            -270.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.2498
+        }
+      }
+    },
+    {
+      "name": "Emitter 9 level 7",
+      "components": {
+        "transform": {
+          "position": [
+            270.0,
+            -270.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 1.6601
+        }
+      }
+    },
+    {
+      "name": "Emitter 10 level 7",
+      "components": {
+        "transform": {
+          "position": [
+            -270.0,
+            -210.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 1.6601
+        }
+      }
+    },
+    {
+      "name": "Emitter 11 level 0",
+      "components": {
+        "transform": {
+          "position": [
+            -210.0,
+            -210.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.02
+        }
+      }
+    },
+    {
+      "name": "Emitter 12 level 3",
+      "components": {
+        "transform": {
+          "position": [
+            -150.0,
+            -210.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.1329
+        }
+      }
+    },
+    {
+      "name": "Emitter 13 level 6",
+      "components": {
+        "transform": {
+          "position": [
+            -90.0,
+            -210.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.883
+        }
+      }
+    },
+    {
+      "name": "Emitter 14 level 9",
+      "components": {
+        "transform": {
+          "position": [
+            -30.0,
+            -210.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 5.8675
+        }
+      }
+    },
+    {
+      "name": "Emitter 15 level 2",
+      "components": {
+        "transform": {
+          "position": [
+            30.0,
+            -210.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.0707
+        }
+      }
+    },
+    {
+      "name": "Emitter 16 level 5",
+      "components": {
+        "transform": {
+          "position": [
+            90.0,
+            -210.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.4697
+        }
+      }
+    },
+    {
+      "name": "Emitter 17 level 8",
+      "components": {
+        "transform": {
+          "position": [
+            150.0,
+            -210.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 3.121
+        }
+      }
+    },
+    {
+      "name": "Emitter 18 level 1",
+      "components": {
+        "transform": {
+          "position": [
+            210.0,
+            -210.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.0376
+        }
+      }
+    },
+    {
+      "name": "Emitter 19 level 4",
+      "components": {
+        "transform": {
+          "position": [
+            270.0,
+            -210.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.2498
+        }
+      }
+    },
+    {
+      "name": "Emitter 20 level 4",
+      "components": {
+        "transform": {
+          "position": [
+            -270.0,
+            -150.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.2498
+        }
+      }
+    },
+    {
+      "name": "Emitter 21 level 7",
+      "components": {
+        "transform": {
+          "position": [
+            -210.0,
+            -150.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 1.6601
+        }
+      }
+    },
+    {
+      "name": "Emitter 22 level 0",
+      "components": {
+        "transform": {
+          "position": [
+            -150.0,
+            -150.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.02
+        }
+      }
+    },
+    {
+      "name": "Emitter 23 level 3",
+      "components": {
+        "transform": {
+          "position": [
+            -90.0,
+            -150.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.1329
+        }
+      }
+    },
+    {
+      "name": "Emitter 24 level 6",
+      "components": {
+        "transform": {
+          "position": [
+            -30.0,
+            -150.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.883
+        }
+      }
+    },
+    {
+      "name": "Emitter 25 level 9",
+      "components": {
+        "transform": {
+          "position": [
+            30.0,
+            -150.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 5.8675
+        }
+      }
+    },
+    {
+      "name": "Emitter 26 level 2",
+      "components": {
+        "transform": {
+          "position": [
+            90.0,
+            -150.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.0707
+        }
+      }
+    },
+    {
+      "name": "Emitter 27 level 5",
+      "components": {
+        "transform": {
+          "position": [
+            150.0,
+            -150.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.4697
+        }
+      }
+    },
+    {
+      "name": "Emitter 28 level 8",
+      "components": {
+        "transform": {
+          "position": [
+            210.0,
+            -150.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 3.121
+        }
+      }
+    },
+    {
+      "name": "Emitter 29 level 1",
+      "components": {
+        "transform": {
+          "position": [
+            270.0,
+            -150.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.0376
+        }
+      }
+    },
+    {
+      "name": "Emitter 30 level 1",
+      "components": {
+        "transform": {
+          "position": [
+            -270.0,
+            -90.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.0376
+        }
+      }
+    },
+    {
+      "name": "Emitter 31 level 4",
+      "components": {
+        "transform": {
+          "position": [
+            -210.0,
+            -90.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.2498
+        }
+      }
+    },
+    {
+      "name": "Emitter 32 level 7",
+      "components": {
+        "transform": {
+          "position": [
+            -150.0,
+            -90.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 1.6601
+        }
+      }
+    },
+    {
+      "name": "Emitter 33 level 0",
+      "components": {
+        "transform": {
+          "position": [
+            -90.0,
+            -90.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.02
+        }
+      }
+    },
+    {
+      "name": "Emitter 34 level 3",
+      "components": {
+        "transform": {
+          "position": [
+            -30.0,
+            -90.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.1329
+        }
+      }
+    },
+    {
+      "name": "Emitter 35 level 6",
+      "components": {
+        "transform": {
+          "position": [
+            30.0,
+            -90.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.883
+        }
+      }
+    },
+    {
+      "name": "Emitter 36 level 9",
+      "components": {
+        "transform": {
+          "position": [
+            90.0,
+            -90.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 5.8675
+        }
+      }
+    },
+    {
+      "name": "Emitter 37 level 2",
+      "components": {
+        "transform": {
+          "position": [
+            150.0,
+            -90.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.0707
+        }
+      }
+    },
+    {
+      "name": "Emitter 38 level 5",
+      "components": {
+        "transform": {
+          "position": [
+            210.0,
+            -90.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.4697
+        }
+      }
+    },
+    {
+      "name": "Emitter 39 level 8",
+      "components": {
+        "transform": {
+          "position": [
+            270.0,
+            -90.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 3.121
+        }
+      }
+    },
+    {
+      "name": "Emitter 40 level 8",
+      "components": {
+        "transform": {
+          "position": [
+            -270.0,
+            -30.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 3.121
+        }
+      }
+    },
+    {
+      "name": "Emitter 41 level 1",
+      "components": {
+        "transform": {
+          "position": [
+            -210.0,
+            -30.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.0376
+        }
+      }
+    },
+    {
+      "name": "Emitter 42 level 4",
+      "components": {
+        "transform": {
+          "position": [
+            -150.0,
+            -30.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.2498
+        }
+      }
+    },
+    {
+      "name": "Emitter 43 level 7",
+      "components": {
+        "transform": {
+          "position": [
+            -90.0,
+            -30.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 1.6601
+        }
+      }
+    },
+    {
+      "name": "Emitter 44 level 0",
+      "components": {
+        "transform": {
+          "position": [
+            -30.0,
+            -30.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.02
+        }
+      }
+    },
+    {
+      "name": "Emitter 45 level 3",
+      "components": {
+        "transform": {
+          "position": [
+            30.0,
+            -30.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.1329
+        }
+      }
+    },
+    {
+      "name": "Emitter 46 level 6",
+      "components": {
+        "transform": {
+          "position": [
+            90.0,
+            -30.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.883
+        }
+      }
+    },
+    {
+      "name": "Emitter 47 level 9",
+      "components": {
+        "transform": {
+          "position": [
+            150.0,
+            -30.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 5.8675
+        }
+      }
+    },
+    {
+      "name": "Emitter 48 level 2",
+      "components": {
+        "transform": {
+          "position": [
+            210.0,
+            -30.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.0707
+        }
+      }
+    },
+    {
+      "name": "Emitter 49 level 5",
+      "components": {
+        "transform": {
+          "position": [
+            270.0,
+            -30.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.4697
+        }
+      }
+    },
+    {
+      "name": "Emitter 50 level 5",
+      "components": {
+        "transform": {
+          "position": [
+            -270.0,
+            30.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.4697
+        }
+      }
+    },
+    {
+      "name": "Emitter 51 level 8",
+      "components": {
+        "transform": {
+          "position": [
+            -210.0,
+            30.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 3.121
+        }
+      }
+    },
+    {
+      "name": "Emitter 52 level 1",
+      "components": {
+        "transform": {
+          "position": [
+            -150.0,
+            30.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.0376
+        }
+      }
+    },
+    {
+      "name": "Emitter 53 level 4",
+      "components": {
+        "transform": {
+          "position": [
+            -90.0,
+            30.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.2498
+        }
+      }
+    },
+    {
+      "name": "Emitter 54 level 7",
+      "components": {
+        "transform": {
+          "position": [
+            -30.0,
+            30.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 1.6601
+        }
+      }
+    },
+    {
+      "name": "Emitter 55 level 0",
+      "components": {
+        "transform": {
+          "position": [
+            30.0,
+            30.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.02
+        }
+      }
+    },
+    {
+      "name": "Emitter 56 level 3",
+      "components": {
+        "transform": {
+          "position": [
+            90.0,
+            30.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.1329
+        }
+      }
+    },
+    {
+      "name": "Emitter 57 level 6",
+      "components": {
+        "transform": {
+          "position": [
+            150.0,
+            30.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.883
+        }
+      }
+    },
+    {
+      "name": "Emitter 58 level 9",
+      "components": {
+        "transform": {
+          "position": [
+            210.0,
+            30.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 5.8675
+        }
+      }
+    },
+    {
+      "name": "Emitter 59 level 2",
+      "components": {
+        "transform": {
+          "position": [
+            270.0,
+            30.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.0707
+        }
+      }
+    },
+    {
+      "name": "Emitter 60 level 2",
+      "components": {
+        "transform": {
+          "position": [
+            -270.0,
+            90.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.0707
+        }
+      }
+    },
+    {
+      "name": "Emitter 61 level 5",
+      "components": {
+        "transform": {
+          "position": [
+            -210.0,
+            90.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.4697
+        }
+      }
+    },
+    {
+      "name": "Emitter 62 level 8",
+      "components": {
+        "transform": {
+          "position": [
+            -150.0,
+            90.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 3.121
+        }
+      }
+    },
+    {
+      "name": "Emitter 63 level 1",
+      "components": {
+        "transform": {
+          "position": [
+            -90.0,
+            90.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.0376
+        }
+      }
+    },
+    {
+      "name": "Emitter 64 level 4",
+      "components": {
+        "transform": {
+          "position": [
+            -30.0,
+            90.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.2498
+        }
+      }
+    },
+    {
+      "name": "Emitter 65 level 7",
+      "components": {
+        "transform": {
+          "position": [
+            30.0,
+            90.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 1.6601
+        }
+      }
+    },
+    {
+      "name": "Emitter 66 level 0",
+      "components": {
+        "transform": {
+          "position": [
+            90.0,
+            90.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.02
+        }
+      }
+    },
+    {
+      "name": "Emitter 67 level 3",
+      "components": {
+        "transform": {
+          "position": [
+            150.0,
+            90.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.1329
+        }
+      }
+    },
+    {
+      "name": "Emitter 68 level 6",
+      "components": {
+        "transform": {
+          "position": [
+            210.0,
+            90.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.883
+        }
+      }
+    },
+    {
+      "name": "Emitter 69 level 9",
+      "components": {
+        "transform": {
+          "position": [
+            270.0,
+            90.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 5.8675
+        }
+      }
+    },
+    {
+      "name": "Emitter 70 level 9",
+      "components": {
+        "transform": {
+          "position": [
+            -270.0,
+            150.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 5.8675
+        }
+      }
+    },
+    {
+      "name": "Emitter 71 level 2",
+      "components": {
+        "transform": {
+          "position": [
+            -210.0,
+            150.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.0707
+        }
+      }
+    },
+    {
+      "name": "Emitter 72 level 5",
+      "components": {
+        "transform": {
+          "position": [
+            -150.0,
+            150.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.4697
+        }
+      }
+    },
+    {
+      "name": "Emitter 73 level 8",
+      "components": {
+        "transform": {
+          "position": [
+            -90.0,
+            150.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 3.121
+        }
+      }
+    },
+    {
+      "name": "Emitter 74 level 1",
+      "components": {
+        "transform": {
+          "position": [
+            -30.0,
+            150.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.0376
+        }
+      }
+    },
+    {
+      "name": "Emitter 75 level 4",
+      "components": {
+        "transform": {
+          "position": [
+            30.0,
+            150.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.2498
+        }
+      }
+    },
+    {
+      "name": "Emitter 76 level 7",
+      "components": {
+        "transform": {
+          "position": [
+            90.0,
+            150.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 1.6601
+        }
+      }
+    },
+    {
+      "name": "Emitter 77 level 0",
+      "components": {
+        "transform": {
+          "position": [
+            150.0,
+            150.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.02
+        }
+      }
+    },
+    {
+      "name": "Emitter 78 level 3",
+      "components": {
+        "transform": {
+          "position": [
+            210.0,
+            150.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.1329
+        }
+      }
+    },
+    {
+      "name": "Emitter 79 level 6",
+      "components": {
+        "transform": {
+          "position": [
+            270.0,
+            150.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.883
+        }
+      }
+    },
+    {
+      "name": "Emitter 80 level 6",
+      "components": {
+        "transform": {
+          "position": [
+            -270.0,
+            210.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.883
+        }
+      }
+    },
+    {
+      "name": "Emitter 81 level 9",
+      "components": {
+        "transform": {
+          "position": [
+            -210.0,
+            210.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 5.8675
+        }
+      }
+    },
+    {
+      "name": "Emitter 82 level 2",
+      "components": {
+        "transform": {
+          "position": [
+            -150.0,
+            210.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.0707
+        }
+      }
+    },
+    {
+      "name": "Emitter 83 level 5",
+      "components": {
+        "transform": {
+          "position": [
+            -90.0,
+            210.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.4697
+        }
+      }
+    },
+    {
+      "name": "Emitter 84 level 8",
+      "components": {
+        "transform": {
+          "position": [
+            -30.0,
+            210.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 3.121
+        }
+      }
+    },
+    {
+      "name": "Emitter 85 level 1",
+      "components": {
+        "transform": {
+          "position": [
+            30.0,
+            210.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.0376
+        }
+      }
+    },
+    {
+      "name": "Emitter 86 level 4",
+      "components": {
+        "transform": {
+          "position": [
+            90.0,
+            210.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.2498
+        }
+      }
+    },
+    {
+      "name": "Emitter 87 level 7",
+      "components": {
+        "transform": {
+          "position": [
+            150.0,
+            210.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 1.6601
+        }
+      }
+    },
+    {
+      "name": "Emitter 88 level 0",
+      "components": {
+        "transform": {
+          "position": [
+            210.0,
+            210.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.02
+        }
+      }
+    },
+    {
+      "name": "Emitter 89 level 3",
+      "components": {
+        "transform": {
+          "position": [
+            270.0,
+            210.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.1329
+        }
+      }
+    },
+    {
+      "name": "Emitter 90 level 3",
+      "components": {
+        "transform": {
+          "position": [
+            -270.0,
+            270.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.1329
+        }
+      }
+    },
+    {
+      "name": "Emitter 91 level 6",
+      "components": {
+        "transform": {
+          "position": [
+            -210.0,
+            270.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.883
+        }
+      }
+    },
+    {
+      "name": "Emitter 92 level 9",
+      "components": {
+        "transform": {
+          "position": [
+            -150.0,
+            270.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 5.8675
+        }
+      }
+    },
+    {
+      "name": "Emitter 93 level 2",
+      "components": {
+        "transform": {
+          "position": [
+            -90.0,
+            270.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.0707
+        }
+      }
+    },
+    {
+      "name": "Emitter 94 level 5",
+      "components": {
+        "transform": {
+          "position": [
+            -30.0,
+            270.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.4697
+        }
+      }
+    },
+    {
+      "name": "Emitter 95 level 8",
+      "components": {
+        "transform": {
+          "position": [
+            30.0,
+            270.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 3.121
+        }
+      }
+    },
+    {
+      "name": "Emitter 96 level 1",
+      "components": {
+        "transform": {
+          "position": [
+            90.0,
+            270.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.0376
+        }
+      }
+    },
+    {
+      "name": "Emitter 97 level 4",
+      "components": {
+        "transform": {
+          "position": [
+            150.0,
+            270.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.2498
+        }
+      }
+    },
+    {
+      "name": "Emitter 98 level 7",
+      "components": {
+        "transform": {
+          "position": [
+            210.0,
+            270.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 1.6601
+        }
+      }
+    },
+    {
+      "name": "Emitter 99 level 0",
+      "components": {
+        "transform": {
+          "position": [
+            270.0,
+            270.0,
+            35.0
+          ],
+          "scale": [
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "mesh": {
+          "asset": "sample/content/meshes/cube.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0,
+          "baseColorG": 0,
+          "baseColorB": 0,
+          "roughnessMultiplier": 1,
+          "metallicMultiplier": 0,
+          "emissiveColorR": 1,
+          "emissiveColorG": 1,
+          "emissiveColorB": 1,
+          "emissiveIntensity": 0.02
+        }
+      }
+    }
+  ]
+}
