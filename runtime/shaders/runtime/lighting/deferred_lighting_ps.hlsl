@@ -450,6 +450,15 @@ float LocalShadow(uint entry, uint cubeBase, float3 worldPos, float3 N, float so
     return SampleLocalShadow(entry, worldPos, N);
 }
 
+/// The PCSS emitter radius (cm) of one local light (phase2_omni-pcss-soft-shadows 1.5): the light's
+/// own `softShadowRadius` when set (negative keeps it hard, see LocalShadow), else its `sourceRadius`
+/// when positive (point lights), else r.Shadows.SoftPCSS.Local.SourceRadius. Every light at 0 is the
+/// selection the local PCSS shipped with.
+float LocalPcssRadius(float softShadowRadius, float sourceRadius) {
+    return softShadowRadius != 0.0 ? softShadowRadius
+         : (sourceRadius > 0.0 ? sourceRadius : localPcssSourceRadius);
+}
+
 // ─── Local lights (block B.7) ─────────────────────────────────────────────
 //
 // The point and spot loop bodies of the deferred pass, as functions shared by the per-pixel loop and
@@ -495,7 +504,7 @@ float3 ShadePointLight(PointLightData pl, float3 worldPos, float3 N, float3 geom
                         : (a.y >= a.z)               ? (d.y > 0.0 ? 2u : 3u)
                                                      : (d.z > 0.0 ? 4u : 5u);
         atten *= LocalShadow(pl.shadowIndex + face, pl.shadowIndex, worldPos, geometricNormal,
-                             pl.sourceRadius > 0.0 ? pl.sourceRadius : localPcssSourceRadius);
+                             LocalPcssRadius(pl.softShadowRadius, pl.sourceRadius));
     }
 
     float3 Hp   = normalize(V + Lp);
@@ -551,7 +560,8 @@ float3 ShadeSpotLight(SpotLightData sl, float3 worldPos, float3 N, float3 geomet
     // ── Spot shadow map sampling ─────────────────────────────────
     // Linear-distance tile, sampled by SampleLocalShadow above (block A.1).
     float spotShadow = (sl.shadowIndex != 0xFFFFFFFFu && sl.shadowIndex < localShadowCount)
-                     ? LocalShadow(sl.shadowIndex, 0xFFFFFFFFu, worldPos, geometricNormal, localPcssSourceRadius) : 1.0;
+                     ? LocalShadow(sl.shadowIndex, 0xFFFFFFFFu, worldPos, geometricNormal,
+                                   LocalPcssRadius(sl.softShadowRadius, 0.0)) : 1.0;
 
     float3 Hs   = normalize(V + Ls);
     float  NoHs = saturate(dot(N, Hs));

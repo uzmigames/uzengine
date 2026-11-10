@@ -31,7 +31,9 @@ struct PointLightData   // 64 bytes — matches C++ exactly
     float3 position;     float radius;
     float3 color;        float sourceRadius;
     float falloffExponent; float specularScale; float diffuseScale; uint flags;
-    uint shadowIndex;    float3 _pad;
+    // softShadowRadius: per-light PCSS emitter radius in cm (0 = inherit sourceRadius, else the
+    // r.Shadows.SoftPCSS.Local.SourceRadius CVar; < 0 = hard). The former first pad float.
+    uint shadowIndex;    float softShadowRadius; float2 _pad;
 };
 
 struct SpotLightData    // 80 bytes — matches C++ exactly
@@ -40,7 +42,8 @@ struct SpotLightData    // 80 bytes — matches C++ exactly
     float3 color;        float cosOuterAngle;
     float3 direction;    float invCosConeDifference;
     float falloffExponent; float specularScale; float diffuseScale; uint flags;
-    uint shadowIndex;    float3 _spotPad;
+    // softShadowRadius: per-light PCSS emitter radius in cm (0 = inherit the CVar, < 0 = hard).
+    uint shadowIndex;    float softShadowRadius; float2 _spotPad;
 };
 
 // Rectangular area light (phase3a 3.33.0): position +- right * halfWidth +- up * halfHeight, emitting

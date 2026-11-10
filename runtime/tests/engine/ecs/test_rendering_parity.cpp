@@ -192,6 +192,7 @@ TEST(RenderingParity, PointLightDefaults) {
     EXPECT_FLOAT_EQ(point.lightFalloffExponent, 8.0f);
     EXPECT_FLOAT_EQ(point.sourceRadius,         0.f);
     EXPECT_FLOAT_EQ(point.softSourceRadius,     0.f);
+    EXPECT_FLOAT_EQ(point.softShadowRadius,     0.f);   // 0 = inherit (phase2_omni-pcss-soft-shadows 1.5)
     EXPECT_FLOAT_EQ(point.sourceLength,         0.f);
 }
 
@@ -213,6 +214,7 @@ TEST(RenderingParity, SpotLightInheritsFromPointLight) {
     EXPECT_FLOAT_EQ(spot.lightFalloffExponent, 8.0f);
     EXPECT_FLOAT_EQ(spot.sourceRadius,         0.f);
     EXPECT_FLOAT_EQ(spot.softSourceRadius,     0.f);
+    EXPECT_FLOAT_EQ(spot.softShadowRadius,     0.f);
     EXPECT_FLOAT_EQ(spot.sourceLength,         0.f);
 }
 

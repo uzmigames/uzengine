@@ -513,6 +513,7 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
                 pld.diffuseScale    = 1.0f;
                 pld.flags           = kLightFlag_InverseSquared;
                 pld.shadowIndex     = UINT32_MAX;
+                pld.softShadowRadius = 0.0f;   // unshadowed anyway; 0 = inherit
                 lightingCB->pointLightCount++;
             }
         }

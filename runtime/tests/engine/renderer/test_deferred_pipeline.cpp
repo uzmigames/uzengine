@@ -126,7 +126,8 @@ TEST(PointLightData, SizeIs64Bytes) {
 /// 40  diffuseScale    float   ( 4 B)
 /// 44  flags           uint    ( 4 B)
 /// 48  shadowIndex     uint    ( 4 B)
-/// 52  _pointPad[3]    float3  (12 B)
+/// 52  softShadowRadius float  ( 4 B)  phase2_omni-pcss-soft-shadows 1.5 (former pad)
+/// 56  _pointPad[2]    float2  ( 8 B)
 TEST(PointLightData, FieldLayout) {
     EXPECT_EQ(offsetof(PointLightData, position),        0u);
     EXPECT_EQ(offsetof(PointLightData, radius),         12u);
@@ -137,7 +138,22 @@ TEST(PointLightData, FieldLayout) {
     EXPECT_EQ(offsetof(PointLightData, diffuseScale),   40u);
     EXPECT_EQ(offsetof(PointLightData, flags),          44u);
     EXPECT_EQ(offsetof(PointLightData, shadowIndex),    48u);
+    EXPECT_EQ(offsetof(PointLightData, softShadowRadius), 52u);
     EXPECT_EQ(sizeof(PointLightData),                   64u);
+    // The spot light carries the same per-light PCSS radius after its shadowIndex (light_types.hlsli).
+    EXPECT_EQ(offsetof(SpotLightData, flags),            60u);
+    EXPECT_EQ(offsetof(SpotLightData, shadowIndex),      64u);
+    EXPECT_EQ(offsetof(SpotLightData, softShadowRadius), 68u);
+    EXPECT_EQ(sizeof(SpotLightData),                     80u);
+}
+
+TEST(PointLightData, SoftShadowRadiusDefaultsToInherit) {
+    // 0 = inherit (sourceRadius, else the r.Shadows.SoftPCSS.Local.SourceRadius CVar): a light
+    // nobody configured renders exactly as before the field existed.
+    const PointLightData pl{};
+    const SpotLightData sl{};
+    EXPECT_FLOAT_EQ(pl.softShadowRadius, 0.0f);
+    EXPECT_FLOAT_EQ(sl.softShadowRadius, 0.0f);
 }
 
 TEST(PointLightData, WriteAndReadBack) {

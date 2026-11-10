@@ -468,6 +468,8 @@ static constexpr uint32_t kClusterFlag_SpotCone = 1u << 4;   ///< Spots are assi
 ///     float  specularScale;   // 0-1 specular multiplier
 ///     float  diffuseScale;    // 0-1 diffuse multiplier
 ///     uint   flags;           // bit0=useInverseSquared
+///     uint   shadowIndex;     // local shadow atlas entry (0xFFFFFFFF = none)
+///     float  softShadowRadius; // PCSS emitter radius in cm (0 = inherit)
 /// };
 /// ```
 struct PointLightData {
@@ -483,7 +485,12 @@ struct PointLightData {
     /// For point lights, this is the base index — 6 consecutive entries (one per cubemap face).
     /// 0xFFFFFFFF = no shadow (light does not cast shadows).
     uint32_t shadowIndex = UINT32_MAX;
-    float    _pointPad[3] = {};  ///< Pad to 64 bytes (4 float4s).
+    /// Per-light PCSS emitter radius in cm (phase2_omni-pcss-soft-shadows 1.5): the penumbra width
+    /// of this light's soft shadow. 0 = inherit (sourceRadius when positive, else
+    /// r.Shadows.SoftPCSS.Local.SourceRadius), < 0 = hard shadow for this light. Only read on the
+    /// r.Shadows.SoftPCSS.Local path; the former first pad float, so the layout is unchanged.
+    float    softShadowRadius = 0.0f;
+    float    _pointPad[2] = {};  ///< Pad to 64 bytes (4 float4s).
 };
 
 /// PointLightData flag bits.
@@ -512,6 +519,8 @@ static_assert(sizeof(PointLightData) == 64, "PointLightData must be 64 bytes (fo
 ///     float  specularScale;         // 0-1 specular multiplier
 ///     float  diffuseScale;          // 0-1 diffuse multiplier
 ///     uint   flags;                 // bit0=useInverseSquared
+///     uint   shadowIndex;           // local shadow atlas entry (0xFFFFFFFF = none)
+///     float  softShadowRadius;      // PCSS emitter radius in cm (0 = inherit)
 /// };
 /// ```
 struct SpotLightData {
@@ -528,7 +537,11 @@ struct SpotLightData {
     /// Index into LocalShadowCB::shadows[] for this light's shadow data.
     /// 0xFFFFFFFF = no shadow (light does not cast shadows).
     uint32_t shadowIndex = UINT32_MAX;
-    float    _spotPad[3] = {};      ///< Pad to 80 bytes (5 float4s).
+    /// Per-light PCSS emitter radius in cm (phase2_omni-pcss-soft-shadows 1.5). 0 = inherit
+    /// r.Shadows.SoftPCSS.Local.SourceRadius, < 0 = hard shadow for this light. The former first
+    /// pad float, so the layout is unchanged.
+    float    softShadowRadius = 0.0f;
+    float    _spotPad[2] = {};      ///< Pad to 80 bytes (5 float4s).
 };
 
 static_assert(sizeof(SpotLightData) == 80, "SpotLightData must be 80 bytes (five float4s)");
