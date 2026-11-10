@@ -152,6 +152,13 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         denoiserGuides.normal = ctx.normalRes;
         denoiserGuides.velocity = ctx.velocityRes;
         denoiserGuides.reset = !ctx.temporal.matrixValid;
+        {
+            // nrd::CommonSettings needs worldToView and viewToClip separately (NRD SDK adapter).
+            const Camera& camera = m_cameraManager->GetActiveCamera();
+            denoiserGuides.view = camera.GetView();
+            denoiserGuides.proj = camera.GetProjection();
+            denoiserGuides.farPlane = camera.GetFarPlane();
+        }
         if (!m_pipelinePathTracer->AddPass(rgBuilder, ctx.hdrRes, ctx.perFrameAlloc,
                 *m_rtManager, ctx.cmdList, ctx.drawList.GetCommands(), m_meshes, skySrv,
                 ctx.frameIndex, static_cast<uint32_t>(ctx.renderWidth),

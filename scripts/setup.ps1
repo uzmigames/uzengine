@@ -805,6 +805,18 @@ Clone-Repo -Name "dlss" `
     -Commit "982b0d19f9e35fef8e1b3109efa6b95470563866" `
     -RemoveDirs @("doc", "samples", "utils", "tests")
 
+# NVIDIA NRD (Real-time Denoisers) SDK — REBLUR diffuse + RELAX specular for the
+# DXR path tracer (r.NRD.SDK / --denoiser nrd-sdk). MIT license, no binaries
+# published: scripts/build_nrd.ps1 builds NRD.dll (DXIL embedded) with MSVC and
+# the engine loads it at runtime. runtime/thirdparty/nrd/ is .gitignored.
+# v4.17.3 pinned to the commit the tag points to.
+Clone-Repo -Name "nrd" `
+    -Url "https://github.com/NVIDIA-RTX/NRD.git" `
+    -Branch "v4.17.3" `
+    -Commit "792eff196afdd350fd9c3f862119017ccb438a0e" `
+    -RemoveDirs @("Images", ".github")
+& (Join-Path $ScriptDir "build_nrd.ps1")
+
 # SMAA — Subpixel Morphological Anti-Aliasing (header-only HLSL/GLSL)
 # master pinned to its tip (unchanged since 2013), matching the vendored files.
 Clone-Repo -Name "smaa" `

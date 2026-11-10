@@ -37,6 +37,10 @@ struct NrdInputs {
     CBAllocation perFrame;
     uint32_t width, height, frameIndex;
     bool reset;
+    // Camera of this frame for the NRD SDK adapter (nrd::CommonSettings wants
+    // worldToView and viewToClip separately); unused by the native stages.
+    Mat4 view, proj;
+    float farPlane = 0.f;
 };
 
 // Separate diffuse/specular temporal and edge-aware a-trous reconstruction.

@@ -1,4 +1,5 @@
 #include "pipeline_path_tracer_pass.h"
+#include "nrd_sdk_denoiser.h"
 
 #include "draw_list.h"
 #include "gpu_mesh.h"
@@ -128,6 +129,8 @@ struct PipelinePathTracerPass::Impl {
     std::array<uint32_t, 3> lightCapacity{};
     LightBVH lightBVH;
     std::unique_ptr<NrdDenoiser> denoiser;
+    std::unique_ptr<NrdSdkDenoiser> sdkDenoiser; // r.NRD.SDK: NVIDIA NRD instead of the native stages
+    bool sdkInitFailed = false;
     std::array<RHIBufferHandle, 3> bvhNodes{}, bvhLights{}, bvhConfigs{};
     std::array<uint32_t, 3> bvhNodeCapacity{}, bvhLightCapacity{}, bvhConfigCapacity{};
     bool bvhLogged = false;
@@ -883,8 +886,29 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
     radianceDesc.usage = RHITextureUsage::ShaderResource | RHITextureUsage::UnorderedAccess;
     const auto radiance = builder.CreateTexture("PipelinePathTracer_Radiance", radianceDesc);
     rg::RgResourceId diffuse, fraction, signalAlbedo, specular, modulation, virtualPosition, pathGuide;
+    bool sdkActive = false;
     if (denoise) {
-        if (!p.denoiser) {
+        if (cv.GetBool("r.NRD.SDK", false)) {
+            // Opt-in NVIDIA NRD SDK; a failed Init (no NRD.dll, mismatched build)
+            // logs once and leaves the native stage-2 denoiser in charge.
+            const bool stale = !p.sdkDenoiser || p.sdkDenoiser->Width() != width
+                || p.sdkDenoiser->Height() != height;
+            if (stale && !p.sdkInitFailed) {
+                auto sdk = std::make_unique<NrdSdkDenoiser>();
+                if (sdk->Init(p.device, width, height)) {
+                    p.sdkDenoiser = std::move(sdk);
+                } else {
+                    p.sdkDenoiser.reset();
+                    p.sdkInitFailed = true;
+                    UZ_LOG(Renderer, Warning, "PipelinePathTracer: r.NRD.SDK requested but NrdSdkDenoiser::Init failed; using the native NRD stages");
+                }
+            }
+            sdkActive = p.sdkDenoiser != nullptr;
+        } else if (p.sdkDenoiser || p.sdkInitFailed) {
+            p.sdkDenoiser.reset();
+            p.sdkInitFailed = false;
+        }
+        if (!sdkActive && !p.denoiser) {
             p.denoiser = std::make_unique<NrdDenoiser>();
             if (!p.denoiser->Init(p.device)) {
                 p.denoiser.reset();
@@ -1237,9 +1261,10 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
         inputs.width = width; inputs.height = height; inputs.frameIndex = frameIndex;
         inputs.perFrame = perFrame;
         // Stage 2 validates moving views per pixel. Stage 1 retains its camera-cut reset.
-        inputs.reset = inputs.reset || (cv.GetBool("r.NRD.Specular", true)
+        inputs.reset = inputs.reset || (sdkActive || cv.GetBool("r.NRD.Specular", true)
             ? denoiserReset : accumulatedFrames == 0);
-        resolved = p.denoiser->Denoise(builder, inputs);
+        resolved = sdkActive ? p.sdkDenoiser->Denoise(builder, inputs)
+                             : p.denoiser->Denoise(builder, inputs);
         if (!resolved.IsValid()) return false;
     }
     builder.AddPass("PipelinePathTracer_Resolve", [=](rg::RgPassBuilder& pb) {

@@ -386,6 +386,10 @@ TIER_B = [
                      'nrdFractionUav': 'fractionUav', 'nrdAlbedoUav': 'albedoUav',
                      'nrdSpecularUav': 'specularUav', 'nrdModulationUav': 'modulationUav',
                      'nrdVirtualPositionUav': 'virtualPositionUav', 'nrdGuideUav': 'guideUav'}),
+    # NVIDIA NRD SDK adapter root: 224 bytes / 56 DWORDs shared by its pack and modulate
+    # dispatches (two row-major matrices, no CBV). Shared graphics roots do not grow.
+    layout_entry('pathtracing/nrd_sdk_common.hlsli', 'NrdSdkRoot',
+                 PASSES + 'pathtracing/nrd_sdk_denoiser.h'),
     # Private DXR/ReSTIR root: 96 bytes / 24 DWORDs, including history UAVs,
     # sample count and bounce/RR controls. Shared graphics and PerFrameCB do not grow.
     layout_entry('pathtracing/pathtracer_shared.hlsli', 'PathTracerRoot',
