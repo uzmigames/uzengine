@@ -27,6 +27,14 @@ struct RestirSurface {
     float3 view; float metallic;
     float3 albedo; float padding;
 };
+// Mirrors RestirCameraHistory in pipeline_path_tracer_pass.h: last frame's
+// PerFrameCB view-projection, stored as rows so P.x * row0 + P.y * row1 +
+// P.z * row2 + row3 equals mul(float4(P, 1), viewProj) of that frame.
+struct RestirCameraHistory {
+    float4 viewProjRow0, viewProjRow1, viewProjRow2, viewProjRow3;
+    float4 cameraPos;
+    uint cameraMoved; uint3 padding;
+};
 void RestirSetSurface(inout Reservoir r, RestirSurface s) {
     r.surfacePosition = s.position; r.surfaceNormal = s.normal;
     r.surfaceView = s.view; r.surfaceRoughness = s.roughness;

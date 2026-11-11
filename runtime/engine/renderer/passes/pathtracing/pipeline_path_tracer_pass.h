@@ -102,6 +102,42 @@ static_assert(sizeof(RestirReservoir) == 116);
 static_assert(offsetof(RestirReservoir, visibility) == 112);
 static_assert(sizeof(RestirSurface) == 64);
 
+// Mirrors RestirCameraHistory in include/restir_di.hlsli: the previous frame's
+// PerFrameCB view-projection rows and camera position. Temporal reuse
+// reprojects this frame's primary hit through them when the camera moved, so
+// reservoir history survives camera motion instead of resetting with the
+// accumulation. An unchanged camera keeps the exact same-pixel lookup.
+struct RestirCameraHistory {
+    float viewProjRows[4][4] = {};
+    float cameraPos[4] = {};
+    uint32_t cameraMoved = 0;
+    uint32_t padding[3] = {};
+};
+static_assert(sizeof(RestirCameraHistory) == 96);
+static_assert(offsetof(RestirCameraHistory, cameraMoved) == 80);
+
+// Reservoir history survives camera motion (it is reprojected). It is dropped
+// by a transport change (scene, materials, lights, path-tracer CVars), a frame
+// gap, a manual reset, scene edits, or when ReSTIR did not run last frame at
+// this resolution. Pure, so the rule is unit-testable without a device.
+struct RestirHistoryInputs {
+    bool enabled = false;
+    bool previousEnabled = false;
+    uint32_t frameIndex = 0;
+    uint32_t previousFrame = UINT32_MAX;
+    uint32_t resetGeneration = 0;
+    uint32_t previousResetGeneration = 0;
+    uint32_t sceneDirtyFlags = 0;
+    uint64_t transportSignature = 0;
+    uint64_t previousTransportSignature = 0;
+};
+inline bool RestirHistoryValid(const RestirHistoryInputs& in) {
+    return in.enabled && in.previousEnabled
+        && in.previousFrame != UINT32_MAX && in.frameIndex == in.previousFrame + 1u
+        && in.sceneDirtyFlags == 0u && in.resetGeneration == in.previousResetGeneration
+        && in.transportSignature == in.previousTransportSignature;
+}
+
 // Mirrors GISample / GIReservoir / RestirGIRoot in include/restir_gi.hlsli:
 // the one-bounce secondary vertex with its own material and single NEE light
 // sample, so its exitant radiance is re-evaluated toward any receiver.

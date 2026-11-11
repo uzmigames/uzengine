@@ -18,11 +18,33 @@ void main(uint3 id : SV_DispatchThreadID) {
     float selectedTarget = RestirVisibilityTarget(RestirTarget(RestirContribution(surface, r.sample)), r.visibility);
     r.weightSum = selectedTarget * r.W;
     if (restirHistory != 0u && restirTemporal != 0u && r.M > 0u) {
-        // The path-tracer gate invalidates on ANY camera/object change.
-        // The same pixel owns the history. Subpixel jitter moves hits along
-        // the surface, so validate point-to-plane separation, not hit depth.
-        {
-            Reservoir old = previous[index];
+        // History survives camera motion: restirHistory is the SRV index + 1 of
+        // last frame's camera. An unchanged camera keeps the same pixel exactly;
+        // a moved camera reprojects this frame's primary hit through last frame's
+        // view-projection (static geometry; a moved object fails the surface
+        // gate below instead). Transport/scene/reset changes drop the history
+        // on the CPU. Subpixel jitter moves hits along the surface, so validate
+        // point-to-plane separation, not hit depth.
+        StructuredBuffer<RestirCameraHistory> cameras = ResourceDescriptorHeap[restirHistory - 1u];
+        RestirCameraHistory camera = cameras[0];
+        int2 historyPixel = int2(id.xy);
+        bool found = true;
+        if (camera.cameraMoved != 0u) {
+            float4 clip = surface.position.x * camera.viewProjRow0 + surface.position.y * camera.viewProjRow1
+                        + surface.position.z * camera.viewProjRow2 + camera.viewProjRow3;
+            found = clip.w > 0.0;
+            if (found) {
+                float2 ndc = clip.xy / clip.w;
+                // Inverse of the raygen mapping: uv = (pixel + 0.5 + jitter) / size,
+                // ndc = (2 uv.x - 1, 1 - 2 uv.y).
+                float2 uv = float2(0.5 + 0.5 * ndc.x, 0.5 - 0.5 * ndc.y);
+                historyPixel = int2(floor(uv * float2(restirWidth, restirHeight)));
+                found = all(historyPixel >= 0) && historyPixel.x < int(restirWidth)
+                     && historyPixel.y < int(restirHeight);
+            }
+        }
+        if (found) {
+            Reservoir old = previous[uint(historyPixel.y) * restirWidth + uint(historyPixel.x)];
             float tolerance = max(0.01, length(surface.position - cameraPos.xyz) * 1e-4);
             if (old.M > 0u && dot(old.surfaceNormal, surface.normal) >= 0.9
                 && abs(dot(old.surfacePosition - surface.position, surface.normal)) <= tolerance) {

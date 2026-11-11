@@ -499,6 +499,10 @@ TIER_C = [
      'hlsl_structs': ('LightSample',), 'extra_structs': ('RestirLightSample',)},
     layout_entry('include/restir_di.hlsli', 'RestirSurface',
                  PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'RestirSurface'),
+    # 96-byte previous-camera record (four view-projection rows, position, moved flag)
+    # read by restir_temporal_cs to reproject reservoir history under camera motion.
+    layout_entry('include/restir_di.hlsli', 'RestirCameraHistory',
+                 PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'RestirCameraHistory'),
     # 88-byte one-bounce sample inside the 160-byte GI reservoir (visibility at 156).
     layout_entry('include/restir_gi.hlsli', 'GISample',
                  PASSES + 'pathtracing/pipeline_path_tracer_pass.h', 'RestirGISample'),

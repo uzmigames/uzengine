@@ -151,6 +151,14 @@ struct PipelinePathTracerPass::Impl {
     uint64_t previousDenoiserSignature = 0;
     RHIBufferHandle restirSurface, restirInitial;
     std::array<RHIBufferHandle, 2> reservoirs{};
+    // Temporal history across camera motion: last frame's camera (uploaded per
+    // frame slot), whether ReSTIR ran last frame, the frames since the history
+    // was last dropped (the reservoir passes' random seed), and the logged state.
+    std::array<RHIBufferHandle, 3> restirCameras{};
+    RestirCameraHistory restirCamera{};
+    bool restirPreviousEnabled = false;
+    bool restirCameraMoving = false;
+    uint32_t restirFrame = 0;
     RHIBufferHandle giInitial;
     std::array<RHIBufferHandle, 2> giReservoirs{};
     RHIBufferHandle readback;
@@ -182,6 +190,8 @@ struct PipelinePathTracerPass::Impl {
         if (restirSurface.IsValid()) device->DestroyBuffer(restirSurface);
         if (restirInitial.IsValid()) device->DestroyBuffer(restirInitial);
         for (auto buffer : reservoirs)
+            if (buffer.IsValid()) device->DestroyBuffer(buffer);
+        for (auto buffer : restirCameras)
             if (buffer.IsValid()) device->DestroyBuffer(buffer);
         if (giInitial.IsValid()) device->DestroyBuffer(giInitial);
         for (auto buffer : giReservoirs)
@@ -846,6 +856,7 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
         if (!p.restirSurface.IsValid() || !p.restirInitial.IsValid()
             || !p.reservoirs[0].IsValid() || !p.reservoirs[1].IsValid()) return false;
         p.samples = 0;
+        p.restirPreviousEnabled = false; // fresh reservoirs hold no history
     }
     if (giRestir && !p.giInitial.IsValid()) {
         RHIBufferDesc desc{};
@@ -862,6 +873,56 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
         p.samples = 0;
     }
     const uint32_t resetGeneration = GetPathTracerResetGeneration();
+    // Reservoir history is decoupled from the accumulation: a camera-only
+    // change resets the accumulated image but keeps (and reprojects) the
+    // reservoirs. denoiserSignature is the transport signature without the camera.
+    RestirHistoryInputs historyInputs{};
+    historyInputs.enabled = restirEnabled != 0u;
+    historyInputs.previousEnabled = p.restirPreviousEnabled;
+    historyInputs.frameIndex = frameIndex;
+    historyInputs.previousFrame = p.lastFrame;
+    historyInputs.resetGeneration = resetGeneration;
+    historyInputs.previousResetGeneration = p.resetGeneration;
+    historyInputs.sceneDirtyFlags = sceneDirtyFlags;
+    historyInputs.transportSignature = denoiserSignature;
+    historyInputs.previousTransportSignature = p.previousDenoiserSignature;
+    const bool restirHistoryValid = RestirHistoryValid(historyInputs);
+    p.restirFrame = restirHistoryValid ? p.restirFrame + 1u : 0u;
+    p.restirPreviousEnabled = restirEnabled != 0u;
+    uint32_t restirHistorySrv = 0u;
+    if (restirEnabled) {
+        // Upload last frame's camera; this frame's replaces it for the next frame.
+        static_assert(sizeof(pf->viewProj) == sizeof(RestirCameraHistory::viewProjRows));
+        static_assert(sizeof(pf->cameraPos) == sizeof(RestirCameraHistory::cameraPos));
+        RestirCameraHistory history = p.restirCamera;
+        history.cameraMoved = std::memcmp(history.viewProjRows, &pf->viewProj, sizeof(history.viewProjRows)) != 0 ? 1u : 0u;
+        std::memcpy(p.restirCamera.viewProjRows, &pf->viewProj, sizeof(p.restirCamera.viewProjRows));
+        std::memcpy(p.restirCamera.cameraPos, &pf->cameraPos, sizeof(p.restirCamera.cameraPos));
+        if (!p.restirCameras[slot].IsValid()) {
+            RHIBufferDesc desc{};
+            desc.sizeBytes = sizeof(RestirCameraHistory);
+            desc.stride = sizeof(RestirCameraHistory);
+            desc.memory = RHIMemoryType::Upload;
+            desc.usage = RHIBufferUsage::StructuredBuffer;
+            desc.debugName = "ReSTIR_CameraHistory";
+            p.restirCameras[slot] = p.device->CreateBuffer(desc);
+        }
+        if (!p.restirCameras[slot].IsValid()) return false;
+        if (void* destination = p.device->MapBuffer(p.restirCameras[slot])) {
+            std::memcpy(destination, &history, sizeof(history));
+            p.device->UnmapBuffer(p.restirCameras[slot]);
+        } else {
+            return false;
+        }
+        if (restirHistoryValid) restirHistorySrv = p.device->GetBufferSRVIndex(p.restirCameras[slot]) + 1u;
+        const bool moving = restirHistoryValid && history.cameraMoved != 0u;
+        if (moving != p.restirCameraMoving) {
+            UZ_LOG(Renderer, Info, "ReSTIR DI: temporal history {} at frame {}",
+                moving ? "reprojected through last frame's camera (camera moving)"
+                       : "same-pixel (camera static)", frameIndex);
+            p.restirCameraMoving = moving;
+        }
+    }
     const bool denoiserReset = frameIndex != p.lastFrame + 1
         || resetGeneration != p.resetGeneration || !cv.GetBool("r.PathTracer.Accumulate", true)
         || denoiserSignature != p.previousDenoiserSignature || sceneDirtyFlags != 0;
@@ -983,6 +1044,13 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
         restirConstants.restirInitialUav = p.device->GetBufferUAVIndex(p.restirInitial);
         restirConstants.restirCurrentUav = p.device->GetBufferUAVIndex(currentBuffer);
         restirConstants.restirPreviousUav = p.device->GetBufferUAVIndex(previousBuffer);
+        // The reservoir passes seed their candidates per frame since the history
+        // was last dropped (equal to the accumulation count for a static camera)
+        // and read last frame's camera for reprojection. The DXR dispatches keep
+        // the accumulation index so extraction and shading sample the same rays.
+        auto reservoirConstants = restirConstants;
+        reservoirConstants.sampleIndex = p.restirFrame;
+        reservoirConstants.restirHistory = restirHistorySrv;
         builder.AddPass("ReSTIR_PrimaryHit", [=, this](rg::RgPassBuilder& pb) {
             pb.Write(surface, RHIResourceState::UnorderedAccess);
             pb.SetExecutionCallback([=, this](IRHICommandList* cmd, const rg::RgPassResources&) {
@@ -1034,7 +1102,7 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
 #ifdef _WIN32
                     auto* native = static_cast<DX12CommandList*>(cmd)->GetNative();
                     native->SetComputeRootSignature(m_impl->root.Get());
-                    native->SetComputeRoot32BitConstants(0, kRootDwords, &restirConstants, 0);
+                    native->SetComputeRoot32BitConstants(0, kRootDwords, &reservoirConstants, 0);
                     native->SetComputeRoot32BitConstants(6, sizeof(giInactive) / 4, &giInactive, 0);
                     native->SetComputeRootConstantBufferView(1, m_impl->device->GetBufferGPUAddress(perFrame.bufferHandle) + perFrame.offsetBytes);
                     auto* dx = static_cast<DX12Device*>(m_impl->device);
@@ -1048,7 +1116,7 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
                         UZ_LOG(Renderer, Info, "ReSTIR DI: {} dispatched {}x{}, history={}, 32 candidates, 20-frame M cap",
                             stage == 2 ? "spatial (4 neighbors, source-target MIS)" : stage == 1 ? "temporal"
                                 : restirBVH ? "initial BVH-sourced RIS (joint source PDF, visibility-aware reuse)" : "initial",
-                            (width + 7) / 8, (height + 7) / 8, restirConstants.restirHistory);
+                            (width + 7) / 8, (height + 7) / 8, reservoirConstants.restirHistory != 0u ? 1u : 0u);
 #endif
                 });
             });
