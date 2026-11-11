@@ -17,6 +17,7 @@
 #include "vfs.h"
 #include "gpu_mesh.h"
 #include "sh_projection.h"
+#include "sky_light_fallback.h"
 #include "profiler.h"
 #include "rhi.h"
 #include "log.h"
@@ -327,11 +328,13 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     float skyIndirectIntensity = 1.0f;
     bool  lowerHemisphereIsBlack = true;
     Vec3  lowerHemisphereColor = {0.0f, 0.0f, 0.0f};
+    bool  hasSkyLight = false;
     if (ctx.world) {
         auto skyLightView = ctx.world->GetRegistry().view<SkyLightComponent>();
         for (auto enttEntity : skyLightView) {
             auto& sl = skyLightView.get<SkyLightComponent>(enttEntity);
             if (!sl.enabled) continue;
+            hasSkyLight = true;
             skyIntensity = sl.intensity;
             skyIndirectIntensity = sl.indirectLightingIntensity;
             perFrame.skyLightIntensity  = sl.intensity;
@@ -458,6 +461,44 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
         perFrame.skyIrradianceSH[2].y -= lowerHemisphereColor.z * halfWeight * shScale;
     }
 
+    // ── Ambient fallback while the sky IBL is not ready (phase3a-3.51.0, fix 3) ────────
+    // Before the first sky bake the SH above is all zero and no irradiance cubemap is bound, so the
+    // deferred pass has no diffuse sky term (sky_light_fallback.h). With a SkyLightComponent present the
+    // skyLightMinAmbient floor carries lightColor * intensity * 0.1 for those frames (the shader
+    // multiplies the floor by skyLightColor * skyLightIntensity), and the forward paths read the same
+    // product from PerFrameCB::ambientColor. The frame the bake lands both return to their authored
+    // values, so this never touches the steady state. No SkyLightComponent: no ambient, as in UE5.
+    Vec3 skyFallbackAmbient{};
+    bool skyFallbackActive = false;
+    {
+        static bool fallbackLogged = false, fallbackLateLogged = false, fallbackEndedLogged = false;
+        if (hasSkyLight && !SkyIBLReady(m_skyIrradianceSH, m_iblResult.irradianceSrvIndex)) {
+            skyFallbackActive = true;
+            skyFallbackAmbient = SkyLightFallbackAmbient(
+                {perFrame.skyLightColorR, perFrame.skyLightColorG, perFrame.skyLightColorB},
+                perFrame.skyLightIntensity);
+            perFrame.skyLightMinAmbient = std::max(perFrame.skyLightMinAmbient, kSkyLightFallbackIrradiance);
+            if (!fallbackLogged) {
+                UZ_LOG(Renderer, Info,
+                       "SkyLight: sky IBL not ready at frame {} - ambient fallback lightColor * intensity * {:.2f} = "
+                       "({:.4f}, {:.4f}, {:.4f}) until the first sky bake",
+                       ctx.frameIndex, kSkyLightFallbackIrradiance,
+                       skyFallbackAmbient.x, skyFallbackAmbient.y, skyFallbackAmbient.z);
+                fallbackLogged = true;
+            }
+            if (ctx.frameIndex > kSkyLightFallbackReportFrame && !fallbackLateLogged) {
+                UZ_LOG(Renderer, Warning,
+                       "SkyLight: ambient fallback still active at frame {} - the sky IBL never baked (no sky "
+                       "atmosphere capture or cubemap?); the ambient is the 0.1 hemisphere approximation, not the sky SH",
+                       ctx.frameIndex);
+                fallbackLateLogged = true;
+            }
+        } else if (fallbackLogged && !fallbackEndedLogged) {
+            UZ_LOG(Renderer, Info, "SkyLight: sky IBL ready at frame {} - ambient fallback off", ctx.frameIndex);
+            fallbackEndedLogged = true;
+        }
+    }
+
     // Log SH L0 coefficient once to diagnose shadow darkness.
     // In compact packed format: coeffs[0].w = R_L0, coeffs[1].w = G_L0, coeffs[2].w = B_L0
     static bool shLogged = false;
@@ -479,7 +520,7 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     ctx.lightData = ExtractLightingFromECS(ctx.world, *m_cbRing, camera.GetPosition());
     ctx.sunDir       = ctx.lightData.sunDir;
     ctx.sunColor     = ctx.lightData.sunColor;
-    ctx.ambientColor = ctx.lightData.ambientColor;
+    ctx.ambientColor = skyFallbackActive ? skyFallbackAmbient : ctx.lightData.ambientColor;
     ctx.lightingAlloc = ctx.lightData.lightingCBAlloc;
 
     // ── Inject VFX particle lights into the LightingCB ──────────────────

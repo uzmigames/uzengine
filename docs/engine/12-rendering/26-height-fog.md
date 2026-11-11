@@ -116,6 +116,32 @@ Where:
 
 **Effect**: Creates visible "light shafts" when looking toward the sun through fog.
 
+### Sky Atmosphere Injection (UE5 parity)
+
+With a `SkyAtmosphereComponent` in the scene the fog takes the sky's colour at runtime, the way UE5's
+`HeightFogCommon.ush:174-180` (`ComputeInscatteringColor`) does it:
+
+```hlsl
+// height_fog_ps.hlsl
+float3 InscatteringColor = fogColor.xyz;                       // the authored colour (`color`)
+InscatteringColor += skyAtmContribColorScale.xyz * heightFogContribution
+                   * float3(skyLightColorR, skyLightColorG, skyLightColorB);
+```
+
+| Factor | Source | Default |
+|--------|--------|---------|
+| `skyAtmContribColorScale` | `HeightFogComponent::skyAtmosphereAmbientContributionColorScale`, scene key `sky_atmosphere_ambient_contribution_color_scale` (UE5 `ExponentialHeightFogComponent::SkyAtmosphereAmbientContributionColorScale`) | (1, 1, 1) |
+| `heightFogContribution` | `SkyAtmosphereComponent::heightFogContribution` (`height_fog_contribution`); 0 without a sky atmosphere, as UE5's `SkyAtmosphereHeightFogContribution` | 1.0 |
+| `skyLightColor` | the sky irradiance SH L0 of the captured sky cubemap x the SkyLight intensity (`frame_atmosphere_passes.cpp`): the engine's stand-in for UE5's distant-sky-light LUT (`GetViewDistanceSkyLightColor`) | from the capture |
+
+The injection is additive: a black authored `color` (the UE5 default) still gives a sky-coloured fog;
+the authored colour adds to it. The froxel volumetric fog, when it runs, receives the same
+`skyLightColor` as its sky ambient and the height fog starts at the froxel grid's far edge, so the sky
+term is never applied twice. The sun term adds `heightFogContribution * sunIlluminancePostTransmittance`
+to `directionalInscatteringColor` (UE5 `HeightFogCommon.ush:319`). Evidence and measurements:
+`_evidence/lighting/skylight-fog-ambient/report.md` (phase3a-3.51.0); tests:
+`runtime/tests/engine/renderer/test_skylight_fog_ambient.cpp`.
+
 ## CPU Precomputation
 
 **Key optimization**: Avoid expensive `pow()` per-pixel by precomputing:
@@ -180,6 +206,7 @@ struct HeightFogComponent {
 | `fogMaxOpacity` | 0.8 | 0.0–1.0 | Fog alpha clamp at distance |
 | `fogStartDistance` | 0 | 0–∞ | Min distance before fog appears |
 | `fogCutoffDistance` | 50km | 0–∞ | Distance for full opacity |
+| `skyAtmosphereAmbientContributionColorScale` | (1,1,1) | RGB | Per-channel scale of the sky atmosphere's injection into the fog colour (`sky_atmosphere_ambient_contribution_color_scale`); (0,0,0) leaves only the authored colour |
 
 ## GPU Implementation
 
@@ -521,3 +548,4 @@ heightFog->inscatteringExponent = 16.0;          // Sharper disk
 | Date | Change |
 |------|--------|
 | 2026-03-16 | Initial creation — comprehensive height fog reference and tuning guide |
+| 2026-11-10 | Sky atmosphere injection section; `sky_atmosphere_ambient_contribution_color_scale` scene key now reaches the GPU (phase3a-3.51.0) |

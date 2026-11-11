@@ -67,7 +67,12 @@ struct LightFrameData {
     /// that phantom light (docs/analysis/hardcoded/01-rendering-defaults.md, re-audit 2026-10-05).
     Vec3  sunColor = {0.0f, 0.0f, 0.0f};
     bool  hasDirectionalLight = false;    ///< True when a DirectionalLightComponent was found.
-    Vec3  ambientColor = {0.0f, 0.0f, 0.0f}; ///< Ambient light color (zero unless populated by SkyLight SH).
+    /// Constant ambient term (PerFrameCB::ambientColor, read by the forward mesh / translucent
+    /// shaders). Always zero here: the deferred ambient is the SkyLight SH, and the only non-zero value
+    /// the frame ever carries is the sky-light fallback frame_constants.cpp substitutes while the sky
+    /// IBL is not baked yet (sky_light_fallback.h). The invented {0.08, 0.09, 0.12} was removed in
+    /// e2571a66 - UE5 has no ambient without a sky light.
+    Vec3  ambientColor = {0.0f, 0.0f, 0.0f};
     float perLightShadowBias      = 0.5f; ///< Per-light shadow bias.
     float perLightShadowSlopeBias = 0.5f; ///< Per-light slope bias.
     float lightSourceAngleDeg     = 0.5357f; ///< Sun disk angular diameter in degrees.

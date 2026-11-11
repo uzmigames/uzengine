@@ -10,7 +10,8 @@
 | Bloom (6-mip pyramid + Karis average) | Yes | Yes | **Parity** |
 | FilmToneMap (ACES 3-segment, 5 artist params) | Yes | Yes | **Parity** |
 | Sky Atmosphere (Bruneton, transmittance LUT) | Yes | Yes | ~90% |
-| Height Fog (aerial perspective) | Yes | Yes | Basic |
+| Height Fog (aerial perspective) | Yes | Yes | 2 layers + directional inscattering + sky atmosphere injection (`HeightFogCommon.ush:174-180` parity; the authored `sky_atmosphere_ambient_contribution_color_scale` reaches the GPU since phase3a-3.51.0, 2026-11-10) |
+| SkyLight ambient (sky SH + IBL, no invented ambient) | Yes | Yes | SH readback verified non-zero, fallback = lightColor x intensity x 0.1 only before the first bake (phase3a-3.51.0). Open: the captured sky's lower hemisphere is the horizon colour, not black (sky-facing ambient ~8x too dark vs ground-facing); albedo-only materials render as metals (`metallicMultiplier` default 1 without a map) - see 3.51.0 items 2.6 / 2.7 |
 | POM (steep parallax + self-shadow) | Yes | Yes | **Parity** |
 | Distance Field Shadows (atlas, cone trace) | Yes | Yes | 90% |
 | Point Lights (deferred, no shadows) | Yes | Yes | Basic |
@@ -111,6 +112,7 @@
 
 ### 2.7 Exponential Height Fog → task `phase3a-3.35.0-exponential-height-fog` (existing)
 - [x] 2.7.1 Implement — 2-layer exp fog with directional inscattering, matching UE5 HeightFogComponent. Second fog layer additive combination via CalculateLineIntegralShared, CPU precomputation of secondRayOriginTerms, HeightFogContribution AP anti-double-fogging in deferred lighting.
+- [x] 2.7.2 Sky -> fog colour injection verified and completed (phase3a-3.51.0, 2026-11-10): `color + scale * heightFogContribution * skyLightColor` on the GPU, the authored scale wired through the serializer and the fog CB; a black authored colour still gives a sky-coloured horizon. Evidence `E:/UzmiEngine/_evidence/lighting/skylight-fog-ambient/report.md`.
 
 ### 2.8 Motion Blur → task `phase3a-3.18.0-motion-blur` (existing)
 - [ ] 2.8.1 Core implemented — velocity buffer pass wired (2026-03-18), per-pixel gather blur (motion_blur_cs), depth-aware weighting. Correction (2026-10-08): these shaders are one-line empty compute bodies since bd4db199 (2026-03-31), and no pass dispatches them since phase0_sponza-followup-08 item 4.4; motion blur and DOF are not implemented today (known-issues r.MotionBlur / r.DOF).

@@ -169,6 +169,11 @@ struct HeightFogComponent : public CBDirtyMixin {
 
     /// @ref Bruneton 2008 "Precomputed Atmospheric Scattering" — sky atmosphere fog tint
     /// Per-channel scale for the sky atmosphere's ambient contribution to fog inscattering.
+    /// Scene key `sky_atmosphere_ambient_contribution_color_scale` (UE5
+    /// ExponentialHeightFogComponent::SkyAtmosphereAmbientContributionColorScale). The fog pass adds
+    /// `scale * SkyAtmosphereComponent::heightFogContribution * skyLightColor` to `color`, where
+    /// skyLightColor is the sky irradiance SH L0 times the SkyLight intensity (UE5
+    /// HeightFogCommon.ush:174-180 parity); (0,0,0) removes the sky from the fog, leaving `color`.
     /// Default: (1,1,1).
     Vec3 skyAtmosphereAmbientContributionColorScale = {1.0f, 1.0f, 1.0f};
 

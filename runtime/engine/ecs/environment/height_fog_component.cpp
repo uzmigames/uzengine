@@ -47,6 +47,10 @@ UZ_REGISTER_COMPONENT_SERIALIZER(height_fog, uz::HeightFogComponent,
         // Volumetric fog
         c.enableVolumetricFog = uz::json::Bool(j, "enable_volumetric_fog", defaults.enableVolumetricFog);
 
+        // Atmosphere contribution (UE5 SkyAtmosphereAmbientContributionColorScale)
+        c.skyAtmosphereAmbientContributionColorScale = uz::json::Vec3FromArray(
+            j, "sky_atmosphere_ambient_contribution_color_scale", defaults.skyAtmosphereAmbientContributionColorScale);
+
         // Control
         c.enabled = uz::json::Bool(j, "enabled", defaults.enabled);
     },
@@ -78,6 +82,9 @@ UZ_REGISTER_COMPONENT_SERIALIZER(height_fog, uz::HeightFogComponent,
 
         // Volumetric fog
         j["enable_volumetric_fog"] = c->enableVolumetricFog;
+
+        // Atmosphere contribution
+        uz::json::WriteVec3(j, "sky_atmosphere_ambient_contribution_color_scale", c->skyAtmosphereAmbientContributionColorScale);
 
         // Control
         j["enabled"] = c->enabled;
