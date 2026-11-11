@@ -157,8 +157,14 @@ float mieAbsorptionScale = 1.0f;
 float mieAnisotropy = 0.8f;            // Forward scattering (Henyey-Greenstein g)
 float mieScaleHeightKm = 1.2f;
 
-// Ground reflection
-Vec3 groundAlbedo = {0.3f, 0.3f, 0.3f};
+// Ground reflection: the Lambertian planet the sky cubemap capture (sky_cubemap_cs.hlsl) renders
+// below the horizon, i.e. the ground bounce the SkyLight SH, the prefiltered specular, the fog /
+// cloud sky colour and the escaping GI rays see. Scene key `ground_albedo`; a runtime change
+// re-captures. Default 0.7 = the value the capture hardcoded until 2026-11-11 (this field reached
+// no live shader then), kept so an unauthored scene renders as before; the captured ground is then
+// 5-9x brighter than the sky hemisphere - a scene wanting a darker bounce authors e.g. 0.1
+// (Bruneton's default, ~0.75x) - phase3a-3.51.0 item 2.6.
+Vec3 groundAlbedo = {0.7f, 0.7f, 0.7f};
 
 // Multi-scattering approximation
 float multiScatteringFactor = 1.0f;    // 0 = single, 1 = full
@@ -197,7 +203,7 @@ Per-frame constant buffer (256 bytes) bound at register `b2` in the sky atmosphe
 |--------|------|-------|-----------|---------|
 | 0 | 16 | rayleighScattering | float4 | xyz = RGB coefficients (km⁻¹), w = scale height (km) |
 | 16 | 16 | mieScattering | float4 | x = coeff, y = anisotropy g, z = scale height, w = unused |
-| 32 | 16 | groundAlbedo | float4 | xyz = reflectance, w = unused |
+| 32 | 16 | groundAlbedo | float4 | xyz = reflectance, w = unused (declared only; the sky PS does not read it - the capture gets it as root constants) |
 | 48 | 16 | sunIlluminance | float4 | xyz = sun color × illuminance, w = angular radius (rad) |
 | 64 | 4 | bottomRadiusKm | float | Planet radius |
 | 68 | 4 | atmosphereHeightKm | float | Atmosphere thickness |

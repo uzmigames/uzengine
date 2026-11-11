@@ -189,9 +189,11 @@
     uint32_t m_skyCubemapSrv = UINT32_MAX;         ///< SRV index for IBL baker input.
     uint32_t m_skyCubemapUav = UINT32_MAX;         ///< UAV index for compute write.
     bool m_skyIBLDirty = true;                     ///< True when sky cubemap needs re-capture.
-    /// Sun direction, sky sun colour, angular radius and passes-since-bake of the last sky IBL
-    /// bake (AtmosphereFrameContext::skyBakeSignature). -1e30 = not baked yet.
-    float m_skyBakeSignature[8] = {-1e30f, -1e30f, -1e30f, -1e30f, -1e30f, -1e30f, -1e30f, 0.f};
+    /// Sun direction (3), sky sun colour (3), angular radius (1), ground albedo (3) and passes-since-bake
+    /// of the last sky IBL bake (AtmosphereFrameContext::skyBakeSignature; kSkyBakeSignatureValues + 1
+    /// floats, pinned where it is handed over). -1e30 = not baked yet.
+    float m_skyBakeSignature[11] = {-1e30f, -1e30f, -1e30f, -1e30f, -1e30f, -1e30f, -1e30f,
+                                    -1e30f, -1e30f, -1e30f, 0.f};
     bool m_skyCubemapFilled = false;               ///< True once the sky cubemap has been captured at least once.
     IBLBaker::BakeResult m_iblResult;              ///< Irradiance + prefiltered SRV indices.
     uint32_t m_brdfLutSrvIndex = UINT32_MAX;       ///< BRDF LUT SRV (baked once at init).

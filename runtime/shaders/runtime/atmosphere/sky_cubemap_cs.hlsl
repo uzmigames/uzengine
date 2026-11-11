@@ -3,13 +3,22 @@
 /// 16-step ray march with transmittance LUT. No sun disk (IBL only).
 /// Output: linear HDR, no tonemap. 64x64x6 RGBA16F.
 ///
-/// b0: 12 root constants, u0: RWTexture2DArray, s0: linear sampler
+/// b0: 15 root constants, u0: RWTexture2DArray, s0: linear sampler
 ///
 /// The sun illuminance is per channel, the same quantity the sky pass scatters
 /// (`skyCB.sunIlluminance`): block B.5c (2026-10-08) found the capture taking the
 /// length of the illuminance vector (sqrt 3 x the per-channel value of a white sun,
 /// grey for a tinted one), so every image-based term saw a sky brighter than the
 /// one the frame renders.
+///
+/// The planet the march hits below the horizon is Lambertian with
+/// `SkyAtmosphereComponent::groundAlbedo` (root constants groundAlbedoR/G/B), the
+/// same field the scene authors as `ground_albedo`. Until 2026-11-11 it was a
+/// hardcoded 0.7, which stays the component's default so an unauthored scene
+/// captures exactly as before; the field is the per-scene knob. Solid-angle
+/// weighted, 0.7 makes the captured ground hemisphere 4-9x brighter than the sky
+/// hemisphere, and the SH L0 (the diffuse sky light, the fog and cloud sky colour)
+/// and the prefiltered specular inherit it (phase3a-3.51.0 item 2.6).
 
 #include "../common/constants.hlsli"
 
@@ -22,6 +31,7 @@ cbuffer SkyCubemapParams : register(b0) {
     uint  packedScatterScales;
     uint  scatteringLut3DIdx;
     float muSMin;
+    float groundAlbedoR, groundAlbedoG, groundAlbedoB;   ///< SkyAtmosphereComponent::groundAlbedo (planet below the horizon).
 };
 
 RWTexture2DArray<float4> outputCubemap : register(u0);
@@ -37,7 +47,6 @@ static const float  MIE_EXT_RATIO = 1.11;
 static const float  MIE_G = 0.8;
 static const float  RAYLEIGH_H = 8.0;
 static const float  MIE_H = 1.2;
-static const float3 GROUND_ALBEDO = float3(0.7, 0.7, 0.7);
 static const uint   FACE_SIZE = 64;
 static const int    NUM_STEPS = 16;
 static const float  OFFSET_KM = 0.005;
@@ -87,6 +96,14 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     uint2 texel = DTid.xy;
     uint face = DTid.z;
     if (texel.x >= FACE_SIZE || texel.y >= FACE_SIZE || face >= 6) return;
+
+    // The planet's Lambertian factor albedo / PI, rounded once as its own value: `precise` keeps the
+    // compiler from re-associating the root constants into the ground product below, so the default 0.7
+    // yields exactly the constant the shader hardcoded until 2026-11-11 (fl(0.7 * fl(1 / PI))) and the
+    // default capture is bit-identical to that build's (measured: 0 of 524,288 env values differ; the
+    // plain `albedo * (1.0/PI) * NdotL * ...` chain moved 18 texels by one f16 ulp). Computed before
+    // any float branch so the attribute marks nothing else.
+    precise float3 kGround = float3(groundAlbedoR, groundAlbedoG, groundAlbedoB) * (1.0/PI);
 
     float2 uv = (float2(texel) + 0.5) / float(FACE_SIZE);
     float3 rayDir = CubeFaceDirZUp(face, uv);
@@ -149,13 +166,18 @@ void main(uint3 DTid : SV_DispatchThreadID) {
         T *= Ts;
     }
 
-    // Ground contribution
+    // Ground contribution: the sun-lit Lambertian planet with the component's ground albedo
+    // (direct sun only, as Bruneton's ground term; no sky light on the ground).
     if (hitsGround) {
         float3 gPos = camKm + rayDir * gndHit.x;
         float3 gN = normalize(gPos);
         float3 gSunT = SampleTLut(tLut, gPos, sunDir, bottomRadiusKm, topRadiusKm);
         float NdotL = max(0.0, dot(gN, sunDir));
-        float3 gRad = GROUND_ALBEDO * (1.0/PI) * NdotL * sunIllum * gSunT;
+        // The sun-lit Lambertian planet: kGround (albedo / PI, see the top of main) x NdotL x the sun's
+        // illuminance x its transmittance to the ground. Keep this shape: with kGround a `precise`
+        // value, the product compiles to what the hardcoded-0.7 build computed, bit for bit.
+        const float3 nk = NdotL * kGround;
+        float3 gRad = nk * sunIllum * gSunT;
         L += T * gRad;
     }
 

@@ -191,29 +191,39 @@ void AddAtmospherePasses(
         // / r.SkyLight.RebakeIntensityDelta marks it dirty, at most once per
         // r.SkyLight.RebakeMinInterval passes (each bake stalls on WaitIdle plus an SH readback —
         // an asynchronous bake is the follow-up, not this).
+        // The ground albedo is part of the signature too: the capture renders the planet below the
+        // horizon with it (sky_cubemap_cs.hlsl), so uz.scene.set_sky_ground_albedo must re-capture.
         if (ctx.skyBakeSignature != nullptr) {
             float* sig = ctx.skyBakeSignature;
-            const float now[7] = {sunDir.x, sunDir.y, sunDir.z,
-                                  skySunColor.x, skySunColor.y, skySunColor.z, skySunAngularRadius};
-            sig[7] += 1.0f;
+            constexpr int kN = kSkyBakeSignatureValues;
+            const float now[kN] = {sunDir.x, sunDir.y, sunDir.z,
+                                   skySunColor.x, skySunColor.y, skySunColor.z, skySunAngularRadius,
+                                   skyComp.groundAlbedo.x, skyComp.groundAlbedo.y, skyComp.groundAlbedo.z};
+            sig[kN] += 1.0f;
             if (sig[0] <= -1e29f) {
-                for (int i = 0; i < 7; ++i) sig[i] = now[i];   // the initial bake is already pending
-                sig[7] = 0.0f;
+                for (int i = 0; i < kN; ++i) sig[i] = now[i];   // the initial bake is already pending
+                sig[kN] = 0.0f;
             } else {
                 const float dirDot = sig[0] * now[0] + sig[1] * now[1] + sig[2] * now[2];
                 float colorRel = 0.0f;
                 for (int i = 3; i < 6; ++i) {
                     colorRel = std::max(colorRel, std::abs(now[i] - sig[i]) / std::max(std::abs(sig[i]), 1e-3f));
                 }
+                float albedoDelta = 0.0f;
+                for (int i = 7; i < 10; ++i) {
+                    albedoDelta = std::max(albedoDelta, std::abs(now[i] - sig[i]));
+                }
                 const float cosAngle = std::cos(cv_SkyRebakeAngleDeg->value * 3.14159265358979323846f / 180.f);
                 const bool changed = dirDot < cosAngle
                                   || colorRel > cv_SkyRebakeIntensity->value
-                                  || std::abs(now[6] - sig[6]) > 1e-4f;
-                if (changed && sig[7] >= static_cast<float>(cv_SkyRebakeInterval->value) && !ctx.hdriActive) {
+                                  || std::abs(now[6] - sig[6]) > 1e-4f
+                                  || albedoDelta > 1e-4f;
+                if (changed && sig[kN] >= static_cast<float>(cv_SkyRebakeInterval->value) && !ctx.hdriActive) {
                     *ctx.skyIBLDirty = true;
-                    for (int i = 0; i < 7; ++i) sig[i] = now[i];
-                    sig[7] = 0.0f;
-                    UZ_LOG(Renderer, Info, "Sky IBL: re-bake queued (sun dir dot={:.6f}, sun colour change={:.3f})", dirDot, colorRel);
+                    for (int i = 0; i < kN; ++i) sig[i] = now[i];
+                    sig[kN] = 0.0f;
+                    UZ_LOG(Renderer, Info, "Sky IBL: re-bake queued (sun dir dot={:.6f}, sun colour change={:.3f}, ground albedo change={:.3f})",
+                           dirDot, colorRel, albedoDelta);
                 }
             }
         }
@@ -264,6 +274,11 @@ void AddAtmospherePasses(
                                            ? ctx.scatteringLut3DSrv : 0u;
                 // muSMin: cos(102 deg) = cos(1.78 rad) — Bruneton 2017 default minimum sun zenith cosine
                 cubeRC.muSMin              = -0.2079116908f;
+                // The planet below the horizon: the component's ground albedo, the scene's `ground_albedo`
+                // (until 2026-11-11 the shader hardcoded 0.7, which stays the component default; item 2.6).
+                cubeRC.groundAlbedoR       = skyComp.groundAlbedo.x;
+                cubeRC.groundAlbedoG       = skyComp.groundAlbedo.y;
+                cubeRC.groundAlbedoB       = skyComp.groundAlbedo.z;
 
                 SkyCubemapCapturePassDesc cubePassDesc{};
                 cubePassDesc.cubemapTarget      = cubeRes;

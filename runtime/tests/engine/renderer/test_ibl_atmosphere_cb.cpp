@@ -394,11 +394,14 @@ TEST(SkyAtmosphereComponent, MieScalingDefaults) {
     EXPECT_FLOAT_EQ(comp.mieAbsorptionScale, 1.0f);
 }
 
-TEST(SkyAtmosphereComponent, GroundAlbedoIs0_4) {
+TEST(SkyAtmosphereComponent, GroundAlbedoIs0_7) {
+    // The planet the sky capture renders below the horizon (sky_cubemap_cs.hlsl) since 2026-11-11: the
+    // value the capture hardcoded before (the field's old 0.4 reached no live shader), kept as the
+    // default so an unauthored scene captures exactly as before (phase3a-3.51.0 item 2.6).
     SkyAtmosphereComponent comp{};
-    EXPECT_FLOAT_EQ(comp.groundAlbedo.x, 0.4f);
-    EXPECT_FLOAT_EQ(comp.groundAlbedo.y, 0.4f);
-    EXPECT_FLOAT_EQ(comp.groundAlbedo.z, 0.4f);
+    EXPECT_FLOAT_EQ(comp.groundAlbedo.x, 0.7f);
+    EXPECT_FLOAT_EQ(comp.groundAlbedo.y, 0.7f);
+    EXPECT_FLOAT_EQ(comp.groundAlbedo.z, 0.7f);
 }
 
 TEST(SkyAtmosphereComponent, MultiScatteringFactorIsOne) {
@@ -721,12 +724,16 @@ TEST(SkyLightComponent, CanSetAllFields) {
 // SkyCubemapCaptureRootConstants — size, field offsets, write/read, memcpy
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST(SkyCubemapCaptureRootConstants, SizeIs48Bytes) {
-    // 12 DWORDs: bottomRadiusKm(4) + topRadiusKm(4) + sunDirX(4) + sunDirY(4)
+TEST(SkyCubemapCaptureRootConstants, SizeIs60Bytes) {
+    // 15 DWORDs: bottomRadiusKm(4) + topRadiusKm(4) + sunDirX(4) + sunDirY(4)
     //          + sunDirZ(4) + sunIllumX(4) + sunIllumY(4) + sunIllumZ(4) + transmittanceLutIdx(4)
     //          + packedScatterScales(4) + scatteringLut3DIdx(4) + muSMin(4)
-    // (block B.5c: the sun illuminance per channel in place of the scalar |illuminance|)
-    EXPECT_EQ(sizeof(SkyCubemapCaptureRootConstants), 48u);
+    //          + groundAlbedoR(4) + groundAlbedoG(4) + groundAlbedoB(4)
+    // (block B.5c: the sun illuminance per channel in place of the scalar |illuminance|;
+    //  2026-11-11: the component's ground albedo in place of the shader's hardcoded 0.7)
+    EXPECT_EQ(sizeof(SkyCubemapCaptureRootConstants), 60u);
+    EXPECT_EQ(kSkyCubemapCaptureRootDwords, 15u);
+    EXPECT_LE(kSkyCubemapCaptureRootDwords, 24u);   // the global root signature's b0 budget
 }
 
 TEST(SkyCubemapCaptureRootConstants, FieldOffsets) {
@@ -742,6 +749,9 @@ TEST(SkyCubemapCaptureRootConstants, FieldOffsets) {
     EXPECT_EQ(offsetof(SkyCubemapCaptureRootConstants, packedScatterScales),  36u);
     EXPECT_EQ(offsetof(SkyCubemapCaptureRootConstants, scatteringLut3DIdx),  40u);
     EXPECT_EQ(offsetof(SkyCubemapCaptureRootConstants, muSMin),              44u);
+    EXPECT_EQ(offsetof(SkyCubemapCaptureRootConstants, groundAlbedoR),       48u);
+    EXPECT_EQ(offsetof(SkyCubemapCaptureRootConstants, groundAlbedoG),       52u);
+    EXPECT_EQ(offsetof(SkyCubemapCaptureRootConstants, groundAlbedoB),       56u);
 }
 
 TEST(SkyCubemapCaptureRootConstants, WriteAndReadBack) {
@@ -756,6 +766,9 @@ TEST(SkyCubemapCaptureRootConstants, WriteAndReadBack) {
     rc.sunIllumZ           = 18.0f;
     rc.transmittanceLutIdx = 5u;
     rc.packedScatterScales = 0x3C003C00u; // f16(1.0) packed into both halves
+    rc.groundAlbedoR       = 0.1f;
+    rc.groundAlbedoG       = 0.12f;
+    rc.groundAlbedoB       = 0.08f;
 
     EXPECT_FLOAT_EQ(rc.bottomRadiusKm, 6360.0f);
     EXPECT_FLOAT_EQ(rc.topRadiusKm,    6420.0f);
@@ -767,6 +780,9 @@ TEST(SkyCubemapCaptureRootConstants, WriteAndReadBack) {
     EXPECT_FLOAT_EQ(rc.sunIllumZ,      18.0f);
     EXPECT_EQ(rc.transmittanceLutIdx,  5u);
     EXPECT_EQ(rc.packedScatterScales,  0x3C003C00u);
+    EXPECT_FLOAT_EQ(rc.groundAlbedoR,  0.1f);
+    EXPECT_FLOAT_EQ(rc.groundAlbedoG,  0.12f);
+    EXPECT_FLOAT_EQ(rc.groundAlbedoB,  0.08f);
 }
 
 TEST(SkyCubemapCaptureRootConstants, TopRadiusIsBottomPlusAtmosphereHeight) {
@@ -790,8 +806,11 @@ TEST(SkyCubemapCaptureRootConstants, MemcpyRoundTrip) {
     src.packedScatterScales = 0u;
     src.scatteringLut3DIdx  = 0u;
     src.muSMin              = -0.2079116908f;
+    src.groundAlbedoR       = 0.1f;
+    src.groundAlbedoG       = 0.1f;
+    src.groundAlbedoB       = 0.1f;
 
-    uint8_t buffer[sizeof(SkyCubemapCaptureRootConstants)];   // 48 bytes since block B.5c (12 DWORDs)
+    uint8_t buffer[sizeof(SkyCubemapCaptureRootConstants)];   // 60 bytes since 2026-11-11 (15 DWORDs)
     std::memcpy(buffer, &src, sizeof(src));
 
     SkyCubemapCaptureRootConstants dst{};
@@ -807,6 +826,10 @@ TEST(SkyCubemapCaptureRootConstants, MemcpyRoundTrip) {
     EXPECT_FLOAT_EQ(dst.sunIllumZ, 0.8f);
     EXPECT_EQ(dst.transmittanceLutIdx, 3u);
     EXPECT_EQ(dst.packedScatterScales, 0u);
+    EXPECT_FLOAT_EQ(dst.muSMin, -0.2079116908f);
+    EXPECT_FLOAT_EQ(dst.groundAlbedoR, 0.1f);
+    EXPECT_FLOAT_EQ(dst.groundAlbedoG, 0.1f);
+    EXPECT_FLOAT_EQ(dst.groundAlbedoB, 0.1f);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

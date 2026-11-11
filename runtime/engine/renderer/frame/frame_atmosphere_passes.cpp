@@ -162,6 +162,8 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
     atmoCtx.skyCubemapUav       = m_skyCubemapUav;
     atmoCtx.skyIBLDirty         = &m_skyIBLDirty;
     atmoCtx.skyCubemapFilled    = &m_skyCubemapFilled;
+    static_assert(sizeof(m_skyBakeSignature) / sizeof(float) == kSkyBakeSignatureValues + 1,
+                  "m_skyBakeSignature holds the compared values plus the pass counter");
     atmoCtx.skyBakeSignature    = m_skyBakeSignature;
     atmoCtx.iblBaker            = m_iblBaker.get();
     atmoCtx.iblResult           = &m_iblResult;

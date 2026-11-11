@@ -107,9 +107,12 @@ TEST(RenderingParity, SkyAtmosphereDefaults_Mie) {
 
 TEST(RenderingParity, SkyAtmosphereDefaults_GroundAndMultiScatter) {
     SkyAtmosphereComponent sky;
-    EXPECT_FLOAT_EQ(sky.groundAlbedo.x,        0.4f);
-    EXPECT_FLOAT_EQ(sky.groundAlbedo.y,        0.4f);
-    EXPECT_FLOAT_EQ(sky.groundAlbedo.z,        0.4f);
+    // 0.7 since 2026-11-11: the sky capture renders the planet below the horizon with this field
+    // (it hardcoded 0.7 before, ignoring the field's 0.4), and the default keeps that look for a scene
+    // that authors nothing (phase3a-3.51.0 item 2.6).
+    EXPECT_FLOAT_EQ(sky.groundAlbedo.x,        0.7f);
+    EXPECT_FLOAT_EQ(sky.groundAlbedo.y,        0.7f);
+    EXPECT_FLOAT_EQ(sky.groundAlbedo.z,        0.7f);
     EXPECT_FLOAT_EQ(sky.multiScatteringFactor, 1.0f);
     EXPECT_FLOAT_EQ(sky.heightFogContribution, 1.0f);
 }
