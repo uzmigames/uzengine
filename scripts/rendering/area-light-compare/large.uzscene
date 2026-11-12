@@ -1,0 +1,42 @@
+{
+  "name": "Large area light (phase3a 3.33.0 item 2.4): a 360x240 cm LTC rectangle 200 cm above a rough floor, a 50x50x60 cm box standing on it and a free-standing wall; DXR area-source shadows (default ON) versus unshadowed versus the path tracer",
+  "version": "1.0",
+  "entities": [
+    {"name": "Camera", "components": {
+      "transform": {"position": [0, -300, 130]},
+      "camera": {"fov": 70, "near": 1, "far": 5000, "active": true, "look_at": [0, 40, 0]}
+    }},
+    {"name": "Black environment", "components": {
+      "sky_light": {"intensity": 0, "light_color": [0, 0, 0]}
+    }},
+    {"name": "Area light", "components": {
+      "transform": {"position": [0, 0, 200], "rotation": [90, 0, 0]},
+      "light": {"type": "rect", "color": [1, 1, 1], "intensity": 2.5, "width": 360, "height": 240, "range": 5000}
+    }},
+    {"name": "PT emitter", "components": {
+      "transform": {"position": [0, 0, 200], "scale": [120, 180, 0.1]},
+      "mesh": {"asset": "sample/content/meshes/cube.uzmesh"},
+      "material": {"baseColorR": 0, "baseColorG": 0, "baseColorB": 0,
+                   "roughnessMultiplier": 1, "metallicMultiplier": 0,
+                   "emissiveColorR": 1, "emissiveColorG": 1, "emissiveColorB": 1, "emissiveIntensity": 2.5}
+    }},
+    {"name": "Occluder", "components": {
+      "transform": {"position": [0, 0, 0], "scale": [25, 25, 30]},
+      "mesh": {"asset": "sample/content/meshes/cube.uzmesh"},
+      "material": {"baseColorR": 0.6, "baseColorG": 0.6, "baseColorB": 0.6,
+                   "roughnessMultiplier": 1, "metallicMultiplier": 0}
+    }},
+    {"name": "Wall", "components": {
+      "transform": {"position": [0, 190, 0], "scale": [90, 3, 55]},
+      "mesh": {"asset": "sample/content/meshes/cube.uzmesh"},
+      "material": {"baseColorR": 0.6, "baseColorG": 0.6, "baseColorB": 0.6,
+                   "roughnessMultiplier": 1, "metallicMultiplier": 0}
+    }},
+    {"name": "Rough floor", "components": {
+      "transform": {"position": [0, 0, -20], "scale": [700, 700, 10]},
+      "mesh": {"asset": "sample/content/meshes/cube.uzmesh"},
+      "material": {"baseColorR": 0.6, "baseColorG": 0.6, "baseColorB": 0.6,
+                   "roughnessMultiplier": 1, "metallicMultiplier": 0}
+    }}
+  ]
+}
