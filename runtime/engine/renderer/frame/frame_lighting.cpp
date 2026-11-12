@@ -164,7 +164,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                 ctx.frameIndex, static_cast<uint32_t>(ctx.renderWidth),
                 static_cast<uint32_t>(ctx.renderHeight), ctx.world,
                 ctx.unjitteredViewProj, ctx.updateFlags.flags & ~SceneUpdateFlags::kCamera,
-                denoiserGuides)) {
+                denoiserGuides, ctx.vfs)) {
             UZ_LOG(Renderer, Error, "PipelinePathTracer: failed to register single-bounce pass");
             return;
         }

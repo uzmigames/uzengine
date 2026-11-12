@@ -1,0 +1,131 @@
+{
+  "name": "Grid medium: heterogeneous cumulus (builtin:cloud) lit by the sun",
+  "version": "1.0",
+  "entities": [
+    {
+      "name": "Camera",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            -820,
+            260
+          ]
+        },
+        "camera": {
+          "fov": 50,
+          "near": 5,
+          "far": 20000,
+          "active": true,
+          "look_at": [
+            0,
+            0,
+            300
+          ]
+        }
+      }
+    },
+    {
+      "name": "Sun",
+      "components": {
+        "transform": {
+          "rotation": [
+            -40,
+            -90,
+            0
+          ]
+        },
+        "light": {
+          "type": "directional",
+          "color": [
+            1,
+            0.96,
+            0.9
+          ],
+          "intensity": 10,
+          "cast_shadows": true,
+          "atmosphere_sun_light": true,
+          "light_source_angle": 0.53
+        }
+      }
+    },
+    {
+      "name": "Sky",
+      "components": {
+        "sky_atmosphere": {
+          "sun_illuminance": [
+            10,
+            10,
+            10
+          ]
+        }
+      }
+    },
+    {
+      "name": "SkyLight",
+      "components": {
+        "sky_light": {
+          "intensity": 1,
+          "light_color": [
+            1,
+            1,
+            1
+          ],
+          "indirect_lighting_intensity": 1,
+          "min_occlusion": 0,
+          "lower_hemisphere_is_black": true
+        }
+      }
+    },
+    {
+      "name": "Ground",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            -50
+          ],
+          "scale": [
+            6000,
+            6000,
+            100
+          ]
+        },
+        "mesh": {
+          "asset": "builtin:cube"
+        },
+        "material": {
+          "baseColorR": 0.35,
+          "baseColorG": 0.33,
+          "baseColorB": 0.3,
+          "metallicMultiplier": 0,
+          "roughnessMultiplier": 1
+        }
+      }
+    },
+    {
+      "name": "Cloud",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            300
+          ]
+        },
+        "volume": {
+          "density_grid": "builtin:cloud",
+          "half_extents": [
+            320,
+            280,
+            180
+          ],
+          "sigma_a": 0.0004,
+          "sigma_s": 0.0096,
+          "phase_g": 0.6
+        }
+      }
+    }
+  ]
+}

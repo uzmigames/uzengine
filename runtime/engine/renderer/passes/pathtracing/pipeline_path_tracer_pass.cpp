@@ -11,6 +11,8 @@
 #include "world.h"
 #include "light_component.h"
 #include "scene_component.h"
+#include "volume_component.h"
+#include "volume_asset.h"
 #include "color_utils.h"
 #include "cvar.h"
 #include "path_tracer_pass.h"
@@ -134,6 +136,12 @@ struct PipelinePathTracerPass::Impl {
     std::array<RHIBufferHandle, 3> bvhNodes{}, bvhLights{}, bvhConfigs{};
     std::array<uint32_t, 3> bvhNodeCapacity{}, bvhLightCapacity{}, bvhConfigCapacity{};
     bool bvhLogged = false;
+    // Grid media (VolumeComponent): per-frame-slot descriptor buffers and the
+    // density grids, resolved and uploaded once per densityGrid string.
+    std::array<RHIBufferHandle, 3> volumeBuffers{};
+    std::array<uint32_t, 3> volumeCapacity{};
+    struct VolumeGridEntry { VolumeAsset asset; float maxDensity = 0.f; bool attempted = false; };
+    std::map<std::string, VolumeGridEntry> volumeGrids;
 #ifdef _WIN32
     ComPtr<ID3D12RootSignature> root;
     ComPtr<ID3D12StateObject> pipeline;
@@ -184,6 +192,9 @@ struct PipelinePathTracerPass::Impl {
         for (auto buffers : {bvhNodes, bvhLights, bvhConfigs})
             for (auto buffer : buffers)
                 if (buffer.IsValid()) device->DestroyBuffer(buffer);
+        for (auto buffer : volumeBuffers)
+            if (buffer.IsValid()) device->DestroyBuffer(buffer);
+        for (auto& [spec, grid] : volumeGrids) grid.asset.ReleaseGPU(device);
         if (sbt.IsValid()) device->DestroyBuffer(sbt);
         if (accumulation.IsValid()) device->DestroyTexture(accumulation);
         if (compensation.IsValid()) device->DestroyTexture(compensation);
@@ -486,7 +497,7 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
         std::span<const DrawCommand> draws, std::span<const GPUMesh> meshes,
         uint32_t envSrv, uint32_t frameIndex, uint32_t width, uint32_t height, World* world,
         const Mat4& unjitteredViewProj, uint32_t sceneDirtyFlags,
-        const NrdInputs& denoiserGuides) {
+        const NrdInputs& denoiserGuides, IVFS* vfs) {
     auto& p = *m_impl;
     if (!p.ready || !rt.IsEnabled()) return false;
     if (p.readbackPending) {
@@ -734,6 +745,94 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
     p.device->UnmapBuffer(p.lights[slot]);
     const uint32_t lightSrv = p.device->GetBufferSRVIndex(p.lights[slot]);
 
+    // Grid media: every enabled VolumeComponent (up to kMaxPathVolumes) becomes
+    // one PathVolumeGridDesc. The density grid is resolved and uploaded the
+    // first time its string is seen; the box frame follows the entity transform.
+    std::vector<PathVolumeGridDesc> volumeDescs;
+    std::vector<std::string> volumeSpecs;
+    if (world && cv_Volume->value >= 0.5f) {
+        auto view = world->GetRegistry().view<VolumeComponent>();
+        for (auto entity : view) {
+            const auto& component = view.get<VolumeComponent>(entity);
+            if (!component.enabled || volumeDescs.size() >= kMaxPathVolumes) continue;
+            auto& cached = p.volumeGrids[component.densityGrid];
+            if (!cached.attempted) {
+                cached.attempted = true;
+                std::string error;
+                if (VolumeAsset::Resolve(component.densityGrid, vfs, cached.asset, &error)
+                    && cached.asset.Upload(p.device, buildCmd)) {
+                    cached.maxDensity = cached.asset.GetMaxDensity();
+                    UZ_LOG(Renderer, Info, "PathVolume: grid '{}' {}x{}x{} {} max density {} SRV={}",
+                        component.densityGrid, cached.asset.Width(), cached.asset.Height(), cached.asset.Depth(),
+                        cached.asset.Format() == VolumeFormat::R16F ? "R16F" : "R8", cached.maxDensity,
+                        cached.asset.GetSrvIndex());
+                } else {
+                    UZ_LOG(Renderer, Error, "PathVolume: grid '{}' unavailable: {}", component.densityGrid,
+                        error.empty() ? "Texture3D upload failed" : error);
+                }
+            }
+            if (!cached.asset.GetTexture3D().IsValid() || cached.maxDensity <= 0.f) continue;
+            const auto* scene = world->GetRegistry().try_get<SceneComponent>(entity);
+            const Mat4 worldMatrix = scene ? scene->GetWorldMatrix() : Mat4::Identity();
+            const Vec3 center = worldMatrix.TransformPoint(Vec3(0.f, 0.f, 0.f));
+            const Vec3 axes[3] = {worldMatrix.TransformDirection(Vec3(1.f, 0.f, 0.f)),
+                                  worldMatrix.TransformDirection(Vec3(0.f, 1.f, 0.f)),
+                                  worldMatrix.TransformDirection(Vec3(0.f, 0.f, 1.f))};
+            const float halves[3] = {component.halfExtents.x, component.halfExtents.y, component.halfExtents.z};
+            PathVolumeGridDesc desc{};
+            bool degenerate = false;
+            for (int i = 0; i < 3; ++i) {
+                // local_i = (P - center) . axis_i / (|axis_i|^2 * half_i): the
+                // axis carries the entity scale, so the box face sits at +-1.
+                const float lengthSquared = axes[i].Dot(axes[i]);
+                if (!(lengthSquared > 1e-12f) || !(halves[i] > 0.f)) { degenerate = true; break; }
+                const Vec3 row = axes[i] / (lengthSquared * halves[i]);
+                desc.worldToLocal[i][0] = row.x; desc.worldToLocal[i][1] = row.y; desc.worldToLocal[i][2] = row.z;
+                desc.worldToLocal[i][3] = -row.Dot(center);
+            }
+            if (degenerate) continue;
+            desc.sigmaA = std::max(component.sigmaA, 0.f);
+            desc.sigmaS = std::max(component.sigmaS, 0.f);
+            desc.phaseG = std::clamp(component.phaseG, -0.99f, 0.99f);
+            desc.densityScale = std::max(component.densityScale, 0.f);
+            desc.maxDensity = cached.maxDensity * desc.densityScale;
+            desc.emission[0] = std::max(component.emission.x, 0.f);
+            desc.emission[1] = std::max(component.emission.y, 0.f);
+            desc.emission[2] = std::max(component.emission.z, 0.f);
+            desc.densitySrv = cached.asset.GetSrvIndex();
+            desc.halfTexel[0] = 0.5f / float(cached.asset.Width());
+            desc.halfTexel[1] = 0.5f / float(cached.asset.Height());
+            desc.halfTexel[2] = 0.5f / float(cached.asset.Depth());
+            if (desc.sigmaA + desc.sigmaS <= 0.f || desc.maxDensity <= 0.f) continue;
+            volumeDescs.push_back(desc);
+            volumeSpecs.push_back(component.densityGrid);
+        }
+    }
+    const uint32_t volumeCount = uint32_t(volumeDescs.size());
+    uint32_t volumeSrv = UINT32_MAX;
+    if (volumeCount) {
+        if (p.volumeCapacity[slot] < volumeCount) {
+            if (p.volumeBuffers[slot].IsValid()) {
+                p.device->WaitIdle();
+                p.device->DestroyBuffer(p.volumeBuffers[slot]);
+            }
+            RHIBufferDesc desc{};
+            desc.sizeBytes = uint64_t(kMaxPathVolumes) * sizeof(PathVolumeGridDesc);
+            desc.stride = sizeof(PathVolumeGridDesc);
+            desc.memory = RHIMemoryType::Upload;
+            desc.usage = RHIBufferUsage::StructuredBuffer;
+            desc.debugName = "PipelinePathTracer_VolumeGrids";
+            p.volumeBuffers[slot] = p.device->CreateBuffer(desc);
+            p.volumeCapacity[slot] = p.volumeBuffers[slot].IsValid() ? kMaxPathVolumes : 0;
+        }
+        if (!p.volumeBuffers[slot].IsValid()) return false;
+        mapped = p.device->MapBuffer(p.volumeBuffers[slot]);
+        if (!mapped) return false;
+        std::memcpy(mapped, volumeDescs.data(), volumeCount * sizeof(PathVolumeGridDesc));
+        p.device->UnmapBuffer(p.volumeBuffers[slot]);
+        volumeSrv = p.device->GetBufferSRVIndex(p.volumeBuffers[slot]);
+    }
+
     // Hash only transport inputs, never timeParams or the raster TAA jitter.
     uint64_t signature = 14695981039346656037ull;
     auto hash = [&](const void* data, size_t size) {
@@ -774,8 +873,9 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
     volume.volumeCenterY = cv_VolumeY->value;
     volume.volumeCenterZ = cv_VolumeZ->value;
     volume.volumeVariation = cv_VolumeVariation->value;
+    volume.volumeGridCount = volumeCount;
     volume.volumeEnabled = cv_Volume->value >= 0.5f
-        && volume.volumeRadius > 0.f && volume.volumeSigmaA + volume.volumeSigmaS > 0.f;
+        && ((volume.volumeRadius > 0.f && volume.volumeSigmaA + volume.volumeSigmaS > 0.f) || volumeCount > 0u);
     // Surface-only reservoir validation and diffuse denoiser guides do not
     // describe stochastic medium vertices. Use ordinary unbiased NEE here.
     // Stage-1 reservoirs contain only the base material. Coated vertices use
@@ -805,7 +905,16 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
     hash(&giRestir, sizeof(giRestir));
     hash(&giTemporal, sizeof(giTemporal));
     hash(&giSpatial, sizeof(giSpatial));
+    // The grid descriptor SRV rotates across frame slots; the grids' own
+    // descriptors are stable, so hash the medium, box frames and grid names.
     hash(&volume, sizeof(volume));
+    for (size_t i = 0; i < volumeDescs.size(); ++i) {
+        PathVolumeGridDesc stable = volumeDescs[i];
+        stable.densitySrv = 0u;
+        hash(&stable, sizeof(stable));
+        hash(volumeSpecs[i].data(), volumeSpecs[i].size());
+    }
+    volume.volumeGridSrv = volumeSrv;
     const auto* pf = static_cast<const PerFrameCB*>(perFrame.cpuPtr);
     hash(&pf->skyLightIntensity, sizeof(float) * 4);
     const uint64_t denoiserSignature = signature;
@@ -1195,7 +1304,10 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
             auto gi = giConstants;
             if (giRestir) gi.giRestirPartialUav = state.device->GetTextureUAVIndex(res.GetTexture(giPartial));
             native->SetComputeRoot32BitConstants(6, sizeof(gi) / 4, &gi, 0);
-            if (accumulatedFrames == 0 && volume.volumeEnabled)
+            if (accumulatedFrames == 0 && volume.volumeEnabled && volume.volumeGridCount != 0u)
+                UZ_LOG(Renderer, Info, "PathVolume: {} grid box(es); nearest-first Woodcock delta free flight + ratio shadow tracking on trilinear Texture3D density, HG + NEE, absorption-weighted emission; surface ReSTIR/NRD bypassed",
+                    volume.volumeGridCount);
+            else if (accumulatedFrames == 0 && volume.volumeEnabled)
                 UZ_LOG(Renderer, Info, "PathVolume: sphere sigmaA={} sigmaS={} g={} radius={} variation={}; delta free flight + ratio shadow tracking (exact homogeneous limit), HG + NEE; surface ReSTIR/NRD bypassed",
                     volume.volumeSigmaA,volume.volumeSigmaS,volume.volumeG,volume.volumeRadius,volume.volumeVariation);
             if (accumulatedFrames == 0 && layered && cv_StackDepth->value < 2.f)

@@ -12,6 +12,7 @@ class IRHIDevice;
 class IRHICommandList;
 class RTManager;
 class World;
+class IVFS;
 struct DrawCommand;
 struct GPUMesh;
 namespace rg { class RgBuilder; }
@@ -69,13 +70,32 @@ struct PipelinePathRoot {
 };
 static_assert(sizeof(PipelinePathRoot) == 96);
 
+// The two former padding DWORDs carry the grid media: the structured buffer of
+// PathVolumeGridDesc and its count. The private root stays 12 DWORDs.
 struct PathVolumeRoot {
     float volumeSigmaA = 0, volumeSigmaS = 0, volumeG = 0, volumeRadius = 0;
     float volumeCenterX = 0, volumeCenterY = 0, volumeCenterZ = 0;
     uint32_t volumeEnabled = 0;
-    float volumeVariation = 0, volumePadding0 = 0, volumePadding1 = 0, volumePadding2 = 0;
+    float volumeVariation = 0;
+    uint32_t volumeGridSrv = UINT32_MAX, volumeGridCount = 0;
+    float volumePadding2 = 0;
 };
 static_assert(sizeof(PathVolumeRoot) == 48);
+static_assert(offsetof(PathVolumeRoot, volumeGridSrv) == 36);
+
+// Mirrors PathVolumeGrid in pathtracer_volume.hlsli: one VolumeComponent's
+// oriented box and medium. worldToLocal maps world points into the box's
+// [-1,1]^3 frame (rows are affine: local_i = dot(row_i.xyz, P) + row_i.w).
+struct PathVolumeGridDesc {
+    float worldToLocal[3][4] = {};
+    float sigmaA = 0, sigmaS = 0, phaseG = 0, maxDensity = 0;
+    float emission[3] = {}; uint32_t densitySrv = UINT32_MAX;
+    float densityScale = 1, halfTexel[3] = {};
+};
+static_assert(sizeof(PathVolumeGridDesc) == 96);
+static_assert(offsetof(PathVolumeGridDesc, sigmaA) == 48);
+static_assert(offsetof(PathVolumeGridDesc, emission) == 64);
+static_assert(offsetof(PathVolumeGridDesc, densityScale) == 80);
 
 struct RestirLightSample {
     uint32_t lightIndex;
@@ -190,7 +210,7 @@ public:
                  std::span<const GPUMesh> meshes, uint32_t envSrv,
                  uint32_t frameIndex, uint32_t width, uint32_t height, World* world,
                  const Mat4& unjitteredViewProj, uint32_t sceneDirtyFlags,
-                 const NrdInputs& denoiserGuides);
+                 const NrdInputs& denoiserGuides, IVFS* vfs);
 private:
     struct Impl;
     std::unique_ptr<Impl> m_impl;

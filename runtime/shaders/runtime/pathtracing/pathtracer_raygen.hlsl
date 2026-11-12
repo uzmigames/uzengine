@@ -7,7 +7,7 @@
 #endif
 #include "../include/light_bvh.hlsli"
 
-float3 PathVolumeDirect(float3 P, float3 incoming, uint bounce) {
+float3 PathVolumeDirect(float3 P, float3 incoming, uint bounce, float g) {
     float3 direct = 0.0;
     StructuredBuffer<PathDirectionalLight> lights = ResourceDescriptorHeap[directionalLightsSrv];
     uint configIndex = lights[0].padding;
@@ -45,7 +45,7 @@ float3 PathVolumeDirect(float3 P, float3 incoming, uint bounce) {
                 float lightPdf = LightBVHSolidAnglePDF(chosen.selectionPdf,light.area,d2,cosine);
                 value = light.emission*cosine/max(d2*chosen.pdf,1e-20);
                 value *= LightBVHBalanceWeight(float(neeSamples)*lightPdf,
-                    PathVolumePhase(dot(incoming,L),volumeG));
+                    PathVolumePhase(dot(incoming,L),g));
                 if (light.emissiveSrv != 0xffffffffu) {
                     Texture2D<float4> tex = ResourceDescriptorHeap[NonUniformResourceIndex(light.emissiveSrv)];
                     value *= tex.SampleLevel(linearWrap,chosen.uv,0).rgb;
@@ -61,7 +61,7 @@ float3 PathVolumeDirect(float3 P, float3 incoming, uint bounce) {
                     |RAY_FLAG_SKIP_CLOSEST_HIT_SHADER,0xff,0,0,1,shadowRay,shadow);
             }
             if (!shadow.hit)
-                direct += value*PathVolumePhase(dot(incoming,L),volumeG)
+                direct += value*PathVolumePhase(dot(incoming,L),g)
                     *PathVolumeShadow(P,L,distance,PathVolumeSeed(sampleIndex,DispatchRaysIndex().xy,
                         4096u+sample+bounce*128u))/float(neeSamples);
         }
@@ -86,7 +86,7 @@ float3 PathVolumeDirect(float3 P, float3 incoming, uint bounce) {
                         |RAY_FLAG_SKIP_CLOSEST_HIT_SHADER,0xff,0,0,1,shadowRay,shadow);
                 }
                 if (!shadow.hit)
-                    direct += light.radiance*PathVolumePhase(dot(incoming,direction),volumeG)
+                    direct += light.radiance*PathVolumePhase(dot(incoming,direction),g)
                         *PathVolumeShadow(P,direction,1e7,PathVolumeSeed(sampleIndex,DispatchRaysIndex().xy,
                             8192u+sample+id*32u+bounce*1024u))/float(neeSamples);
             }
@@ -158,6 +158,45 @@ void main() {
                     if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT)
                         surfaceDistance = query.CommittedRayT();
                 }
+                if (volumeGridCount != 0u) {
+                    // Heterogeneous grid boxes (VolumeComponent): nearest-first
+                    // delta tracking to the surface. Collision density is
+                    // sigmaT(x)*Tr, so emission carries weight sigmaA/sigmaT and
+                    // scattering the albedo sigmaS/sigmaT; survival has weight 1.
+                    uint dimension = HashPCG((1024u+bounce*128u)^HashPCG(sampleIndex));
+                    uint gridIndex; float gridT;
+                    if (PathVolumeGridFreeFlight(ray.Origin,ray.Direction,surfaceDistance,PathSample(dimension).x,
+                            PathVolumeSeed(sampleIndex,pixel,16384u+bounce),payload.throughput,gridIndex,gridT)) {
+                        StructuredBuffer<PathVolumeGrid> grids = ResourceDescriptorHeap[volumeGridSrv];
+                        PathVolumeGrid grid = grids[gridIndex];
+                        float3 P = ray.Origin+ray.Direction*gridT;
+                        float sigmaT = grid.sigmaA+grid.sigmaS;
+                        payload.radiance += payload.throughput*(grid.sigmaA/sigmaT)*grid.emission;
+                        payload.throughput *= grid.sigmaS/sigmaT;
+                        if (grid.sigmaS <= 0.0) break; // absorbed
+                        payload.radiance += payload.throughput*PathVolumeDirect(P,ray.Direction,bounce,grid.phaseG);
+                        payload.bounceCount++;
+                        payload.hairBounces = 0u;
+                        if (!PathCanContinue(payload.bounceCount,maxBounces)) break;
+                        float2 phaseU = PathSample(dimension+1u);
+                        float cosine = clamp(PathVolumePhaseCosine(phaseU.x,grid.phaseG),-1.0,1.0);
+                        float sine = sqrt(max(0.0,1.0-cosine*cosine));
+                        float phi = 2.0*PI*phaseU.y;
+                        float3 T,B; PathBasis(ray.Direction,T,B);
+                        float3 direction = normalize(cosine*ray.Direction+sine*(cos(phi)*T+sin(phi)*B));
+                        payload.previousPosition = P;
+                        payload.previousNormal = 0.0;
+                        payload.previousBsdfPdf = PathVolumePhase(cosine,grid.phaseG);
+                        ray.Origin = P; ray.Direction = direction; ray.TMin = .001;
+                        if (rrEnabled != 0u && payload.bounceCount >= rrMinBounce) {
+                            float survival = PathSurvivalProbability(max(payload.throughput.x,
+                                max(payload.throughput.y,payload.throughput.z)));
+                            if (PathSample(dimension+2u).x >= survival) break;
+                            payload.throughput /= survival;
+                        }
+                        continue;
+                    }
+                } else {
                 float2 interval = PathVolumeInterval(ray.Origin,ray.Direction,surfaceDistance);
                 float lengthInMedium = interval.y-interval.x;
                 float sigmaT = volumeSigmaA+volumeSigmaS;
@@ -177,7 +216,7 @@ void main() {
                         // Tr*sigmaS / (sigmaT*Tr) = scattering albedo.
                         // Surface survival similarly has weight Tr/Tr = 1.
                         payload.throughput *= volumeSigmaS/sigmaT;
-                        payload.radiance += payload.throughput*PathVolumeDirect(P,ray.Direction,bounce);
+                        payload.radiance += payload.throughput*PathVolumeDirect(P,ray.Direction,bounce,volumeG);
                         payload.bounceCount++;
                         payload.hairBounces = 0u;
                         if (!PathCanContinue(payload.bounceCount,maxBounces)) break;
@@ -199,6 +238,7 @@ void main() {
                         }
                         continue;
                     }
+                }
                 }
             }
             if (hasGeometry == 0u) {
