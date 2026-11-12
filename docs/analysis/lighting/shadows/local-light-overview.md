@@ -4,531 +4,199 @@ category: analysis
 engine: uzengine
 theme: rendering
 created: 2026-03-30
-updated: 2026-03-30
+updated: 2026-11-11
 status: active
 author: docs-operator
 -->
 
 # UzEngine Local Light Shadow System
 
-Complete technical documentation of the UzEngine local light shadow implementation for spot lights and point lights, including atlas allocation, importance sorting, shadow sampling, and performance budgets.
+How point and spot lights cast shadows in UzEngine (rulebook task `phase3a-3.30.0-point-spot-light-shadows`,
+PCSS from `phase2_omni-pcss-soft-shadows`). This is the implementation as committed on `feat/phase1-lighting`;
+every symbol, file and number below is the shipped one. UE5 background lives in `point-spot-overview.md`,
+`local-light-atlas-allocation.md` and `point-light-data-flow.md`.
 
-## Overview
+## 1. Pipeline in one paragraph
 
-The UzEngine local light shadow system provides dynamic shadow mapping for point lights and spot lights. Shadows are rendered into a shared 4096x4096 atlas organized as a 4x4 grid of 1024x1024 tiles. Each frame, lights are ranked by importance and allocated shadow tiles in priority order. The implementation prioritizes visual quality, consistency across graphics backends (DX11, DX12, Vulkan), and tight GPU performance budget.
+Each frame `ExtractLightingFromECS()` (`runtime/engine/renderer/lighting/light_renderer.cpp`) collects every
+`PointLightComponent` / `SpotLightComponent` with `castShadows`, ranks them by importance and hands the winners
+to the scene renderer as `LightFrameData::spotShadows[]` / `pointShadows[]`. `frame_constants.cpp` allocates
+atlas tiles for them (one per spot, six per point light) and writes one `LocalLightShadowData` entry per tile
+into `ShadowDataCB::localShadows[]` (view-projection, atlas rect, bias, light position, range).
+`frame_shadows.cpp` renders the `LocalShadowDepth` render-graph pass: every opaque draw of the frame into every
+tile, storing the linear distance to the light. `deferred_lighting_ps.hlsl` samples the tile (hard PCF, or the
+PCSS soft path when enabled) and multiplies the light's attenuation by the visibility. Nothing persists across
+frames: the atlas is reset and re-rendered every frame.
 
-**Key characteristics:**
-- Single 4096x4096 D32Float depth atlas (4x4 tile grid)
-- Max 16 tiles per frame = ~1 spot shadow + ~2 point shadows + spare capacity
-- Hardware PCF sampling for quality shadows with standard MSRT filtering
-- Per-light shadow bias and cone angle support
-- Scene file integration (`castShadows: true/false`, `shadowBias: float`)
+## 2. Atlas (`runtime/engine/renderer/shadows/local_light_shadow_atlas.h/.cpp`)
 
-## Shadow Atlas Layout and Allocation Strategy
+One `D32Float` depth texture, `LocalLightShadowAtlas`, created by `Init(device)` and sized by two CVars read at
+that point (registered in `shadow_renderer.cpp`):
 
-### Atlas Texture Configuration
+| CVar | default | range | meaning |
+|---|---|---|---|
+| `r.Shadow.LocalAtlasSize` | 4096 | 1024..8192 | atlas width = height (texels) |
+| `r.Shadow.LocalTileSize` | 1024 | 256..2048 | tile width = height (texels) |
 
-The shadow atlas is a single 4096x4096 D32Float texture divided into a 4x4 grid of 1024x1024 tiles:
+`columns = atlasSize / tileSize`, `maxTiles = min(columns^2, kMaxLocalLightShadows)`. With the defaults that is a
+4x4 grid of 1024x1024 tiles = 16 tiles; a smaller tile size does **not** raise the tile count past 16 because the
+constant buffer holds 16 entries (section 5). `kLocalShadowAtlasSize`, `kLocalShadowTileSize`,
+`kLocalShadowTileCols`, `kMaxLocalShadowTiles` are the compile-time defaults.
+
+Allocation is `Reset()` once per frame, then sequential `AllocateTile(ShadowTileInfo&)`: tile `i` is column
+`i % columns`, row `i / columns`; `ShadowTileInfo` carries the pixel viewport (`viewportX/Y/Size`) for the depth
+pass and the UV rect (`uvOffsetX/Y`, `uvScale = tileSize / atlasSize`) for the sampler. `AllocateTile` returns
+false when the atlas is full; `GetAllocatedTileCount()` is the running count.
+
+## 3. Selection, importance and budget (`light_renderer.cpp`)
+
+Every point light with `castShadows` becomes a `PointLightShadowInfo` candidate (position, range, bias,
+`lightIndex` into `LightingCB::pointLights[]`); every spot light with `castShadows` a `SpotLightShadowInfo`
+(position, direction, clamped outer half-angle, range, bias, `lightIndex`). Candidates are sorted by
 
 ```
-┌──────────┬──────────┬──────────┬──────────┐
-│ Tile 0   │ Tile 1   │ Tile 2   │ Tile 3   │  Row 0
-├──────────┼──────────┼──────────┼──────────┤
-│ Tile 4   │ Tile 5   │ Tile 6   │ Tile 7   │  Row 1
-├──────────┼──────────┼──────────┼──────────┤
-│ Tile 8   │ Tile 9   │ Tile 10  │ Tile 11  │  Row 2
-├──────────┼──────────┼──────────┼──────────┤
-│ Tile 12  │ Tile 13  │ Tile 14  │ Tile 15  │  Row 3
-└──────────┴──────────┴──────────┴──────────┘
+importance = |color * intensity| * range^2 / max(1, |lightPos - cameraPos|^2)
 ```
 
-**File:** `runtime/src/engine/renderer/shadows/local_light_shadow_atlas.h`
-
-```cpp
-/// 4096x4096 D32Float shadow atlas
-/// Grid: 4x4 tiles, each tile 1024x1024 texels
-static constexpr uint32_t ATLAS_WIDTH = 4096;
-static constexpr uint32_t ATLAS_HEIGHT = 4096;
-static constexpr uint32_t TILE_SIZE = 1024;
-static constexpr uint32_t GRID_DIM = 4;  // 4x4 grid
-static constexpr uint32_t MAX_TILES = 16;
-```
-
-Tile UV mapping formula:
-- `col = tileIndex % 4`
-- `row = tileIndex / 4`
-- `uvMin = {col * 0.25f, row * 0.25f}`
-- `uvMax = {(col + 1) * 0.25f, (row + 1) * 0.25f}`
-
-### Per-Frame Allocation Strategy
-
-The `LocalLightShadowAtlas` class manages tile allocation with a **sequential per-frame allocation policy**:
-
-1. **Reset**: At frame start, atlas state is reset (no persistent tile assignments)
-2. **Sequential allocation**: Lights claim tiles in priority order (highest importance first)
-3. **Budget enforcement**: Max 16 tiles; allocation stops when budget exhausted
-4. **Separate budgets**: Spot lights and point lights have independent allocation order, but share total tile budget
-
-**File:** `runtime/src/engine/renderer/shadows/local_light_shadow_atlas.cpp`
-
-```cpp
-class LocalLightShadowAtlas {
-public:
-    void ResetFrame() {
-        nextTileIndex = 0;
-        spotShadowCount = 0;
-        pointShadowCount = 0;
-    }
-
-    /// Allocate a single tile for spot light
-    /// Returns {success, tileIndex, tileUVRect}
-    std::optional<uint32_t> AllocateSpotTile() {
-        if (nextTileIndex >= MAX_TILES) return std::nullopt;
-        spotShadowCount++;
-        return nextTileIndex++;
-    }
-
-    /// Allocate 6 tiles for point light cubemap faces
-    /// Returns first tile index or nullopt if insufficient space
-    std::optional<uint32_t> AllocatePointTiles() {
-        if (nextTileIndex + 6 > MAX_TILES) return std::nullopt;
-        pointShadowCount++;
-        uint32_t first = nextTileIndex;
-        nextTileIndex += 6;
-        return first;
-    }
-
-private:
-    uint32_t nextTileIndex = 0;
-    uint32_t spotShadowCount = 0;
-    uint32_t pointShadowCount = 0;
-};
-```
-
-### Light Type Shadow Tile Requirements
-
-**Spot lights**: 1 tile (1024x1024)
-- Single perspective projection along spot cone direction
-- Full viewport fills entire tile
-- Rendered as 1 depth pass
-
-**Point lights**: 6 tiles (6 × 1024x1024)
-- Cubemap representation: 6 faces (±X, ±Y, ±Z)
-- Each face is 90° FOV orthographic projection
-- Rendered as 6 depth passes (or 1 pass with geometry instancing)
-- Tiles are consecutive: `firstTile, firstTile+1, ..., firstTile+5`
-- Face-to-tile mapping:
-  - Tile+0: +X (right)
-  - Tile+1: -X (left)
-  - Tile+2: +Y (top)
-  - Tile+3: -Y (bottom)
-  - Tile+4: +Z (front)
-  - Tile+5: -Z (back)
-
-## Shadow Importance Sorting
-
-### Importance Metric Calculation
-
-Lights are ranked by a composite importance score that balances visual prominence and performance:
-
-```cpp
-float importance = colorIntensity * (radius * radius) / std::max(1.0f, distanceToCamera * distanceToCamera);
-```
-
-**Components:**
-- **colorIntensity**: Perceptual brightness = `max(color.r, color.g, color.b)`
-- **radius²**: Solid angle contribution (quadratic falloff of influence)
-- **distanceToCamera²**: Normalized distance penalty (shadows of near lights matter more)
-
-**File:** `runtime/src/engine/renderer/lights/light_renderer.cpp:ExtractLightingFromECS()`
-
-```cpp
-struct LightCandidate {
-    uint32_t entityId;
-    uint32_t type;  // POINT or SPOT
-    float3 position;
-    float3 color;
-    float radius;
-    bool castShadows;
-    float importance;
-};
-
-void ExtractLightingFromECS(SceneView& view, std::vector<LightCandidate>& outLights) {
-    std::vector<LightCandidate> candidates;
-
-    // Collect all lights with castShadows=true
-    scene->ForEach<PointLight>([&](PointLight& light, Transform& xf) {
-        if (!light.castShadows) return;
-        float intensity = std::max({light.color.r, light.color.g, light.color.b});
-        float dist = glm::distance(xf.position, view.cameraPos);
-        float imp = intensity * (light.radius * light.radius) / std::max(1.0f, dist * dist);
-        candidates.push_back({
-            .entityId = scene->GetEntityId(),
-            .type = LIGHT_TYPE_POINT,
-            .position = xf.position,
-            .color = light.color,
-            .radius = light.radius,
-            .castShadows = true,
-            .importance = imp
-        });
-    });
-
-    // Sort by importance (descending)
-    std::sort(candidates.begin(), candidates.end(),
-        [](const LightCandidate& a, const LightCandidate& b) {
-            return a.importance > b.importance;
-        });
-
-    outLights = candidates;
-}
-```
-
-### Allocation Order with Budget Enforcement
-
-After sorting, lights are allocated tiles in order until budget exhausted:
-
-```cpp
-uint32_t spotCount = 0;
-uint32_t pointCount = 0;
-
-for (const auto& light : sortedLights) {
-    if (light.type == LIGHT_TYPE_SPOT) {
-        if (atlas.nextTileIndex >= MAX_TILES) break;
-        auto tile = atlas.AllocateSpotTile();
-        if (!tile) break;
-        // Render spot shadow to tile
-        spotCount++;
-    } else if (light.type == LIGHT_TYPE_POINT) {
-        // Point light needs 6 tiles; check if space available
-        uint32_t pointBudget = (MAX_TILES - atlas.nextTileIndex) / 6;
-        if (pointBudget == 0) break;
-        auto tile = atlas.AllocatePointTiles();
-        if (!tile) break;
-        // Render 6 point shadow faces
-        pointCount++;
-    }
-}
-```
-
-**Budget example:**
-- `MAX_TILES = 16`
-- If 2 spot lights allocated: `nextTileIndex = 2`, remaining = 14 tiles
-- Point light can claim: `14 / 6 = 2` point lights (uses 12 tiles)
-- Final state: 2 spot + 2 point shadows, 2 tiles spare
-- 3rd point light or additional spots: rejected (no space)
-
-## Shadow Sampling Algorithm
-
-### Spot Light Shadow Projection
-
-Spot light shadows project world position through light-space perspective matrix:
-
-**File:** `runtime/shaders/runtime/passes/deferred_lighting_ps.hlsl`
-
-```hlsl
-// Spot light shadow sampling
-float SampleSpotShadow(float3 worldPos, uint shadowTileIndex, LocalLightShadowData shadowData) {
-    // Project through light view-projection matrix
-    float4 lightClip = mul(float4(worldPos, 1.0), shadowData.viewProjMatrix);
-    float3 lightNdc = lightClip.xyz / lightClip.w;
-
-    // Convert NDC to 0-1 range
-    float2 lightUv = lightNdc.xy * 0.5 + 0.5;  // [-1,1] → [0,1]
-    lightUv.y = 1.0 - lightUv.y;  // Flip Y for texture coordinates
-
-    // Map to atlas tile UV space
-    float2 tileUv = shadowData.atlasUvMin + lightUv * (shadowData.atlasUvMax - shadowData.atlasUvMin);
-    float lightDepth = lightNdc.z;
-
-    // Hardware PCF sampling (MSRT 2x2 filter)
-    float shadowFactor = shadowAtlas.SampleCmpLevelZero(
-        shadowComparisonSampler,
-        float3(tileUv, 0.0),
-        lightDepth - shadowData.bias
-    );
-
-    return shadowFactor;  // 1.0 = lit, 0.0 = shadowed
-}
-```
-
-### Point Light Shadow Projection (Cubemap)
-
-Point light shadows project world position into cubemap space, then select the dominant face:
-
-**File:** `runtime/shaders/runtime/passes/deferred_lighting_ps.hlsl`
-
-```hlsl
-// Select cubemap face based on dominant axis (UE5 ShadowProjectionCommon.ush:132-147 parity)
-uint SelectCubeFace(float3 dir) {
-    float absX = abs(dir.x);
-    float absY = abs(dir.y);
-    float absZ = abs(dir.z);
-
-    if (absX >= absY && absX >= absZ) {
-        return (dir.x > 0.0) ? 0 : 1;  // 0: +X, 1: -X
-    } else if (absY >= absX && absY >= absZ) {
-        return (dir.y > 0.0) ? 2 : 3;  // 2: +Y, 3: -Y
-    } else {
-        return (dir.z > 0.0) ? 4 : 5;  // 4: +Z, 5: -Z
-    }
-}
-
-float SamplePointShadow(float3 worldPos, uint shadowTileBase, LocalLightShadowData shadowData) {
-    // Vector from light to world position
-    float3 toPixel = worldPos - shadowData.lightPosition;
-
-    // Select appropriate cubemap face
-    uint faceIndex = SelectCubeFace(toPixel);
-
-    // Project through per-face 90° FOV matrix
-    float4 faceClip = mul(float4(toPixel, 1.0), shadowData.faceViewProjMatrix[faceIndex]);
-    float3 faceNdc = faceClip.xyz / faceClip.w;
-
-    // Convert to 0-1 UV
-    float2 faceUv = faceNdc.xy * 0.5 + 0.5;
-    faceUv.y = 1.0 - faceUv.y;
-
-    // Map to atlas tile (shadowTileBase + faceIndex)
-    float2 tileMin = shadowData.atlasFaceTiles[faceIndex].uvMin;
-    float2 tileSize = shadowData.atlasFaceTiles[faceIndex].uvMax - tileMin;
-    float2 atlasUv = tileMin + faceUv * tileSize;
-
-    float lightDepth = faceNdc.z;
-
-    // Hardware PCF sampling
-    float shadowFactor = shadowAtlas.SampleCmpLevelZero(
-        shadowComparisonSampler,
-        float3(atlasUv, 0.0),
-        lightDepth - shadowData.bias
-    );
-
-    return shadowFactor;
-}
-```
-
-### Integration into Deferred Lighting
-
-Shadow factors multiply light attenuation in the deferred lighting pass:
-
-```hlsl
-// In deferred_lighting_ps.hlsl
-float3 lighting = float3(0, 0, 0);
-
-for (uint i = 0; i < lightCount; i++) {
-    Light light = lights[i];
-
-    // Compute diffuse/specular contribution
-    float3 lightDir = normalize(light.position - worldPos);
-    float attenuation = ComputeLightAttenuation(worldPos, light);
-    float3 brdf = ComputeBRDF(normal, lightDir, viewDir, material);
-
-    // Apply shadow if light casts shadows
-    float shadowFactor = 1.0;
-    if (light.shadowTileIndex != SHADOW_TILE_NONE) {
-        if (light.type == LIGHT_TYPE_SPOT) {
-            shadowFactor = SampleSpotShadow(worldPos, light.shadowTileIndex, shadowCB.data[light.shadowDataIndex]);
-        } else if (light.type == LIGHT_TYPE_POINT) {
-            shadowFactor = SamplePointShadow(worldPos, light.shadowTileIndex, shadowCB.data[light.shadowDataIndex]);
-        }
-    }
-
-    // Final light contribution
-    lighting += brdf * light.color * attenuation * shadowFactor;
-}
-
-return float4(lighting, 1.0);
-```
-
-## Performance Budget and Tile Allocation
-
-### Runtime Tile Budget
-
-The shadow system maintains a strict per-frame budget to ensure consistent GPU performance:
-
-| Resource | Budget |
-|----------|--------|
-| Total atlas tiles | 16 (4096x4096 ÷ 1024x1024) |
-| Spot light tiles | Variable (1 tile each) |
-| Point light tiles | Variable (6 tiles each) |
-| Example: 1 spot + 2 points | 1 + 12 = 13 tiles (3 spare) |
-| Example: 3 spots + 1 point | 3 + 6 = 9 tiles (7 spare) |
-
-### Render Pass Execution
-
-The `LocalShadowDepth` render pass executes per-tile after CSM (Cascade Shadow Map) and before GBuffer deferred rendering:
-
-**File:** `runtime/src/engine/renderer/passes/local_shadow_depth_pass.h`
-
-```cpp
-class LocalShadowDepthPass : public RenderPass {
-public:
-    void Execute(RenderGraph& graph, FrameResources& resources) override {
-        // For each allocated tile in shadow atlas
-        for (uint32_t tileIdx = 0; tileIdx < atlas.nextTileIndex; tileIdx++) {
-            // Create render target for this tile (viewport = tile's rect in 4096x4096)
-            SetViewport(
-                tileIdx % 4 * 1024,      // X offset
-                tileIdx / 4 * 1024,      // Y offset
-                1024, 1024               // 1024x1024 tile size
-            );
-
-            // Render scene geometry (depth-only) from light's perspective
-            RenderGeometry(lightViewProj[tileIdx]);
-        }
-    }
-};
-```
-
-### Per-Tile Rendering Cost
-
-Each 1024x1024 tile renders the full scene geometry (depth-only pass):
-
-```
-Cost per tile = VertexShading(all geometry) + DepthTest + DepthWrite
-              = ~0.1 ms (AMD Ryzen 5900X / RTX 3080, typical scene)
-```
-
-For maximum budget (16 tiles): `16 × 0.1 ms = 1.6 ms` GPU time
-
-This is acceptable within typical frame budgets (60 FPS ≈ 16.6 ms total, shadows = ~10% GPU time).
-
-## Key Implementation Files
-
-| File | Purpose |
-|------|---------|
-| `local_light_shadow_atlas.h` | Atlas allocation API, tile indexing, UV mapping |
-| `local_light_shadow_atlas.cpp` | Per-frame reset, tile allocation logic, budget enforcement |
-| `light_renderer.h` | Light collection, sorting, shadow assignment |
-| `light_renderer.cpp` | ECS extraction, importance calculation, allocation orchestration |
-| `frame_constants.cpp` | View-projection matrix setup per tile, face orientation for point lights |
-| `frame_shadows.cpp` | Depth rendering per tile, render target setup, viewport configuration |
-| `deferred_lighting_ps.hlsl` | Shadow sampling, cubemap face selection, PCF filtering |
-| `constant_buffers.h` | `LocalLightShadowData` struct layout, `ShadowDataCB` constant buffer |
-| `shadow_atlas_bindings.hlsl` | `Texture2D shadowAtlas`, `SamplerComparisonState shadowComparisonSampler` |
-
-## Constant Buffer Layout
-
-**File:** `runtime/src/engine/renderer/constant_buffers.h`
-
-```cpp
-/// Per-tile shadow data for spot and point lights
-struct LocalLightShadowData {
-    float4x4 viewProjMatrix;           // 64 bytes: spot light or per-face point light
-    float4x4 faceViewProjMatrix[6];    // 384 bytes: all 6 cubemap faces (point light)
-    float3 lightPosition;              // 12 bytes
-    float shadowBias;                  // 4 bytes
-    float4 atlasUvMin;                 // 16 bytes: {uvMin.x, uvMin.y, reserved, reserved}
-    float4 atlasUvMax;                 // 16 bytes: {uvMax.x, uvMax.y, reserved, reserved}
-    float4 atlasFaceTiles[6];          // 96 bytes: per-face tile UV rects (point light)
-};
-
-static constexpr uint32_t MAX_SHADOW_LIGHTS = 16;
-
-/// Constant buffer for all allocated shadow lights (16 tiles max)
-struct ShadowDataCB {
-    LocalLightShadowData data[MAX_SHADOW_LIGHTS];  // 4096 bytes total
-};
-```
-
-The CB is bound at register `b2` in the deferred lighting shader.
-
-## Scene File Support
-
-Local light shadows are exposed in scene files via component properties:
-
-**File:** `sample/content/scenes/local_shadows_test.uzscene`
-
-```ini
-[scene]
-name = Local Shadows Test
-
-[node:directional_light]
-type = directional_light
-position = [10, 10, 10]
-castShadows = true
-
-[node:point_light_1]
-type = point_light
-position = [0, 2, 0]
-color = [1.0, 1.0, 1.0]
-radius = 10.0
-castShadows = true
-shadowBias = 0.001
-
-[node:point_light_2]
-type = point_light
-position = [5, 3, -5]
-color = [1.0, 0.8, 0.6]
-radius = 8.0
-castShadows = false
-shadowBias = 0.001
-
-[node:spot_light_1]
-type = spot_light
-position = [-5, 4, 0]
-color = [1.0, 1.0, 0.8]
-radius = 15.0
-cone_angle = 45.0
-castShadows = true
-shadowBias = 0.0005
-```
-
-**Scene loading** (in `scene_loader.cpp`):
-
-```cpp
-void LoadLightComponent(const IniSection& section, uint32_t entityId) {
-    float3 pos = section.GetVec3("position", {0, 0, 0});
-    float3 color = section.GetVec3("color", {1, 1, 1});
-    float radius = section.GetFloat("radius", 10.0f);
-    bool castShadows = section.GetBool("castShadows", false);
-    float shadowBias = section.GetFloat("shadowBias", 0.001f);
-
-    if (section.GetString("type") == "point_light") {
-        scene->AddComponent<PointLight>(entityId, {
-            .color = color,
-            .radius = radius,
-            .castShadows = castShadows,
-            .shadowBias = shadowBias
-        });
-    } else if (section.GetString("type") == "spot_light") {
-        float coneAngle = section.GetFloat("cone_angle", 45.0f);
-        scene->AddComponent<SpotLight>(entityId, {
-            .color = color,
-            .radius = radius,
-            .coneAngleDegrees = coneAngle,
-            .castShadows = castShadows,
-            .shadowBias = shadowBias
-        });
-    }
-}
-```
-
-## Key Takeaways
-
-1. **Fixed Atlas**: 4096x4096 D32Float texture divided into 16 × 1024x1024 tiles provides consistent memory footprint and allocation predictability.
-
-2. **Importance-Based Sorting**: Lights are ranked by `colorIntensity × radius² / distance²` to prioritize near, bright, large-radius lights for shadow quality.
-
-3. **Separate Tile Requirements**: Spot lights consume 1 tile (perspective projection), point lights consume 6 tiles (cubemap faces). Budget allocation accounts for this asymmetry.
-
-4. **Hardware PCF**: All shadow sampling uses hardware texture comparison (`SamplerComparisonState`) for efficient, high-quality filtering without manual tap loops.
-
-5. **Per-Frame Reset**: Atlas allocation is fully reset each frame; no persistent tile assignments. Lights can change shadow status, importance, or position dynamically without cache invalidation.
-
-6. **Scene Integration**: Light components expose `castShadows` and `shadowBias` properties, allowing scene authoring to control shadow quality per light.
-
-7. **Performance Predictability**: Max 16 tiles × ~0.1 ms per tile = ~1.6 ms GPU budget (under 10% of 60 FPS frame time).
-
-## References
-
-- [local-light-shadows-ue5-architecture.md](local-light-shadows-ue5-architecture.md) — UE5 reference architecture for local light shadows
-- [ue5-shadows/ue5-shadow-sampling-exact-code.md](../ue5-shadows/ue5-shadow-sampling-exact-code.md) — Hardware PCF and shadow sampling patterns
-- [ue5-shadows/ue5-reversed-z-architecture.md](../ue5-shadows/ue5-reversed-z-architecture.md) — Depth comparison conventions in reversed-Z systems
-- `docs/specs/renderer.md` — Rendering subsystem specification
-- `docs/guides/shader-authoring.md` — HLSL shader writing conventions
+(`ComputeShadowImportance`, descending). Spots are assigned first: `spotShadowCount = min(candidates, 16)`,
+`spotLights[i].shadowIndex = 0..spotShadowCount-1`. Point lights get the remaining entries in blocks of six:
+`maxPoint = (16 - spotShadowCount) / 6`, `pointLights[i].shadowIndex = spotShadowCount + 6 * rank`. A light that
+does not fit keeps `shadowIndex = 0xFFFFFFFF` and is lit without a shadow. Consequences with the 16-entry CB:
+
+- no spots: at most **2** shadowed point lights (12 entries);
+- 1..4 spots: 2 point lights; 5..10 spots: 1; 11..16 spots: none;
+- point lights never displace a spot light, whatever their importance.
+
+The spot cone angle used for the shadow frustum is the same clamp the cone attenuation uses:
+`outer = clamp(outerAngleDeg, inner + 0.001 rad, 89 deg + 0.001 rad)`.
+
+## 4. Projections (`frame_constants.cpp`, after the CSM cascades)
+
+Both use the engine `Camera` (`SetPosition`, `LookAt`, `SetHorizontalFOV(fov, aspect 1, near, far)`) with
+`near = r.Shadow.Local.NearPlane` (default 1.0 cm, range 0.01..50) and `far = range`.
+
+- **Spot**: one tile, `LookAt(position + direction, up)` with `up = +Z` unless `|direction . Z| > 0.99`, then
+  `up = +Y`; horizontal FOV = `2 * outer`, so the cone boundary is exactly the tile edge.
+- **Point**: six tiles in the order **+X, -X, +Y, -Y, +Z, -Z**, each a 90-degree frustum from the light
+  position; up vectors `+Z` for the four horizontal faces, `-Y` for +Z and `+Y` for -Z (Z-up world). The same
+  order is hard-coded in the shader's face selection (section 6) and in the unit test
+  `runtime/tests/engine/renderer/test_local_light_shadows.cpp` (every direction on the sphere projects inside the
+  face selected for it; seams are covered by both neighbours).
+
+Each tile's `LocalLightShadowData` entry: `viewProj`, `atlasOffsetX/Y`, `atlasScale`, `bias` (cm, from the
+light's `shadowBias`), `lightPosX/Y/Z`, `radius` (range). `ShadowDataCB::localShadowCount` is the number of
+entries written (spots + 6 per point light), `localShadowAtlasIndex` the atlas SRV,
+`localShadowNormalOffset = r.Shadow.Local.NormalOffset` (default 0.005, range 0..0.05).
+
+## 5. Constant buffer layout
+
+`ShadowDataCB` (`constant_buffers.h`, 2304 bytes, bound at `b4`): the 768-byte CSM section, then
+`LocalLightShadowData localShadows[16]` at offset 768 (16 x 96 = 1536 bytes). One entry is six `float4`:
+
+| float4 | content |
+|---|---|
+| 0..3 | `viewProj` rows |
+| 4 | `atlasOffsetX`, `atlasOffsetY`, `atlasScale`, `bias` (cm) |
+| 5 | light position xyz, `radius` |
+
+The shader (`shadow.hlsli`) declares the array as `float4 localShadowRaw[96]` and indexes entry `e` at
+`localShadowRaw[6e .. 6e+5]`. The scalar fields it reads: `localShadowAtlasIndex` (696), `localShadowCount`
+(700), `localShadowNormalOffset` (704), `localSoftPCSS` (752), `localPcssSourceRadius` (756).
+
+The per-light side lives in `LightingCB`: `PointLightData` (64 bytes) carries `shadowIndex` at offset 48 and
+`softShadowRadius` at 52; `SpotLightData` (80 bytes) carries them at 64 and 68 (`light_types.hlsli` mirrors both).
+`npm run test:layouts` and `test_deferred_pipeline.cpp` pin these offsets; `test_local_light_shadows.cpp` pins the
+`LocalLightShadowData` / `ShadowDataCB` ones.
+
+## 6. Depth pass and sampling
+
+**`LocalShadowDepth`** (`frame_shadows.cpp`): the atlas is cleared to 1.0, then for every tile a viewport +
+scissor of the tile, the `GetShadowDepthLinear` pipeline (`shadow_depth_vs.hlsl` with `UZ_SHADOW_LINEAR=1`
+forwarding the world position + `shadow_depth_linear_ps.hlsl`), a per-tile `ShadowCB` (view-projection, light
+position, range) and every opaque command of the frame's draw list (translucent, additive and mesh-decal
+materials are skipped). The tile stores `saturate(distance(fragment, light) / range)` in `SV_Depth`, tested with
+`Less`: a linear value is independent of the projection's Z convention (the `Camera` projections are reversed-Z
+while the shadow PSO and comparison sampler follow the CSM's standard-Z, see `shadow-depth-z-convention.md`)
+and keeps its precision over the whole range. Cost scales with tiles x draws: the demo scene below renders
+13 tiles x 6 meshes = 78 depth draws.
+
+**Hard path** (`SampleLocalShadow`, `deferred_lighting_ps.hlsl`): push the receiver along its geometric normal by
+`localShadowNormalOffset * distance` (against acne on grazing surfaces), project it with the tile's `viewProj`,
+return lit when it falls outside the tile (`w <= 0` or `|ndc| > 1`), else compare
+`(distance(light, receiver) - bias) / range` against the tile with the hardware LESS comparison sampler
+(`SampleCmpLevelZero`, one bilinear 2x2 tap).
+
+**Point lights** (`ShadePointLight`): the face is the major axis of the light-to-receiver direction
+(`a.x >= a.y && a.x >= a.z` -> +X/-X, else `a.y >= a.z` -> +Y/-Y, else +Z/-Z), entry `shadowIndex + face`.
+
+**Soft path** (`SampleLocalShadowSoft`, Fernando 2005 PCSS): enabled when `r.Shadows.SoftPCSS` (master) and
+`r.Shadows.SoftPCSS.Local` (default ON) are set and the light's emitter radius is positive. The radius per light
+is `LocalPcssRadius(softShadowRadius, sourceRadius)`: the light's `softShadowRadius` when non-zero (negative =
+hard shadow for that light), else its `sourceRadius` when positive (point lights), else
+`r.Shadows.SoftPCSS.Local.SourceRadius` (5 cm). A 16-tap blocker search over the clamped filter support
+(`r.Shadow.PCSSMaxPenumbra`, 16 texels), penumbra = `(d_receiver - d_blocker) * radius / d_blocker`
+(`PcssLocalPenumbraRadius`), then 16 Poisson comparison taps with that radius; taps are traced as rays and
+re-projected per tap (`LocalShadowTapUV`), so a point-light kernel crosses cube-face seams into the neighbouring
+tile instead of repeating a tile edge, and each tap is clamped half a texel inside its tile.
+
+## 7. Scene keys (`scene_loader.cpp`)
+
+Point and spot `light` components: `castShadows` (bool, default false), `shadowBias` (cm, default 0.5),
+`softShadowRadius` (cm, default 0 = inherit, < 0 = hard), `range`, `intensity`, `color`; spots add `innerAngle`
+/ `outerAngle` (degrees) and point lights `sourceRadius`. The demo scene
+`sample/content/scenes/local_shadows_test.uzscene` (project `sample/projects/local_shadows_test.uzproject`) has
+two shadowed point lights (red, blue) and one shadowed spot over a checker floor with three pillars: the log
+reports `LocalShadow: 1 spot + 2 point light shadows allocated (13 tiles)` and `LocalShadowDepth: 13 tiles, 78
+total draw calls`.
+
+## 8. Validation (RTX 5080, 2026-11-11)
+
+Evidence lane `E:/UzmiEngine/_evidence/lighting/point-spot-shadows-finish/` (report.md, the fixture generator and
+the analytic-truth analysis). Three single-light fixtures without sun or sky, frame 41, whole-frame linear-HDR
+dumps; visibility = direct light divided by the unshadowed capture; every pixel's world point is intersected with
+the exact occluder boxes to get the ground truth:
+
+- closed room, point light at its centre, one occluder per cube face, four cameras: every face receives its
+  shadow (umbra pixels on all six faces); interior umbra visibility max 0.0000 (no leaks), interior lit p0.1 = 1.0
+  (no acne) on the hard path; measured edges within p99 1.7 cm of the analytic edges (bias + normal offset).
+- spot, bar across the cone: both shadow edges within 0.6 cm of the analytic +-16.67 cm at all 16 stations
+  across the cone (no peter-panning); PCSS 10-90 % penumbra 9.2-10.1 cm at every station against an analytic
+  8.7 cm (the PCF adds about one texel); hard path 1.7-2.6 cm.
+- pillars/wall: the stripes' edges within p99 1.4 cm of analytic; no leaks, no acne.
+
+**Known artifact (seam line)**: a one-sided band of `localShadowNormalOffset x distance` (about 1.4-2.3 cm here)
+along every cube-face seam reads lit inside a point-light shadow, on both the hard and the PCSS path, because
+`ShadePointLight` selected the face from the raw pixel position while both samplers project the normal-offset
+receiver: a receiver within that offset of a seam projects outside the face chosen for it and the samplers'
+"outside the tile = lit" early-out fires. 9-19 % of the analytic-umbra pixels within +-3 cm of a seam are lit in
+the room captures; `r.Shadow.Local.NormalOffset 0` removes the line (and the acne protection). The fix is to
+select the face from the same offset receiver (`seam-fix.patch` in the evidence lane).
+
+## 9. Limits against the proposal
+
+- Acceptance criterion 4 of the proposal ("max 4 shadowed point lights") is not met by design: 16 entries / 6
+  faces = 2 point lights per frame (section 3). Raising it means growing `kMaxLocalLightShadows` (and
+  `ShadowDataCB`, 96 bytes per entry) or a cheaper point-light layout (dual-paraboloid, 2 tiles).
+- Resolution is fixed per tile; there is no screen-coverage-driven resolution or shadow caching.
+- Only opaque geometry casts; no contact shadows for local lights.
+
+## 10. Files
+
+| file | role |
+|---|---|
+| `runtime/engine/renderer/shadows/local_light_shadow_atlas.h/.cpp` | atlas texture, tile allocation |
+| `runtime/engine/renderer/lighting/light_renderer.h/.cpp` | candidates, importance, budget, `shadowIndex` |
+| `runtime/engine/renderer/frame/frame_constants.cpp` | spot / cube-face projections, `localShadows[]` entries |
+| `runtime/engine/renderer/frame/frame_shadows.cpp` | `LocalShadowDepth` pass |
+| `runtime/engine/renderer/core/params/constant_buffers.h`, `shadow_data_params.h` | `LocalLightShadowData`, `ShadowDataCB`, `PointLightData` / `SpotLightData` |
+| `runtime/shaders/runtime/lighting/shadow_depth_linear_ps.hlsl` | linear-distance tile |
+| `runtime/shaders/runtime/lighting/deferred_lighting_ps.hlsl`, `shadow.hlsli`, `light_types.hlsli` | sampling, PCSS, CB mirror |
+| `runtime/engine/ecs/lighting/light_component.h`, `runtime/engine/ecs/loaders/scene_loader.cpp` | components, scene keys |
+| `runtime/tests/engine/renderer/test_local_light_shadows.cpp` | layout, atlas, extraction, cube faces, spot tile |
 
 ## Changelog
 
-| Date | Change |
-|------|--------|
-| 2026-03-30 | Initial creation. Documented shadow atlas layout, importance sorting, spot/point shadow projections, PCF sampling, constant buffer layout, and scene integration. |
+- 2026-11-11: rewritten against the shipped implementation (linear-distance tiles, PCSS, `softShadowRadius`,
+  CVars, budget arithmetic, validation, the seam artifact). The 2026-03-30 text described a planned design
+  (`AllocateSpotTile` / `AllocatePointTiles`, orthographic faces, hardware-PCF-only) that was never the code.
+- 2026-03-30: initial version.
