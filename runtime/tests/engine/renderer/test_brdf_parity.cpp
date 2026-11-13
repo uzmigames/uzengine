@@ -29,6 +29,80 @@ using namespace uz::brdf;
 static constexpr float kEps  = 1e-4f;   // tolerance for stable formulas
 static constexpr float kEps3 = 1e-3f;   // tolerance for chained exp/log operations
 
+// Hill 2016 fitted RRT+ODT and Lagarde 2014 specular occlusion.
+// CPU mirrors of common/color.hlsli and lighting/ibl.hlsli, respectively.
+TEST(ACESHillFit, PublishedMatricesKnownValue) {
+    // Independently evaluated in double precision from the shipped Hill matrices:
+    // input matrix * (1, .5, .2) = (.784126, .533302, .262869).
+    // RRT+ODT = (.536219451861, .397228878353, .179749000559).
+    const Vec3 result = ACESHillFit({1.0f, 0.5f, 0.2f});
+    EXPECT_NEAR(result.x, 0.636295743787f, kEps);
+    EXPECT_NEAR(result.y, 0.384356473870f, kEps);
+    EXPECT_NEAR(result.z, 0.162757708785f, kEps);
+}
+
+TEST(ACESHillFit, BlackAndHdrSaturateToDisplayRange) {
+    const Vec3 black = ACESHillFit({0.0f, 0.0f, 0.0f});
+    EXPECT_FLOAT_EQ(black.x, 0.0f);
+    EXPECT_FLOAT_EQ(black.y, 0.0f);
+    EXPECT_FLOAT_EQ(black.z, 0.0f);
+    const Vec3 white = ACESHillFit({10000.0f, 10000.0f, 10000.0f});
+    EXPECT_FLOAT_EQ(white.x, 1.0f);
+    EXPECT_FLOAT_EQ(white.y, 1.0f);
+    EXPECT_FLOAT_EQ(white.z, 1.0f);
+}
+
+TEST(ACESNarkowicz, RetainedComparisonFit) {
+    // Independent rational-fit values for (1, .5, .2).
+    const Vec3 result = ACESNarkowicz({1.0f, 0.5f, 0.2f});
+    EXPECT_NEAR(result.x, 2.54f / 3.16f, kEps);
+    EXPECT_NEAR(result.y, 0.6425f / 1.0425f, kEps);
+    EXPECT_NEAR(result.z, 0.1064f / 0.3552f, kEps);
+}
+
+TEST(SpecularOcclusion, KnownValue) {
+    // exp2(-16 * .5 - 1) = 1/512.
+    // pow(.5 + .3, 1/512) - 1 + .3 = .299564267710239.
+    EXPECT_NEAR(ComputeSpecularOcclusion(0.5f, 0.3f, 0.5f),
+                0.299564267710f, 1e-6f);
+}
+
+TEST(SpecularOcclusion, AoBoundaries) {
+    for (int view = 0; view <= 32; ++view) {
+        for (int rough = 0; rough <= 32; ++rough) {
+            const float NdotV = static_cast<float>(view) / 32.0f;
+            const float roughness = static_cast<float>(rough) / 32.0f;
+            EXPECT_NEAR(ComputeSpecularOcclusion(NdotV, 0.0f, roughness), 0.0f, 1e-6f);
+            EXPECT_FLOAT_EQ(ComputeSpecularOcclusion(NdotV, 1.0f, roughness), 1.0f);
+        }
+    }
+}
+
+TEST(SpecularOcclusion, RoughnessExtremes) {
+    // roughness 0: exponent = 1/2; roughness 1: exponent = 1/131072.
+    EXPECT_NEAR(ComputeSpecularOcclusion(0.5f, 0.3f, 0.0f),
+                0.194427190999916f, 1e-6f);
+    EXPECT_NEAR(ComputeSpecularOcclusion(0.5f, 0.3f, 1.0f),
+                0.299998297551259f, 1e-6f);
+}
+
+TEST(SpecularOcclusion, ValidInputSweepStaysFiniteAndSaturated) {
+    // 33^3 samples include every corner, both clamp regimes and interior values.
+    for (int view = 0; view <= 32; ++view) {
+        for (int ambient = 0; ambient <= 32; ++ambient) {
+            for (int rough = 0; rough <= 32; ++rough) {
+                const float result = ComputeSpecularOcclusion(
+                    static_cast<float>(view) / 32.0f,
+                    static_cast<float>(ambient) / 32.0f,
+                    static_cast<float>(rough) / 32.0f);
+                ASSERT_TRUE(std::isfinite(result));
+                ASSERT_GE(result, 0.0f);
+                ASSERT_LE(result, 1.0f);
+            }
+        }
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // §7.1 — Disney Burley Diffuse BRDF
 // ─────────────────────────────────────────────────────────────────────────────

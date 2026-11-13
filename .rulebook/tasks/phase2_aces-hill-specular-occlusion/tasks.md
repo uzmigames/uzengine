@@ -13,24 +13,42 @@
 ## 2. Testing
 
 ### 2.1 CPU Math Parity (Tier 1)
-- [ ] 2.1.1 Add known-value test for `AcesHillFit()`: input (1.0, 0.5, 0.2) must match Hill's published reference output within 1e-4.
-- [ ] 2.1.2 Add known-value test for `ComputeSpecularOcclusion()`: NdotV=0.5, AO=0.3, roughness=0.5 → verify against hand-computed result.
-- [ ] 2.1.3 Add boundary tests: AO=0 → specular occlusion near 0; AO=1 → specular occlusion = 1; roughness=0 and roughness=1 edge cases.
-- [ ] 2.1.4 Property test: specular occlusion always in [0, 1] for all valid inputs.
+- [x] 2.1.1 `ACESHillFit.PublishedMatricesKnownValue` in `test_brdf_parity.cpp`: shipped symbol `ACESHillFit`, input (1, 0.5, 0.2), independently evaluated Hill matrices output (0.636295744, 0.384356474, 0.162757709), tolerance 1e-4.
+- [x] 2.1.2 `SpecularOcclusion.KnownValue`: (0.5, 0.3, 0.5) gives `pow(0.8, 1/512) - 0.7 = 0.299564267710`, tolerance 1e-6.
+- [x] 2.1.3 `SpecularOcclusion.AoBoundaries` sweeps view/roughness endpoints and interiors (33 x 33); `RoughnessExtremes` checks roughness 0 and 1 against 0.194427191 and 0.299998298 (1e-6). Hill black/HDR saturation is also checked.
+- [x] 2.1.4 `SpecularOcclusion.ValidInputSweepStaysFiniteAndSaturated`: all 35,937 points on the 33 x 33 x 33 valid-input grid stay finite and in [0, 1]. This samples the domain; it is not an exhaustive continuum proof.
 
 ### 2.2 Visual Regression (Tier 2)
-- [ ] 2.2.1 Capture before/after screenshots with damaged_helmet scene (Hill vs Narkowicz ACES). Verify no hue shift in orange/red emissive highlights.
-- [ ] 2.2.2 Capture before/after with specular occlusion ON/OFF in a scene with crevices (PBR sphere on ground plane). Verify reduced light leaking at contact edges.
-- [ ] 2.2.3 PSNR comparison: Hill vs Falcor full ACES on same HDR input. Target >= 35 dB.
+- [ ] 2.2.1 Capture before/after screenshots with damaged_helmet scene (Hill vs Narkowicz ACES). Verify no hue shift in orange/red emissive highlights. Deferred: needs Fable/GPU lane.
+- [ ] 2.2.2 Capture before/after with specular occlusion ON/OFF in a scene with crevices (PBR sphere on ground plane). Verify reduced light leaking at contact edges. Deferred: needs Fable/GPU lane.
+- [ ] 2.2.3 PSNR comparison: Hill vs Falcor full ACES on same HDR input. Target >= 35 dB. Deferred: needs Fable/GPU lane.
+
+Items 2.2.1, 2.2.2 and 2.2.3 need Fable/GPU lane. This CPU-only lane
+does not run the viewer, render, or capture screenshots; neither the visual
+comparisons nor Falcor PSNR can be established by CPU mirror tests.
 
 ### 2.3 Coverage
-- [ ] 2.3.1 Verify 95%+ coverage on all new C++ code in `brdf_math.h`.
+- [x] 2.3.1 CPU source line accounting: 23/23 behavior-bearing physical lines
+      covered (100%) across the phase's three CPU functions. `ACESHillFit`:
+      18/18 (480-483, 486-489, 492, 495-500, 502-503, 505);
+      `ACESNarkowicz`: 4/4 (512-514, 516), exercised by
+      `ACESNarkowicz.RetainedComparisonFit`; `ComputeSpecularOcclusion`: 1/1
+      (529), including both saturation endpoints. Excludes signatures, braces,
+      comments and blank lines. This is source accounting, not instrumented
+      coverage; the repository has no coverage tool.
 
 ## 3. Documentation
-- [ ] 3.1 Update `docs/specs/rendering/shader-library.md` with `AcesHillFit()` and `ComputeSpecularOcclusion()` function signatures and citations.
-- [ ] 3.2 Add `@ref` citations to HLSL file headers: Hill 2016, Lagarde 2014.
+- [x] 3.1 `docs/specs/rendering/shader-library.md` documents shipped `ACESHillFit()` and `ComputeSpecularOcclusion()` signatures, spaces/ranges, formula, CPU mirrors, tests and references.
+- [x] 3.2 Added header `@ref` citations: Hill 2016 in `color.hlsli`, Lagarde 2014 in `ibl.hlsli`; comment-only changes.
 
 ## 4. Tail (mandatory — enforced by rulebook v5.3.0)
-- [ ] 4.1 Update or create documentation covering the implementation
-- [ ] 4.2 Write tests covering the new behavior
-- [ ] 4.3 Run tests and confirm they pass
+- [x] 4.1 Updated shader-library documentation above.
+- [x] 4.2 Added seven CPU math tests in the existing automatically registered `test_brdf_parity.cpp`.
+- [x] 4.3 Pinned Zig 0.15.2 `build -Doptimize=ReleaseFast` exit 0,
+      173 shaders verified. `GTEST_FILTER=-RuntimeViewportTest.*`:
+      `[==========] 8254 tests from 854 test suites ran. (48042 ms total)`,
+      `[  PASSED  ] 8237 tests.`, `[  SKIPPED ] 17 tests, listed below:`;
+      zero failures (exit 0), all seven new tests pass, no new failures versus
+      the stated zero-failure baseline. `npm run test:layouts` exit 0,
+      `Tier A: 105/105 passing entries`, `all layouts agree`.
+      Logs and patch: `E:/UzmiEngine/_evidence/lighting/aces-hill-tail/`.

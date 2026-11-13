@@ -1,11 +1,43 @@
 <!-- doc-meta
-title: Local Shadow Shader Functions
+title: Rendering Shader Functions
 category: rendering
 status: current
 updated: 2026-11-13
 -->
 
-# Point and spot PCSS shader functions
+# Rendering shader functions
+
+## ACES tone mapping and specular occlusion
+
+`runtime/shaders/runtime/common/color.hlsli` exports
+`float3 ACESHillFit(float3 x)`. It transforms linear HDR RGB with Hill's input
+matrix, applies the rational fitted RRT+ODT curve, transforms with the output
+matrix, and saturates each output channel to [0, 1]. The result remains linear;
+sRGB encoding is a separate operation. The shipped tone mapping pass calls this
+fit. `float3 ACESFilmic(float3 x)` retains the Narkowicz rational fit for comparison.
+Reference: Hill 2016, "ACES Fitted Curves"; Narkowicz 2015, "ACES Filmic Tone
+Mapping Curve".
+
+`runtime/shaders/runtime/lighting/ibl.hlsli` exports
+`float ComputeSpecularOcclusion(float NdotV, float ao, float roughness)`.
+For inputs in [0, 1], it returns
+`saturate(pow(NdotV + ao, exp2(-16 * roughness - 1)) - 1 + ao)`.
+The result multiplies ambient specular lighting to reduce IBL leaking in
+occluded regions. AO 0 returns 0; AO 1 returns 1. Roughness 0 uses exponent
+1/2, and roughness 1 uses 1/131072. Reference: Lagarde 2014,
+"Moving Frostbite to PBR", specular occlusion approximation.
+
+The CPU mirrors in `runtime/engine/renderer/lighting/brdf_math.h` are
+`uz::brdf::Vec3 ACESHillFit(Vec3 x)`,
+`uz::brdf::Vec3 ACESNarkowicz(Vec3 x)`, and
+`float ComputeSpecularOcclusion(float NdotV, float ao, float roughness)` in
+`uz::brdf`. `runtime/tests/engine/renderer/test_brdf_parity.cpp` checks the Hill
+matrix reference at (1, 0.5, 0.2), black/HDR saturation, the retained Narkowicz
+fit, specular occlusion reference values and AO/roughness boundaries, and
+finite [0, 1] output over a 33 x 33 x 33 input sweep. These CPU checks do not
+establish visual equivalence or PSNR against full ACES.
+
+## Point and spot PCSS shader functions
 
 The general [shader library](../shader-library.md) describes the runtime shader
 tree. These local shadow functions live in

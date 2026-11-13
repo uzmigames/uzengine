@@ -1,6 +1,7 @@
 /// UzEngine IBL evaluation — SH diffuse + split-sum specular.
 /// @ref Karis 2013 "Real Shading in Unreal Engine 4" — split-sum approximation
 /// @ref Ramamoorthi & Hanrahan 2001 — SH irradiance
+/// @ref Lagarde 2014 "Moving Frostbite to PBR" — ComputeSpecularOcclusion
 
 #ifndef UZ_LIGHTING_IBL_HLSLI
 #define UZ_LIGHTING_IBL_HLSLI
