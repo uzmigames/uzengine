@@ -63,6 +63,9 @@ All shader entry points MUST be named `main` — the ShaderManager compiles with
 
 ## CPU Math Parity
 
+Point and spot PCSS functions and their shipped call sites are documented in
+[Local Shadow Shader Functions](rendering/shader-library.md).
+
 Key HLSL functions have C++ mirrors in `engine/renderer/lighting/brdf_math.h` for unit testing:
 
 | HLSL Function | C++ Mirror | Test File |

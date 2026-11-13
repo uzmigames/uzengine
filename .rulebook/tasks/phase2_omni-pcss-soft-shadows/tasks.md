@@ -162,13 +162,23 @@ missing item, 1.5, and produces the 2.1 / 2.2 evidence on the RTX 5080 at 1920x1
 - [x] 2.2.1 Benchmark PCSS vs PCF for point/spot: target < 0.5ms additional GPU cost per light at 1080p. — point +0.405 ms (0.529 -> 0.934), spot +0.040 ms (0.635 -> 0.675) at 1920x1080, `logs/perf.json`.
 
 ### 2.3 Coverage
-- [ ] 2.3.1 Verify 95%+ coverage on new C++ code.
+- [ ] 2.3.1 Verify 95%+ coverage on new C++ code. — CPU line accounting (2026-11-13):
+      the per-light feature commit 6b4adbb1 added 10 behavior-bearing C++ lines:
+      component default (1), CB radius defaults (2), scene reads/writes (4), ECS uploads (2),
+      generated emissive-light radius initialization in frame_constants.cpp (1).
+      Existing defaults/layout tests plus the new extraction and scene round-trip tests cover
+      9/10 (90%); padding reshapes, comments and HLSL are excluded from this denominator.
+      The remaining generated-light frame setup is unexecuted by these CPU tests: needs
+      Fable/GPU lane. This is source line accounting, not an instrumented 95% claim.
+      Existing test_local_light_shadows.cpp already covers atlas/extraction budgets,
+      cube-face/cone projections and entry layout; test_shadow_pcss.cpp already covers
+      local similar-triangles math and shared clamp/CB fields. Those tests were not duplicated.
 
 ## 3. Documentation
-- [ ] 3.1 Update `docs/specs/rendering/shader-library.md` with PCSS point/spot functions.
-- [ ] 3.2 Update `docs/specs/rendering/point-spot-light-shadows.md` with PCSS support description.
+- [x] 3.1 Update `docs/specs/rendering/shader-library.md` with PCSS point/spot functions. — Created the missing page against shipped LocalShadow / SampleLocalShadowSoft / LocalShadowTapUV / LocalPcssRadius symbols; linked from the existing docs/specs/shader-library.md.
+- [x] 3.2 Update `docs/specs/rendering/point-spot-light-shadows.md` with PCSS support description. — Created the missing page: controls, signed radius inheritance, radial filtering, cross-face taps, ABI, limits and tests.
 
 ## 4. Tail (mandatory — enforced by rulebook v5.3.0)
-- [ ] 4.1 Update or create documentation covering the implementation
-- [ ] 4.2 Write tests covering the new behavior
+- [x] 4.1 Update or create documentation covering the implementation — Both rendering spec pages above, with source-verified function contracts.
+- [x] 4.2 Write tests covering the new behavior — Reused the 20 existing test_local_light_shadows.cpp tests, test_shadow_pcss.cpp math/CB coverage and existing default/layout tests. Added only missing signed-radius ECS upload and point/spot scene default/save/reload tests (3 tests total).
 - [ ] 4.3 Run tests and confirm they pass

@@ -65,6 +65,49 @@ protected:
     uz::World world_;
 };
 
+TEST_F(SceneLoaderTest, LocalSoftShadowRadiusDefaultsToInheritWhenAbsent) {
+    const auto bytes = ToBytes(R"({"entities":[
+        {"components":{"light":{"type":"point"}}},
+        {"components":{"light":{"type":"spot"}}}
+    ]})");
+    ASSERT_EQ(uz::LoadScene(world_, bytes, "local-radius-default"), 2u);
+    auto points = world_.View<uz::PointLightComponent>();
+    auto spots = world_.View<uz::SpotLightComponent>();
+    ASSERT_EQ(ViewCount(points), 1u);
+    ASSERT_EQ(ViewCount(spots), 1u);
+    for (auto entity : points)
+        EXPECT_FLOAT_EQ(points.get<uz::PointLightComponent>(entity).softShadowRadius, 0.0f);
+    for (auto entity : spots)
+        EXPECT_FLOAT_EQ(spots.get<uz::SpotLightComponent>(entity).softShadowRadius, 0.0f);
+}
+
+TEST_F(SceneLoaderTest, LocalSoftShadowRadiusPreservesSignedValuesThroughSaveAndReload) {
+    for (float radius : {0.0f, 12.5f, -1.0f}) {
+        SCOPED_TRACE(radius);
+        const nlohmann::json scene = {{"entities", {
+            {{"components", {{"light", {{"type", "point"}, {"softShadowRadius", radius}}}}}},
+            {{"components", {{"light", {{"type", "spot"}, {"softShadowRadius", radius}}}}}}
+        }}};
+        ASSERT_EQ(uz::LoadScene(world_, ToBytes(scene.dump()), "local-radius"), 2u);
+        const auto saved = uz::SaveScene(world_);
+        const auto json = nlohmann::json::parse(saved.begin(), saved.end());
+        ASSERT_EQ(json["entities"].size(), 2u);
+        for (const auto& entity : json["entities"])
+            EXPECT_FLOAT_EQ(entity["components"]["light"]["softShadowRadius"].get<float>(), radius);
+
+        uz::World reloaded;
+        ASSERT_EQ(uz::LoadScene(reloaded, saved, "local-radius-reload"), 2u);
+        auto points = reloaded.View<uz::PointLightComponent>();
+        auto spots = reloaded.View<uz::SpotLightComponent>();
+        ASSERT_EQ(ViewCount(points), 1u);
+        ASSERT_EQ(ViewCount(spots), 1u);
+        for (auto entity : points)
+            EXPECT_FLOAT_EQ(points.get<uz::PointLightComponent>(entity).softShadowRadius, radius);
+        for (auto entity : spots)
+            EXPECT_FLOAT_EQ(spots.get<uz::SpotLightComponent>(entity).softShadowRadius, radius);
+    }
+}
+
 namespace {
 class SceneLoaderVFS final : public uz::IVFS {
 public:

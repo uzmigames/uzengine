@@ -515,6 +515,30 @@ TEST(LocalLightShadowExtraction, ShadowInfoCarriesThePerLightParameters) {
     EXPECT_NEAR(s.direction.Length(), 1.0f, 1e-5f);
 }
 
+TEST(LocalLightShadowExtraction, SoftShadowRadiusUploadsSignedValuesWithoutResolvingInheritance) {
+    // Selection belongs to LocalPcssRadius in HLSL. CPU extraction must preserve
+    // the zero sentinel, positive overrides and negative per-light hard requests.
+    for (float radius : {0.0f, 3.0f, -1.0f}) {
+        SCOPED_TRACE(radius);
+        ExtractionRig rig;
+        auto& point = rig.AddPoint({100.f, 0.f, 300.f}, 10.f, 1000.f, true);
+        point.sourceRadius = 17.0f;
+        point.softShadowRadius = radius;
+        auto& spot = rig.AddSpot({-100.f, 0.f, 300.f}, 10.f, 1000.f, true);
+        spot.softShadowRadius = radius;
+
+        const auto data = rig.Extract({0.f, 0.f, 0.f});
+        const auto& cb = ExtractionRig::CB(data);
+        ASSERT_EQ(cb.pointLightCount, 1u);
+        ASSERT_EQ(cb.spotLightCount, 1u);
+        EXPECT_FLOAT_EQ(cb.pointLights[0].sourceRadius, 17.0f);
+        EXPECT_FLOAT_EQ(cb.pointLights[0].softShadowRadius, radius);
+        EXPECT_FLOAT_EQ(cb.spotLights[0].softShadowRadius, radius);
+        EXPECT_NE(cb.pointLights[0].shadowIndex, UINT32_MAX);
+        EXPECT_NE(cb.spotLights[0].shadowIndex, UINT32_MAX);
+    }
+}
+
 TEST(LocalLightShadowExtraction, SpotOuterAngleIsClampedLikeTheConeAttenuation) {
     // The shadow frustum uses the same clamp as the cone term: outer in (inner + 0.001, 89 deg + 0.001].
     ExtractionRig rig;
