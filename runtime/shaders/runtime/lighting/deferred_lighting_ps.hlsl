@@ -498,7 +498,11 @@ float3 ShadePointLight(PointLightData pl, float3 worldPos, float3 N, float3 geom
     // Shadowed point lights own six consecutive tiles (+X, -X, +Y, -Y, +Z, -Z, the order
     // frame_constants.cpp allocates them); the face is the major axis of light -> pixel.
     if (pl.shadowIndex != 0xFFFFFFFFu && pl.shadowIndex + 5u < localShadowCount) {
-        const float3 d = -toLight;
+        // Select the face from the same normal-offset receiver the samplers project (they push the
+        // receiver along the geometric normal by localShadowNormalOffset of its distance): selected
+        // from the raw pixel, a receiver within that offset of a seam projected outside its face and
+        // was returned lit - a bright line along every cube-face seam of a point-light shadow.
+        const float3 d = -toLight + geometricNormal * (sqrt(distSq) * localShadowNormalOffset);
         const float3 a = abs(d);
         const uint face = (a.x >= a.y && a.x >= a.z) ? (d.x > 0.0 ? 0u : 1u)
                         : (a.y >= a.z)               ? (d.y > 0.0 ? 2u : 3u)
