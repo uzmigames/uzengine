@@ -819,6 +819,15 @@ void SceneRenderer::RegisterPassInspectorTargets(FrameContext& ctx) {
         m_passInspector.RegisterTarget("atmo.sky_cubemap", m_skyCubemap, m_skyCubemapSrv,
                                         VisDisplayMode::HDR, 64, 64);
     }
+    // The HDRI environment's cubemap (SetHDRIEnvironment / SetPMREMEnvironment): what the
+    // HdriSkybox pass draws and the IBL bake read. atmo.sky_cubemap above stays the procedural
+    // capture, which is never filled while the HDRI is active, so --pass-dump / --diag would
+    // otherwise show no sky source at all for an HDRI scene.
+    if (m_hdriActive && m_hdriCubemap.IsValid() && m_hdriCubemapSrv != UINT32_MAX
+        && m_hdriCubemapSize > 0) {
+        m_passInspector.RegisterTarget("atmo.hdri_cubemap", m_hdriCubemap, m_hdriCubemapSrv,
+                                        VisDisplayMode::HDR, m_hdriCubemapSize, m_hdriCubemapSize);
+    }
 
     // Volumetric fog (godrays / light shafts) — froxel inscattering volume
     // and the integrated march. Lets the dump show whether volumetric scatter

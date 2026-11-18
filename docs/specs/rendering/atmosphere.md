@@ -132,6 +132,51 @@ Two shader variants capture the procedural sky into a 6-face RGBA16F cubemap for
 
 The captured cubemap is passed to `IBLBaker::BakeEnvironment()` after graph execution.
 
+### HDRI Skybox (SkyLight `cubemap_path`)
+
+A `SkyLightComponent` with `cubemap_path` (`.hdr`, `.exr`, `.ktx2`) replaces the
+procedural sky with a static environment. `frame_constants.cpp` loads the file
+once (`TextureLoader::LoadHDRFromMemory`, panoramas wider than 2048 are halved
+to 2048), `SceneRenderer::SetHDRIEnvironment()` converts the equirect to a
+6-face RGBA16F cubemap (`equirect_to_cubemap_cs.hlsl`, `IBLBaker::EquirectToCubemap`),
+bakes the irradiance / prefiltered IBL from that cubemap, projects the sky SH
+(fog and cloud ambient) and rebuilds the env-MIS sampler; PMREM `.ktx2` atlases
+go through `SetPMREMEnvironment()` instead. `uz.renderer.set_hdri_environment(srv)`
+(Lua) reaches the same path. While the HDRI is active (`m_hdriActive`):
+
+- `AddAtmospherePasses` registers `HdriSkybox` (`hdri_skybox_pass.cpp`,
+  fullscreen triangle, `skybox_cubemap_ps.hlsl`) in place of every procedural
+  pass (transmittance LUT, sky, capture, aerial perspective). It writes only
+  pixels whose G-buffer depth is the reversed-Z far plane (`depth <= 0.0001`),
+  reconstructs the view ray with the same two-point `invViewProj` unproject as
+  `sky_atmosphere_ps.hlsl`, and samples the cubemap through `WorldToCubemap`
+  (`(x, z, y)`, Z-up world to the DX +Y-up cube) &mdash; the swizzle the deferred
+  lighting, the translucent pass and the env-MIS sampler use, so a mirror
+  reflects the sky behind it. The procedural capture and its sun-change re-bake
+  stay suppressed (`!ctx.hdriActive`).
+- Exposure is not applied by the pass: `tonemap_ps.hlsl` multiplies the whole
+  HDR buffer by `exposure` after the sky is in it, so the sky and the lit scene
+  share one exposure (the procedural sky works the same way).
+- Orientation: `equirect_to_cubemap_cs.hlsl` maps world +X to the panorama's
+  centre column (`u = 0.5`), world +Y (the camera's right in the left-handed
+  Z-up world) to `u = 0.75`, world +Z to the top row; a panorama therefore
+  reads unmirrored from the inside and its `u = 0/1` seam faces world -X.
+  `path_tracer_ps.hlsl` inlines the same mapping for the raw panorama.
+- `--pass-dump` / `--diag` register the cubemap as `atmo.hdri_cubemap`
+  (`atmo.sky_cubemap` stays the never-filled procedural capture).
+
+`r.HDRISkybox` (int, default 1): `0` skips the `HdriSkybox` pass and lets the
+procedural passes run (a `SkyAtmosphereComponent` draws the sky; the HDRI still
+drives the IBL, the SH, the fog colour and env-MIS); `1` renders the IBL cubemap
+converted at `SkyLightComponent::cubemapResolution` (default 128, the
+behaviour before the CVar); `2` converts the auto-loaded panorama at its own
+resolution (`HdriSkyboxCubeResolution`: width / 4, power of two, at most 1024,
+never below the authored value &mdash; 512 for a 2048-wide panorama), read once
+when the SkyLight loads the file. At 128 a 4K panorama's sun is a 4-texel
+block and the horizon smears; at 512 the sun is a disc and the trees resolve,
+and the fixed 256-face prefiltered mip 0 stops being an upsample. Validation:
+`E:/UzmiEngine/_evidence/lighting/hdri-skybox/report.md` (2026-11-17).
+
 ### Volumetric Clouds (M0-M6, aerial perspective)
 
 `VolumetricCloudsComponent` supplies the first cloud entity's settings to
@@ -234,6 +279,9 @@ retain the existing s3 wrap sampler; shadow sampling retains s2, never s0.
 | `runtime/shaders/runtime/atmosphere/height_fog_ps.hlsl` | Height fog fullscreen pass |
 | `runtime/shaders/runtime/atmosphere/sky_cubemap_cs.hlsl` | Sky cubemap capture (compute variant) |
 | `runtime/shaders/runtime/atmosphere/sky_cubemap_ps.hlsl` | Sky cubemap capture (raster variant) |
+| `runtime/engine/renderer/passes/atmosphere/hdri_skybox_pass.h/cpp` | HDRI skybox pass, `HdriSkyboxMode`, `HdriSkyboxCubeResolution` |
+| `runtime/shaders/runtime/atmosphere/skybox_cubemap_ps.hlsl` | HDRI skybox fullscreen pass |
+| `runtime/shaders/runtime/ibl/equirect_to_cubemap_cs.hlsl` | Equirect panorama to cubemap conversion |
 | `runtime/shaders/runtime/include/aerial_perspective.hlsli` | Atmospheric inscattering math |
 
 ## UE5 Reference
@@ -255,6 +303,7 @@ retain the existing s3 wrap sampler; shadow sampling retains s2, never s0.
 | Transmittance LUT compute | Done |
 | Procedural sky fullscreen pass | Done |
 | Sky cubemap capture (CS + PS) | Done |
+| HDRI skybox (`cubemap_path`, `r.HDRISkybox`) | Done |
 | Height fog (single layer) | Done |
 | Height fog (two layers) | Done |
 | Height fog directional inscattering | Done |

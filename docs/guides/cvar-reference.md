@@ -141,6 +141,7 @@ Registered in `frame_setup.cpp`.
 | `r.SkyLight.RebakeAngleDeg` | float | 0.25 | [0.01, 30] | Re-bake the sky IBL when the sun direction moved by more than this (degrees) |
 | `r.SkyLight.RebakeIntensityDelta` | float | 0.01 | [0.001, 1] | Re-bake the sky IBL when the sky sun colour changed by more than this (relative) |
 | `r.SkyLight.RebakeMinInterval` | int | 30 | [1, 3600] | Minimum sky passes between two IBL bakes |
+| `r.HDRISkybox` | int | 1 | [0, 2] | HDRI skybox while a SkyLight `cubemap_path` is active: 0 = skip the pass (procedural sky, HDRI IBL kept), 1 = render the IBL cubemap at `cubemap_resolution` (128 by default; the pre-CVar behaviour), 2 = convert the panorama at its own resolution (width / 4, <= 1024; read once at load). See [HDRI skybox](#hdri-skybox-skylight-cubemap_path). |
 
 ## Tonemap Parameters
 
@@ -365,6 +366,52 @@ Supported HDRI/environment map formats for `cubemap_path` in SkyLight:
 | `.ktx2` | basis_universal ktx2_transcoder | UASTC HDR (FastHDR/PMREM), UASTC LDR, ETC1S. Supports Zstd supercompression. |
 
 KTX2 PMREM files from [needle.tools](https://cloud.needle.tools/hdris) are supported directly — the engine transcodes UASTC HDR → RGBA16Float and uses the panorama as equirectangular input for IBL baking.
+
+## HDRI skybox (SkyLight `cubemap_path`)
+
+A static environment map replaces the procedural sky when the scene's first enabled
+`sky_light` names a panorama. The file is VFS-relative (the project's `content_root`),
+equirectangular, 2:1, top row = up:
+
+```json
+{
+  "name": "SkyLight",
+  "components": {
+    "transform": { "position": [0, 0, 0] },
+    "sky_light": {
+      "cubemap_path": "textures/hdri/grasslands_sunset_4k.hdr",
+      "cubemap_resolution": 512,
+      "intensity": 1.0,
+      "light_color": [1.0, 1.0, 1.0]
+    }
+  }
+}
+```
+
+- `cubemap_path` sets `source_type` to `SpecifiedCubemap`; the panorama is loaded once,
+  converted to a cubemap, and that one cubemap feeds the visible sky (`HdriSkybox` pass),
+  the irradiance / prefiltered IBL, the sky SH (fog and cloud ambient) and the env-MIS
+  sampler, so reflections match the sky behind them. A `sky_atmosphere` component may
+  stay in the scene; it is not rendered while the HDRI is active.
+- `cubemap_resolution` (default 128) is the cube face size the panorama is converted to
+  &mdash; and therefore the resolution of the visible sky. 128 turns a 4K sun into a
+  4-texel block and smears the horizon; use 512 for a 2K/4K panorama (the loader halves
+  panoramas wider than 2048), or set `r.HDRISkybox 2` to derive it from the file.
+- Orientation: the centre column of the panorama faces world +X, the columns to its
+  right face +Y (the camera's right when it looks along +X), the top row is +Z. The
+  panorama reads unmirrored from the inside; its left/right seam faces world -X.
+- Exposure is the scene's: `r.Exposure` / auto-exposure act on the sky and the lit
+  geometry alike at the tonemap. Scale the panorama's brightness with `intensity` only
+  for the lighting (it does not change the drawn sky); re-grade the file for the sky.
+- `r.HDRISkybox 0` hides the HDRI sky (the `sky_atmosphere` renders instead) while the
+  HDRI keeps lighting the scene &mdash; an A/B switch, not a way to disable the HDRI.
+- Scripts: `uz.texture.load_hdr(path)` + `uz.renderer.set_hdri_environment(srv)`
+  (`sample/content/scripts/load_hdri.lua`) reach the same path with a 512 cube.
+- Diagnostics: `--pass-dump` writes the cube as `atmo.hdri_cubemap` and the composed sky
+  in `hdr`; `--diag` reports both (`atmo.sky_cubemap` is the never-filled procedural
+  capture and reads all-zero in an HDRI scene).
+- Not applied on this path: `lower_hemisphere_is_black` / `lower_hemisphere_color`
+  (the capture-side mask of the procedural path) and `source_cubemap_angle`.
 
 ## Render Quality Tuning Log (phase2a-2.50.0)
 

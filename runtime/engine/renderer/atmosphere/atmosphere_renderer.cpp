@@ -63,7 +63,13 @@ void AddAtmospherePasses(
     // capture, aerial perspective) and render the HDRI cubemap directly as
     // the sky background. The HDRI cubemap was already baked into IBL maps
     // during SetHDRIEnvironment().
-    if (ctx.hdriActive && ctx.hdriCubemapSrv != UINT32_MAX) {
+    // r.HDRISkybox 0 (HdriSkyboxMode::Off) skips only this pass: the procedural
+    // passes below run instead, and their capture / re-bake stay suppressed by
+    // ctx.hdriActive, so the IBL keeps the HDRI.
+    static const CVar* cvHdriSkybox = CVarRegistry::Get().Find("r.HDRISkybox");
+    const bool hdriSkyboxOn = cvHdriSkybox == nullptr
+        || static_cast<int>(cvHdriSkybox->value) != static_cast<int>(HdriSkyboxMode::Off);
+    if (ctx.hdriActive && ctx.hdriCubemapSrv != UINT32_MAX && hdriSkyboxOn) {
         auto hdriPipeline = ctx.pipelines->GetHdriSkybox();
         if (hdriPipeline.IsValid()) {
             HdriSkyboxPassDesc hdriDesc{};

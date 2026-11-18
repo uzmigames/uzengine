@@ -7,6 +7,7 @@
 
 #include "renderer_core.h"
 #include "passes.h"
+#include "hdri_skybox_pass.h"
 #include "subsystems.h"
 #include "components.h"
 #include "raytracing/rt_manager.h"
@@ -53,6 +54,15 @@ static auto* cv_SkyLightMinAmbient       = UZ_CVAR_FLOAT("r.SkyLight.MinAmbient"
     "0 = the component value (Sponza authors 0.01; the shader documents 0.005-0.02). The old 0.25 default "
     "overrode every scene (block A.2, 2026-10-05)", 0.f, 1.f);
 static auto* cv_SkyLightIndirectIntensity = UZ_CVAR_FLOAT("r.SkyLight.IndirectIntensity", 1.0f, "Diffuse IBL multiplier (separate from specular)", 0.f, 10.f);
+// HdriSkyboxMode (hdri_skybox_pass.h). 1 = the behaviour before the CVar existed (the HDRI skybox pass renders the IBL
+// cubemap converted at SkyLightComponent::cubemapResolution); the only default that leaves every HDRI scene as it was.
+static auto* cv_HDRISkybox = UZ_CVAR_INT("r.HDRISkybox", static_cast<int>(uz::HdriSkyboxMode::Cubemap),
+    "HDRI skybox while a SkyLight cubemap_path (or set_hdri_environment) is active: 0 = skip the HdriSkybox pass (the "
+    "procedural sky passes run when a SkyAtmosphereComponent exists; the HDRI still drives the IBL, SH, fog and env-MIS); "
+    "1 = render the IBL cubemap, converted at SkyLightComponent::cubemapResolution (128 by default); 2 = as 1 but the "
+    "auto-loaded panorama is converted at its own resolution (width / 4, power of two, <= 1024, never below the authored "
+    "value; read once, when the SkyLight loads it), so the sky and the prefiltered mip 0 are not upsampled from a "
+    "128-texel cube", static_cast<int>(uz::HdriSkyboxMode::Off), static_cast<int>(uz::HdriSkyboxMode::SourceResolution));
 // Contact shadows ON by default — they are NOT GTAO. Pure screen-space
 // ray-march from each pixel along the sun direction; produces hard contact
 // shadows at object/floor intersections without the GTAO over-occlusion bug.
@@ -397,7 +407,19 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
                                     "SkyLight: '{}' loaded as PMREM atlas ({}px face, {} LODs)",
                                     sl.cubemapPath, hdrResult.pmremFaceSize, hdrResult.pmremLodCount);
                             } else {
-                                SetHDRIEnvironment(hdrResult.srvIndex, sl.cubemapResolution);
+                                // r.HDRISkybox 2: the cube is sized from the panorama (hdri_skybox_pass.h);
+                                // otherwise the authored capture resolution, as before the CVar existed.
+                                const bool sourceRes = static_cast<int>(cv_HDRISkybox->value)
+                                    == static_cast<int>(HdriSkyboxMode::SourceResolution);
+                                const uint32_t cubeRes = sourceRes
+                                    ? HdriSkyboxCubeResolution(hdrResult.width, sl.cubemapResolution)
+                                    : sl.cubemapResolution;
+                                SetHDRIEnvironment(hdrResult.srvIndex, cubeRes);
+                                if (sourceRes) {
+                                    UZ_LOG(Renderer, Info,
+                                        "SkyLight: r.HDRISkybox=2 — cube sized from the {}x{} panorama: {} (authored {})",
+                                        hdrResult.width, hdrResult.height, cubeRes, sl.cubemapResolution);
+                                }
                             }
                             UZ_LOG(Renderer, Info,
                                 "SkyLight: auto-loaded HDRI '{}' (SRV={}, res={}, PMREM={})",

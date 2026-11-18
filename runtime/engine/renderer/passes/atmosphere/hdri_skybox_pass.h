@@ -32,6 +32,47 @@ class RgBuilder;
 namespace uz {
 
 // ─────────────────────────────────────────────────────────────────────────────
+// r.HDRISkybox
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Values of `r.HDRISkybox` (registered once, in frame_constants.cpp; read by
+/// `AddAtmospherePasses` every frame and by the SkyLight auto-load once).
+enum class HdriSkyboxMode : int32_t {
+    /// The HdriSkybox pass is skipped. The procedural sky passes run when a
+    /// SkyAtmosphereComponent exists; the HDRI still drives the IBL, the SH,
+    /// the fog colour and the env-MIS sampler (the capture and the re-bake
+    /// stay suppressed while the HDRI is active).
+    Off = 0,
+    /// The pass renders the IBL cubemap, converted at
+    /// `SkyLightComponent::cubemapResolution` (128 by default). The shipped
+    /// behaviour before the CVar existed.
+    Cubemap = 1,
+    /// As `Cubemap`, but the auto-loaded panorama is converted at its own
+    /// resolution (`HdriSkyboxCubeResolution`), so the visible sky and the
+    /// prefiltered mip 0 are not upsampled from a 128-texel cube.
+    SourceResolution = 2,
+};
+
+/// Largest cube face `HdriSkyboxCubeResolution` returns (texels).
+inline constexpr uint32_t kHdriSkyboxMaxCubeResolution = 1024;
+
+/// Cube face size for an equirect panorama `equirectWidth` texels wide under
+/// `HdriSkyboxMode::SourceResolution`: one face spans 90 of the panorama's
+/// 360 degrees, so width / 4, rounded down to a power of two, capped at
+/// `kHdriSkyboxMaxCubeResolution`, and never below the authored
+/// `SkyLightComponent::cubemapResolution` (the value the other modes use).
+/// A 2048-wide panorama (the loader's cap) gives 512.
+[[nodiscard]] constexpr uint32_t HdriSkyboxCubeResolution(uint32_t equirectWidth,
+                                                          uint32_t authoredResolution) noexcept
+{
+    uint32_t res = 1;
+    while (res * 2 <= equirectWidth / 4 && res * 2 <= kHdriSkyboxMaxCubeResolution) {
+        res *= 2;
+    }
+    return res > authoredResolution ? res : authoredResolution;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // HdriSkyboxPassDesc
 // ─────────────────────────────────────────────────────────────────────────────
 
