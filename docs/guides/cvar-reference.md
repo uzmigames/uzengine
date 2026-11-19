@@ -2,7 +2,7 @@
 title: CVar Reference — Complete List of Console Variables
 status: active
 created: 2026-03-21
-updated: 2026-03-24
+updated: 2026-11-19
 -->
 
 # CVar Reference — Complete List of Console Variables
@@ -251,15 +251,27 @@ Registered in `fsr_pass.cpp`.
 
 ## SSR Parameters
 
-Registered in `frame_lighting.cpp`.
+`r.SSR` is registered in `frame_lighting.cpp` (default **off**: the quality presets turn it on at
+High and Ultra only, and the real-time default reflection layer is the hardware ray-traced pass,
+`r.RayTracing.Reflections`, where DXR is available). The pass CVars live in `frame_gi_passes.cpp`,
+the legacy composite in `frame_postprocess.cpp`. Pipeline (all compute, 1920x1080 on an RTX 5080:
+0.13 ms total): SSR_TileClassify -> SSR_PrepareIndirect -> SSR_Trace (GGX-VNDF sample, Hi-Z
+march) -> SSR_Resolve (elliptical bilateral) -> SSR_Temporal (YCoCg variance clip) ->
+SSR_SpatialDenoise -> read by the deferred lighting before the BRDF.
 
 | CVar | Type | Default | Range | Description |
 |------|------|---------|-------|-------------|
-| `r.SSR.Intensity` | float | 1.0 | [0, 2] | SSR intensity multiplier |
-| `r.SSR.MaxRoughness` | float | 0.8 | [0, 1] | Max roughness for SSR |
-| `r.SSR.NumSteps` | int | 16 | [8, 32] | SSR ray march step count |
-| `r.SSR.StartMipLevel` | float | 1.0 | [0, 3] | SSR initial HZB mip level |
-| `r.SSR.SlopeToleranceScale` | float | 4.0 | [1, 16] | SSR slope tolerance scale |
+| `r.SSR` | bool | 0 | [0, 1] | Screen-space reflections (stochastic GGX-VNDF trace + temporal/spatial denoise) |
+| `r.SSR.MaxRoughness` | float | 0.35 | [0.05, 1] | Roughness cutoff; the blend weight fades to 0 at the cutoff (slope `-2 / MaxRoughness`) |
+| `r.SSR.Intensity` | float | 1.0 | [0, 5] | Blend-weight scale of the SSR layer (shared with the ray-traced reflections) |
+| `r.SSR.NumSteps` | int | 16 | [8, 64] | Ray-march steps: `NumSteps/4` coarse at Hi-Z mip 1, `NumSteps/2` fine at mip 0, then 4 binary steps at full resolution (linear march of `NumSteps` without a Hi-Z chain) |
+| `r.SSR.Trace` / `.Resolve` / `.Temporal` / `.SpatialDenoise` | float | 1 | [0, 1] | Per-pass skip switches (0 = that pass does not dispatch); diagnostics |
+| `r.SSR.StartMipLevel` | float | 1.0 | [0, 3] | **No effect**: pushed to the trace root constants (slot 14) but never read by `ssr_trace_cs.hlsl` |
+| `r.SSR.SlopeToleranceScale` | float | 4.0 | [1, 16] | **No effect**: pushed to the trace root constants (slot 15) but never read by `ssr_trace_cs.hlsl` |
+| `r.SSR.Composite` | float | 0 | [0, 1] | Legacy additive post-TAA composite; 1 double-counts (the lighting already blends SSR before the BRDF). A/B control only |
+| `r.RayTracing.Reflections.TemporalFix` | bool | 1 | [0, 1] | The SSR / RT reflection temporal filter permutation: velocity in pixels -> UV, thin-lens virtual hit behind the surface, g-buffer roughness history cap (4..32 frames), variance clip widened by the texel's temporal variance; 0 = the prior pass |
+| `r.RayTracing.Reflections.TemporalFix.ClipFloor` | float | 2.0 | [0, 8] | Clip-box growth by gamma x this x (temporal sigma / 3); 0 = the plain 3x3 box |
+| `r.RayTracing.Reflections.TemporalFix.RoughnessFull` | float | 0.3 | [0.04, 1] | Roughness from which the history cap is the full 32 frames (4 at the mirror threshold) |
 
 ## TAA Parameters
 
