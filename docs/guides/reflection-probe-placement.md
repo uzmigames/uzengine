@@ -120,7 +120,7 @@ With 8 active probes at 128px: ~4.2 MB total (negligible vs. scene textures). At
 
 **`priority` parameter — Resolution tiebreaker in overlapping regions.**
 
-When multiple probes overlap at a pixel, the **highest priority wins** (overwrites lower-priority reflections).
+When probes overlap at a pixel, the **highest priority is blended first**: it takes its fade weight, and lower-priority probes (then the sky IBL) fill only what it leaves (the under operator). Inside a higher-priority probe's full-weight zone, lower-priority probes do not show.
 
 | Priority | Purpose |
 |---|---|
@@ -178,7 +178,7 @@ for (auto& probe : probes) {
 // → Zero per-frame cost beyond deferred lighting blend
 ```
 
-**Performance:** Deferred blend only (~0.5–1ms for 8 probes). No capture cost.
+**Performance:** Deferred blend only (measured: +0.01–0.02 ms on the deferred lighting pass for 2 probes at 1280×720 on an RTX 5080). No capture cost.
 
 #### Dynamic Geometry (Moving Objects, Destructible Structures)
 
@@ -291,14 +291,32 @@ Use this for very low-end platforms or as a fallback quality setting.
 2. Pre-capture all probes during loading screen (set `needsCapture = true` at load time; system auto-captures over 8 frames before gameplay starts)
 3. Reduce `resolution` for non-critical probes (outdoor = 64, indoor = 128)
 
-## Advanced: Parallax Correction (Phase 3+)
+### Problem: No probe reflections at all
 
-In Phase 3, parallax-corrected probes will adjust reflection rays based on probe box shape (instead of assuming perfect sphere):
+**Cause:** reflection probes are opt-in. `r.ReflectionProbes` defaults to 0, under which no probe is captured, baked or sampled, whatever the scene authors.
 
-- **Current (Phase 2):** Spherical influence (distance fade only)
-- **Future (Phase 3):** Cubic influence (parallax correction via box projection)
+**Fix:** set `r.ReflectionProbes` to 1 in the project's `cvars` (the shipped `reflection-probes.uzproject` does) or at the console.
 
-This reduces "wrong angle" artifacts when reflecting objects at probe boundary. For now, rely on `blendDistance` and `priority` to hide boundary discontinuities.
+### Problem: Reflections inside a room are far too bright, or black
+
+**Cause (fixed 2026-11-19):** the capture used to light the scene with the sun's N·L only (no shadows, no ambient). It now renders a sun shadow map of its own and lights the geometry as the main pass does (sun + shadows, sky light, emissive); the reflected walls measure 1.02–1.07 × the frame's lighting of the same points. What a capture still does not carry: local lights, GI, SSR, contact and cloud shadows. See [17-lighting.md — Limitations](../engine/12-rendering/17-lighting.md#limitations).
+
+**Fix:** if a room looks too bright or dark in a reflection, check it is not lit mainly by local lights or GI, which the capture does not include; and re-capture after the sky light changes (`needsCapture`).
+
+### Problem: A smooth metal ignores the probe
+
+**Cause:** the screen-space and ray-traced reflections layer over the probes on smooth surfaces (on DXR hardware with `r.SSR` off the ray-traced reflections are on by default), and `r.EnvMIS` replaces the split-sum specular on smooth metals with a sky-only estimate. The probe shows where those layers do not cover.
+
+**Fix:** expected; to inspect the probe layer alone, set `r.RayTracing.Reflections 0`, `r.SSR 0`, `r.EnvMIS 0` (as `scripts/rendering/reflection-probes.uzproject` does).
+
+## Parallax Correction (`boxExtents`)
+
+Without a box a probe's cubemap is an infinitely distant environment: a surface near a wall reflects the wall as the probe's centre sees it. With `boxExtents` (JSON `box_extents: [x, y, z]`, half-extents in cm, all three > 0) the reflection ray is intersected with that box and the cubemap is read towards the hit point, so the wall appears where it is (box projection, Lagarde 2012).
+
+- The box is **centred on the probe**: put the probe at the room's centre and set the half-extents to the room's interior (e.g. an 8 × 8 × 3 m room: probe at mid-height, `box_extents: [400, 400, 150]`).
+- The influence is still the **sphere**: to keep the corners at full weight, use `influenceRadius >= half-diagonal + blendDistance` (8 × 8 × 3 m: half-diagonal 585 cm).
+- A receiver outside the box but inside the sphere (a doorway) is projected from the closest point of the box, so the reflection stays continuous through the opening while the probe fades out.
+- Leave `box_extents` out (or any component 0) for outdoor probes and open areas.
 
 ## References
 
@@ -312,3 +330,5 @@ This reduces "wrong angle" artifacts when reflecting objects at probe boundary. 
 | Date | Change |
 |------|--------|
 | 2026-03-24 | Initial creation — placement strategies, parameter tuning, optimization, troubleshooting |
+| 2026-11-16 | Box parallax (`box_extents`), the under-operator priority blend, measured blend cost, the capture-lighting and reflection-layering limitations (phase3a 3.37.0) |
+| 2026-11-19 | `r.ReflectionProbes` opt-in (default 0); the capture lit like the frame with its own sun shadow map (A1) |

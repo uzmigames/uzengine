@@ -20,6 +20,7 @@
     [[nodiscard]] bool EnsureGBufferDebugPixelShader();
     [[nodiscard]] bool EnsureDebugViewPixelShader();
     [[nodiscard]] bool EnsureForwardPixelShader();
+    [[nodiscard]] bool EnsureProbeCapturePixelShader();
     [[nodiscard]] bool EnsureTranslucentPixelShader();
     [[nodiscard]] bool EnsureInstancedMeshShaders();
     [[nodiscard]] bool EnsureInstancedShadowShaders();
@@ -107,6 +108,7 @@
     // ── Cached shader handles ───────────────────────────────────────────
     RHIShaderHandle m_meshVS           = RHIShaderHandle::Invalid();
     RHIShaderHandle m_meshPS           = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_probeCapturePS   = RHIShaderHandle::Invalid(); ///< Reflection-probe capture PS (probe_capture_ps.hlsl).
     RHIShaderHandle m_translucentPS    = RHIShaderHandle::Invalid();
     RHIShaderHandle m_fullscreenVS     = RHIShaderHandle::Invalid();
     RHIShaderHandle m_gbufferPS        = RHIShaderHandle::Invalid();
@@ -227,6 +229,7 @@
     RHIPipelineHandle m_pathTracer            = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_shadowDepth           = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_shadowDepthBindless   = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_probeCapture[2]       = {RHIPipelineHandle::Invalid(), RHIPipelineHandle::Invalid()}; ///< [bindless] reflection-probe capture (phase3a 3.37.0)
     RHIPipelineHandle m_shadowDepthLinear         = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_shadowDepthLinearBindless = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_gbufferInstanced      = RHIPipelineHandle::Invalid();

@@ -27,6 +27,8 @@
 
 #pragma once
 
+#include "vector3.h"
+
 #include <cstdint>
 
 namespace uz {
@@ -59,6 +61,17 @@ struct ReflectionProbeComponent {
     /// transitions between adjacent probes or the fallback sky IBL.
     /// @ref Standard ReflectionCapture — blend transition default 100cm
     float blendDistance = 100.0f;
+
+    /// Parallax proxy: half-extents (cm) of an axis-aligned box centred on the probe
+    /// position. When all three components are > 0 the lighting shader intersects the
+    /// reflection ray with this box and looks the cubemap up along the vector from
+    /// the probe to the hit point, so a surface near a wall reflects that wall
+    /// instead of an infinitely distant environment; a receiver outside the box (but
+    /// inside influenceRadius) projects from the closest point of the box. The default
+    /// (0, 0, 0), or any component <= 0, keeps the plain direction lookup (an infinite
+    /// environment).
+    /// @ref Lagarde 2012 "Local Image-based Lighting With Parallax-corrected Cubemaps"
+    Vec3 boxExtents{0.0f, 0.0f, 0.0f};
 
     // ── Capture Configuration ────────────────────────────────────────────
 

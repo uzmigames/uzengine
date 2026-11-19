@@ -932,8 +932,9 @@ static_assert(sizeof(HeightFogCB) == 256, "HeightFogCB must be 256 bytes (D3D12 
 /// cubemap contribution weighted by distance falloff and priority order.
 ///
 /// # Layout
-/// 32 bytes (two float4s) — tightly packed for GPU structured buffer access.
-/// No 256-byte alignment required (this is not a constant buffer).
+/// 48 bytes (three float4s) — tightly packed for GPU structured buffer access.
+/// No 256-byte alignment required (this is not a constant buffer). Must match the
+/// HLSL `ReflectionProbeGPU` in `runtime/shaders/runtime/lighting/deferred_lighting_ps.hlsl`.
 ///
 /// @ref Lagarde 2012 "Local Image-based Lighting With Parallax-corrected Cubemaps"
 struct ReflectionProbeGPU {
@@ -942,11 +943,17 @@ struct ReflectionProbeGPU {
     float    posZ;                     ///< Probe world position Z (cm).
     float    influenceRadius;          ///< Influence sphere radius (cm).
     float    blendDistance;            ///< Edge fade distance (cm).
-    float    _pad0 = 0.0f;            ///< Padding to align SRV indices to float4 boundary.
+    float    boxHalfX;                 ///< Parallax proxy box half-extent X (cm); all three 0 = no parallax.
+    float    boxHalfY;                 ///< Parallax proxy box half-extent Y (cm).
+    float    boxHalfZ;                 ///< Parallax proxy box half-extent Z (cm).
     uint32_t irradianceSrvIndex;       ///< Bindless SRV index for irradiance cubemap.
     uint32_t prefilteredSrvIndex;      ///< Bindless SRV index for prefiltered specular cubemap.
+    uint32_t prefilteredMipLevels;     ///< Mip count of the prefiltered cubemap (IBLBaker::kPrefilteredMipLevels).
+    uint32_t _pad0 = 0;                ///< Padding to the float4 boundary.
 };
 
-static_assert(sizeof(ReflectionProbeGPU) == 32, "ReflectionProbeGPU must be 32 bytes (two float4s)");
+static_assert(sizeof(ReflectionProbeGPU) == 48, "ReflectionProbeGPU must be 48 bytes (three float4s)");
+static_assert(offsetof(ReflectionProbeGPU, blendDistance) == 16);
+static_assert(offsetof(ReflectionProbeGPU, irradianceSrvIndex) == 32);
 
 } // namespace uz

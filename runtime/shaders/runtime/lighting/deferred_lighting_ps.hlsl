@@ -685,6 +685,97 @@ float3 ShadeShapedLight(RectLightData rl, float3 worldPos, float3 N, float3 V, f
 #endif
 #endif
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Reflection probes (phase3a 3.37.0) — local prefiltered cubemaps over the sky IBL
+// ─────────────────────────────────────────────────────────────────────────────
+#ifdef UZ_BINDLESS
+/// One entry of the per-frame probe buffer (PerFrameCB `_reflProbeSrv`, `_reflProbeCount` entries,
+/// highest priority first; ReflectionProbeRenderer::UploadProbeData). 48 bytes, three float4 rows:
+/// must match `ReflectionProbeGPU` in engine/renderer/core/params/constant_buffers.h
+/// (scripts/rendering/test_cbuffer_layouts.py reflects both).
+struct ReflectionProbeGPU {
+    float3 position;             ///< Probe world position (cm).
+    float  influenceRadius;      ///< Influence sphere radius (cm); no contribution outside it.
+    float  blendDistance;        ///< Fade band inside the influence radius (cm).
+    float3 boxHalf;              ///< Parallax proxy box half-extents (cm); all zero = infinite environment.
+    uint   irradianceSrvIndex;   ///< Irradiance cubemap (uploaded for the diffuse cascade; unused here).
+    uint   prefilteredSrvIndex;  ///< Prefiltered specular cubemap (kSentinelSrvIndex = not baked yet).
+    uint   prefilteredMipLevels; ///< Its mip count: the engine's bake writes mip m at roughness m / (mips - 1).
+    uint   _pad0;
+};
+
+static const uint kMaxReflectionProbes = 8u;
+
+/// World direction -> probe cubemap direction. The capture renders the faces with the camera's
+/// Z-up -> Y-up rotation (BuildCubemapFaceMatrices: world (x, y, z) -> DX (y, z, x)), so a probe
+/// cubemap is a rotation of world space, unlike the sky cubemap's reflected (x, z, y) layout that
+/// `WorldToCubemap` serves. IBLBaker convolves in cube space, which keeps the layout.
+float3 ProbeWorldToCubemap(float3 dir) { return float3(dir.y, dir.z, dir.x); }
+
+/// The probe's weight at a receiver: 1 inside (influenceRadius - blendDistance), a Hermite fade to 0 at
+/// influenceRadius, 0 outside.
+/// @ref UE5 ReflectionEnvironmentComposite.ush — distance alpha of a sphere capture
+float ReflectionProbeFade(ReflectionProbeGPU probe, float3 worldPos) {
+    const float d = length(worldPos - probe.position);
+    if (d >= probe.influenceRadius) return 0.0;
+    const float fadeStart = max(probe.influenceRadius - probe.blendDistance, 0.0);
+    if (d <= fadeStart) return 1.0;
+    return 1.0 - smoothstep(fadeStart, probe.influenceRadius, d);
+}
+
+/// The cubemap lookup direction for the reflection ray (worldPos, R): the ray direction itself for an
+/// infinite environment (no proxy box: a half-extent <= 0), else the vector from the probe to where the
+/// ray leaves the proxy box, so a receiver near a wall reflects that wall instead of the box's centre
+/// view of it. A receiver outside the box (inside the influence sphere but past the proxy, e.g. in a
+/// doorway) projects from the closest point of the box: the lookup stays continuous across the box's
+/// faces and the ray always starts inside it (t >= 0). Projected from the receiver itself out there, the
+/// slab exit is a point off the box and the lookup swept across the capture's edges.
+/// @ref Lagarde 2012 "Local Image-based Lighting With Parallax-corrected Cubemaps"
+float3 ReflectionProbeLookup(ReflectionProbeGPU probe, float3 worldPos, float3 R) {
+    if (any(probe.boxHalf <= 0.0)) return R;
+    const float3 boxMin = probe.position - probe.boxHalf;
+    const float3 boxMax = probe.position + probe.boxHalf;
+    const float3 origin = clamp(worldPos, boxMin, boxMax);
+    // Slab exit distances along each axis; a component of R that is (near) zero never bounds the ray,
+    // so it is pushed away from zero rather than divided by (R <= 0 is taken as negative).
+    const float3 sgn   = 1.0 - 2.0 * step(R, float3(0.0, 0.0, 0.0));   // -1 where R <= 0, else +1
+    const float3 safeR = sgn * max(abs(R), 1e-5);
+    const float3 invR  = 1.0 / safeR;
+    const float3 tFar  = max((boxMax - origin) * invR, (boxMin - origin) * invR);
+    const float  t     = min(min(tFar.x, tFar.y), tFar.z);
+    return (origin + R * t) - probe.position;
+}
+
+/// Blends the probes over the sky radiance: highest priority first, each probe taking the alpha the
+/// previous ones left (the under operator), the sky filling what remains. `R` is the split-sum lookup
+/// direction, `roughness` picks the mip the bake wrote for it (linear, as the sky bake is read).
+/// `skyTint` is the sky light tint the caller would have applied to the sky radiance (it is applied
+/// here to the sky share only: the capture already carries the sky it saw). Probes not baked yet do
+/// not take alpha. `probeAlpha` is the total probe coverage (0 = this pixel kept the sky).
+float3 SampleReflectionProbes(float3 worldPos, float3 R, float roughness, float3 skyRadiance,
+                              float3 skyTint, out float probeAlpha) {
+    StructuredBuffer<ReflectionProbeGPU> probes = ResourceDescriptorHeap[_reflProbeSrv];
+    float3 accum = float3(0.0, 0.0, 0.0);
+    float  alpha = 0.0;
+    const uint count = min(_reflProbeCount, kMaxReflectionProbes);
+    for (uint i = 0u; i < count; ++i) {
+        if (alpha >= 1.0) break;
+        const ReflectionProbeGPU probe = probes[i];
+        if (probe.prefilteredSrvIndex == kSentinelSrvIndex) continue;
+        const float w = ReflectionProbeFade(probe, worldPos) * (1.0 - alpha);
+        if (w <= 0.0) continue;
+        TextureCube<float4> probeTex = ResourceDescriptorHeap[probe.prefilteredSrvIndex];
+        const float maxMip = float(max(probe.prefilteredMipLevels, 1u) - 1u);
+        const float mip    = clamp(roughness * maxMip, 0.0, maxMip);
+        const float3 dir   = ReflectionProbeLookup(probe, worldPos, R);
+        accum += w * probeTex.SampleLevel(linearSampler, ProbeWorldToCubemap(dir), mip).rgb;
+        alpha += w;
+    }
+    probeAlpha = alpha;
+    return accum + (1.0 - alpha) * skyRadiance * skyTint;
+}
+#endif
+
 LightingOutput main(FSInput input) {
     int2 px = int2(input.positionCS.xy);
 
@@ -1404,6 +1495,22 @@ LightingOutput main(FSInput input) {
         if (gBufIndices.iblPrefilteredSrvIdx != kSentinelSrvIndex) {
             TextureCube<float4> prefTex = ResourceDescriptorHeap[gBufIndices.iblPrefilteredSrvIdx];
             radiance = prefTex.SampleLevel(linearSampler, WorldToCubemap(R), mipLevel).rgb;
+        }
+        // Reflection probes (phase3a 3.37.0): the scene's local prefiltered cubemaps, parallax-corrected
+        // to their proxy box and blended by distance over the sky radiance above; a receiver outside
+        // every probe keeps the sky. The SDF gather and the screen / ray-traced blend below layer over
+        // this as they layer over the sky. A scene with no enabled probe (_reflProbeCount 0) never
+        // enters here. A probe-covered pixel neutralises the sky light tint as the SDF gather does: the
+        // capture already carries the sky it saw, and the sky share was tinted inside the blend.
+        if (_reflProbeCount != 0u && _reflProbeSrv != kSentinelSrvIndex) {
+            float probeAlpha = 0.0;
+            const float3 probeRadiance = SampleReflectionProbes(worldPos, R, roughness, radiance,
+                                                                skyTintSpecular, probeAlpha);
+            if (probeAlpha > 0.0) {
+                radiance = probeRadiance;
+                skyTintSpecular = 1.0;
+                dbgPath |= 256u;
+            }
         }
 #endif
         // The specular counterpart of the diffuse hack was removed with it: the

@@ -993,6 +993,13 @@
     /// data, and sets up GPU occlusion culling buffers. Called from SetupFrameData().
     void SyncDrawListAndInstances(FrameContext& ctx);
 
+    /// Records the scene capture of the highest-priority dirty reflection probe
+    /// (ReflectionProbeRenderer::CaptureIfDirty) once the frame's draw list is
+    /// built and the sky IBL is ready; the probe's bake follows in a later
+    /// frame's PopulatePerFrameConstants(). Called from SetupFrameData() after
+    /// SyncDrawListAndInstances().
+    void CaptureReflectionProbes(FrameContext& ctx);
+
     /// Synchronizes VfxEmitterComponent ECS entities to live ParticleEmitter
     /// instances in m_runtimeEmitters. Creates emitters for new components,
     /// updates emitting state for existing ones. Called from RenderFrame()

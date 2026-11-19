@@ -280,6 +280,14 @@ Registered in `ibl_baker.cpp`.
 | `r.IBL.PrefilteredSize` | int | 256 | [64, 512] | Prefiltered specular cubemap base size |
 | `r.IBL.PrefilteredMipLevels` | int | 6 | [1, 10] | Prefiltered specular mip count |
 
+### Reflection probes
+
+Registered in `frame_constants.cpp`.
+
+| CVar | Type | Default | Range | Description |
+|------|------|---------|-------|-------------|
+| `r.ReflectionProbes` | int | 0 | [0, 1] | Reflection probes (phase3a 3.37.0). 0 = off: no capture, bake or sampling; every scene, with or without an authored `reflection_probe`, renders exactly as without the probe system. 1 = the probes' parallax-corrected captures replace the sky IBL's specular inside their influence (priority blend over the sky). See [17-lighting.md — Reflection Probes](../engine/12-rendering/17-lighting.md). |
+
 ## Atmosphere Parameters
 
 Registered in `sky_cubemap_capture_pass.cpp`, `transmittance_lut_pass.cpp`.

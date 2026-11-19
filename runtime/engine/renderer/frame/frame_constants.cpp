@@ -19,6 +19,7 @@
 #include "gpu_mesh.h"
 #include "sh_projection.h"
 #include "sky_light_fallback.h"
+#include "reflection_probe_component.h"
 #include "profiler.h"
 #include "rhi.h"
 #include "log.h"
@@ -54,6 +55,13 @@ static auto* cv_SkyLightMinAmbient       = UZ_CVAR_FLOAT("r.SkyLight.MinAmbient"
     "0 = the component value (Sponza authors 0.01; the shader documents 0.005-0.02). The old 0.25 default "
     "overrode every scene (block A.2, 2026-10-05)", 0.f, 1.f);
 static auto* cv_SkyLightIndirectIntensity = UZ_CVAR_FLOAT("r.SkyLight.IndirectIntensity", 1.0f, "Diffuse IBL multiplier (separate from specular)", 0.f, 10.f);
+// Reflection probes (phase3a 3.37.0) are opt-in: 0 (the default) neither captures, bakes nor uploads any probe, so
+// PerFrameCB::reflectionProbeCount stays 0 and the lighting shader never enters the probe branch - the render is what
+// it was before the probe system, in every scene (20 sample scenes author a reflection_probe). 1 = the probes
+// contribute their parallax-corrected captures to the specular indirect over the sky IBL.
+static auto* cv_ReflectionProbes = UZ_CVAR_INT("r.ReflectionProbes", 0,
+    "Reflection probes: 0 = off (no capture, bake or sampling; the render is unchanged), 1 = probes replace the sky "
+    "IBL's specular inside their influence (parallax-corrected captures, priority blend)", 0, 1);
 // HdriSkyboxMode (hdri_skybox_pass.h). 1 = the behaviour before the CVar existed (the HDRI skybox pass renders the IBL
 // cubemap converted at SkyLightComponent::cubemapResolution); the only default that leaves every HDRI scene as it was.
 static auto* cv_HDRISkybox = UZ_CVAR_INT("r.HDRISkybox", static_cast<int>(uz::HdriSkyboxMode::Cubemap),
@@ -1138,25 +1146,11 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     }
 
     // ── Reflection Probes ────────────────────────────────────────────────
-    // Phase 1: Capture — render the scene into a dirty probe's cubemap.
-    // Phase 2: Update — bake IBL from the captured cubemap and upload GPU data.
-    if (m_reflectionProbes.IsInitialized() && ctx.world && m_pipelines) {
-        // Build a scene descriptor so the probe can render into its cubemap.
-        // The forward PBR pipeline and draw list are used for simplified
-        // scene capture at the probe's resolution.
-        const bool bindless = m_device->IsBindless();
-        ProbeCaptureSceneDesc captureDesc{};
-        captureDesc.cmdList         = ctx.cmdList;
-        captureDesc.drawList        = &ctx.drawList;
-        captureDesc.meshes          = m_meshes.data();
-        captureDesc.meshCount       = static_cast<uint32_t>(m_meshes.size());
-        captureDesc.cbAllocator     = m_cbRing.get();
-        captureDesc.forwardPipeline = m_pipelines->GetForwardPBR(bindless);
-        captureDesc.bindless        = bindless;
-
-        m_reflectionProbes.CaptureIfDirty(
-            *ctx.world, captureDesc, m_skyCubemapSrv, m_skyCubemap);
-
+    // Update — bake IBL from the probes' executed scene captures and upload the
+    // probe buffer the deferred lighting reads. The captures themselves are
+    // recorded by CaptureReflectionProbes(), once the draw list is built.
+    // r.ReflectionProbes 0 (the default): no bake, no upload; the CB keeps its probe-less defaults.
+    if (cv_ReflectionProbes->value != 0.f && m_reflectionProbes.IsInitialized() && ctx.world && m_pipelines) {
         const auto probeResult = m_reflectionProbes.Update(
             *ctx.world, m_skyCubemapSrv, m_skyCubemap);
         perFrame.reflectionProbeCount          = probeResult.probeCount;
@@ -1441,6 +1435,59 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     if (ctx.totalCascadeCount > 0) {
         m_shadowAtlas.Resize(m_device, ctx.totalCascadeCount);
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CaptureReflectionProbes — records the scene capture of a dirty probe
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SceneRenderer::CaptureReflectionProbes(FrameContext& ctx) {
+    UZ_PROFILE_FUNCTION();
+    // r.ReflectionProbes 0 (the default): nothing is captured; the frame's command list is untouched.
+    if (cv_ReflectionProbes->value == 0.f || !m_reflectionProbes.IsInitialized() || !ctx.world || !m_pipelines) {
+        return;
+    }
+    // A capture renders the frame's draw list from the probe and draws the sky cubemap behind it,
+    // so it runs after SyncDrawListAndInstances (from PopulatePerFrameConstants, before the list
+    // is built, every probe captured the sky alone) and waits until the scene is there: the sky
+    // IBL baked (in frame 0 the sky capture pass is recorded after this point on the same command
+    // list, so a probe captured then reads a cubemap nothing has rendered yet), the draw list
+    // populated (empty while the first meshes load) and an enabled probe in the world (the HDRI
+    // skybox pipeline below is created on first use: a world without a probe never creates it).
+    // Until its capture is baked a probe contributes nothing and the sky IBL stands in.
+    if (ctx.drawList.GetCommands().empty()
+        || !SkyIBLReady(m_skyIrradianceSH, m_iblResult.irradianceSrvIndex)) {
+        return;
+    }
+    bool hasEnabledProbe = false;
+    for (auto [probeEntity, probe] : ctx.world->GetRegistry().view<ReflectionProbeComponent>().each()) {
+        if (probe.enabled) {
+            hasEnabledProbe = true;
+            break;
+        }
+    }
+    if (!hasEnabledProbe) {
+        return;
+    }
+
+    // The probe-capture pipeline (mesh_vs + probe_capture_ps: the sun through the capture's own
+    // shadow cascades, rendered with the shadow depth pipeline, plus the sky IBL and emissive, as
+    // the deferred pass lights the frame) renders the draw list at the probe's resolution; the HDRI
+    // skybox pipeline draws the sky cubemap behind the geometry; the faces start from this frame's
+    // PerFrameCB (sun, sky SH / SRVs, shading CVars) with their own view-projection.
+    const bool bindless = m_device->IsBindless();
+    ProbeCaptureSceneDesc captureDesc{};
+    captureDesc.cmdList         = ctx.cmdList;
+    captureDesc.drawList        = &ctx.drawList;
+    captureDesc.meshes          = m_meshes.data();
+    captureDesc.meshCount       = static_cast<uint32_t>(m_meshes.size());
+    captureDesc.cbAllocator     = m_cbRing.get();
+    captureDesc.capturePipeline = m_pipelines->GetProbeCapture(bindless);
+    captureDesc.shadowPipeline  = m_pipelines->GetShadowDepth(bindless);
+    captureDesc.skyboxPipeline  = m_pipelines->GetHdriSkybox();
+    captureDesc.frameCB         = &ctx.perFrame;
+    captureDesc.bindless        = bindless;
+    m_reflectionProbes.CaptureIfDirty(*ctx.world, captureDesc, m_skyCubemapSrv, m_skyCubemap);
 }
 
 } // namespace uz

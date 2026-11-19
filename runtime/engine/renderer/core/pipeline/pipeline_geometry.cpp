@@ -112,6 +112,49 @@ RHIPipelineHandle PipelineLibrary::GetForwardPBR(bool bindless) {
     return handle;
 }
 
+RHIPipelineHandle PipelineLibrary::GetProbeCapture(bool bindless) {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetProbeCapture called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+    auto& cached = m_probeCapture[bindless ? 1 : 0];
+    if (cached.IsValid()) {
+        return cached;
+    }
+    if (!EnsureMeshShaders() || !EnsureProbeCapturePixelShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    // The ForwardPBR state (opaque, back-face cull, depth write, one RGBA16F target, D32 depth) with
+    // the probe capture's pixel shader: ReflectionProbeRenderer renders the cubemap faces with it.
+    RHIGraphicsPipelineDesc desc{};
+    desc.vertexShader  = m_meshVS;
+    desc.pixelShader   = m_probeCapturePS;
+    desc.topology      = RHIPrimitiveTopology::TriangleList;
+    desc.rasterizer.cullMode              = RHICullMode::Back;
+    desc.depthStencil.depthEnable         = true;
+    desc.depthStencil.depthWrite          = true;
+    desc.renderTargetFormats[0]           = RHIFormat::RGBA16Float;
+    desc.renderTargetCount                = 1;
+    desc.depthStencilFormat               = RHIFormat::D32Float;
+    desc.debugName                        = bindless ? "ProbeCapture_Bindless" : "ProbeCapture";
+
+    const auto layout = VertexLayout::Standard();
+    if (!bindless) {
+        desc.inputElements     = layout.elements;
+        desc.inputElementCount = layout.count;
+        desc.vertexStride      = layout.stride;
+    }
+
+    cached = CreateCachedPipeline(desc);
+    if (cached.IsValid()) {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created ProbeCapture pipeline (bindless={})", bindless);
+    } else {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create ProbeCapture pipeline (bindless={})", bindless);
+    }
+    return cached;
+}
+
 RHIPipelineHandle PipelineLibrary::GetGBuffer() {
     return GetGBuffer(m_device->IsBindless());
 }

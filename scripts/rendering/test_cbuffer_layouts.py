@@ -259,6 +259,7 @@ for shader in (
     'lighting/cluster_assign_cs.hlsl', 'lighting/env_mis_temporal_cs.hlsl', 'lighting/sun_shadow_raw_cs.hlsl',
     'debug/debug_view_ps.hlsl', 'atmosphere/height_fog_ps.hlsl',
     'atmosphere/skybox_cubemap_ps.hlsl', 'atmosphere/sky_atmosphere_ps.hlsl',
+    'lighting/probe_capture_ps.hlsl',   # reflection-probe capture (phase3a 3.37.0, item 1.10)
 ):
     TIER_A.append(layout_entry(shader, 'PerFrameCB', PARAMS + 'constant_buffers.h'))
 # The hit-specular gather permutation (r.GI.FinalGather.HitSpecular, docs/analysis/
@@ -267,7 +268,7 @@ for shader in (
 TIER_A.append(layout_entry('ssgi/ssgi_surface.hlsli', 'PerFrameCB', PARAMS + 'constant_buffers.h',
                            defines=('-D', 'UZ_GI_HIT_SPECULAR=1')))
 for shader in ('gbuffer/gbuffer_ps.hlsl', 'gbuffer/mesh_vs.hlsl', 'gbuffer/mesh_ps.hlsl',
-               'gbuffer/translucent_ps.hlsl', 'lighting/shadow_depth_vs.hlsl'):
+               'gbuffer/translucent_ps.hlsl', 'lighting/shadow_depth_vs.hlsl', 'lighting/probe_capture_ps.hlsl'):
     TIER_A.append(layout_entry(shader, 'PerObjectCB', PARAMS + 'constant_buffers.h',
                                before='gbuffer_ps.perobject.before.hlsl' if shader == 'gbuffer/gbuffer_ps.hlsl' else None))
 TIER_A += [
@@ -541,6 +542,12 @@ TIER_C = [
     # scans (SurfaceCacheParams::lightsSrv), built by SurfaceCacheBuildLights.
     layout_entry('gi/surface_cache_contract.hlsli', 'SurfaceCacheLight',
                  'runtime/engine/renderer/gi/surface_radiance_cache.h', 'SurfaceCacheLightGPU'),
+    # 48-byte reflection probe record (phase3a 3.37.0): the per-frame StructuredBuffer the deferred
+    # lighting reads through PerFrameCB::reflectionProbeBufferSrvIndex (position, influence sphere,
+    # parallax box half-extents, the baked cubemap SRVs and mip count); uploaded by
+    # ReflectionProbeRenderer::UploadProbeData with stride sizeof(ReflectionProbeGPU).
+    layout_entry('lighting/deferred_lighting_ps.hlsl', 'ReflectionProbeGPU', PARAMS + 'constant_buffers.h',
+                 'ReflectionProbeGPU'),
 ]
 
 # These are not successful reflection contracts. Keep explicit exclusions visible
@@ -615,7 +622,6 @@ UNTRACKED_CONTRACTS = {
     'CullConstants/GpuCullConstants': 'compute/gpu_cull_cs.hlsl:1 is an empty kernel with no cbuffer; F-018 stage 2 owns implementation; CPU size asserted in engine/renderer/passes/geometry/gpu_cull_pass.h:70',
     'InstanceData': 'instanced vertex shader is unimplemented (F-018); CPU-only transform upload in engine/renderer/frame/frame_sync.cpp:76-102; 128-byte size asserted in engine/renderer/core/instance_batcher.h:42',
     'LightGPU': 'no same-named HLSL element; production lighting uses PointLightData/SpotLightData CB arrays (Tier A); legacy multi-light CPU descriptor size is asserted at engine/renderer/core/lighting/multi_light.h:92',
-    'ReflectionProbeGPU': 'no same-named HLSL element; CPU probe records have two float4 rows, 32-byte size asserted at engine/renderer/core/params/constant_buffers.h:873 and upload stride set in engine/renderer/probes/reflection_probe_renderer.cpp:201',
     'SdfObjectGpuData': 'CPU atlas-manager object records have no HLSL consumer under runtime/shaders; 192-byte size asserted at engine/renderer/shadows/sdf_types.h:198 and upload stride set in sdf_atlas_manager.cpp:90',
     'SkinnedVertex': 'raw ByteAddressBuffer contract, not a structured element: compute/gpu_skinning_cs.hlsl:39-45 pins stride 56 and offsets 0/12/24/32/48/52; CPU size asserted at engine/renderer/mesh/vertex.h:139',
 }

@@ -1,0 +1,513 @@
+{
+  "name": "Reflection probes",
+  "version": "1.0",
+  "cvars": {
+    "r.AutoExposure": 0,
+    "r.Exposure": 1,
+    "r.GTAO": 0
+  },
+  "entities": [
+    {
+      "name": "Sun",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            -40.0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "light": {
+          "type": "directional",
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 10,
+          "cast_shadows": true,
+          "atmosphere_sun_light": true,
+          "light_source_angle": 0.53
+        }
+      }
+    },
+    {
+      "name": "Camera",
+      "components": {
+        "transform": {
+          "position": [
+            40.0,
+            -360.0,
+            170.0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "camera": {
+          "fov": 58.51,
+          "near": 5,
+          "far": 10000,
+          "active": true,
+          "look_at": [
+            -50.0,
+            60.0,
+            80.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "Sky",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        },
+        "sky_atmosphere": {
+          "sun_illuminance": [
+            10,
+            10,
+            10
+          ]
+        }
+      }
+    },
+    {
+      "name": "SkyLight",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        },
+        "sky_light": {
+          "intensity": 1.0,
+          "light_color": [
+            1,
+            1,
+            1
+          ],
+          "indirect_lighting_intensity": 1.0,
+          "min_occlusion": 0.0,
+          "lower_hemisphere_is_black": true
+        }
+      }
+    },
+    {
+      "name": "ground",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "mesh": {
+          "asset": "meshes/reference/reflection-probes-ground.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0.5,
+          "baseColorG": 0.5,
+          "baseColorB": 0.5,
+          "roughnessMultiplier": 1.0,
+          "metallicMultiplier": 0.0
+        }
+      }
+    },
+    {
+      "name": "wall-west",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "mesh": {
+          "asset": "meshes/reference/reflection-probes-wall-west.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0.8,
+          "baseColorG": 0.15,
+          "baseColorB": 0.1,
+          "roughnessMultiplier": 0.8,
+          "metallicMultiplier": 0.0
+        }
+      }
+    },
+    {
+      "name": "wall-east",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "mesh": {
+          "asset": "meshes/reference/reflection-probes-wall-east.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0.15,
+          "baseColorG": 0.25,
+          "baseColorB": 0.85,
+          "roughnessMultiplier": 0.8,
+          "metallicMultiplier": 0.0
+        }
+      }
+    },
+    {
+      "name": "wall-north",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "mesh": {
+          "asset": "meshes/reference/reflection-probes-wall-north.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0.15,
+          "baseColorG": 0.7,
+          "baseColorB": 0.15,
+          "roughnessMultiplier": 0.8,
+          "metallicMultiplier": 0.0
+        }
+      }
+    },
+    {
+      "name": "ceiling",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "mesh": {
+          "asset": "meshes/reference/reflection-probes-ceiling.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0.8,
+          "baseColorG": 0.8,
+          "baseColorB": 0.8,
+          "roughnessMultiplier": 0.8,
+          "metallicMultiplier": 0.0
+        }
+      }
+    },
+    {
+      "name": "strip",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "mesh": {
+          "asset": "meshes/reference/reflection-probes-strip.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0.95,
+          "baseColorG": 0.95,
+          "baseColorB": 0.95,
+          "roughnessMultiplier": 0.05,
+          "metallicMultiplier": 1.0
+        }
+      }
+    },
+    {
+      "name": "sphere-room-mirror",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "mesh": {
+          "asset": "meshes/reference/reflection-probes-sphere-room-mirror.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0.95,
+          "baseColorG": 0.95,
+          "baseColorB": 0.95,
+          "roughnessMultiplier": 0.05,
+          "metallicMultiplier": 1.0
+        }
+      }
+    },
+    {
+      "name": "sphere-room-rough",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "mesh": {
+          "asset": "meshes/reference/reflection-probes-sphere-room-rough.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0.95,
+          "baseColorG": 0.95,
+          "baseColorB": 0.95,
+          "roughnessMultiplier": 0.5,
+          "metallicMultiplier": 1.0
+        }
+      }
+    },
+    {
+      "name": "sphere-overlap",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "mesh": {
+          "asset": "meshes/reference/reflection-probes-sphere-overlap.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0.95,
+          "baseColorG": 0.95,
+          "baseColorB": 0.95,
+          "roughnessMultiplier": 0.05,
+          "metallicMultiplier": 1.0
+        }
+      }
+    },
+    {
+      "name": "sphere-outdoor",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "mesh": {
+          "asset": "meshes/reference/reflection-probes-sphere-outdoor.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0.95,
+          "baseColorG": 0.95,
+          "baseColorB": 0.95,
+          "roughnessMultiplier": 0.05,
+          "metallicMultiplier": 1.0
+        }
+      }
+    },
+    {
+      "name": "sphere-far",
+      "components": {
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "mesh": {
+          "asset": "meshes/reference/reflection-probes-sphere-far.uzmesh"
+        },
+        "material": {
+          "baseColorR": 0.95,
+          "baseColorG": 0.95,
+          "baseColorB": 0.95,
+          "roughnessMultiplier": 0.05,
+          "metallicMultiplier": 1.0
+        }
+      }
+    },
+    {
+      "name": "ProbeRoom",
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            150.0
+          ]
+        },
+        "reflection_probe": {
+          "influence_radius": 650.0,
+          "blend_distance": 200.0,
+          "box_extents": [
+            400.0,
+            400.0,
+            150.0
+          ],
+          "resolution": 128,
+          "priority": 1
+        }
+      }
+    },
+    {
+      "name": "ProbeOutdoor",
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            -1300.0,
+            150.0
+          ]
+        },
+        "reflection_probe": {
+          "influence_radius": 900.0,
+          "blend_distance": 300.0,
+          "resolution": 128,
+          "priority": 0
+        }
+      }
+    }
+  ]
+}
