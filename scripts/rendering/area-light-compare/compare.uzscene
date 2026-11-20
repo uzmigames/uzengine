@@ -1,0 +1,53 @@
+{
+  "name": "Area light vs point light (phase3a 3.33.0 item 2.3): the 120x80 cm LTC rectangle of area-light-ltc.uzscene against a point light at its centre with the same on-axis floor irradiance; glossy floor and roughness 0.1 / 0.5 / 0.9 spheres",
+  "version": "1.0",
+  "entities": [
+    {"name": "Camera", "components": {
+      "transform": {"position": [0, -650, 160]},
+      "camera": {"fov": 70, "near": 5, "far": 10000, "active": true, "look_at": [0, -100, 30]}
+    }},
+    {"name": "Black environment", "components": {
+      "sky_light": {"intensity": 0, "light_color": [0, 0, 0]}
+    }},
+    {"name": "Area light", "components": {
+      "transform": {"position": [0, 0, 200], "rotation": [90, 0, 0]},
+      "light": {"type": "rect", "color": [1, 1, 1], "intensity": 6, "width": 120, "height": 80, "range": 5000}
+    }},
+    {"name": "Point light", "components": {
+      "transform": {"position": [0, 0, 200]},
+      "light": {"type": "point", "color": [1, 1, 1], "intensity": 53039, "range": 5000,
+                "sourceRadius": 0, "castShadows": false}
+    }},
+    {"name": "PT emitter", "components": {
+      "transform": {"position": [0, 0, 200], "scale": [40, 60, 0.1]},
+      "mesh": {"asset": "sample/content/meshes/cube.uzmesh"},
+      "material": {"baseColorR": 0, "baseColorG": 0, "baseColorB": 0,
+                   "roughnessMultiplier": 1, "metallicMultiplier": 0,
+                   "emissiveColorR": 1, "emissiveColorG": 1, "emissiveColorB": 1, "emissiveIntensity": 6}
+    }},
+    {"name": "Glossy floor", "components": {
+      "transform": {"position": [0, 0, -20], "scale": [700, 700, 10]},
+      "mesh": {"asset": "sample/content/meshes/cube.uzmesh"},
+      "material": {"baseColorR": 0.6, "baseColorG": 0.6, "baseColorB": 0.6,
+                   "roughnessMultiplier": 0.3, "metallicMultiplier": 0}
+    }},
+    {"name": "Chrome sphere", "components": {
+      "transform": {"position": [-260, 80, 40], "scale": [40, 40, 40]},
+      "mesh": {"asset": "sample/content/meshes/sphere.uzmesh"},
+      "material": {"baseColorR": 0.9, "baseColorG": 0.9, "baseColorB": 0.9,
+                   "roughnessMultiplier": 0.1, "metallicMultiplier": 1}
+    }},
+    {"name": "Brushed sphere", "components": {
+      "transform": {"position": [260, 80, 40], "scale": [40, 40, 40]},
+      "mesh": {"asset": "sample/content/meshes/sphere.uzmesh"},
+      "material": {"baseColorR": 0.9, "baseColorG": 0.7, "baseColorB": 0.4,
+                   "roughnessMultiplier": 0.5, "metallicMultiplier": 1}
+    }},
+    {"name": "Diffuse sphere", "components": {
+      "transform": {"position": [0, 260, 40], "scale": [40, 40, 40]},
+      "mesh": {"asset": "sample/content/meshes/sphere.uzmesh"},
+      "material": {"baseColorR": 0.8, "baseColorG": 0.3, "baseColorB": 0.2,
+                   "roughnessMultiplier": 0.9, "metallicMultiplier": 0}
+    }}
+  ]
+}

@@ -7,6 +7,7 @@
 
 #include "renderer_core.h"
 #include "passes.h"
+#include "hdri_skybox_pass.h"
 #include "subsystems.h"
 #include "components.h"
 #include "raytracing/rt_manager.h"
@@ -17,6 +18,8 @@
 #include "vfs.h"
 #include "gpu_mesh.h"
 #include "sh_projection.h"
+#include "sky_light_fallback.h"
+#include "reflection_probe_component.h"
 #include "profiler.h"
 #include "rhi.h"
 #include "log.h"
@@ -52,6 +55,22 @@ static auto* cv_SkyLightMinAmbient       = UZ_CVAR_FLOAT("r.SkyLight.MinAmbient"
     "0 = the component value (Sponza authors 0.01; the shader documents 0.005-0.02). The old 0.25 default "
     "overrode every scene (block A.2, 2026-10-05)", 0.f, 1.f);
 static auto* cv_SkyLightIndirectIntensity = UZ_CVAR_FLOAT("r.SkyLight.IndirectIntensity", 1.0f, "Diffuse IBL multiplier (separate from specular)", 0.f, 10.f);
+// Reflection probes (phase3a 3.37.0) are opt-in: 0 (the default) neither captures, bakes nor uploads any probe, so
+// PerFrameCB::reflectionProbeCount stays 0 and the lighting shader never enters the probe branch - the render is what
+// it was before the probe system, in every scene (20 sample scenes author a reflection_probe). 1 = the probes
+// contribute their parallax-corrected captures to the specular indirect over the sky IBL.
+static auto* cv_ReflectionProbes = UZ_CVAR_INT("r.ReflectionProbes", 0,
+    "Reflection probes: 0 = off (no capture, bake or sampling; the render is unchanged), 1 = probes replace the sky "
+    "IBL's specular inside their influence (parallax-corrected captures, priority blend)", 0, 1);
+// HdriSkyboxMode (hdri_skybox_pass.h). 1 = the behaviour before the CVar existed (the HDRI skybox pass renders the IBL
+// cubemap converted at SkyLightComponent::cubemapResolution); the only default that leaves every HDRI scene as it was.
+static auto* cv_HDRISkybox = UZ_CVAR_INT("r.HDRISkybox", static_cast<int>(uz::HdriSkyboxMode::Cubemap),
+    "HDRI skybox while a SkyLight cubemap_path (or set_hdri_environment) is active: 0 = skip the HdriSkybox pass (the "
+    "procedural sky passes run when a SkyAtmosphereComponent exists; the HDRI still drives the IBL, SH, fog and env-MIS); "
+    "1 = render the IBL cubemap, converted at SkyLightComponent::cubemapResolution (128 by default); 2 = as 1 but the "
+    "auto-loaded panorama is converted at its own resolution (width / 4, power of two, <= 1024, never below the authored "
+    "value; read once, when the SkyLight loads it), so the sky and the prefiltered mip 0 are not upsampled from a "
+    "128-texel cube", static_cast<int>(uz::HdriSkyboxMode::Off), static_cast<int>(uz::HdriSkyboxMode::SourceResolution));
 // Contact shadows ON by default — they are NOT GTAO. Pure screen-space
 // ray-march from each pixel along the sun direction; produces hard contact
 // shadows at object/floor intersections without the GTAO over-occlusion bug.
@@ -327,11 +346,13 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     float skyIndirectIntensity = 1.0f;
     bool  lowerHemisphereIsBlack = true;
     Vec3  lowerHemisphereColor = {0.0f, 0.0f, 0.0f};
+    bool  hasSkyLight = false;
     if (ctx.world) {
         auto skyLightView = ctx.world->GetRegistry().view<SkyLightComponent>();
         for (auto enttEntity : skyLightView) {
             auto& sl = skyLightView.get<SkyLightComponent>(enttEntity);
             if (!sl.enabled) continue;
+            hasSkyLight = true;
             skyIntensity = sl.intensity;
             skyIndirectIntensity = sl.indirectLightingIntensity;
             perFrame.skyLightIntensity  = sl.intensity;
@@ -394,7 +415,19 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
                                     "SkyLight: '{}' loaded as PMREM atlas ({}px face, {} LODs)",
                                     sl.cubemapPath, hdrResult.pmremFaceSize, hdrResult.pmremLodCount);
                             } else {
-                                SetHDRIEnvironment(hdrResult.srvIndex, sl.cubemapResolution);
+                                // r.HDRISkybox 2: the cube is sized from the panorama (hdri_skybox_pass.h);
+                                // otherwise the authored capture resolution, as before the CVar existed.
+                                const bool sourceRes = static_cast<int>(cv_HDRISkybox->value)
+                                    == static_cast<int>(HdriSkyboxMode::SourceResolution);
+                                const uint32_t cubeRes = sourceRes
+                                    ? HdriSkyboxCubeResolution(hdrResult.width, sl.cubemapResolution)
+                                    : sl.cubemapResolution;
+                                SetHDRIEnvironment(hdrResult.srvIndex, cubeRes);
+                                if (sourceRes) {
+                                    UZ_LOG(Renderer, Info,
+                                        "SkyLight: r.HDRISkybox=2 — cube sized from the {}x{} panorama: {} (authored {})",
+                                        hdrResult.width, hdrResult.height, cubeRes, sl.cubemapResolution);
+                                }
                             }
                             UZ_LOG(Renderer, Info,
                                 "SkyLight: auto-loaded HDRI '{}' (SRV={}, res={}, PMREM={})",
@@ -458,6 +491,44 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
         perFrame.skyIrradianceSH[2].y -= lowerHemisphereColor.z * halfWeight * shScale;
     }
 
+    // ── Ambient fallback while the sky IBL is not ready (phase3a-3.51.0, fix 3) ────────
+    // Before the first sky bake the SH above is all zero and no irradiance cubemap is bound, so the
+    // deferred pass has no diffuse sky term (sky_light_fallback.h). With a SkyLightComponent present the
+    // skyLightMinAmbient floor carries lightColor * intensity * 0.1 for those frames (the shader
+    // multiplies the floor by skyLightColor * skyLightIntensity), and the forward paths read the same
+    // product from PerFrameCB::ambientColor. The frame the bake lands both return to their authored
+    // values, so this never touches the steady state. No SkyLightComponent: no ambient, as in UE5.
+    Vec3 skyFallbackAmbient{};
+    bool skyFallbackActive = false;
+    {
+        static bool fallbackLogged = false, fallbackLateLogged = false, fallbackEndedLogged = false;
+        if (hasSkyLight && !SkyIBLReady(m_skyIrradianceSH, m_iblResult.irradianceSrvIndex)) {
+            skyFallbackActive = true;
+            skyFallbackAmbient = SkyLightFallbackAmbient(
+                {perFrame.skyLightColorR, perFrame.skyLightColorG, perFrame.skyLightColorB},
+                perFrame.skyLightIntensity);
+            perFrame.skyLightMinAmbient = std::max(perFrame.skyLightMinAmbient, kSkyLightFallbackIrradiance);
+            if (!fallbackLogged) {
+                UZ_LOG(Renderer, Info,
+                       "SkyLight: sky IBL not ready at frame {} - ambient fallback lightColor * intensity * {:.2f} = "
+                       "({:.4f}, {:.4f}, {:.4f}) until the first sky bake",
+                       ctx.frameIndex, kSkyLightFallbackIrradiance,
+                       skyFallbackAmbient.x, skyFallbackAmbient.y, skyFallbackAmbient.z);
+                fallbackLogged = true;
+            }
+            if (ctx.frameIndex > kSkyLightFallbackReportFrame && !fallbackLateLogged) {
+                UZ_LOG(Renderer, Warning,
+                       "SkyLight: ambient fallback still active at frame {} - the sky IBL never baked (no sky "
+                       "atmosphere capture or cubemap?); the ambient is the 0.1 hemisphere approximation, not the sky SH",
+                       ctx.frameIndex);
+                fallbackLateLogged = true;
+            }
+        } else if (fallbackLogged && !fallbackEndedLogged) {
+            UZ_LOG(Renderer, Info, "SkyLight: sky IBL ready at frame {} - ambient fallback off", ctx.frameIndex);
+            fallbackEndedLogged = true;
+        }
+    }
+
     // Log SH L0 coefficient once to diagnose shadow darkness.
     // In compact packed format: coeffs[0].w = R_L0, coeffs[1].w = G_L0, coeffs[2].w = B_L0
     static bool shLogged = false;
@@ -479,7 +550,7 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     ctx.lightData = ExtractLightingFromECS(ctx.world, *m_cbRing, camera.GetPosition());
     ctx.sunDir       = ctx.lightData.sunDir;
     ctx.sunColor     = ctx.lightData.sunColor;
-    ctx.ambientColor = ctx.lightData.ambientColor;
+    ctx.ambientColor = skyFallbackActive ? skyFallbackAmbient : ctx.lightData.ambientColor;
     ctx.lightingAlloc = ctx.lightData.lightingCBAlloc;
 
     // ── Inject VFX particle lights into the LightingCB ──────────────────
@@ -513,6 +584,7 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
                 pld.diffuseScale    = 1.0f;
                 pld.flags           = kLightFlag_InverseSquared;
                 pld.shadowIndex     = UINT32_MAX;
+                pld.softShadowRadius = 0.0f;   // unshadowed anyway; 0 = inherit
                 lightingCB->pointLightCount++;
             }
         }
@@ -1074,25 +1146,11 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     }
 
     // ── Reflection Probes ────────────────────────────────────────────────
-    // Phase 1: Capture — render the scene into a dirty probe's cubemap.
-    // Phase 2: Update — bake IBL from the captured cubemap and upload GPU data.
-    if (m_reflectionProbes.IsInitialized() && ctx.world && m_pipelines) {
-        // Build a scene descriptor so the probe can render into its cubemap.
-        // The forward PBR pipeline and draw list are used for simplified
-        // scene capture at the probe's resolution.
-        const bool bindless = m_device->IsBindless();
-        ProbeCaptureSceneDesc captureDesc{};
-        captureDesc.cmdList         = ctx.cmdList;
-        captureDesc.drawList        = &ctx.drawList;
-        captureDesc.meshes          = m_meshes.data();
-        captureDesc.meshCount       = static_cast<uint32_t>(m_meshes.size());
-        captureDesc.cbAllocator     = m_cbRing.get();
-        captureDesc.forwardPipeline = m_pipelines->GetForwardPBR(bindless);
-        captureDesc.bindless        = bindless;
-
-        m_reflectionProbes.CaptureIfDirty(
-            *ctx.world, captureDesc, m_skyCubemapSrv, m_skyCubemap);
-
+    // Update — bake IBL from the probes' executed scene captures and upload the
+    // probe buffer the deferred lighting reads. The captures themselves are
+    // recorded by CaptureReflectionProbes(), once the draw list is built.
+    // r.ReflectionProbes 0 (the default): no bake, no upload; the CB keeps its probe-less defaults.
+    if (cv_ReflectionProbes->value != 0.f && m_reflectionProbes.IsInitialized() && ctx.world && m_pipelines) {
         const auto probeResult = m_reflectionProbes.Update(
             *ctx.world, m_skyCubemapSrv, m_skyCubemap);
         perFrame.reflectionProbeCount          = probeResult.probeCount;
@@ -1377,6 +1435,59 @@ void SceneRenderer::PopulatePerFrameConstants(FrameContext& ctx) {
     if (ctx.totalCascadeCount > 0) {
         m_shadowAtlas.Resize(m_device, ctx.totalCascadeCount);
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CaptureReflectionProbes — records the scene capture of a dirty probe
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SceneRenderer::CaptureReflectionProbes(FrameContext& ctx) {
+    UZ_PROFILE_FUNCTION();
+    // r.ReflectionProbes 0 (the default): nothing is captured; the frame's command list is untouched.
+    if (cv_ReflectionProbes->value == 0.f || !m_reflectionProbes.IsInitialized() || !ctx.world || !m_pipelines) {
+        return;
+    }
+    // A capture renders the frame's draw list from the probe and draws the sky cubemap behind it,
+    // so it runs after SyncDrawListAndInstances (from PopulatePerFrameConstants, before the list
+    // is built, every probe captured the sky alone) and waits until the scene is there: the sky
+    // IBL baked (in frame 0 the sky capture pass is recorded after this point on the same command
+    // list, so a probe captured then reads a cubemap nothing has rendered yet), the draw list
+    // populated (empty while the first meshes load) and an enabled probe in the world (the HDRI
+    // skybox pipeline below is created on first use: a world without a probe never creates it).
+    // Until its capture is baked a probe contributes nothing and the sky IBL stands in.
+    if (ctx.drawList.GetCommands().empty()
+        || !SkyIBLReady(m_skyIrradianceSH, m_iblResult.irradianceSrvIndex)) {
+        return;
+    }
+    bool hasEnabledProbe = false;
+    for (auto [probeEntity, probe] : ctx.world->GetRegistry().view<ReflectionProbeComponent>().each()) {
+        if (probe.enabled) {
+            hasEnabledProbe = true;
+            break;
+        }
+    }
+    if (!hasEnabledProbe) {
+        return;
+    }
+
+    // The probe-capture pipeline (mesh_vs + probe_capture_ps: the sun through the capture's own
+    // shadow cascades, rendered with the shadow depth pipeline, plus the sky IBL and emissive, as
+    // the deferred pass lights the frame) renders the draw list at the probe's resolution; the HDRI
+    // skybox pipeline draws the sky cubemap behind the geometry; the faces start from this frame's
+    // PerFrameCB (sun, sky SH / SRVs, shading CVars) with their own view-projection.
+    const bool bindless = m_device->IsBindless();
+    ProbeCaptureSceneDesc captureDesc{};
+    captureDesc.cmdList         = ctx.cmdList;
+    captureDesc.drawList        = &ctx.drawList;
+    captureDesc.meshes          = m_meshes.data();
+    captureDesc.meshCount       = static_cast<uint32_t>(m_meshes.size());
+    captureDesc.cbAllocator     = m_cbRing.get();
+    captureDesc.capturePipeline = m_pipelines->GetProbeCapture(bindless);
+    captureDesc.shadowPipeline  = m_pipelines->GetShadowDepth(bindless);
+    captureDesc.skyboxPipeline  = m_pipelines->GetHdriSkybox();
+    captureDesc.frameCB         = &ctx.perFrame;
+    captureDesc.bindless        = bindless;
+    m_reflectionProbes.CaptureIfDirty(*ctx.world, captureDesc, m_skyCubemapSrv, m_skyCubemap);
 }
 
 } // namespace uz

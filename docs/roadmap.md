@@ -791,7 +791,7 @@ Phase 9: Shipping ────────────────────�
 |--------|-------------|--------|
 | SSAO (GTAO) | 3.5 (render graph) | ✅ Multi-bounce + bent normals |
 | TAA | 3.5 (render graph, velocity buffer) | ✅ Variance clipping (Salvi 2016) |
-| SSR | 3.3 (deferred, depth + normal) | ✅ Stochastic multi-ray (Stachowiak 2015) |
+| SSR | 3.3 (deferred, depth + normal) | ✅ Stochastic 1 ray/pixel/frame: GGX-VNDF sample (Dupuy & Benyoub 2023) + temporal IGN, Hi-Z two-phase march, elliptical resolve, YCoCg variance-clip temporal + spatial denoise (Stachowiak 2015 pipeline). Opt-in `r.SSR` (default off; the ray-traced pass is the default where DXR exists). Tile classification runs but its ray list is not consumed yet |
 | DOF | 3.5 (render graph) | ✅ Near/far/sharp layer separation |
 | Motion blur | 3.5 (velocity buffer) | ✅ Per-object velocity |
 | Color grading | 3.5 (LUT texture) | ✅ 32x32x32 LUT + white balance (Bradford) |

@@ -104,34 +104,81 @@ reference scenes at the default 5 cm source radius, with exact OFF preservation 
 test regression. The thin point-face raster seam already present in the hard reference remains;
 cross-face filtering does not repair missing shadow-depth coverage.
 
+## 1E. Per-light `softShadowRadius` + the 2.1 / 2.2 evidence (2026-11-10)
+
+Section 0E (commit 7b5d3c15) had already landed the local PCSS itself, so items 1.1-1.4 and 1.6 are
+satisfied by that code (noted per item below; nothing of it was changed). This session adds the one
+missing item, 1.5, and produces the 2.1 / 2.2 evidence on the RTX 5080 at 1920x1080
+(`E:/UzmiEngine/_evidence/lighting/omni-pcss/report.md`, montages in `viz/`, fixtures in `fixtures/`).
+
+- `PointLightComponent::softShadowRadius` (inherited by the spot): PCSS emitter radius in cm, scene key
+  `"softShadowRadius"`; 0 = inherit (point: `sourceRadius` when positive, else
+  `r.Shadows.SoftPCSS.Local.SourceRadius`; spot: the CVar), < 0 = hard for this light. Carried in the
+  former first pad float of `PointLightData` (52) / `SpotLightData` (68): sizes 64 / 80 unchanged,
+  `test:layouts` A 105/105, B 44/44, C 19/19. Shader: `LocalPcssRadius()` in `deferred_lighting_ps.hlsl`
+  selects the radius in front of the unchanged `LocalShadow()`; every light at 0 is the 0E selection.
+- OFF identity: with every light at 0 the lighting records (direct, indirect, emissive, normals) of the
+  pristine 9ae4feb8 build and this build are bitwise identical on every frame checked; with TAA off
+  the frames are byte-identical (max code delta 0, 0 px) against the parent's own prebuilt exe for the
+  three fixtures. With TAA on, any rebuild of the runtime (even pristine sources plus one dummy
+  volatile store) carries a 1-ulp TAA-history difference from frame 2 (<= 1 code, 0.01-0.03 % px) that
+  is unrelated to this patch (report section 6). Per-light -1 is byte-identical to the CVar-off path.
+- Softness (10-90 % width on the receiver, cm, from region dumps): wall stripes of pillars 1 / 2 / 3 m
+  from a point light 5 m from the wall (blocker-to-receiver ratios 4 / 1.5 / 0.67): hard 1.13 / 1.19 /
+  1.20; CVar 5 cm 27.7 (at the 16-texel clamp) / 11.8 / 6.3; softShadowRadius 3: 24.1 / 6.4 / 3.9;
+  12: 27.7 / 25.8 / 15.0. Spot bar shadow across the whole cone: 5 cm 9.6-10.0 at every station from
+  the centre to 50 cm inside the cone boundary, 8 cm 15.1-15.9. Cube-face seams: widths agree on both
+  sides (bar A 10.4 / 9.7 at x = 295 / 305; bar B 11.4 / 11.75 at y = 335 / 345).
+- No leak: in the hard umbra eroded past the kernel radius the soft visibility is exactly 0 (wall
+  erode 32 px, floor / seam erode 16 px, spot band erode 8 px) and the eroded lit region stays exactly
+  1; contact creases at the pillar bases stay black. The thin bright point-face raster seam of 0E is
+  present on the hard path too (pre-existing, not touched).
+- Cost (DeferredLighting mean of 224 frames from frame 200, two runs): point light 0.529 -> 0.934 ms
+  (+0.405), spot 0.635 -> 0.675 ms (+0.040); LocalShadowDepth unchanged; the per-light radius adds
+  nothing over the CVar path (r 12: 0.915 / 0.674 ms).
+- Gates: pinned zig 0.15.2 ReleaseFast build exit 0 (173 shaders verified); `npm run test:layouts`
+  exit 0; gtests `GTEST_FILTER=-RuntimeViewportTest.*`: 8218 ran, 8198 passed, 17 skipped, 3 failed =
+  the pre-existing VfxEditorSlate trio (new: PointLightData.FieldLayout offsets 52 / 68,
+  SoftShadowRadiusDefaultsToInherit, RenderingParity defaults).
+
 ## 1. Implementation
 
-- [ ] 1.1 Extend `BlockerSearch()` in `shadow_pcss.hlsli` to accept atlas region UV bounds (min/max) so it works within a sub-region of the shadow atlas (point/spot light tile).
-- [ ] 1.2 Implement `SampleShadowPCSS_PointLight()` — blocker search in the point light's atlas face, compute penumbra width from blocker distance and light radius, apply variable-kernel PCF.
-- [ ] 1.3 Implement `SampleShadowPCSS_SpotLight()` — same approach for spot light perspective shadow with cone-based atlas region.
-- [ ] 1.4 In `deferred_lighting_ps.hlsl`, replace point/spot PCF calls with PCSS when `shadowPCSSEnabled` is set in the light CB.
-- [ ] 1.5 Add per-light `softShadowRadius` parameter to LightComponent and LightCB (controls penumbra size).
-- [ ] 1.6 Add CVar `r.ShadowPCSS.PointSpot` (0=PCF only, 1=PCSS, default=1).
+- [x] 1.1 Extend `BlockerSearch()` in `shadow_pcss.hlsli` to accept atlas region UV bounds (min/max) so it works within a sub-region of the shadow atlas (point/spot light tile). — `BlockerSearchPCSS()` in `shadow_pcss.hlsli` already takes `atlasMin/atlasMax` (that header is not included by any pass); the local path that ships is `SampleLocalShadowSoft()` + `LocalShadowTapUV()` in `deferred_lighting_ps.hlsl` (0E), which clamps every tap to the light's tile with a half-texel inset and re-projects taps that leave a point-light face into the neighbouring face. Verified in 2.1.4.
+- [x] 1.2 Implement `SampleShadowPCSS_PointLight()` — blocker search in the point light's atlas face, compute penumbra width from blocker distance and light radius, apply variable-kernel PCF. — `SampleLocalShadowSoft(entry, cubeBase, ...)` with the face chosen by the light->pixel major axis (0E); softness-with-distance proved in 2.1.1.
+- [x] 1.3 Implement `SampleShadowPCSS_SpotLight()` — same approach for spot light perspective shadow with cone-based atlas region. — the same sampler with `cubeBase = 0xFFFFFFFF` on the spot's tile (0E); cone-edge behaviour proved in 2.1.2.
+- [x] 1.4 In `deferred_lighting_ps.hlsl`, replace point/spot PCF calls with PCSS when `shadowPCSSEnabled` is set in the light CB. — `LocalShadow()` branches on `softPCSS && localSoftPCSS && radius > 0` (ShadowDataCB, 0E); the radius is now `LocalPcssRadius(light.softShadowRadius, ...)`.
+- [x] 1.5 Add per-light `softShadowRadius` parameter to LightComponent and LightCB (controls penumbra size). — this session (1E above): component, scene key, `PointLightData` / `SpotLightData` pad float, packing in `light_renderer.cpp`, shader selection; widths scale with it (3 cm = 0.54-0.61x, 12 cm = 2.4x of the 5 cm CVar where unclamped).
+- [x] 1.6 Add CVar `r.ShadowPCSS.PointSpot` (0=PCF only, 1=PCSS, default=1). — exists as `r.Shadows.SoftPCSS.Local` (0E, default 1, also gated by `r.Shadows.SoftPCSS`); no second CVar was added. Note: the default stays ON as committed; flipping it would move the default frame.
 
 ## 2. Testing
 
 ### 2.1 Visual Regression (Tier 2)
-- [ ] 2.1.1 Point light near a wall with objects at varying distances — verify shadow softness increases with distance from caster.
-- [ ] 2.1.2 Spot light with cone shadow — verify correct penumbra along cone edges.
-- [ ] 2.1.3 Compare PCSS ON vs OFF — verify no artifacts, no light leaking at shadow edges.
-- [ ] 2.1.4 Verify shadow quality at atlas boundary (no sampling outside the light's atlas tile).
+- [x] 2.1.1 Point light near a wall with objects at varying distances — verify shadow softness increases with distance from caster. — `point_wall` fixture, widths 27.7 / 11.8 / 6.3 cm for ratios 4 / 1.5 / 0.67 (hard 1.1-1.2 everywhere); `viz/point_wall_stripes.png`, `viz/point_wall_ground.png` (contact hardening on the floor).
+- [x] 2.1.2 Spot light with cone shadow — verify correct penumbra along cone edges. — `spot_cone` fixture: the bar's penumbra is 9.6-10.0 cm (5 cm) / 15.1-15.9 cm (8 cm) at all 16 stations from the cone centre to 50 cm inside the outer-angle boundary, i.e. the tile-edge clamp does not distort it; `viz/spot_cone_band.png`.
+- [x] 2.1.3 Compare PCSS ON vs OFF — verify no artifacts, no light leaking at shadow edges. — eroded-umbra visibility exactly 0 and eroded-lit exactly 1 for 5 / 3 / 8 / 12 cm in all three fixtures; ON vs OFF montages above; the only line artifact is the pre-existing point-face raster seam, identical on the hard path.
+- [x] 2.1.4 Verify shadow quality at atlas boundary (no sampling outside the light's atlas tile). — `point_seam` fixture: penumbra continuous across the -Z/+X and +X/+Y cube-face seams (widths within noise on both sides, no step), eroded umbra exactly 0 next to the seams; spot: constant width up to the cone boundary (2.1.2); `viz/point_seam.png`, `viz/point_seam_closeup_barA.png`.
 
 ### 2.2 Performance
-- [ ] 2.2.1 Benchmark PCSS vs PCF for point/spot: target < 0.5ms additional GPU cost per light at 1080p.
+- [x] 2.2.1 Benchmark PCSS vs PCF for point/spot: target < 0.5ms additional GPU cost per light at 1080p. — point +0.405 ms (0.529 -> 0.934), spot +0.040 ms (0.635 -> 0.675) at 1920x1080, `logs/perf.json`.
 
 ### 2.3 Coverage
-- [ ] 2.3.1 Verify 95%+ coverage on new C++ code.
+- [ ] 2.3.1 Verify 95%+ coverage on new C++ code. — CPU line accounting (2026-11-13):
+      the per-light feature commit 6b4adbb1 added 10 behavior-bearing C++ lines:
+      component default (1), CB radius defaults (2), scene reads/writes (4), ECS uploads (2),
+      generated emissive-light radius initialization in frame_constants.cpp (1).
+      Existing defaults/layout tests plus the new extraction and scene round-trip tests cover
+      9/10 (90%); padding reshapes, comments and HLSL are excluded from this denominator.
+      The remaining generated-light frame setup is unexecuted by these CPU tests: needs
+      Fable/GPU lane. This is source line accounting, not an instrumented 95% claim.
+      Existing test_local_light_shadows.cpp already covers atlas/extraction budgets,
+      cube-face/cone projections and entry layout; test_shadow_pcss.cpp already covers
+      local similar-triangles math and shared clamp/CB fields. Those tests were not duplicated.
 
 ## 3. Documentation
-- [ ] 3.1 Update `docs/specs/rendering/shader-library.md` with PCSS point/spot functions.
-- [ ] 3.2 Update `docs/specs/rendering/point-spot-light-shadows.md` with PCSS support description.
+- [x] 3.1 Update `docs/specs/rendering/shader-library.md` with PCSS point/spot functions. — Created the missing page against shipped LocalShadow / SampleLocalShadowSoft / LocalShadowTapUV / LocalPcssRadius symbols; linked from the existing docs/specs/shader-library.md.
+- [x] 3.2 Update `docs/specs/rendering/point-spot-light-shadows.md` with PCSS support description. — Created the missing page: controls, signed radius inheritance, radial filtering, cross-face taps, ABI, limits and tests.
 
 ## 4. Tail (mandatory — enforced by rulebook v5.3.0)
-- [ ] 4.1 Update or create documentation covering the implementation
-- [ ] 4.2 Write tests covering the new behavior
+- [x] 4.1 Update or create documentation covering the implementation — Both rendering spec pages above, with source-verified function contracts.
+- [x] 4.2 Write tests covering the new behavior — Reused the 20 existing test_local_light_shadows.cpp tests, test_shadow_pcss.cpp math/CB coverage and existing default/layout tests. Added only missing signed-radius ECS upload and point/spot scene default/save/reload tests (3 tests total).
 - [ ] 4.3 Run tests and confirm they pass

@@ -12,13 +12,13 @@
 - [x] 2.2 Split the selection variate by child power, inverse squared distance, and clamped receiver cosine; preserve nonzero support and handle directional/mixed nodes conservatively.
 - [x] 2.3 Sample triangle area uniformly using square-root barycentrics. The joint area PDF is `P(select triangle) / triangleArea`, not the reciprocal of that probability.
 - [x] 2.4 Evaluate the same selection PDF by parent traversal. NEE and BSDF emitter hits use matching area-to-solid-angle conversion and complementary balance MIS weights, including the NEE sample count. Exact draw/primitive identities survive Morton sorting.
-- [ ] 2.5 Wire into `restir_initial_cs.hlsl` as the candidate generator when `HAS_LIGHT_BVH=1` define is set. Build + verify: scene with 100 emissive cubes — sampling probability distribution concentrates correctly in front-facing emitters (validate via readback histogram of selected triangle IDs).
+- [x] 2.5 Wire into `restir_initial_cs.hlsl` as the candidate generator when `HAS_LIGHT_BVH=1` define is set. Build + verify: scene with 100 emissive cubes — sampling probability distribution concentrates correctly in front-facing emitters (validate via readback histogram of selected triangle IDs). *Stage 4: the generator is wired behind the runtime descriptor gate (`lights[0].padding` = config SRV + 1, present only with `r.ReSTIR.DI` and `r.LightBVH`), not a compile-time define; stage 3 proved it unbiased. The GPU selection histogram (`r.ReSTIR.Readback`) on the 100-cube scene matches the CPU `LightBVH::Sample` model within sampling noise and concentrates candidates on the powerful, receiver-facing emitters; see the stage-4 section.*
 
 ## Session 3: Validation + Demo
 
 - [x] 3.1 Rebuild from `LightBVH::Gather()` when its transport-input hash changes; unchanged gathered data avoids rescanning triangles.
-- [ ] 3.2 Demo: place 100 emissive cubes in a grid at varying intensities. Render with `--restir-di` + light BVH. Verify: brighter cubes receive proportionally more samples (histogram check). Compare convergence rate vs uniform sampling via 100-sample screenshot comparison.
-- [ ] 3.3 Build + verify: `--screenshot-stdout` after 64 samples shows correct multi-emitter lighting. No visible sampling bias (no dark patches near bright emitters). GPU timestamp (`--gpu-profile`) confirms traversal cost is sub-millisecond for 100 emitters.
+- [x] 3.2 Demo: place 100 emissive cubes in a grid at varying intensities. Render with `--restir-di` + light BVH. Verify: brighter cubes receive proportionally more samples (histogram check). Compare convergence rate vs uniform sampling via 100-sample screenshot comparison. *Stage 4: `scripts/rendering/light-bvh-grid.uzproject/.uzscene` (100 cubes, ten log-spaced intensities over 294x, 1,200 emissive triangles); candidate share follows emitter power (Spearman 0.969) against a flat uniform control; floor error variance at 64 spp is -87.4% versus uniform-candidate ReSTIR and -53.7% versus light-BVH NEE.*
+- [x] 3.3 Build + verify: `--screenshot-stdout` after 64 samples shows correct multi-emitter lighting. No visible sampling bias (no dark patches near bright emitters). GPU timestamp (`--gpu-profile`) confirms traversal cost is sub-millisecond for 100 emitters. *Stage 4: the 64-spp frame (frame 64 of the `--screenshot --screenshot-frames` backbuffer capture; the `uzengine.exe` capture launcher has no `--screenshot-stdout`, that flag exists only in the `Application` argument parser) is within -0.063% of the 2,050-spp uniform-NEE reference on the floor, every per-cube floor pool within +/-7.3% at 64 spp with no systematic darkening (mean ratio 0.993; +/-2% at 2,050 spp); a single full-screen traversal costs about 0.07-0.12 ms at 640x360 (sub-millisecond), while the 32-candidate RIS generator adds 2.19 ms and the spatial-reuse PDF walks 2.14 ms per frame versus uniform candidates.*
 - [x] 3.4 Stage-1 path-traced emissive demo: equal-budget BVH on/off captures pass the mean gate at frames 210 and 2050 while retaining the low-sample variance improvement. ReSTIR demo/readback and isolated traversal timing in 3.2/3.3 remain deferred.
 
 ## 1. Tail (mandatory — enforced by rulebook v5.3.0)
@@ -351,3 +351,82 @@ No commit or archive was made.
 The complete 13-file scoped change list, detailed estimator argument,
 mask definition, all measurements, and verification are in the matching
 visibility-aware subsection of `../phase1_falcor-restir-di/tasks.md`.
+
+## Stage 4: 100-emitter demo, selection histogram, 64-spp gate (2026-11-09): COMPLETE
+
+Closes 2.5, 3.2 and 3.3 on the already-merged ReSTIR x light-BVH generator.
+Evidence root: `E:/UzmiEngine/_evidence/lighting/light-bvh-finish/` (`report.md`,
+`metrics.json`, `montage_multi_emitter.png`, `montage_convergence.png`,
+`light-bvh-finish.patch`); `scripts/rendering/measure_light_bvh_grid.py capture|analyze`
+reproduces the captures and every number below. No defaults changed.
+
+- Assessment: `restir_initial_cs.hlsl` already traverses `SampleLightBVH` for all 32
+  RIS candidates behind the runtime descriptor gate (config SRV + 1 in
+  `lights[0].padding`, present only with `r.ReSTIR.DI` + `r.LightBVH`); there is no
+  `HAS_LIGHT_BVH` define and none is needed. The open gap was the GPU histogram readback
+  and the 100-emitter demo/gates.
+- Scene: `scripts/rendering/light-bvh-grid.uzscene`: 10x10 grid of 20-unit emissive
+  cubes (black base, white emission) 25-45 units above a 0.65-albedo floor, ten
+  log-spaced intensities 0.02..5.87 (294x) scattered so every row and column carries
+  every level; black sky; 640x360; `r.TonemapOperator=0` onto the RGBA8_UNORM swapchain,
+  so PNG code / 255 is linear radiance clipped at 1.0. Engine log: `LightBVH: SAOH/cone
+  build 1200 lights, 2399 nodes, root power=300295.22`, `101 TLAS instances`,
+  `ReSTIR DI: initial BVH-sourced RIS (joint source PDF, visibility-aware reuse)`.
+  Accumulation resets at frame 1, so `f_N.png` holds N samples; the 100-frame every-frame
+  replays are byte-identical to the 2,055-frame captures at all 20 shared frames.
+- Histogram readback (new, `r.ReSTIR.Readback` with `r.LightBVH`): `LightBVHConfig`
+  gains `histogramUav` (stride 16 -> 32 bytes, both declarations and the layout gtest
+  updated; `npm run test:layouts` agrees). The initial pass atomically counts every BVH
+  candidate, every RIS-selected sample and every selected-and-visible sample per emitter
+  into a pass-private buffer; the CPU differences the cumulative counts each frame,
+  aggregates them per source draw, and re-samples the copied primary surfaces with the
+  CPU `LightBVH::Sample` (32 stratified selections on every other pixel). Over 129 frames
+  (919,450,048 GPU candidates, 32.02 per valid pixel per frame): candidate share versus
+  power share Spearman 0.969, log-log slope 0.81 (geometry modulates power); the ten most
+  powerful cubes hold 46.9% of the power and receive 37.5% of the candidates and 42.6% of
+  the RIS selections, the fifty weakest hold 4.1% and receive 8.3%. GPU versus CPU model:
+  max 2.2% and mean 0.52% relative share deviation over the 49 emitters with >= 0.5% share,
+  total L1 0.52 percentage points, consistent with the CPU sample count. Uniform control
+  (`r.LightBVH.Uniform=1`): Spearman 0.036, top ten 10.0%, bottom fifty 50.0%, while its
+  RIS selections still follow power (0.990), as RIS should. The emitters here are closed
+  two-sided cubes above the receivers, so there is no below-horizon emitter to show the
+  0.01 cosine floor; the orientation/cosine weighting is validated through the CPU-model
+  agreement rather than a back-facing population.
+- Unbiasedness (linear floor mask, 81,606 pixels; whole image 230,400): 2,050-spp means
+  versus the uniform-emitter NEE x32 reference: ReSTIR x BVH -0.025% (whole -0.009%),
+  uniform-candidate ReSTIR -0.008%, light-BVH NEE -0.032%. At 64 spp: ReSTIR x BVH
+  -0.063% (whole -0.041%; -0.039% versus its own 2,050-spp frame), uniform ReSTIR -0.073%,
+  BVH NEE -0.089%. Per-cube floor pools (44 pools clear of the emitter mask) at 64 spp:
+  ReSTIR x BVH ratio to the reference 0.993 mean, 0.927..1.066, 0 pools outside +/-10%;
+  uniform ReSTIR 0.781..1.354 with 13 outside +/-10%; at 2,050 spp all three are within
+  +/-4.4% and ReSTIR x BVH within 0.986..1.019.
+- Variance (floor MSE against the 2,050-spp reference, equal samples): 5 spp
+  0.00647 / 0.04240 / 0.01463 (combined / uniform ReSTIR / BVH NEE), 64 spp
+  0.000569 / 0.004510 / 0.001229, 200 spp 0.000199 / 0.001438 / 0.000411: ReSTIR x BVH
+  -84.7%/-87.4%/-86.1% versus uniform candidates and -55.8%/-53.7%/-51.5% versus BVH NEE
+  at 5/64/200 spp. These are equal-sample, static-camera, spatial error variances.
+- Brightness tracks power: emitter top faces read exactly their radiance (0.882 for 0.883);
+  an isolated-emitter probe (three cubes 300 units apart, L = 0.5/2/8) renders identical
+  floor profiles scaled by 4.00x and 4.0x. Observation outside this task: within about one
+  emitter height of the foot the path tracer (every estimator, including the uniform-NEE
+  reference) renders 0.70-0.75 of the Lambert x exact form-factor analytic, converging to
+  1.00 beyond ~2.5 heights; far-field pools agree within 1-5%. Not a light-BVH/ReSTIR
+  effect; left as a follow-up.
+- GPU time (manifest `gpu_ms`, 640x360, frames >= 200): ReSTIR_Initial 2.60 ms with BVH
+  candidates versus 0.41 ms uniform (+2.19 ms for 32 traversals + 32 PDF walks per pixel,
+  ~0.07 ms per full-screen traversal), ReSTIR_Spatial 2.80 versus 0.65 ms (+2.14 ms of
+  neighbour-target PDF walks), PipelinePathTracer 1.30 versus 1.06 ms (+0.24 ms for the
+  two NEE traversals per pixel, ~0.12 ms each); frame 7.37 versus 2.45 ms. Equal-time
+  efficiency is not claimed.
+- Safety: the post-change binary reproduces the pre-change ReSTIR x BVH 2,050-spp frame
+  byte-for-byte (max code delta 0). Flag-free `reflection-reference` frame 95: the
+  post-change binary is byte-identical to the pre-change binary in three of four runs;
+  the exceptions are the default pipeline's own run-to-run nondeterminism (same-binary
+  reruns differ by 6-100 pixels / 12-78 codes in transient 8-row bands), and the stored
+  `f005-after` baseline predates 18 default-ON commits (max delta 195), so it is no longer
+  a valid byte gate.
+- Gates: `zig build -Doptimize=ReleaseFast` exit 0 (171 shaders); `npm run test:layouts`
+  exit 0 (104/104 Tier A); `GTEST_FILTER='-RuntimeViewportTest.*' zig build test` ran
+  8,175 tests, 8,155 passed, 17 skipped, only the three pre-existing `VfxEditorSlate`
+  failures (exit 1 solely from those); all 14 LightBVH and all ReSTIR tests pass. Captures
+  bounded to 175 s; no TDR, no `compile failed`. No commit.

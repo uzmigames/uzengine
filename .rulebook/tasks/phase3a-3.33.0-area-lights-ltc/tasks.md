@@ -46,8 +46,8 @@
 
 - [x] 2.1 Screenshot: glossy floor reflecting rectangular light — `E:/UzmiEngine/area-ltc/area-light-ltc-raster-vs-pt.jpg` (raster | path tracer | |diff|×4): the elongated reflection of the rect on the roughness-0.3 floor sits where the path tracer puts it.
 - [x] 2.2 Screenshot: roughness gradient — the three spheres in the same montage: sharp rect reflection (0.1), broad highlight (0.5), diffuse glow (0.9). Three samples, not a continuous gradient plane.
-- [ ] 2.3 Screenshot: area light vs point light — not captured in stage 1.
-- [ ] 2.4 Screenshot: large area light — soft shadows are a later stage (stage 1 is unshadowed; `shadowIndex` reserved).
+- [x] 2.3 Screenshot: area light vs point light — `scripts/rendering/area-light-compare/` (2026-11-11): the stage-1 scene with the 120×80 rect replaced by a point light at its centre whose intensity gives the same floor irradiance under the light (π·L·F·h² = 53 039), four cameras (hero, low, side, and the hero view over a roughness-0.12 floor), each as point / rect unshadowed / rect default / path tracer. The point light's highlight is a dot (1.9–2.7× the PT mean in the rect's mirror footprint, bright area 2–20 % of the 2× footprint); the LTC rect's is the foreshortened rectangle the path tracer draws (mirror-footprint mean ratio 0.98–1.035, relative RMSE 2.6–6.3 %, bright area 23–44 % vs PT 23–47 %). Montage: `E:/UzmiEngine/_evidence/lighting/area-lights-ltc-finish/montage-compare-display.png`.
+- [x] 2.4 Screenshot: large area light — same scripts (2026-11-11): a 360×240 cm rect 200 cm over a rough floor with a 50×50×60 box and a free-standing wall, three cameras (oblique, grazing, behind), each as LTC-diffuse-only / shadows off / default (DXR area shadows) / path tracer at 1535 spp. Linear-HDR visibility ON vs PT: box contact strip 0.605 vs 0.605, box shadow ROI 0.944 vs 0.943, floor behind the wall 0.529 vs 0.538; penumbra profiles RMSE 0.013 (10–90 % widths 60/65 cm vs 58/55 cm); the wall's back face is exactly 0 in every mode (no leaking); LTC diffuse vs the exact Lambert integral over 115 k unoccluded floor pixels 0.9986 (PT 1.0001). Montage: `.../montage-large-display.png`.
 - [x] 2.5 Regression: existing point/spot lights unchanged — reflection-reference frame 95 (1920×1080, same recipe as `E:/UzmiEngine/f005-after`): **max_code_delta 0** against the HEAD (ebe785b0) pre-change capture, run-to-run deterministic (two HEAD runs: max 0). Against `f005-after/frames/f_95.png`: 1 pixel / 1 code — the same single pixel HEAD itself differs by (the reference predates the PCSS/RT commits), not from this work. Scenes without a rect light create no texture, no buffer and no PSO.
 
 ## 3. Documentation
@@ -71,6 +71,27 @@
 - Montage: `E:/UzmiEngine/area-ltc/area-light-ltc-raster-vs-pt.jpg`.
 
 Deferred to later stages: disk / line / tube (sphere+capsule) area lights, area-light shadows (`shadowIndex` reserved), rect lights in the SM5 (non-bindless) lighting path and in the path tracer's own light list (it only sees emissive meshes), light cookies (`sourceTexture`). Pre-existing observations, out of scope: the raster G-buffer only writes emissive when an emissive texture is bound (a constant-only emissive material shows black in raster, visible in the PT), and the path tracer skips emissive NEE when `PathCanContinue(bounce + 1, maxBounces)` is false, so `MaxBounces` must be ≥ 2 for direct lighting from emissive meshes.
+
+## Finish evidence: items 2.3 and 2.4 (2026-11-11, RTX 5080, pristine 92a9c95b + these scripts)
+
+- No engine, shader or default change: the rect/disk/tube LTC, `r.Lights.AreaLTC` (default on) and
+  `r.Lighting.AreaLightShadows` (default on) are as committed; the binary is the pinned ReleaseFast
+  build of HEAD (sha256 887ceb9a…). Only `scripts/rendering/area-light-compare/` and this file changed.
+- Build: `zig build -Doptimize=ReleaseFast` exit 0, Shader integrity OK (173 shaders).
+  `npm run test:layouts` exit 0 (Tier A 105/105). gtests `GTEST_FILTER='-RuntimeViewportTest.*'`:
+  8248 tests, 8228 passed, 17 skipped, 3 failed = the pre-existing VfxEditorSlate trio; no TDR.
+- Numbers are linear-HDR whole-frame `output` dumps at 640×360 (raster frame 95, PT frame 1535),
+  never PNG codes; pixel masks come from the raster camera's recorded view-projection intersected
+  with the floor, the boxes, the spheres and the PT quad. Report with the full tables:
+  `E:/UzmiEngine/_evidence/lighting/area-lights-ltc-finish/report.md`.
+- Known, unchanged residual: on open floor the raster (`off`/`on`) sits +2.9 % (oblique) / +5.2 %
+  (grazing) above both the LTC-diffuse-only run and the path tracer because the rough dielectric's
+  LTC specular is added on top of plain Lambert while the PT keeps its (1 − E_spec) partition
+  (stage 1 note); on the roughness-0.3 compare floor this is the 1.17–1.5× pool ratio at grazing NoV.
+  Base BRDF / D7 untouched.
+- The `--path-trace` camera at 92a9c95b matches the raster camera at the same fov (box silhouette
+  columns 296/297/341/342 in both); the 2× tan(fov/2) compensation of `area-light-shadows/verify.py`
+  no longer applies to this build.
 
 ## Phase E: disk and line/tube LTC (2026-10-23)
 

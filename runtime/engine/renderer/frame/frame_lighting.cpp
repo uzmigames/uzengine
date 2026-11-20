@@ -152,12 +152,19 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         denoiserGuides.normal = ctx.normalRes;
         denoiserGuides.velocity = ctx.velocityRes;
         denoiserGuides.reset = !ctx.temporal.matrixValid;
+        {
+            // nrd::CommonSettings needs worldToView and viewToClip separately (NRD SDK adapter).
+            const Camera& camera = m_cameraManager->GetActiveCamera();
+            denoiserGuides.view = camera.GetView();
+            denoiserGuides.proj = camera.GetProjection();
+            denoiserGuides.farPlane = camera.GetFarPlane();
+        }
         if (!m_pipelinePathTracer->AddPass(rgBuilder, ctx.hdrRes, ctx.perFrameAlloc,
                 *m_rtManager, ctx.cmdList, ctx.drawList.GetCommands(), m_meshes, skySrv,
                 ctx.frameIndex, static_cast<uint32_t>(ctx.renderWidth),
                 static_cast<uint32_t>(ctx.renderHeight), ctx.world,
                 ctx.unjitteredViewProj, ctx.updateFlags.flags & ~SceneUpdateFlags::kCamera,
-                denoiserGuides)) {
+                denoiserGuides, ctx.vfs)) {
             UZ_LOG(Renderer, Error, "PipelinePathTracer: failed to register single-bounce pass");
             return;
         }
@@ -811,6 +818,15 @@ void SceneRenderer::RegisterPassInspectorTargets(FrameContext& ctx) {
     if (m_skyCubemap.IsValid() && m_skyCubemapSrv != UINT32_MAX) {
         m_passInspector.RegisterTarget("atmo.sky_cubemap", m_skyCubemap, m_skyCubemapSrv,
                                         VisDisplayMode::HDR, 64, 64);
+    }
+    // The HDRI environment's cubemap (SetHDRIEnvironment / SetPMREMEnvironment): what the
+    // HdriSkybox pass draws and the IBL bake read. atmo.sky_cubemap above stays the procedural
+    // capture, which is never filled while the HDRI is active, so --pass-dump / --diag would
+    // otherwise show no sky source at all for an HDRI scene.
+    if (m_hdriActive && m_hdriCubemap.IsValid() && m_hdriCubemapSrv != UINT32_MAX
+        && m_hdriCubemapSize > 0) {
+        m_passInspector.RegisterTarget("atmo.hdri_cubemap", m_hdriCubemap, m_hdriCubemapSrv,
+                                        VisDisplayMode::HDR, m_hdriCubemapSize, m_hdriCubemapSize);
     }
 
     // Volumetric fog (godrays / light shafts) — froxel inscattering volume

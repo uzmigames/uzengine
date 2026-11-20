@@ -2,6 +2,7 @@
 ///
 /// sRGB transfer functions, luminance, tone mapping operators, and white
 /// balance. All functions operate in linear RGB unless noted otherwise.
+/// @ref Hill 2016 "ACES Fitted Curves" — ACESHillFit fitted RRT+ODT
 
 #ifndef UZ_COMMON_COLOR_HLSLI
 #define UZ_COMMON_COLOR_HLSLI

@@ -28,6 +28,8 @@ UZ_REGISTER_COMPONENT_SERIALIZER(reflection_probe, uz::ReflectionProbeComponent,
         // Influence volume
         c.influenceRadius = uz::json::Float(j, "influence_radius", defaults.influenceRadius);
         c.blendDistance   = uz::json::Float(j, "blend_distance", defaults.blendDistance);
+        // Parallax proxy box half-extents (cm); absent = (0, 0, 0) = no parallax correction.
+        c.boxExtents      = uz::json::Vec3FromArray(j, "box_extents", defaults.boxExtents);
 
         // Capture configuration
         c.resolution = uz::json::Uint(j, "resolution", defaults.resolution);
@@ -50,6 +52,7 @@ UZ_REGISTER_COMPONENT_SERIALIZER(reflection_probe, uz::ReflectionProbeComponent,
         // Influence volume
         j["influence_radius"] = c->influenceRadius;
         j["blend_distance"]   = c->blendDistance;
+        uz::json::WriteVec3(j, "box_extents", c->boxExtents);
 
         // Capture configuration
         j["resolution"] = c->resolution;

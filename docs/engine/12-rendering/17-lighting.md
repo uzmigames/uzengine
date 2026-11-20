@@ -145,163 +145,76 @@ struct LightProbeContribution {
 
 ### Reflection Probes (Cubemap, Parallax-Corrected) — Phase 2+
 
-Capture dynamic local reflections from strategic scene positions via real-time cubemap probes. Each probe bakes a cubemap environment at its position and blends with global IBL using under-operator alpha compositing.
+Local reflections: a probe captures the scene around its position into a cubemap, the IBL baker prefilters it, and the deferred lighting's split-sum specular samples it instead of the sky's prefiltered cubemap — parallax-corrected to an optional proxy box and blended by distance and priority over the sky IBL. A pixel outside every probe keeps the sky IBL unchanged.
 
-#### System Overview
+#### Component
 
-**Capture Flow:**
-1. **CaptureIfDirty** — Every frame, one probe queues for capture (amortized cost)
-2. **RenderProbeCubemap** — Render scene 6 times (one per cubemap face) in forward PBR mode at probe resolution
-3. **IBLBaker** — Compute irradiance (32×32) + prefiltered specular (256×256, 6 mips) via GPU compute shaders
-4. **StructuredBuffer Upload** — Store baked cubemaps in GPU texture atlas, upload probe metadata to constant buffer
-5. **Shader Evaluation** — Deferred lighting iterates up to 8 active probes, applies distance-based fading + blending
+`ReflectionProbeComponent` (`runtime/engine/ecs/environment/reflection_probe_component.h`), scene key `reflection_probe`; the probe sits at its entity's world position (`SceneComponent`).
 
-**Max Probes:** 8 simultaneously active in deferred lighting shader
-
-#### ECS Component
-
-**`ReflectionProbeComponent`** — Attached to scene nodes:
-
-```cpp
-/// @ref UE5 ReflectionCaptureComponent — dynamic cubemap probe for local IBL
-struct ReflectionProbeComponent {
-    /// Radius of influence in world units (cm). Default: 300.
-    /// Reflections fade to 0 at influence radius boundary using Hermite smoothstep.
-    float influenceRadius = 300.0f;
-
-    /// Distance over which reflections smoothly blend with neighboring probes (cm).
-    /// Default: 100. Larger values = softer transitions, more GPU work.
-    float blendDistance = 100.0f;
-
-    /// Cubemap resolution (width=height=depth). Default: 128.
-    /// Valid: 64 (distant/cheap), 128 (standard), 256 (hero areas).
-    /// Capture cost scales with resolution^2 per face.
-    uint32_t resolution = 128;
-
-    /// Priority for competing probes in overlapping regions. Default: 0.
-    /// Higher priority wins in overlap. Allows artist control of blending hierarchy.
-    uint32_t priority = 0;
-
-    /// Is this probe active and influencing reflections? Default: true.
-    bool enabled = true;
-
-    /// Signals GPU to re-capture cubemap. Set true on component creation or when
-    /// scene geometry changes. Automatically cleared after capture completes.
-    bool needsCapture = true;
-};
-```
-
-#### GPU Pipeline
-
-**Stage 1: Capture (if needsCapture)**
-
-Render the scene 6 times (one per cubemap face). Each pass:
-- Render to intermediate RT at probe resolution (e.g., 128×128)
-- Use forward PBR shading (same as game rendering, but from probe viewpoint)
-- Capture all geometry visible from probe position
-
-```cpp
-// Pseudocode: capture one probe per frame
-for (uint32_t i = 0; i < probes.size(); ++i) {
-    if (probes[i].needsCapture) {
-        CaptureProbe(probes[i], resolution);
-        probes[i].needsCapture = false;
-        break;  // Only one per frame — amortize cost
-    }
-}
-```
-
-**Stage 2: IBL Baking (GPU Compute)**
-
-After capture, run 3 compute shaders to generate offline IBL data:
-
-| Compute Shader | Input | Output | Purpose |
-|---|---|---|---|
-| **IrradianceBaker** | Cubemap (128×128) | Irradiance cubemap (32×32) | Diffuse lighting (SH9 encoded or sampled directly) |
-| **PrefilteredBaker** | Cubemap (128×128) | Mip chain 0–5 (256→8 px) | Specular at roughness levels |
-| **BRDFIntegrator** | — | 2D LUT (256×256) | Fresnel factor lookup (pre-computed once globally) |
-
-All runs are read-only GUP passes (no sync required between probes).
-
-**Stage 3: Upload to GPU**
-
-Store baked cubemaps in a texture array (or atlas) indexed by probe ID:
-- `ProbeIrradianceTexture[]` — cube array, 32×32 per probe
-- `ProbePrefilteredTexture[]` — cube array with mips, 256×256 base per probe
-- `ProbeMetadataBuffer[]` — structured buffer with influence radius, blend distance, priority, position
-
-#### Shader Integration
-
-**Deferred Lighting Evaluation** — `deferred_lighting_ps.hlsl`
-
-Iterate all active probes (up to 8) and blend their contributions:
-
-```hlsl
-// Per-pixel lighting from all probes
-float3 totalProbeSpecular = float3(0, 0, 0);
-float3 totalProbeDiffuse = float3(0, 0, 0);
-
-for (uint p = 0; p < probeCount; ++p) {
-    ProbeMetadata probe = probes[p];
-    float3 probeDir = probe.position - positionWS;
-    float distToProbe = length(probeDir);
-
-    // Distance-based fade using Hermite smoothstep
-    float influence = 0.0f;
-    if (distToProbe < probe.influenceRadius) {
-        float normalizedDist = (distToProbe - (probe.influenceRadius - probe.blendDistance))
-                             / probe.blendDistance;
-        influence = smoothstep(1.0f, 0.0f, clamp(normalizedDist, 0.0f, 1.0f));
-    }
-
-    if (influence > 0.001f) {
-        // Sample probe cubemaps at current pixel
-        float3 R = reflect(-V, N);
-        float3 irradiance = SampleIrradianceProbe(probe.id, N).rgb;
-        float3 specular = SamplePrefilteredProbe(probe.id, R, roughness).rgb;
-
-        // Accumulate weighted contribution
-        totalProbeDiffuse += irradiance * influence;
-        totalProbeSpecular += specular * influence;
-    }
-}
-
-// Blend with global IBL using under-operator (probe = foreground)
-float3 blendedDiffuse = lerp(globalIrradiance, totalProbeDiffuse, probeAlpha);
-float3 blendedSpecular = lerp(globalSpecular, totalProbeSpecular, probeAlpha);
-```
-
-Where `probeAlpha` is determined by:
-- If any probe is active at this pixel: alpha = influence of highest-priority probe
-- Otherwise: alpha = 0 (use global IBL)
-
-#### File Locations
-
-| Component | File | Purpose |
-|-----------|------|---------|
-| **ECS Component** | `runtime/engine/scene/reflection_probe_component.h` | `ReflectionProbeComponent` definition |
-| **Capture System** | `runtime/engine/renderer/core/reflection_probe_manager.h` | Probe capture, baking, GPU upload |
-| **GPU Compute** | `runtime/shaders/compute/ibl_baker_irradiance_cs.hlsl` | Irradiance cubemap baking |
-| **GPU Compute** | `runtime/shaders/compute/ibl_baker_prefiltered_cs.hlsl` | Prefiltered mip chain baking |
-| **Deferred Pass** | `runtime/shaders/runtime/deferred_lighting_ps.hlsl` | Probe sampling + blending (lines TBD) |
-| **Data Struct** | `runtime/engine/renderer/core/probe_types.h` | `ProbeMetadata`, GPU buffer layout |
-| **Tests** | `runtime/tests/engine/renderer/test_reflection_probes.cpp` | Capture, baking, blending math |
-
-#### Performance Characteristics
-
-| Operation | Cost | Per Frame |
+| Field (JSON key) | Default | Meaning |
 |---|---|---|
-| **Single probe capture** | 6 forward passes at resolution² | ~1/8 frame (amortized: 1 probe/frame) |
-| **IBL baking (1 probe)** | 3 compute shaders (irradiance, prefilt, BRDF) | ~2ms (one-time after capture) |
-| **Deferred blend (8 probes)** | 8 × (distance fade + 2 cubemap samples) | ~0.5–1.0ms (included in deferred lighting) |
-| **VRAM (per probe)** | Irradiance (4KB) + Prefiltered (512KB) + Metadata (16B) | ~520KB per probe |
+| `influenceRadius` (`influence_radius`) | 300 cm | Influence sphere; no contribution outside it |
+| `blendDistance` (`blend_distance`) | 100 cm | Fade band inside the sphere: weight 1 up to `influenceRadius - blendDistance`, Hermite smoothstep to 0 at `influenceRadius` |
+| `boxExtents` (`box_extents`, `[x, y, z]`) | (0, 0, 0) | Parallax proxy box half-extents around the probe; all three > 0 enables the box projection |
+| `resolution` (`resolution`) | 128 | Capture face size (px) |
+| `priority` (`priority`) | 0 | Higher first; lower-priority probes fill what higher ones leave |
+| `enabled` (`enabled`) | true | A disabled probe is neither captured nor sampled |
+| `needsCapture` (`needs_capture`) | true | Dirty flag, cleared when the capture is baked; set it to recapture |
 
-With 8 probes active, total VRAM ≈ 4.2 MB (negligible vs. scene textures).
+The runtime SRV indices (`prefilteredSrvIndex`, `irradianceSrvIndex`) are written by the renderer and never serialized.
 
-**Optimization opportunities:**
-- **Captured once, updated only on needsCapture flag** — leverage temporal coherence for static scenes
-- **Distance-based fade reduces sample cost for distant probes** — farther probes skip computation entirely
-- **Bake offline or during loading screen** — capture all probes asynchronously before gameplay starts
+#### Capture, bake, upload
+
+1. **Capture** — `SceneRenderer::CaptureReflectionProbes` (frame_constants.cpp), called by `SetupFrameData` right after `SyncDrawListAndInstances`, calls `ReflectionProbeRenderer::CaptureIfDirty` once the frame's draw list is populated and the sky IBL is ready (`SkyIBLReady`: in frame 0 the sky cubemap is rendered later on the same command list), and only in a world with an enabled probe. For the highest-priority dirty probe (one per frame) it records six 90° faces at the probe's resolution into an RGBA16F six-slice texture — `BuildCubemapFaceMatrices`, the camera's Z-up → Y-up rotation, world (x, y, z) → cube (y, z, x): first a sun shadow map for this capture (`RenderCaptureShadowAtlas`: two sphere-bounded orthographic cascades centred on the probe — its influence sphere / proxy box, and 8 × that radius, capped at 400 m — rendered depth-only with the frame's shadow depth pipeline into a 2048² D32 atlas, the frame's bias rules), then the frame's draw list with the probe-capture pipeline (`PipelineLibrary::GetProbeCapture`: `mesh_vs` + `probe_capture_ps.hlsl`, which lights the geometry as `deferred_lighting_ps.hlsl` lights the frame: the sun through those cascades via `shadow.hlsli`'s `CascadeShadow` and a ShadowDataCB at slot 3, the Frostbite diffuse (1/π) + GGX specular, the sky light's SH irradiance and split-sum prefiltered specular with multi-scatter, AO, horizon and specular occlusion, the emissive), then the sky cubemap behind it (the HDRI skybox pipeline, where depth is the far plane).
+2. **Bake** — `ReflectionProbeRenderer::Update` (in `PopulatePerFrameConstants`) bakes a capture only after a frame boundary (`CapturePhase`: Recorded → Executed → baked; the bake's own graphics-queue list runs behind the capture's): `IBLBaker::BakeEnvironment` → irradiance 64² and prefiltered specular 256² × 8 mips (mip m at roughness m / 7). The sky cubemap is never baked into a probe — its face convention differs.
+3. **Upload** — up to 8 probes, highest priority first, into a `StructuredBuffer<ReflectionProbeGPU>` (48 bytes: position, influence radius, blend distance, box half-extents, irradiance and prefiltered SRVs, mip count). `PerFrameCB::reflectionProbeCount` / `reflectionProbeBufferSrvIndex` reach the shader as `_reflProbeCount` / `_reflProbeSrv`; `scripts/rendering/test_cbuffer_layouts.py` checks the record (Tier C).
+
+#### Shader (`deferred_lighting_ps.hlsl`, bindless only)
+
+With `_reflProbeCount > 0`, `SampleReflectionProbes` replaces the sky radiance of the split-sum specular (ahead of the SDF reflections and the screen / ray-traced blend, which layer over it as they layer over the sky):
+
+- per probe, highest priority first: weight `w = ReflectionProbeFade(probe, P) × (1 − α)` (the under operator; a probe not baked yet takes no alpha), `α += w`;
+- lookup (`ReflectionProbeLookup`): the reflection direction without a box; with one, the vector from the probe to where the ray leaves the box (Lagarde 2012), projected from the closest point of the box for a receiver outside it, so the lookup stays continuous across the box's faces;
+- `ProbeWorldToCubemap(d) = (d.y, d.z, d.x)`, the capture's rotation (the sky's `WorldToCubemap` is the reflected (x, z, y));
+- mip `roughness × (mips − 1)` (the engine's bake is linear in roughness);
+- result `Σ w·L_probe + (1 − α)·L_sky·skyTint`; a probe-covered pixel sets `skyTintSpecular = 1` (the capture carries its own sky; the sky share was tinted in the blend) and the region dump's path bit 256.
+
+Diffuse is unchanged: the irradiance cubemaps are baked and uploaded, but the indirect diffuse cascade does not read them. The SM5 path has no probe sampling.
+
+**Gate.** `r.ReflectionProbes` (int 0..1, **default 0**, frame_constants.cpp). At 0 nothing is captured, baked or uploaded: `_reflProbeCount` stays 0, the lighting shader never enters the probe code, and every scene — with or without an authored `reflection_probe` — renders byte-identically to the build without the probe system (validated on the demo against pristine 8abb9f5a: 13 views, screenshots and every lighting / TAA dump record). At 1 a scene that authors an enabled `reflection_probe` gets probe reflections; the demo project pins it.
+
+**Layering.** On DXR hardware with `r.SSR` off the ray-traced reflections (`r.RayTracing.Reflections`, default 1) take the smooth surfaces and replace the probe radiance there; `r.EnvMIS` replaces the split-sum specular on smooth metals with a sky-only estimate (not probe-aware). The probe demo pins both off.
+
+#### Limitations
+
+Measured on the demo with `scripts/rendering/test_reflection_probes.py`:
+
+- **Capture lighting.** A capture carries the sun (shadowed by its own cascades), the sky light and the emissive, not the frame's screen-space or GI terms: local lights (the cluster lists are the frame's), the GI solvers, SSR, contact and cloud shadows are absent from a probe reflection. Measured on the demo (G6 of `test_reflection_probes.py`): the reflected walls read 1.02–1.07 × the frame's own lighting of the same points. Before `probe_capture_ps.hlsl` the capture used `mesh_ps.hlsl` (`albedo × (sun N·L + ambient)`: unshadowed, no 1/π, no IBL) and the sun-facing red wall read 8.6–9.0 ×, the others 0.04–0.11 ×.
+- **Capture shadow reach.** Receivers beyond the capture's second cascade (8 × the probe's region radius, at most 400 m) are captured unshadowed, as the frame's CSM lights receivers past its last cascade; the cascades are 1024² each, so a reflection shows shadow detail down to about `2 × radius / 1024` cm.
+- **Recapture** only when `needsCapture` is set; nothing marks a probe dirty when geometry changes.
+- **No sky, no capture**: a scene whose sky IBL never bakes never captures its probes (they contribute nothing).
+- **Single-mip source**: the prefilter's PDF-based mip bias has no source mips (small bright sources can alias in the rough mips).
+- **Influence is a sphere**; the box is the parallax proxy only (receivers between the box and the sphere use the closest-point projection).
+- At most 8 probes; bindless only.
+
+#### Demo and validation
+
+`scripts/rendering/reflection_probes_demo.py` writes the demo — `sample/content/scenes/reflection_probes.uzscene` and `scripts/rendering/reflection-probes.uzproject`: an open-fronted room with coloured walls and a box-projected probe, an outdoor probe, chrome spheres and a chrome strip through both fade zones. `scripts/rendering/test_reflection_probes.py` captures six views with the probes on and off and checks the room (not the sky) on the chrome sphere, the parallax fit (the authored box fits best), the sky fallback outside every probe (bit-identical), a seamless blend along the strip, rough blurred against smooth sharp, the capture lit like the frame (the reflected walls' radiance over the frame's, G6), and (`--identity` / `--compare-identity`) every view at the default `r.ReflectionProbes=0` against another build.
+
+#### File locations
+
+| Component | File |
+|---|---|
+| ECS component + serializer | `runtime/engine/ecs/environment/reflection_probe_component.{h,cpp}` |
+| Capture, bake, upload | `runtime/engine/renderer/probes/reflection_probe_renderer.{h,cpp}` |
+| Frame wiring | `runtime/engine/renderer/frame/frame_constants.cpp` (`CaptureReflectionProbes`; `Update` in `PopulatePerFrameConstants`), `frame_setup.cpp` |
+| GPU record | `runtime/engine/renderer/core/params/constant_buffers.h` (`ReflectionProbeGPU`) |
+| Sampling | `runtime/shaders/runtime/lighting/deferred_lighting_ps.hlsl` (`SampleReflectionProbes`) |
+| Tests | `runtime/tests/engine/renderer/test_reflection_probes.cpp`, `scripts/rendering/test_reflection_probes.py` |
+
+#### Cost
+
+Two probes, 1280×720, RTX 5080: the deferred lighting pass 0.27 ms with the probes against 0.25 ms without (+0.01–0.02 ms over four views). A capture draws the draw list six times (one dirty probe per frame); its bake is synchronous (`IBLBaker` waits idle), a hitch on the frame it lands and nothing afterwards until the next recapture.
 
 ### Image-Based Lighting (IBL) — Phase 2
 

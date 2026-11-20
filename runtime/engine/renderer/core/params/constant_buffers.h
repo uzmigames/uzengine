@@ -468,6 +468,8 @@ static constexpr uint32_t kClusterFlag_SpotCone = 1u << 4;   ///< Spots are assi
 ///     float  specularScale;   // 0-1 specular multiplier
 ///     float  diffuseScale;    // 0-1 diffuse multiplier
 ///     uint   flags;           // bit0=useInverseSquared
+///     uint   shadowIndex;     // local shadow atlas entry (0xFFFFFFFF = none)
+///     float  softShadowRadius; // PCSS emitter radius in cm (0 = inherit)
 /// };
 /// ```
 struct PointLightData {
@@ -483,7 +485,12 @@ struct PointLightData {
     /// For point lights, this is the base index — 6 consecutive entries (one per cubemap face).
     /// 0xFFFFFFFF = no shadow (light does not cast shadows).
     uint32_t shadowIndex = UINT32_MAX;
-    float    _pointPad[3] = {};  ///< Pad to 64 bytes (4 float4s).
+    /// Per-light PCSS emitter radius in cm (phase2_omni-pcss-soft-shadows 1.5): the penumbra width
+    /// of this light's soft shadow. 0 = inherit (sourceRadius when positive, else
+    /// r.Shadows.SoftPCSS.Local.SourceRadius), < 0 = hard shadow for this light. Only read on the
+    /// r.Shadows.SoftPCSS.Local path; the former first pad float, so the layout is unchanged.
+    float    softShadowRadius = 0.0f;
+    float    _pointPad[2] = {};  ///< Pad to 64 bytes (4 float4s).
 };
 
 /// PointLightData flag bits.
@@ -512,6 +519,8 @@ static_assert(sizeof(PointLightData) == 64, "PointLightData must be 64 bytes (fo
 ///     float  specularScale;         // 0-1 specular multiplier
 ///     float  diffuseScale;          // 0-1 diffuse multiplier
 ///     uint   flags;                 // bit0=useInverseSquared
+///     uint   shadowIndex;           // local shadow atlas entry (0xFFFFFFFF = none)
+///     float  softShadowRadius;      // PCSS emitter radius in cm (0 = inherit)
 /// };
 /// ```
 struct SpotLightData {
@@ -528,7 +537,11 @@ struct SpotLightData {
     /// Index into LocalShadowCB::shadows[] for this light's shadow data.
     /// 0xFFFFFFFF = no shadow (light does not cast shadows).
     uint32_t shadowIndex = UINT32_MAX;
-    float    _spotPad[3] = {};      ///< Pad to 80 bytes (5 float4s).
+    /// Per-light PCSS emitter radius in cm (phase2_omni-pcss-soft-shadows 1.5). 0 = inherit
+    /// r.Shadows.SoftPCSS.Local.SourceRadius, < 0 = hard shadow for this light. The former first
+    /// pad float, so the layout is unchanged.
+    float    softShadowRadius = 0.0f;
+    float    _spotPad[2] = {};      ///< Pad to 80 bytes (5 float4s).
 };
 
 static_assert(sizeof(SpotLightData) == 80, "SpotLightData must be 80 bytes (five float4s)");
@@ -919,8 +932,9 @@ static_assert(sizeof(HeightFogCB) == 256, "HeightFogCB must be 256 bytes (D3D12 
 /// cubemap contribution weighted by distance falloff and priority order.
 ///
 /// # Layout
-/// 32 bytes (two float4s) — tightly packed for GPU structured buffer access.
-/// No 256-byte alignment required (this is not a constant buffer).
+/// 48 bytes (three float4s) — tightly packed for GPU structured buffer access.
+/// No 256-byte alignment required (this is not a constant buffer). Must match the
+/// HLSL `ReflectionProbeGPU` in `runtime/shaders/runtime/lighting/deferred_lighting_ps.hlsl`.
 ///
 /// @ref Lagarde 2012 "Local Image-based Lighting With Parallax-corrected Cubemaps"
 struct ReflectionProbeGPU {
@@ -929,11 +943,17 @@ struct ReflectionProbeGPU {
     float    posZ;                     ///< Probe world position Z (cm).
     float    influenceRadius;          ///< Influence sphere radius (cm).
     float    blendDistance;            ///< Edge fade distance (cm).
-    float    _pad0 = 0.0f;            ///< Padding to align SRV indices to float4 boundary.
+    float    boxHalfX;                 ///< Parallax proxy box half-extent X (cm); all three 0 = no parallax.
+    float    boxHalfY;                 ///< Parallax proxy box half-extent Y (cm).
+    float    boxHalfZ;                 ///< Parallax proxy box half-extent Z (cm).
     uint32_t irradianceSrvIndex;       ///< Bindless SRV index for irradiance cubemap.
     uint32_t prefilteredSrvIndex;      ///< Bindless SRV index for prefiltered specular cubemap.
+    uint32_t prefilteredMipLevels;     ///< Mip count of the prefiltered cubemap (IBLBaker::kPrefilteredMipLevels).
+    uint32_t _pad0 = 0;                ///< Padding to the float4 boundary.
 };
 
-static_assert(sizeof(ReflectionProbeGPU) == 32, "ReflectionProbeGPU must be 32 bytes (two float4s)");
+static_assert(sizeof(ReflectionProbeGPU) == 48, "ReflectionProbeGPU must be 48 bytes (three float4s)");
+static_assert(offsetof(ReflectionProbeGPU, blendDistance) == 16);
+static_assert(offsetof(ReflectionProbeGPU, irradianceSrvIndex) == 32);
 
 } // namespace uz

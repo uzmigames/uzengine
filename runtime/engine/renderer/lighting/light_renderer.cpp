@@ -138,6 +138,7 @@ LightFrameData ExtractLightingFromECS(
             pld.diffuseScale    = pl.diffuseScale;
             pld.flags           = pl.useInverseSquaredFalloff ? kLightFlag_InverseSquared : 0u;
             pld.shadowIndex     = UINT32_MAX; // Assigned below after spot shadow count is known
+            pld.softShadowRadius = pl.softShadowRadius; // 0 = inherit (phase2_omni-pcss-soft-shadows 1.5)
 
             // Collect shadow candidate unconditionally — importance sorting and
             // budget trimming happen after all lights are collected.
@@ -206,6 +207,7 @@ LightFrameData ExtractLightingFromECS(
             sld.specularScale         = sl.specularScale;
             sld.diffuseScale          = sl.diffuseScale;
             sld.flags                 = sl.useInverseSquaredFalloff ? kLightFlag_InverseSquared : 0u;
+            sld.softShadowRadius      = sl.softShadowRadius; // 0 = inherit (phase2_omni-pcss-soft-shadows 1.5)
 
             // Collect shadow candidate unconditionally — importance sorting and
             // budget trimming happen after all spot lights are collected.

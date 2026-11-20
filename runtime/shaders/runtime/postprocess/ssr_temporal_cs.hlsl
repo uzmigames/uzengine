@@ -5,6 +5,7 @@
 /// @constants VARIANCE_CLIP_GAMMA = 1.25, VELOCITY_THRESHOLD = 0.05
 
 #include "../common/encoding.hlsli"
+#include "../common/color_ycocg.hlsli"   // RGB <-> YCoCg, shared with test_color_math_parity.cpp
 #ifdef UZ_SSR_TEMPORAL_FIX
 #include "../denoising/rough_specular_math.hlsli"   // ThinLensDistance / LobeHalfAngle: the motion-aware reconstruction's lens
 #endif
@@ -88,22 +89,22 @@ float3 ProjectToScreenVP(float3 worldPos, float4x4 vp) {
     return float3(uv, clipPos.z);
 }
 
-/// RGB → YCoCg conversion.
+/// RGB → YCoCg conversion (common/color_ycocg.hlsli — the same text the C++ parity test compiles).
 /// @ref Karis 2014 — tighter bounding volume in YCoCg than RGB.
 float3 RGBToYCoCg(float3 rgb) {
     return float3(
-        0.25 * rgb.r + 0.5 * rgb.g + 0.25 * rgb.b,
-        0.5 * rgb.r - 0.5 * rgb.b,
-       -0.25 * rgb.r + 0.5 * rgb.g - 0.25 * rgb.b
+        SsrYCoCgLumaY(rgb.r, rgb.g, rgb.b),
+        SsrYCoCgChromaCo(rgb.r, rgb.g, rgb.b),
+        SsrYCoCgChromaCg(rgb.r, rgb.g, rgb.b)
     );
 }
 
 /// YCoCg → RGB conversion.
 float3 YCoCgToRGB(float3 ycocg) {
     return float3(
-        ycocg.x + ycocg.y - ycocg.z,
-        ycocg.x + ycocg.z,
-        ycocg.x - ycocg.y - ycocg.z
+        SsrYCoCgToR(ycocg.x, ycocg.y, ycocg.z),
+        SsrYCoCgToG(ycocg.x, ycocg.y, ycocg.z),
+        SsrYCoCgToB(ycocg.x, ycocg.y, ycocg.z)
     );
 }
 

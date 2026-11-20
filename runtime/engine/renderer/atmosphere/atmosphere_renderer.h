@@ -20,6 +20,10 @@
 
 namespace uz {
 
+/// Values compared by the sky IBL bake signature (AtmosphereFrameContext::skyBakeSignature); the
+/// array holds one more float, the passes since the last bake.
+inline constexpr int kSkyBakeSignatureValues = 10;
+
 class World;
 class Camera;
 class PipelineLibrary;
@@ -97,9 +101,10 @@ struct AtmosphereFrameContext {
     uint32_t          skyCubemapUav = UINT32_MAX;
     bool*             skyIBLDirty       = nullptr;
     bool*             skyCubemapFilled  = nullptr;  ///< True once sky cubemap has been captured at least once.
-    /// 8 floats owned by the SceneRenderer: the sun direction (3), sky sun colour (3) and angular
-    /// radius the IBL was last baked with, and [7] = passes since that bake. Below -1e29 = never
-    /// set. The sky pass sets *skyIBLDirty when they change (block A.5, 2026-10-05).
+    /// kSkyBakeSignatureValues + 1 floats owned by the SceneRenderer: the sun direction (3), sky sun
+    /// colour (3), angular radius (1) and ground albedo (3) the IBL was last baked with, and
+    /// [kSkyBakeSignatureValues] = passes since that bake. Below -1e29 = never set. The sky pass
+    /// sets *skyIBLDirty when they change (block A.5, 2026-10-05; ground albedo 2026-11-11).
     float*            skyBakeSignature  = nullptr;
 
     // IBL (owned by SceneRenderer)

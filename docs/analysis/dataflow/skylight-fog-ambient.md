@@ -131,7 +131,7 @@ Without any of these, shadowed areas ARE black in UE5. The reason UE5's Basic te
 | SH upload to CB | WORKING | `frame_setup.cpp:241-248` | Uploads `skyIrradianceSH[7]` scaled by `indirectLightingIntensity` |
 | SkyLightColor multiplier | **PARTIAL** | `frame_setup.cpp:226-229` | Uploads `skyLightColorR/G/B` and `skyLightIntensity` from `SkyLightComponent` |
 | Shader SH evaluation | **DIFFERENT from UE5** | `deferred_lighting_ps.hlsl:965` | `GetSkySHDiffuse(N, skyIrradianceSH)` — returns raw SH value. Then multiplied by `skyLightIntensity * skyLightTint` on line 1031. **Problem: UE5 multiplies SH by SkyLightColor in shader (line 130 of SkyLightingDiffuseShared.ush), but we ALSO pre-scale SH by indirectLightingIntensity on CPU (frame_setup.cpp:240). This double-applies indirect intensity.** |
-| Ambient fallback | **WRONG** | `light_renderer.h:64` | `ambientColor = {0.08, 0.09, 0.12}` — hardcoded. UE5 uses `{0, 0, 0}` when no SkyLight. |
+| Ambient fallback | FIXED (e2571a66, phase3a-3.51.0) | `light_renderer.h`, `sky_light_fallback.h`, `frame_constants.cpp` | `ambientColor` is zero; the frames before the first sky bake use `lightColor * intensity * 0.1` from the SkyLightComponent through the `skyLightMinAmbient` floor (see Part 10). |
 
 ### SH Readback Issue
 
@@ -145,7 +145,7 @@ The `ProjectCubemapToSH()` GPU readback path (`atmosphere_renderer.cpp:404`) cop
 |-----------|----------------|------|-------|
 | DistantSkyLightLut compute | **MISSING** | N/A | UE5 dispatches a dedicated CS to integrate sky luminance over the sphere. UzEngine does not have this. |
 | Fog inscattering injection | **PARTIALLY IMPLEMENTED** | `fog_renderer.cpp:200-204`, `height_fog_ps.hlsl:247-249` | Uses SH L0 as approximation of `GetViewDistanceSkyLightColor()`. `skyLightColor` in HeightFogCB is set to `m_skyIrradianceSH.coeffs[0..2].w` (the L0 terms, which are the average sky irradiance per channel). |
-| SkyAtmosphereAmbientContributionColorScale | WORKING | `fog_renderer.cpp:200` | Defaults to `{1,1,1}` (UE5 parity) |
+| SkyAtmosphereAmbientContributionColorScale | FIXED (phase3a-3.51.0) | `height_fog_component.{h,cpp}`, `fog_renderer.cpp` | `HeightFogComponent::skyAtmosphereAmbientContributionColorScale` (scene key `sky_atmosphere_ambient_contribution_color_scale`, default `{1,1,1}`) now reaches `HeightFogCB`; it was hardcoded to white in the renderer and the serializer had no key. |
 | HeightFogContribution | WORKING | `fog_renderer.cpp:211` | Read from `SkyAtmosphereComponent.heightFogContribution` |
 | FogInscatteringLuminance default | **CORRECT** | `height_fog_component.h:37` | Default `{0,0,0}` (UE5 post-SkyAtmosphere default) |
 
@@ -155,7 +155,7 @@ The `ProjectCubemapToSH()` GPU readback path (`atmosphere_renderer.cpp:404`) cop
 
 | UE5 Stage | UzEngine Status | File | Issue |
 |-----------|----------------|------|-------|
-| No-SkyLight ambient | **WRONG** | `light_renderer.h:64` | Hardcoded `{0.08, 0.09, 0.12}`. UE5 uses `{0, 0, 0}`. However, removing this without a working SkyLight SH would make shadows pitch black. |
+| No-SkyLight ambient | FIXED (e2571a66) | `light_renderer.h`, `scene_lighting.h` | `{0, 0, 0}` as UE5; no `{0.08, 0.09, 0.12}` remains anywhere in `runtime/`, `sample/` or `scripts/` (grep, 2026-11-10). |
 | SkyLightMinAmbient | WORKING | `constant_buffers.h:68` | `skyLightMinAmbient = 0.0f` (UE5 default). Used in shader as floor. |
 
 ---
@@ -310,11 +310,21 @@ the 2026-10-10 revert that did so was rolled back.
 
 ### Change 6: Verify SkyAtmosphereAmbientContributionColorScale Default
 
-**Files**: `height_fog_component.h`, `fog_renderer.cpp`
+**Files**: `height_fog_component.h`, `height_fog_component.cpp`, `fog_renderer.cpp`
 
-**Status**: The HeightFogComponent does not have a `skyAtmosphereAmbientContributionColorScale` field. It is hardcoded to `{1,1,1}` in `fog_renderer.cpp:200`. This matches UE5's default.
+**Status**: DONE (phase3a-3.51.0, 2026-11-10). The component field existed (Lua-settable) but `fog_renderer.cpp` ignored it and wrote white, and the scene serializer had no key. The renderer now uploads the authored value and the serializer reads/writes `sky_atmosphere_ambient_contribution_color_scale`. GPU proof: with `(1, 0.3, 0.3)` the fogged sky at the horizon goes from (1.188, 1.320, 1.334) to (1.188, 0.859, 0.911) linear - R untouched, G/B scaled (`_evidence/lighting/skylight-fog-ambient/report.md`).
 
-**Potential future action**: Add this as a field on `HeightFogComponent` for artistic control (UE5 exposes it as a property).
+---
+
+## Part 10: Verification on the demo scene (phase3a-3.51.0, 2026-11-10)
+
+Fixtures: `sample/content/scenes/demo.uzscene` (ground plane + stone sphere + sun 30 deg elevation + sky atmosphere + sky light (0.85, 0.9, 1.0) x 1 + height fog), fixed exposure 1.0, four camera angles (into the sun, away from it, grazing the horizon, looking down at the cast shadow) plus a 200 m / 2 km plane for the horizon; frame 120 `components` region dumps (linear HDR). Full numbers, montages and scripts in `E:/UzmiEngine/_evidence/lighting/skylight-fog-ambient/`.
+
+- **SH readback**: non-zero on every run, `SH from GPU readback`, L0 = (1.168, 1.121, 1.029) at frame 120; the irradiance cubemap and SH are bound from frame 1. The copy / WaitIdle / Map sequence is not a defect.
+- **Sky -> fog injection**: works. With the authored fog colour set to black (the UE5 default) the fogged horizon is still sky-coloured, (0.92, 1.00, 0.95) linear; the authored (0.45, 0.55, 0.65) adds to it. The sky-side profile across the horizon is monotonic (0.95 -> 1.66 over 175 rows at the grazing angle) and the ground converges to the same fog colour (1.66); the row-level step at the geometric horizon is the perspective compression of a 70 m-visibility fog (the demo's `density 0.15`), not an injection defect. The sun term carries the atmosphere transmittance.
+- **Defect found, not fixed here - the captured sky's lower hemisphere**: the sky cubemap the SH and the IBL are baked from has the horizon colour (~1.9 luminance, brighter than the sky itself) everywhere below the horizon (no planet, no `lowerHemisphereIsBlack` applied to the capture; the SH code only ADDS a term when the flag is false). The diffuse ambient on the sphere's shadowed side, per unit AO, by world-normal elevation: down-facing 0.228, -30..0 deg 0.150, 0..30 0.103, 30..60 0.064, **up-facing 0.028** - sky-facing surfaces receive ~8x less sky light than ground-facing ones, and the SH L0 (and with it the fog's sky colour and the froxel fog's sky ambient) is inflated ~2x by the fake lower hemisphere. Azimuth dependence is weak (0.10-0.13), so the SH orientation is right. UE5 blackens the lower hemisphere of the capture before the filtering (`LowerHemisphereIsBlack`, default true) and its atmosphere renders the planet below the horizon. This is the dominant reason shadows on sky-facing surfaces read darker than UE5's. The fix (mask the capture or the projection below the horizon with `lowerHemisphereColor`) changes the committed IBL, fog and cloud numerics and is left for review.
+- **Defect found, not fixed here - albedo-only materials are metals**: `gbuffer_ps.hlsl` uses `metallicMultiplier` as the metallic value when no metallic map is bound, and the scene loader defaults `metallicMultiplier` to 1.0, so the demo's checker floor (`albedo` only) renders as a roughness-1 metal: no diffuse at all (`diffuse_indirect` = 0 on every floor pixel; its shadow is only the 0.06-0.12 rough sky reflection) and a specular-only sun response (0.40 instead of 0.61 diffuse on the lit floor). With `metallicMultiplier: 0` the floor gets the sky ambient (0.054, 0.088, 0.147 in shadow). `material_asset.h` documents the missing-map fallback as metallic 0; the shader and the loader default disagree with it.
+- **Ambient fallback**: active only while the sky IBL is absent (renderer frame 0 on the demo scenes, before any geometry is drawn; the bake is synchronous inside that frame), off from frame 1; a scene without a sky atmosphere still bakes a black capture, so the fallback stays off there and the ambient is black as in UE5. Steady state before/after the patch: byte-identical at frame 120 in every ROI of every angle.
 
 ---
 

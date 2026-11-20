@@ -29,6 +29,80 @@ using namespace uz::brdf;
 static constexpr float kEps  = 1e-4f;   // tolerance for stable formulas
 static constexpr float kEps3 = 1e-3f;   // tolerance for chained exp/log operations
 
+// Hill 2016 fitted RRT+ODT and Lagarde 2014 specular occlusion.
+// CPU mirrors of common/color.hlsli and lighting/ibl.hlsli, respectively.
+TEST(ACESHillFit, PublishedMatricesKnownValue) {
+    // Independently evaluated in double precision from the shipped Hill matrices:
+    // input matrix * (1, .5, .2) = (.784126, .533302, .262869).
+    // RRT+ODT = (.536219451861, .397228878353, .179749000559).
+    const Vec3 result = ACESHillFit({1.0f, 0.5f, 0.2f});
+    EXPECT_NEAR(result.x, 0.636295743787f, kEps);
+    EXPECT_NEAR(result.y, 0.384356473870f, kEps);
+    EXPECT_NEAR(result.z, 0.162757708785f, kEps);
+}
+
+TEST(ACESHillFit, BlackAndHdrSaturateToDisplayRange) {
+    const Vec3 black = ACESHillFit({0.0f, 0.0f, 0.0f});
+    EXPECT_FLOAT_EQ(black.x, 0.0f);
+    EXPECT_FLOAT_EQ(black.y, 0.0f);
+    EXPECT_FLOAT_EQ(black.z, 0.0f);
+    const Vec3 white = ACESHillFit({10000.0f, 10000.0f, 10000.0f});
+    EXPECT_FLOAT_EQ(white.x, 1.0f);
+    EXPECT_FLOAT_EQ(white.y, 1.0f);
+    EXPECT_FLOAT_EQ(white.z, 1.0f);
+}
+
+TEST(ACESNarkowicz, RetainedComparisonFit) {
+    // Independent rational-fit values for (1, .5, .2).
+    const Vec3 result = ACESNarkowicz({1.0f, 0.5f, 0.2f});
+    EXPECT_NEAR(result.x, 2.54f / 3.16f, kEps);
+    EXPECT_NEAR(result.y, 0.6425f / 1.0425f, kEps);
+    EXPECT_NEAR(result.z, 0.1064f / 0.3552f, kEps);
+}
+
+TEST(SpecularOcclusion, KnownValue) {
+    // exp2(-16 * .5 - 1) = 1/512.
+    // pow(.5 + .3, 1/512) - 1 + .3 = .299564267710239.
+    EXPECT_NEAR(ComputeSpecularOcclusion(0.5f, 0.3f, 0.5f),
+                0.299564267710f, 1e-6f);
+}
+
+TEST(SpecularOcclusion, AoBoundaries) {
+    for (int view = 0; view <= 32; ++view) {
+        for (int rough = 0; rough <= 32; ++rough) {
+            const float NdotV = static_cast<float>(view) / 32.0f;
+            const float roughness = static_cast<float>(rough) / 32.0f;
+            EXPECT_NEAR(ComputeSpecularOcclusion(NdotV, 0.0f, roughness), 0.0f, 1e-6f);
+            EXPECT_FLOAT_EQ(ComputeSpecularOcclusion(NdotV, 1.0f, roughness), 1.0f);
+        }
+    }
+}
+
+TEST(SpecularOcclusion, RoughnessExtremes) {
+    // roughness 0: exponent = 1/2; roughness 1: exponent = 1/131072.
+    EXPECT_NEAR(ComputeSpecularOcclusion(0.5f, 0.3f, 0.0f),
+                0.194427190999916f, 1e-6f);
+    EXPECT_NEAR(ComputeSpecularOcclusion(0.5f, 0.3f, 1.0f),
+                0.299998297551259f, 1e-6f);
+}
+
+TEST(SpecularOcclusion, ValidInputSweepStaysFiniteAndSaturated) {
+    // 33^3 samples include every corner, both clamp regimes and interior values.
+    for (int view = 0; view <= 32; ++view) {
+        for (int ambient = 0; ambient <= 32; ++ambient) {
+            for (int rough = 0; rough <= 32; ++rough) {
+                const float result = ComputeSpecularOcclusion(
+                    static_cast<float>(view) / 32.0f,
+                    static_cast<float>(ambient) / 32.0f,
+                    static_cast<float>(rough) / 32.0f);
+                ASSERT_TRUE(std::isfinite(result));
+                ASSERT_GE(result, 0.0f);
+                ASSERT_LE(result, 1.0f);
+            }
+        }
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // §7.1 — Disney Burley Diffuse BRDF
 // ─────────────────────────────────────────────────────────────────────────────
@@ -881,4 +955,112 @@ TEST(GGX_ImportanceSample, UpperHemisphere) {
         EXPECT_GE(H.z, 0.0f) << "H must be in upper hemisphere";
         EXPECT_NEAR(VecLen(H), 1.0f, 1e-4f);
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §10b — VNDF known values, roughness boundaries, visibility property
+// (phase2_ssr-stochastic-refactor T.6; the SSR trace pass's sampler)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Known values at roughness 0.1 / 0.5 / 0.9 (alpha = roughness^2, as ssr_trace_cs.hlsl feeds
+/// the sampler) for the view direction (0.36, 0.48, 0.8) — exactly unit, 0.36^2 + 0.48^2 + 0.8^2 = 1 —
+/// and two sample pairs. Expected vectors evaluated independently in double precision from
+/// Dupuy & Benyoub 2023 (listing 1: Vh = normalize(alpha wi.xy, wi.z); z = (1 - u.y)(1 + Vh.z) - Vh.z;
+/// H = normalize(alpha (cap + Vh).xy, max((cap + Vh).z, 0))); the float sampler agrees to < 1e-7.
+TEST(VNDF_Sampling, KnownValues_Roughness_0p1_0p5_0p9) {
+    const Vec3 wi = {0.36f, 0.48f, 0.8f};
+    struct Case { float roughness, ux, uy; Vec3 expected; };
+    static const Case kCases[] = {
+        {0.1f, 0.3f,  0.6f, {-0.003728205f,  0.011722333f, 0.999924341f}},
+        {0.1f, 0.75f, 0.2f, { 0.000028124f, -0.004962483f, 0.999987686f}},
+        {0.5f, 0.3f,  0.6f, {-0.057436176f,  0.322047113f, 0.944979758f}},
+        {0.5f, 0.75f, 0.2f, { 0.017332965f, -0.101889389f, 0.994644721f}},
+        {0.9f, 0.3f,  0.6f, { 0.002729136f,  0.829511658f, 0.558482731f}},
+        {0.9f, 0.75f, 0.2f, { 0.164565500f, -0.191225665f, 0.967652283f}},
+    };
+    for (const Case& c : kCases) {
+        const Vec3 H = SampleGGX_VNDF(c.roughness * c.roughness, wi, c.ux, c.uy);
+        EXPECT_NEAR(H.x, c.expected.x, 1e-5f) << "roughness " << c.roughness << " u=(" << c.ux << "," << c.uy << ")";
+        EXPECT_NEAR(H.y, c.expected.y, 1e-5f) << "roughness " << c.roughness << " u=(" << c.ux << "," << c.uy << ")";
+        EXPECT_NEAR(H.z, c.expected.z, 1e-5f) << "roughness " << c.roughness << " u=(" << c.ux << "," << c.uy << ")";
+    }
+}
+
+/// Boundary, roughness 0 (alpha 0): the ellipsoid collapses onto the normal, so every sample is
+/// the macro normal exactly — the mirror the trace pass short-circuits below MIRROR_THRESHOLD.
+TEST(VNDF_Sampling, RoughnessBoundary_Zero_IsTheNormalForEverySample) {
+    const Vec3 views[] = {{0.0f, 0.0f, 1.0f}, {0.36f, 0.48f, 0.8f}, {0.6f, 0.0f, 0.8f},
+                          VecNormalize({0.99f, 0.0f, 0.1f})};
+    for (const Vec3& wi : views) {
+        for (int i = 0; i < 16; ++i) {
+            for (int j = 0; j < 16; ++j) {
+                const Vec3 H = SampleGGX_VNDF(0.0f, wi, (i + 0.5f) / 16.0f, (j + 0.5f) / 16.0f);
+                EXPECT_FLOAT_EQ(H.x, 0.0f);
+                EXPECT_FLOAT_EQ(H.y, 0.0f);
+                EXPECT_FLOAT_EQ(H.z, 1.0f);
+            }
+        }
+    }
+}
+
+/// Boundary, roughness 1 (alpha 1): the hemisphere configuration is the identity (Vh = wi). At
+/// u.y = 0 the cap sample is the pole, so H = normalize(wi + N) for any u.x (closed form:
+/// (0.36, 0.48, 1.8) / |.| = (0.189736660, 0.252982213, 0.948683298)), and every other sample is
+/// still a unit visible normal in the upper hemisphere. The pole is ill-conditioned in float:
+/// z = (1 - u.y)(1 + Vh.z) - Vh.z rounds to 1 - 6e-8 and sqrt(1 - z^2) amplifies that to a
+/// 3.5e-4 tilt of the cap sample (measured 1.8e-4 per component), hence the 5e-4 tolerance.
+TEST(VNDF_Sampling, RoughnessBoundary_One_ClosedFormAtThePole) {
+    const Vec3 wi = {0.36f, 0.48f, 0.8f};
+    for (int i = 0; i < 8; ++i) {
+        const Vec3 H = SampleGGX_VNDF(1.0f, wi, i / 8.0f, 0.0f);
+        EXPECT_NEAR(H.x, 0.189736660f, 5e-4f) << "u.x=" << i / 8.0f;
+        EXPECT_NEAR(H.y, 0.252982213f, 5e-4f) << "u.x=" << i / 8.0f;
+        EXPECT_NEAR(H.z, 0.948683298f, 5e-4f) << "u.x=" << i / 8.0f;
+    }
+    for (int i = 0; i < 32; ++i) {
+        for (int j = 0; j < 32; ++j) {
+            const Vec3 H = SampleGGX_VNDF(1.0f, wi, (i + 0.5f) / 32.0f, (j + 0.5f) / 32.0f);
+            EXPECT_GE(H.x * wi.x + H.y * wi.y + H.z * wi.z, -1e-6f);
+            EXPECT_GE(H.z, -1e-6f);
+            EXPECT_NEAR(VecLen(H), 1.0f, 1e-4f);
+        }
+    }
+}
+
+/// Property: the sampled microfacet normal is a *visible* normal — dot(H, wi) >= 0 (the VNDF's
+/// defining support, Heitz 2018) — in the upper hemisphere and of unit length, for every
+/// roughness, view direction and sample pair of a 32x32 grid (double-precision minimum over this
+/// grid: dot(H, wi) 0.0083, H.z 0.0045).
+TEST(VNDF_Sampling, Property_SampledNormalIsVisibleUnitUpperHemisphere) {
+    const float alphas[] = {0.01f, 0.1f, 0.25f, 0.5f, 0.81f, 1.0f};
+    const Vec3 views[] = {{0.0f, 0.0f, 1.0f}, {0.36f, 0.48f, 0.8f}, {0.6f, 0.0f, 0.8f},
+                          VecNormalize({0.99f, 0.0f, 0.1f}), VecNormalize({-0.5f, 0.5f, 0.7071f})};
+    for (float alpha : alphas) {
+        for (const Vec3& wi : views) {
+            for (int i = 0; i < 32; ++i) {
+                for (int j = 0; j < 32; ++j) {
+                    const Vec3 H = SampleGGX_VNDF(alpha, wi, (i + 0.5f) / 32.0f, (j + 0.5f) / 32.0f);
+                    EXPECT_GE(H.x * wi.x + H.y * wi.y + H.z * wi.z, -1e-6f)
+                        << "alpha=" << alpha << " wi=(" << wi.x << "," << wi.y << "," << wi.z << ")";
+                    EXPECT_GE(H.z, -1e-6f) << "alpha=" << alpha;
+                    EXPECT_NEAR(VecLen(H), 1.0f, 1e-4f) << "alpha=" << alpha;
+                }
+            }
+        }
+    }
+}
+
+/// The two guards the CPU mirror adds over the shader's normalize() (which returns NaN there):
+/// a zero view vector (Vh has no length) and alpha 0 with u.y = 1 (the hemisphere normal
+/// collapses to zero length). The first still yields a finite unit vector, the second the zero
+/// vector. Covers the two `len > 0` false branches of SampleGGX_VNDF.
+TEST(VNDF_Sampling, DegenerateInputs_GuardedNotNaN) {
+    const Vec3 hZeroView = SampleGGX_VNDF(0.25f, {0.0f, 0.0f, 0.0f}, 0.3f, 0.6f);
+    EXPECT_TRUE(std::isfinite(hZeroView.x) && std::isfinite(hZeroView.y) && std::isfinite(hZeroView.z));
+    EXPECT_NEAR(VecLen(hZeroView), 1.0f, 1e-4f);
+
+    const Vec3 hCollapsed = SampleGGX_VNDF(0.0f, {0.0f, 0.0f, 1.0f}, 0.3f, 1.0f);
+    EXPECT_FLOAT_EQ(hCollapsed.x, 0.0f);
+    EXPECT_FLOAT_EQ(hCollapsed.y, 0.0f);
+    EXPECT_FLOAT_EQ(hCollapsed.z, 0.0f);
 }

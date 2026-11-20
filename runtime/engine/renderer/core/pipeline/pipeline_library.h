@@ -106,6 +106,19 @@ public:
     /// Returns the forward PBR pipeline using the device's default bindless mode.
     [[nodiscard]] RHIPipelineHandle GetForwardPBR();
 
+    /// Returns the reflection-probe capture pipeline (mesh_vs + probe_capture_ps, 1 RGBA16F RT + depth).
+    ///
+    /// The ForwardPBR state with the capture's pixel shader: the sun through the capture's own
+    /// cascades (ShadowDataCB at slot 3) and the sky IBL, as deferred_lighting_ps.hlsl lights the
+    /// frame (phase3a 3.37.0, item 1.10). Used only by ReflectionProbeRenderer::RenderProbeCubemap.
+    ///
+    /// # Arguments
+    /// * `bindless` — If true, omits vertex input layout (SM6.6 path).
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetProbeCapture(bool bindless);
+
     /// Returns the G-Buffer geometry pipeline (mesh_vs + gbuffer_ps, 2 RT + depth).
     ///
     /// Rasterizer: back-face cull, clockwise front.

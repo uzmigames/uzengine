@@ -35,14 +35,14 @@ class RgBuilder;
 namespace uz {
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SkyCubemapCaptureRootConstants — 12 DWORDs (48 bytes) at root param 0 (b0)
+// SkyCubemapCaptureRootConstants — 15 DWORDs (60 bytes) at root param 0 (b0)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Root constants for the sky cubemap capture compute shader.
 ///
 /// Matches the HLSL cbuffer SkyCubemapParams at b0 in sky_cubemap_cs.hlsl.
-/// Uses root constants (not a CBV) because the compute root signature
-/// defines slot 0 as 16x 32-bit root constants — same pattern as the
+/// Uses root constants (not a CBV) because the global root signature
+/// defines slot 0 as 24x 32-bit root constants — same pattern as the
 /// transmittance LUT and IBL baker compute shaders.
 struct SkyCubemapCaptureRootConstants {
     float    bottomRadiusKm;        ///< Planet surface radius (km). DWORD 0.
@@ -57,10 +57,17 @@ struct SkyCubemapCaptureRootConstants {
     uint32_t packedScatterScales;   ///< Packed f16 pair: low16 = rayleighScatteringScale, high16 = mieScatteringScale. DWORD 9.
     uint32_t scatteringLut3DIdx;    ///< SRV index for Bruneton 3D scattering LUT (0 = not available). DWORD 10.
     float    muSMin;                ///< Minimum sun zenith cosine for LUT parameterization, cos(102 deg). DWORD 11.
+    float    groundAlbedoR;         ///< SkyAtmosphereComponent::groundAlbedo, red: the Lambertian planet the march hits below the horizon. DWORD 12.
+    float    groundAlbedoG;         ///< Ground albedo, green. DWORD 13.
+    float    groundAlbedoB;         ///< Ground albedo, blue. DWORD 14.
 };
 
-static_assert(sizeof(SkyCubemapCaptureRootConstants) == 48,
-    "SkyCubemapCaptureRootConstants must be exactly 12 DWORDs (48 bytes)");
+static_assert(sizeof(SkyCubemapCaptureRootConstants) == 60,
+    "SkyCubemapCaptureRootConstants must be exactly 15 DWORDs (60 bytes)");
+
+/// DWORDs uploaded at root param 0 (b0); the global root signature holds 24 there.
+inline constexpr uint32_t kSkyCubemapCaptureRootDwords = sizeof(SkyCubemapCaptureRootConstants) / sizeof(uint32_t);
+static_assert(kSkyCubemapCaptureRootDwords <= 24, "the b0 root-constant budget is 24 DWORDs");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SkyCubemapCapturePassDesc
@@ -75,7 +82,7 @@ struct SkyCubemapCapturePassDesc {
     rg::RgResourceId  transmittanceLutDep; ///< Transmittance LUT (read dependency for correct execution order).
     rg::RgResourceId  scatteringLut3DDep;  ///< Bruneton 3D scattering LUT (read dependency, may be invalid if LUT not available).
     RHIPipelineHandle pipeline;         ///< Compute PSO for sky_cubemap_cs.hlsl.
-    SkyCubemapCaptureRootConstants rootConstants; ///< Atmosphere params (12 DWORDs at root param 0).
+    SkyCubemapCaptureRootConstants rootConstants; ///< Atmosphere params (kSkyCubemapCaptureRootDwords at root param 0).
     uint32_t          cubemapUavIndex;  ///< UAV descriptor heap index for the output cubemap.
 };
 

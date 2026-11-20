@@ -1,4 +1,5 @@
 #include "pipeline_path_tracer_pass.h"
+#include "nrd_sdk_denoiser.h"
 
 #include "draw_list.h"
 #include "gpu_mesh.h"
@@ -10,6 +11,8 @@
 #include "world.h"
 #include "light_component.h"
 #include "scene_component.h"
+#include "volume_component.h"
+#include "volume_asset.h"
 #include "color_utils.h"
 #include "cvar.h"
 #include "path_tracer_pass.h"
@@ -17,6 +20,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <map>
 #include <vector>
 
 #ifdef _WIN32
@@ -127,9 +131,17 @@ struct PipelinePathTracerPass::Impl {
     std::array<uint32_t, 3> lightCapacity{};
     LightBVH lightBVH;
     std::unique_ptr<NrdDenoiser> denoiser;
+    std::unique_ptr<NrdSdkDenoiser> sdkDenoiser; // r.NRD.SDK: NVIDIA NRD instead of the native stages
+    bool sdkInitFailed = false;
     std::array<RHIBufferHandle, 3> bvhNodes{}, bvhLights{}, bvhConfigs{};
     std::array<uint32_t, 3> bvhNodeCapacity{}, bvhLightCapacity{}, bvhConfigCapacity{};
     bool bvhLogged = false;
+    // Grid media (VolumeComponent): per-frame-slot descriptor buffers and the
+    // density grids, resolved and uploaded once per densityGrid string.
+    std::array<RHIBufferHandle, 3> volumeBuffers{};
+    std::array<uint32_t, 3> volumeCapacity{};
+    struct VolumeGridEntry { VolumeAsset asset; float maxDensity = 0.f; bool attempted = false; };
+    std::map<std::string, VolumeGridEntry> volumeGrids;
 #ifdef _WIN32
     ComPtr<ID3D12RootSignature> root;
     ComPtr<ID3D12StateObject> pipeline;
@@ -147,11 +159,28 @@ struct PipelinePathTracerPass::Impl {
     uint64_t previousDenoiserSignature = 0;
     RHIBufferHandle restirSurface, restirInitial;
     std::array<RHIBufferHandle, 2> reservoirs{};
+    // Temporal history across camera motion: last frame's camera (uploaded per
+    // frame slot), whether ReSTIR ran last frame, the frames since the history
+    // was last dropped (the reservoir passes' random seed), and the logged state.
+    std::array<RHIBufferHandle, 3> restirCameras{};
+    RestirCameraHistory restirCamera{};
+    bool restirPreviousEnabled = false;
+    bool restirCameraMoving = false;
+    uint32_t restirFrame = 0;
     RHIBufferHandle giInitial;
     std::array<RHIBufferHandle, 2> giReservoirs{};
     RHIBufferHandle readback;
     bool readbackPending = false;
     uint32_t readbackFrame = 0;
+    // r.ReSTIR.Readback light-BVH selection histogram: the shader counts
+    // cumulatively; the CPU differences consecutive readbacks and checks the
+    // candidate distribution against the CPU hierarchy on the copied surfaces.
+    RHIBufferHandle bvhHistogram, bvhHistogramReadback, surfaceReadback;
+    uint32_t bvhHistogramLights = 0, bvhHistogramPixels = 0, histogramFrames = 0;
+    bool histogramPending = false;
+    std::vector<uint32_t> histogramPrevious;
+    std::vector<uint64_t> histogramTotals;
+    void LogLightBVHHistogram();
 
     ~Impl() {
         if (!device) return;
@@ -163,6 +192,9 @@ struct PipelinePathTracerPass::Impl {
         for (auto buffers : {bvhNodes, bvhLights, bvhConfigs})
             for (auto buffer : buffers)
                 if (buffer.IsValid()) device->DestroyBuffer(buffer);
+        for (auto buffer : volumeBuffers)
+            if (buffer.IsValid()) device->DestroyBuffer(buffer);
+        for (auto& [spec, grid] : volumeGrids) grid.asset.ReleaseGPU(device);
         if (sbt.IsValid()) device->DestroyBuffer(sbt);
         if (accumulation.IsValid()) device->DestroyTexture(accumulation);
         if (compensation.IsValid()) device->DestroyTexture(compensation);
@@ -170,12 +202,85 @@ struct PipelinePathTracerPass::Impl {
         if (restirInitial.IsValid()) device->DestroyBuffer(restirInitial);
         for (auto buffer : reservoirs)
             if (buffer.IsValid()) device->DestroyBuffer(buffer);
+        for (auto buffer : restirCameras)
+            if (buffer.IsValid()) device->DestroyBuffer(buffer);
         if (giInitial.IsValid()) device->DestroyBuffer(giInitial);
         for (auto buffer : giReservoirs)
             if (buffer.IsValid()) device->DestroyBuffer(buffer);
         if (readback.IsValid()) device->DestroyBuffer(readback);
+        for (auto buffer : {bvhHistogram, bvhHistogramReadback, surfaceReadback})
+            if (buffer.IsValid()) device->DestroyBuffer(buffer);
     }
 };
+
+// Diagnostic only (r.ReSTIR.Readback with r.LightBVH): per-frame deltas of the
+// cumulative GPU histogram are summed per emitter draw and compared with the
+// CPU LightBVH::Sample distribution over the same primary surfaces, so the
+// GPU traversal's selection density is checked against the proven CPU model.
+void PipelinePathTracerPass::Impl::LogLightBVHHistogram() {
+    const uint32_t lightCount = bvhHistogramLights;
+    if (lightCount == 0u || lightBVH.lights.size() != lightCount) return;
+    const auto* counts = static_cast<const uint32_t*>(device->MapBuffer(bvhHistogramReadback));
+    if (!counts) return;
+    for (uint32_t i = 0; i < 3u * lightCount; ++i) {
+        histogramTotals[i] += uint32_t(counts[i] - histogramPrevious[i]); // modular per-frame delta
+        histogramPrevious[i] = counts[i];
+    }
+    device->UnmapBuffer(bvhHistogramReadback);
+    if (++histogramFrames % 64u != 1u) return;
+    const bool uniform = CVarRegistry::Get().GetBool("r.LightBVH.Uniform", false);
+    // CPU model: 32 stratified selections per primary surface (every other pixel).
+    std::vector<double> cpu(lightCount, 0.0);
+    uint32_t cpuPixels = 0;
+    double cpuCandidates = 0;
+    if (const auto* surfaces = static_cast<const RestirSurface*>(device->MapBuffer(surfaceReadback))) {
+        for (uint32_t y = 0; y < height; y += 2) {
+            for (uint32_t x = 0; x < width; x += 2) {
+                const auto& s = surfaces[y * width + x];
+                if (!s.valid) continue;
+                ++cpuPixels;
+                const Vec3 position{s.position[0], s.position[1], s.position[2]};
+                const Vec3 normal{s.normal[0], s.normal[1], s.normal[2]};
+                for (uint32_t i = 0; i < 32u; ++i) {
+                    uint32_t h = (y * width + x) * 1973u + i * 26699u + 911u;
+                    h = (h ^ (h >> 16u)) * 0x7feb352du;
+                    h = (h ^ (h >> 15u)) * 0x846ca68bu;
+                    h ^= h >> 16u;
+                    const float u = (float(i) + float(h >> 8u) / 16777216.f) / 32.f;
+                    float pdf = 1.f;
+                    const uint32_t light = uniform ? std::min(uint32_t(u * lightCount), lightCount - 1u)
+                                                   : lightBVH.Sample(position, normal, u, pdf);
+                    cpu[light] += 1.0;
+                    cpuCandidates += 1.0;
+                }
+            }
+        }
+        device->UnmapBuffer(surfaceReadback);
+    }
+    struct Row { uint32_t triangles = 0; double power = 0, candidates = 0, selected = 0, visible = 0, cpu = 0; };
+    std::map<uint32_t, Row> rows; // keyed by source draw; directional lights share key UINT32_MAX
+    double totalPower = 0, totalCandidates = 0, totalSelected = 0, totalVisible = 0;
+    for (uint32_t i = 0; i < lightCount; ++i) {
+        const auto& l = lightBVH.lights[i];
+        auto& row = rows[l.type == 0u ? l.sourceIndex : UINT32_MAX];
+        const double power = (l.emission.x * .2126 + l.emission.y * .7152 + l.emission.z * .0722)
+                           * (l.type == 0u ? l.area : 1.f);
+        ++row.triangles;
+        row.power += power; totalPower += power;
+        row.candidates += double(histogramTotals[i]); totalCandidates += double(histogramTotals[i]);
+        row.selected += double(histogramTotals[lightCount + i]); totalSelected += double(histogramTotals[lightCount + i]);
+        row.visible += double(histogramTotals[2u * lightCount + i]); totalVisible += double(histogramTotals[2u * lightCount + i]);
+        row.cpu += cpu[i];
+    }
+    auto share = [](double value, double total) { return total > 0 ? 100.0 * value / total : 0.0; };
+    UZ_LOG(Renderer, Info, "LightBVH histogram frames={} lights={} emitters={} candidates={} selected={} visible={} cpuPixels={} cpuCandidates={} uniform={}",
+        histogramFrames, lightCount, rows.size(), totalCandidates, totalSelected, totalVisible, cpuPixels, cpuCandidates, uniform ? 1 : 0);
+    for (const auto& [source, row] : rows)
+        UZ_LOG(Renderer, Info, "LightBVH histogram emitter={} triangles={} power={} powerShare={} candidates={} candidateShare={} cpuShare={} selected={} selectedShare={} visible={} visibleShare={}",
+            source, row.triangles, row.power, share(row.power, totalPower), row.candidates,
+            share(row.candidates, totalCandidates), share(row.cpu, cpuCandidates), row.selected,
+            share(row.selected, totalSelected), row.visible, share(row.visible, totalSelected));
+}
 
 PipelinePathTracerPass::PipelinePathTracerPass() : m_impl(std::make_unique<Impl>()) {}
 PipelinePathTracerPass::~PipelinePathTracerPass() = default;
@@ -392,7 +497,7 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
         std::span<const DrawCommand> draws, std::span<const GPUMesh> meshes,
         uint32_t envSrv, uint32_t frameIndex, uint32_t width, uint32_t height, World* world,
         const Mat4& unjitteredViewProj, uint32_t sceneDirtyFlags,
-        const NrdInputs& denoiserGuides) {
+        const NrdInputs& denoiserGuides, IVFS* vfs) {
     auto& p = *m_impl;
     if (!p.ready || !rt.IsEnabled()) return false;
     if (p.readbackPending) {
@@ -405,6 +510,10 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
             p.device->UnmapBuffer(p.readback);
         }
         p.readbackPending = false;
+        if (p.histogramPending) {
+            p.LogLightBVHHistogram();
+            p.histogramPending = false;
+        }
     }
     std::vector<PipelinePathMaterial> entries;
     // Match TLASManager::Rebuild's order and inclusion rules, using its
@@ -522,9 +631,10 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
         }
     }
     const uint32_t lightCount = static_cast<uint32_t>(directionalLights.size());
-    uint32_t bvhConfigSrv = 0;
+    uint32_t bvhConfigSrv = 0, histogramUav = 0;
     const bool lightBVHEnabled = CVarRegistry::Get().GetBool("r.LightBVH", false);
     const uint32_t bvhUniform = CVarRegistry::Get().GetBool("r.LightBVH.Uniform", false);
+    const bool histogramRequested = cv_RestirDI->value >= 0.5f && cv_RestirReadback->value >= 0.5f;
     if (lightBVHEnabled) {
         if (p.lightBVH.Gather(draws, meshes, world)) {
             UZ_LOG(Renderer, Info, "LightBVH: Morton build {} lights, {} nodes, root power={}",
@@ -558,9 +668,42 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
                 || !upload(p.bvhLights[slot],p.bvhLightCapacity[slot],p.lightBVH.lights.data(),
                         uint32_t(p.lightBVH.lights.size()),sizeof(LightBVHLight),"LightBVH_Lights"))
                 return false;
+            if (histogramRequested) {
+                // Pass-private diagnostic buffers; sized by emitter count and pixel count.
+                const uint32_t emitterCount = uint32_t(p.lightBVH.lights.size());
+                if (p.bvhHistogramLights != emitterCount || p.bvhHistogramPixels != width * height) {
+                    p.device->WaitIdle();
+                    for (auto* buffer : {&p.bvhHistogram, &p.bvhHistogramReadback, &p.surfaceReadback}) {
+                        if (buffer->IsValid()) p.device->DestroyBuffer(*buffer);
+                        *buffer = {};
+                    }
+                    RHIBufferDesc desc{};
+                    desc.sizeBytes = uint64_t(3u * emitterCount) * sizeof(uint32_t);
+                    desc.stride = sizeof(uint32_t);
+                    desc.usage = RHIBufferUsage::StructuredBuffer | RHIBufferUsage::UnorderedAccess;
+                    desc.debugName = "LightBVH_Histogram";
+                    p.bvhHistogram = p.device->CreateBuffer(desc);
+                    RHIBufferDesc readback{};
+                    readback.sizeBytes = desc.sizeBytes;
+                    readback.memory = RHIMemoryType::Readback;
+                    readback.debugName = "LightBVH_HistogramReadback";
+                    p.bvhHistogramReadback = p.device->CreateBuffer(readback);
+                    readback.sizeBytes = uint64_t(width) * height * sizeof(RestirSurface);
+                    readback.debugName = "ReSTIR_SurfaceReadback";
+                    p.surfaceReadback = p.device->CreateBuffer(readback);
+                    p.bvhHistogramLights = emitterCount;
+                    p.bvhHistogramPixels = width * height;
+                    p.histogramPrevious.assign(3u * emitterCount, 0u);
+                    p.histogramTotals.assign(3u * emitterCount, 0u);
+                    p.histogramFrames = 0u;
+                    p.histogramPending = false;
+                }
+                if (p.bvhHistogram.IsValid() && p.bvhHistogramReadback.IsValid() && p.surfaceReadback.IsValid())
+                    histogramUav = p.device->GetBufferUAVIndex(p.bvhHistogram) + 1u;
+            }
             LightBVHConfig config{p.device->GetBufferSRVIndex(p.bvhNodes[slot]),
                 p.device->GetBufferSRVIndex(p.bvhLights[slot]),
-                uint32_t(p.lightBVH.lights.size()), bvhUniform};
+                uint32_t(p.lightBVH.lights.size()), bvhUniform, histogramUav, 0u, 0u, 0u};
             if (!upload(p.bvhConfigs[slot],p.bvhConfigCapacity[slot],&config,1,
                         sizeof(config),"LightBVH_Config")) return false;
             bvhConfigSrv = p.device->GetBufferSRVIndex(p.bvhConfigs[slot])+1u;
@@ -602,6 +745,94 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
     p.device->UnmapBuffer(p.lights[slot]);
     const uint32_t lightSrv = p.device->GetBufferSRVIndex(p.lights[slot]);
 
+    // Grid media: every enabled VolumeComponent (up to kMaxPathVolumes) becomes
+    // one PathVolumeGridDesc. The density grid is resolved and uploaded the
+    // first time its string is seen; the box frame follows the entity transform.
+    std::vector<PathVolumeGridDesc> volumeDescs;
+    std::vector<std::string> volumeSpecs;
+    if (world && cv_Volume->value >= 0.5f) {
+        auto view = world->GetRegistry().view<VolumeComponent>();
+        for (auto entity : view) {
+            const auto& component = view.get<VolumeComponent>(entity);
+            if (!component.enabled || volumeDescs.size() >= kMaxPathVolumes) continue;
+            auto& cached = p.volumeGrids[component.densityGrid];
+            if (!cached.attempted) {
+                cached.attempted = true;
+                std::string error;
+                if (VolumeAsset::Resolve(component.densityGrid, vfs, cached.asset, &error)
+                    && cached.asset.Upload(p.device, buildCmd)) {
+                    cached.maxDensity = cached.asset.GetMaxDensity();
+                    UZ_LOG(Renderer, Info, "PathVolume: grid '{}' {}x{}x{} {} max density {} SRV={}",
+                        component.densityGrid, cached.asset.Width(), cached.asset.Height(), cached.asset.Depth(),
+                        cached.asset.Format() == VolumeFormat::R16F ? "R16F" : "R8", cached.maxDensity,
+                        cached.asset.GetSrvIndex());
+                } else {
+                    UZ_LOG(Renderer, Error, "PathVolume: grid '{}' unavailable: {}", component.densityGrid,
+                        error.empty() ? "Texture3D upload failed" : error);
+                }
+            }
+            if (!cached.asset.GetTexture3D().IsValid() || cached.maxDensity <= 0.f) continue;
+            const auto* scene = world->GetRegistry().try_get<SceneComponent>(entity);
+            const Mat4 worldMatrix = scene ? scene->GetWorldMatrix() : Mat4::Identity();
+            const Vec3 center = worldMatrix.TransformPoint(Vec3(0.f, 0.f, 0.f));
+            const Vec3 axes[3] = {worldMatrix.TransformDirection(Vec3(1.f, 0.f, 0.f)),
+                                  worldMatrix.TransformDirection(Vec3(0.f, 1.f, 0.f)),
+                                  worldMatrix.TransformDirection(Vec3(0.f, 0.f, 1.f))};
+            const float halves[3] = {component.halfExtents.x, component.halfExtents.y, component.halfExtents.z};
+            PathVolumeGridDesc desc{};
+            bool degenerate = false;
+            for (int i = 0; i < 3; ++i) {
+                // local_i = (P - center) . axis_i / (|axis_i|^2 * half_i): the
+                // axis carries the entity scale, so the box face sits at +-1.
+                const float lengthSquared = axes[i].Dot(axes[i]);
+                if (!(lengthSquared > 1e-12f) || !(halves[i] > 0.f)) { degenerate = true; break; }
+                const Vec3 row = axes[i] / (lengthSquared * halves[i]);
+                desc.worldToLocal[i][0] = row.x; desc.worldToLocal[i][1] = row.y; desc.worldToLocal[i][2] = row.z;
+                desc.worldToLocal[i][3] = -row.Dot(center);
+            }
+            if (degenerate) continue;
+            desc.sigmaA = std::max(component.sigmaA, 0.f);
+            desc.sigmaS = std::max(component.sigmaS, 0.f);
+            desc.phaseG = std::clamp(component.phaseG, -0.99f, 0.99f);
+            desc.densityScale = std::max(component.densityScale, 0.f);
+            desc.maxDensity = cached.maxDensity * desc.densityScale;
+            desc.emission[0] = std::max(component.emission.x, 0.f);
+            desc.emission[1] = std::max(component.emission.y, 0.f);
+            desc.emission[2] = std::max(component.emission.z, 0.f);
+            desc.densitySrv = cached.asset.GetSrvIndex();
+            desc.halfTexel[0] = 0.5f / float(cached.asset.Width());
+            desc.halfTexel[1] = 0.5f / float(cached.asset.Height());
+            desc.halfTexel[2] = 0.5f / float(cached.asset.Depth());
+            if (desc.sigmaA + desc.sigmaS <= 0.f || desc.maxDensity <= 0.f) continue;
+            volumeDescs.push_back(desc);
+            volumeSpecs.push_back(component.densityGrid);
+        }
+    }
+    const uint32_t volumeCount = uint32_t(volumeDescs.size());
+    uint32_t volumeSrv = UINT32_MAX;
+    if (volumeCount) {
+        if (p.volumeCapacity[slot] < volumeCount) {
+            if (p.volumeBuffers[slot].IsValid()) {
+                p.device->WaitIdle();
+                p.device->DestroyBuffer(p.volumeBuffers[slot]);
+            }
+            RHIBufferDesc desc{};
+            desc.sizeBytes = uint64_t(kMaxPathVolumes) * sizeof(PathVolumeGridDesc);
+            desc.stride = sizeof(PathVolumeGridDesc);
+            desc.memory = RHIMemoryType::Upload;
+            desc.usage = RHIBufferUsage::StructuredBuffer;
+            desc.debugName = "PipelinePathTracer_VolumeGrids";
+            p.volumeBuffers[slot] = p.device->CreateBuffer(desc);
+            p.volumeCapacity[slot] = p.volumeBuffers[slot].IsValid() ? kMaxPathVolumes : 0;
+        }
+        if (!p.volumeBuffers[slot].IsValid()) return false;
+        mapped = p.device->MapBuffer(p.volumeBuffers[slot]);
+        if (!mapped) return false;
+        std::memcpy(mapped, volumeDescs.data(), volumeCount * sizeof(PathVolumeGridDesc));
+        p.device->UnmapBuffer(p.volumeBuffers[slot]);
+        volumeSrv = p.device->GetBufferSRVIndex(p.volumeBuffers[slot]);
+    }
+
     // Hash only transport inputs, never timeParams or the raster TAA jitter.
     uint64_t signature = 14695981039346656037ull;
     auto hash = [&](const void* data, size_t size) {
@@ -642,8 +873,9 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
     volume.volumeCenterY = cv_VolumeY->value;
     volume.volumeCenterZ = cv_VolumeZ->value;
     volume.volumeVariation = cv_VolumeVariation->value;
+    volume.volumeGridCount = volumeCount;
     volume.volumeEnabled = cv_Volume->value >= 0.5f
-        && volume.volumeRadius > 0.f && volume.volumeSigmaA + volume.volumeSigmaS > 0.f;
+        && ((volume.volumeRadius > 0.f && volume.volumeSigmaA + volume.volumeSigmaS > 0.f) || volumeCount > 0u);
     // Surface-only reservoir validation and diffuse denoiser guides do not
     // describe stochastic medium vertices. Use ordinary unbiased NEE here.
     // Stage-1 reservoirs contain only the base material. Coated vertices use
@@ -673,7 +905,16 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
     hash(&giRestir, sizeof(giRestir));
     hash(&giTemporal, sizeof(giTemporal));
     hash(&giSpatial, sizeof(giSpatial));
+    // The grid descriptor SRV rotates across frame slots; the grids' own
+    // descriptors are stable, so hash the medium, box frames and grid names.
     hash(&volume, sizeof(volume));
+    for (size_t i = 0; i < volumeDescs.size(); ++i) {
+        PathVolumeGridDesc stable = volumeDescs[i];
+        stable.densitySrv = 0u;
+        hash(&stable, sizeof(stable));
+        hash(volumeSpecs[i].data(), volumeSpecs[i].size());
+    }
+    volume.volumeGridSrv = volumeSrv;
     const auto* pf = static_cast<const PerFrameCB*>(perFrame.cpuPtr);
     hash(&pf->skyLightIntensity, sizeof(float) * 4);
     const uint64_t denoiserSignature = signature;
@@ -724,6 +965,7 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
         if (!p.restirSurface.IsValid() || !p.restirInitial.IsValid()
             || !p.reservoirs[0].IsValid() || !p.reservoirs[1].IsValid()) return false;
         p.samples = 0;
+        p.restirPreviousEnabled = false; // fresh reservoirs hold no history
     }
     if (giRestir && !p.giInitial.IsValid()) {
         RHIBufferDesc desc{};
@@ -740,6 +982,56 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
         p.samples = 0;
     }
     const uint32_t resetGeneration = GetPathTracerResetGeneration();
+    // Reservoir history is decoupled from the accumulation: a camera-only
+    // change resets the accumulated image but keeps (and reprojects) the
+    // reservoirs. denoiserSignature is the transport signature without the camera.
+    RestirHistoryInputs historyInputs{};
+    historyInputs.enabled = restirEnabled != 0u;
+    historyInputs.previousEnabled = p.restirPreviousEnabled;
+    historyInputs.frameIndex = frameIndex;
+    historyInputs.previousFrame = p.lastFrame;
+    historyInputs.resetGeneration = resetGeneration;
+    historyInputs.previousResetGeneration = p.resetGeneration;
+    historyInputs.sceneDirtyFlags = sceneDirtyFlags;
+    historyInputs.transportSignature = denoiserSignature;
+    historyInputs.previousTransportSignature = p.previousDenoiserSignature;
+    const bool restirHistoryValid = RestirHistoryValid(historyInputs);
+    p.restirFrame = restirHistoryValid ? p.restirFrame + 1u : 0u;
+    p.restirPreviousEnabled = restirEnabled != 0u;
+    uint32_t restirHistorySrv = 0u;
+    if (restirEnabled) {
+        // Upload last frame's camera; this frame's replaces it for the next frame.
+        static_assert(sizeof(pf->viewProj) == sizeof(RestirCameraHistory::viewProjRows));
+        static_assert(sizeof(pf->cameraPos) == sizeof(RestirCameraHistory::cameraPos));
+        RestirCameraHistory history = p.restirCamera;
+        history.cameraMoved = std::memcmp(history.viewProjRows, &pf->viewProj, sizeof(history.viewProjRows)) != 0 ? 1u : 0u;
+        std::memcpy(p.restirCamera.viewProjRows, &pf->viewProj, sizeof(p.restirCamera.viewProjRows));
+        std::memcpy(p.restirCamera.cameraPos, &pf->cameraPos, sizeof(p.restirCamera.cameraPos));
+        if (!p.restirCameras[slot].IsValid()) {
+            RHIBufferDesc desc{};
+            desc.sizeBytes = sizeof(RestirCameraHistory);
+            desc.stride = sizeof(RestirCameraHistory);
+            desc.memory = RHIMemoryType::Upload;
+            desc.usage = RHIBufferUsage::StructuredBuffer;
+            desc.debugName = "ReSTIR_CameraHistory";
+            p.restirCameras[slot] = p.device->CreateBuffer(desc);
+        }
+        if (!p.restirCameras[slot].IsValid()) return false;
+        if (void* destination = p.device->MapBuffer(p.restirCameras[slot])) {
+            std::memcpy(destination, &history, sizeof(history));
+            p.device->UnmapBuffer(p.restirCameras[slot]);
+        } else {
+            return false;
+        }
+        if (restirHistoryValid) restirHistorySrv = p.device->GetBufferSRVIndex(p.restirCameras[slot]) + 1u;
+        const bool moving = restirHistoryValid && history.cameraMoved != 0u;
+        if (moving != p.restirCameraMoving) {
+            UZ_LOG(Renderer, Info, "ReSTIR DI: temporal history {} at frame {}",
+                moving ? "reprojected through last frame's camera (camera moving)"
+                       : "same-pixel (camera static)", frameIndex);
+            p.restirCameraMoving = moving;
+        }
+    }
     const bool denoiserReset = frameIndex != p.lastFrame + 1
         || resetGeneration != p.resetGeneration || !cv.GetBool("r.PathTracer.Accumulate", true)
         || denoiserSignature != p.previousDenoiserSignature || sceneDirtyFlags != 0;
@@ -764,8 +1056,29 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
     radianceDesc.usage = RHITextureUsage::ShaderResource | RHITextureUsage::UnorderedAccess;
     const auto radiance = builder.CreateTexture("PipelinePathTracer_Radiance", radianceDesc);
     rg::RgResourceId diffuse, fraction, signalAlbedo, specular, modulation, virtualPosition, pathGuide;
+    bool sdkActive = false;
     if (denoise) {
-        if (!p.denoiser) {
+        if (cv.GetBool("r.NRD.SDK", false)) {
+            // Opt-in NVIDIA NRD SDK; a failed Init (no NRD.dll, mismatched build)
+            // logs once and leaves the native stage-2 denoiser in charge.
+            const bool stale = !p.sdkDenoiser || p.sdkDenoiser->Width() != width
+                || p.sdkDenoiser->Height() != height;
+            if (stale && !p.sdkInitFailed) {
+                auto sdk = std::make_unique<NrdSdkDenoiser>();
+                if (sdk->Init(p.device, width, height)) {
+                    p.sdkDenoiser = std::move(sdk);
+                } else {
+                    p.sdkDenoiser.reset();
+                    p.sdkInitFailed = true;
+                    UZ_LOG(Renderer, Warning, "PipelinePathTracer: r.NRD.SDK requested but NrdSdkDenoiser::Init failed; using the native NRD stages");
+                }
+            }
+            sdkActive = p.sdkDenoiser != nullptr;
+        } else if (p.sdkDenoiser || p.sdkInitFailed) {
+            p.sdkDenoiser.reset();
+            p.sdkInitFailed = false;
+        }
+        if (!sdkActive && !p.denoiser) {
             p.denoiser = std::make_unique<NrdDenoiser>();
             if (!p.denoiser->Init(p.device)) {
                 p.denoiser.reset();
@@ -833,10 +1146,20 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
         initial = builder.ImportTrackedBuffer("ReSTIR_Initial", p.restirInitial);
         current = builder.ImportTrackedBuffer("ReSTIR_Current", currentBuffer);
         previous = builder.ImportTrackedBuffer("ReSTIR_Previous", previousBuffer);
+        const bool histogramActive = restirBVH && histogramUav != 0u;
+        rg::RgResourceId histogram;
+        if (histogramActive) histogram = builder.ImportTrackedBuffer("LightBVH_Histogram", p.bvhHistogram);
         restirConstants.restirSurfaceUav = p.device->GetBufferUAVIndex(p.restirSurface);
         restirConstants.restirInitialUav = p.device->GetBufferUAVIndex(p.restirInitial);
         restirConstants.restirCurrentUav = p.device->GetBufferUAVIndex(currentBuffer);
         restirConstants.restirPreviousUav = p.device->GetBufferUAVIndex(previousBuffer);
+        // The reservoir passes seed their candidates per frame since the history
+        // was last dropped (equal to the accumulation count for a static camera)
+        // and read last frame's camera for reprojection. The DXR dispatches keep
+        // the accumulation index so extraction and shading sample the same rays.
+        auto reservoirConstants = restirConstants;
+        reservoirConstants.sampleIndex = p.restirFrame;
+        reservoirConstants.restirHistory = restirHistorySrv;
         builder.AddPass("ReSTIR_PrimaryHit", [=, this](rg::RgPassBuilder& pb) {
             pb.Write(surface, RHIResourceState::UnorderedAccess);
             pb.SetExecutionCallback([=, this](IRHICommandList* cmd, const rg::RgPassResources&) {
@@ -880,12 +1203,15 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
                     pb.Read(initial, RHIResourceState::UnorderedAccess);
                     pb.Read(previous, RHIResourceState::UnorderedAccess);
                     pb.Write(current, RHIResourceState::UnorderedAccess);
-                } else pb.Write(initial, RHIResourceState::UnorderedAccess);
+                } else {
+                    pb.Write(initial, RHIResourceState::UnorderedAccess);
+                    if (histogramActive) pb.Write(histogram, RHIResourceState::UnorderedAccess);
+                }
                 pb.SetExecutionCallback([=, this](IRHICommandList* cmd, const rg::RgPassResources&) {
 #ifdef _WIN32
                     auto* native = static_cast<DX12CommandList*>(cmd)->GetNative();
                     native->SetComputeRootSignature(m_impl->root.Get());
-                    native->SetComputeRoot32BitConstants(0, kRootDwords, &restirConstants, 0);
+                    native->SetComputeRoot32BitConstants(0, kRootDwords, &reservoirConstants, 0);
                     native->SetComputeRoot32BitConstants(6, sizeof(giInactive) / 4, &giInactive, 0);
                     native->SetComputeRootConstantBufferView(1, m_impl->device->GetBufferGPUAddress(perFrame.bufferHandle) + perFrame.offsetBytes);
                     auto* dx = static_cast<DX12Device*>(m_impl->device);
@@ -899,8 +1225,27 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
                         UZ_LOG(Renderer, Info, "ReSTIR DI: {} dispatched {}x{}, history={}, 32 candidates, 20-frame M cap",
                             stage == 2 ? "spatial (4 neighbors, source-target MIS)" : stage == 1 ? "temporal"
                                 : restirBVH ? "initial BVH-sourced RIS (joint source PDF, visibility-aware reuse)" : "initial",
-                            (width + 7) / 8, (height + 7) / 8, restirConstants.restirHistory);
+                            (width + 7) / 8, (height + 7) / 8, reservoirConstants.restirHistory != 0u ? 1u : 0u);
 #endif
+                });
+            });
+        }
+        if (histogramActive) {
+            // Copy the cumulative selection histogram and the primary surfaces
+            // it was taken on; the CPU reads both next frame after WaitIdle.
+            const auto histogramReadback = builder.ImportTrackedBuffer("LightBVH_HistogramReadback", p.bvhHistogramReadback);
+            const auto surfaceReadback = builder.ImportTrackedBuffer("ReSTIR_SurfaceReadback", p.surfaceReadback);
+            builder.AddPass("LightBVH_HistogramReadback", [=, this](rg::RgPassBuilder& pb) {
+                pb.Read(histogram, RHIResourceState::CopySrc);
+                pb.Read(surface, RHIResourceState::CopySrc);
+                pb.Write(histogramReadback, RHIResourceState::CopyDst);
+                pb.Write(surfaceReadback, RHIResourceState::CopyDst);
+                pb.SetExecutionCallback([=, this](IRHICommandList* cmd, const rg::RgPassResources&) {
+                    cmd->CopyBuffer(m_impl->bvhHistogram, 0, m_impl->bvhHistogramReadback, 0,
+                        uint64_t(3u * m_impl->bvhHistogramLights) * sizeof(uint32_t));
+                    cmd->CopyBuffer(m_impl->restirSurface, 0, m_impl->surfaceReadback, 0,
+                        uint64_t(width) * height * sizeof(RestirSurface));
+                    m_impl->histogramPending = true;
                 });
             });
         }
@@ -959,7 +1304,10 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
             auto gi = giConstants;
             if (giRestir) gi.giRestirPartialUav = state.device->GetTextureUAVIndex(res.GetTexture(giPartial));
             native->SetComputeRoot32BitConstants(6, sizeof(gi) / 4, &gi, 0);
-            if (accumulatedFrames == 0 && volume.volumeEnabled)
+            if (accumulatedFrames == 0 && volume.volumeEnabled && volume.volumeGridCount != 0u)
+                UZ_LOG(Renderer, Info, "PathVolume: {} grid box(es); nearest-first Woodcock delta free flight + ratio shadow tracking on trilinear Texture3D density, HG + NEE, absorption-weighted emission; surface ReSTIR/NRD bypassed",
+                    volume.volumeGridCount);
+            else if (accumulatedFrames == 0 && volume.volumeEnabled)
                 UZ_LOG(Renderer, Info, "PathVolume: sphere sigmaA={} sigmaS={} g={} radius={} variation={}; delta free flight + ratio shadow tracking (exact homogeneous limit), HG + NEE; surface ReSTIR/NRD bypassed",
                     volume.volumeSigmaA,volume.volumeSigmaS,volume.volumeG,volume.volumeRadius,volume.volumeVariation);
             if (accumulatedFrames == 0 && layered && cv_StackDepth->value < 2.f)
@@ -1093,9 +1441,10 @@ bool PipelinePathTracerPass::AddPass(rg::RgBuilder& builder, rg::RgResourceId hd
         inputs.width = width; inputs.height = height; inputs.frameIndex = frameIndex;
         inputs.perFrame = perFrame;
         // Stage 2 validates moving views per pixel. Stage 1 retains its camera-cut reset.
-        inputs.reset = inputs.reset || (cv.GetBool("r.NRD.Specular", true)
+        inputs.reset = inputs.reset || (sdkActive || cv.GetBool("r.NRD.Specular", true)
             ? denoiserReset : accumulatedFrames == 0);
-        resolved = p.denoiser->Denoise(builder, inputs);
+        resolved = sdkActive ? p.sdkDenoiser->Denoise(builder, inputs)
+                             : p.denoiser->Denoise(builder, inputs);
         if (!resolved.IsValid()) return false;
     }
     builder.AddPass("PipelinePathTracer_Resolve", [=](rg::RgPassBuilder& pb) {

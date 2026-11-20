@@ -203,29 +203,116 @@ volume collection, sparse/VDB storage, raster volume passes and temporal
 reprojection, emissive media and spectral transport. The original Sessions 1-3
 below still describe those deferred asset/raster integrations.
 
+## Stage 3: Heterogeneous grid media in DXR path transport
+
+Stage 3 is the general-purpose medium: a `VolumeAsset` density grid
+(`.uzvol`, R8/R16F, up to 256^3, or `builtin:sphere|cloud|constant|ramp`)
+uploaded as a `Texture3D<float>`, placed by a `VolumeComponent` (scene key
+`volume`) oriented box, and tracked by the DXR path tracer behind the same
+`r.PathTracer.Volume` gate. Enabled components replace the stage-1/2 sphere;
+without a component the sphere renders as before. Up to four boxes per frame,
+96 bytes each in a pass-private structured buffer addressed through the two
+former padding DWORDs of the 12-DWORD `PathVolumeRoot`; no root grows.
+Transport: nearest-first Woodcock delta tracking with majorant
+`(sigmaA+sigmaS)*maxDensity`, ratio-tracked camera absorption and every
+shadow transmittance (one factor per box, exact across overlaps), HG phase per
+box, NEE, Russian roulette, multiple scattering to `r.PathTracer.MaxBounces`,
+and absorption-weighted emission `L_e(x) = sigma_a(x) * emission`.
+
+- [x] Homogeneous slab transmittance through the Texture3D path: `builtin:constant`
+  box, `sigmaA=.005`, 200 cm chord (optical depth 1). Frame-4095 central 8x8
+  transmission `.3683455785` versus analytic `.3678478577`; left `.3666385015`
+  versus `.3647939316`; right `.3636900584` versus `.3647939316`. Every region's
+  mean radiance error is below `.0004` (tolerance `.0006`); central HDR RMSE
+  falls `.0061075971` (255) -> `.0026130835` (1023) -> `.0015194848` (4095).
+- [x] Heterogeneous transmittance: `builtin:ramp` (64^3 R16F, density = voxel-centre
+  u, trilinear = exact linear profile), `sigmaA=.01`. Frame-4095 transmission
+  centre `.3683328629` versus `.3679900332`, left `.2477812767` versus
+  `.2467150971`, right `.5395650864` versus `.5398238703`, the reference being
+  4096-interval quadrature of the same half-quantized trilinear density along
+  the DXR rays reconstructed from the recorded view-projection inverse. Central
+  RMSE `.0038135911` -> `.0020759144` -> `.0010703993`; no energy drift.
+- [x] Emission: constant box, `sigmaA=.005`, `sigmaS=0`, `emission=(1,1,1)` behind
+  the `.2` backdrop: centre `.7056757609` versus `L_bg e^-1 + (1-e^-1) =
+  .7057217138`; left `.7085698446` versus `.7081648548`; right `.7079442342`
+  versus `.7081648548`. Binary delta-tracking estimator, RMSE `.0188963983` ->
+  `.0134867271` -> `.0065743862`.
+- [x] Single scattering through the grid: constant box `sigmaA=.002`, `sigmaS=.003`,
+  isotropic: centre `.2802047729` versus the 4096-interval single-scatter
+  integral `.2800047002` (left `.2801475525`/`.2805200947`, right
+  `.2807083130`/`.2805200947`); RMSE `.0071935123` -> `.0042667899` ->
+  `.0021708961`.
+- [x] Cloud look from four camera angles (front-lit, back-lit, side, low oblique;
+  640x360, 512 spp, 8 bounces, `g=.6`, `builtin:cloud` 96^3): a lit cumulus with
+  a brighter forward-scattering back-lit view, soft self-shadowing and a soft
+  volumetric shadow on the ground. Sphere smoke demo (`builtin:sphere`, 200 cm
+  radius, density `.5`, 30 spp): halo, shadow, soft edge fade.
+- [x] Perf, 1920x1080, 8 bounces, one sample per frame, front-lit cloud covering
+  about a third of the frame: `PipelinePathTracer` GPU `.567 ms` without the
+  medium, `2.207 ms` with it (`+1.64 ms` per sample; frame `1.01` -> `2.65 ms`).
+  This is a per-sample reference cost, not a real-time budget: a converged
+  image needs hundreds of samples.
+- [x] OFF byte identity against the pre-edit c269119f binary: raster
+  `reflection-reference` frame 95, `--path-trace` without `--volume`,
+  `--volume` with zero density, and the stage-1 constant sphere (frame 2047) are
+  all PNG byte-identical with maximum linear-HDR delta 0. A grid scene with the
+  component present and the gate off is HDR-identical to the stage-2 scene.
+  (The retained `f005-after/frames/f_95.png` differs from both pre and post
+  identically: that reference predates later raster commits on this branch.)
+- [x] Build `cd runtime && zig build -Doptimize=ReleaseFast` exits 0, 173 shaders
+  verified; `npm run test:layouts` exits 0, Tier A 105/105, Tier C 20/20, all
+  layouts agree (`PathVolumeRoot` keeps 48 bytes). Four `PathVolumeGrid` tests
+  (`.uzvol` round trip and validation, generators, delta/ratio estimators on
+  sampled grids versus 16384-interval quadrature, builtin resolution) added.
+
+Evidence (2026-11-11): `E:/UzmiEngine/_evidence/lighting/volumetric-media-finish/`
+(`report.md`, `proof/metrics.json`, `identity.json`, `final/cloud/montage.png`,
+`final/perf/timings.json`, `demo/sphere_30.png`, logs). Reproduce with
+`python scripts/rendering/test_path_volume_grid.py --out DIR --case CASE` for
+`slab|ramp|emission|scatter|off|off-stage2|cloud|perf`, then `--case metrics`.
+Not done: sparse/VDB storage, spectral coefficients, overlapping boxes (tracked
+one at a time: exact only when disjoint), and the raster `VolumePass` items
+below (half-resolution raymarch, upscale/composite, temporal reprojection),
+which this DXR integration supersedes rather than implements.
+
 ## Session 1: Volume Asset + CVolumeComponent
 
-- [ ] 1.1 Create `volume_asset.h/.cpp` — `VolumeAsset` class: `Load(path, format)` reads raw binary 3D grid (header: uint32 width, height, depth; data: R8_UNORM or R16F per voxel). `GetTexture3D() → RhiTextureHandle`. `GetDimensions() → uint3`. `GetMaxDensity() → float` (precomputed maximum value for Woodcock tracking majorant).
-- [ ] 1.2 Binary format: magic `UZVOL`, version 1, width/height/depth as uint32, format enum (R8=0, R16F=1), then raw data. Include a CPU utility `GenerateSphereVolume(radius, density)` for test volumes.
-- [ ] 1.3 Create `volume_component.h` — `CVolumeComponent` ECS component: `VolumeAsset* asset`, `float sigmaA = 0.1f` (absorption coefficient, cm⁻¹), `float sigmaS = 0.9f` (scattering coefficient), `float g = 0.0f` (Henyey-Greenstein anisotropy, [-1,1]), `float3 halfExtents` (OBB size). Default sigma values from Novak 2018 Table 1 smoke example.
-- [ ] 1.4 Add `CVolumeComponent` collection to `scene_gather.cpp`: gather up to 4 volume components per frame, upload as `StructuredBuffer<VolumeDesc>` (transform matrix, sigma values, anisotropy, Texture3D index in bindless heap).
-- [ ] 1.5 Build + verify: volume asset loads a test sphere binary. `CVolumeComponent` attaches to an entity. Scene gather populates volume buffer. No crashes.
+- [x] 1.1 Create `volume_asset.h/.cpp` — `VolumeAsset` class: `Load(path, format)` reads raw binary 3D grid (header: uint32 width, height, depth; data: R8_UNORM or R16F per voxel). `GetTexture3D() → RhiTextureHandle`. `GetDimensions() → uint3`. `GetMaxDensity() → float` (precomputed maximum value for Woodcock tracking majorant).
+  `engine/asset/formats/volume_asset.h/.cpp`: `Load(bytes)`, `LoadFile(vfs, path)` (project VFS, engine content, cwd), `Serialize()`, `Width/Height/Depth()`, `GetMaxDensity()`, `Upload()`/`GetTexture3D()`/`GetSrvIndex()`; the format is carried in the header rather than passed.
+- [x] 1.2 Binary format: magic `UZVOL`, version 1, width/height/depth as uint32, format enum (R8=0, R16F=1), then raw data. Include a CPU utility `GenerateSphereVolume(radius, density)` for test volumes.
+  32-byte header (`UZVOL\0\0\0`, version, dims, format, reserved); `GenerateSphereVolume(resolution, radius, density, format)` plus `GenerateConstantVolume`, `GenerateRampVolume`, `GenerateCloudVolume`; round trip and rejection of bad magic/size/format/dims are gtested.
+- [x] 1.3 Create `volume_component.h` — `CVolumeComponent` ECS component: `VolumeAsset* asset`, `float sigmaA = 0.1f` (absorption coefficient, cm⁻¹), `float sigmaS = 0.9f` (scattering coefficient), `float g = 0.0f` (Henyey-Greenstein anisotropy, [-1,1]), `float3 halfExtents` (OBB size). Default sigma values from Novak 2018 Table 1 smoke example.
+  `engine/ecs/environment/volume_component.h/.cpp` as `VolumeComponent` (engine naming, no `C` prefix; JSON key `volume`): `densityGrid` string (asset reference), `halfExtents`, `sigmaA`, `sigmaS`, `phaseG`, `emission`, `densityScale`, `enabled`. The literal 0.1/0.9 per cm would make any box over 50 cm opaque in engine centimetres, so the defaults keep the smoke albedo (0.9) at a 1 m mean free path: `.001`/`.009` per cm.
+- [x] 1.4 Add `CVolumeComponent` collection to `scene_gather.cpp`: gather up to 4 volume components per frame, upload as `StructuredBuffer<VolumeDesc>` (transform matrix, sigma values, anisotropy, Texture3D index in bindless heap).
+  Gathered where the path tracer already gathers its lights (`PipelinePathTracerPass::AddPass`, there is no `scene_gather.cpp`): `kMaxPathVolumes = 4`, `StructuredBuffer<PathVolumeGridDesc>` (world-to-box affine rows, coefficients, majorant, emission, Texture3D SRV).
+- [x] 1.5 Build + verify: volume asset loads a test sphere binary. `CVolumeComponent` attaches to an entity. Scene gather populates volume buffer. No crashes.
+  `.uzvol` sphere round trip in `PathVolumeGrid.UzVolRoundTripAndValidation`; the component is attached from scene JSON in every fixture; the run logs record `PathVolume: grid 'builtin:sphere' 64x64x64 R8 max density 1 SRV=...` and `1 grid box(es)`; every capture exits 0 with no `[error]`, no `compile failed`, no device removal.
 
 ## Session 2: Volume Ray March Shader
 
-- [ ] 2.1 Create `volume_raymarch_cs.hlsl` — `[numthreads(8,8,1)]` entry `main`. For each pixel: reconstruct world-space ray from depth buffer. Ray/OBB intersection test (transform ray to volume local space, axis-aligned slab test). Clamp ray to [tMin, tMax] from intersection.
-- [ ] 2.2 Woodcock delta tracking for transmittance: set majorant `mu_t_max = (sigmaA + sigmaS) * volume.maxDensity`. Advance by free path `t += -log(rand) / mu_t_max`. At each sample: read `Texture3D` density, compute `mu_t_real = (sigmaA + sigmaS) * density`. Accept with probability `mu_t_real / mu_t_max` (rejection sampling). Accepted samples contribute in-scattering. @ref Novak 2018 Eq. 13
-- [ ] 2.3 In-scattering at accepted sample: cast shadow ray toward directional light. Evaluate Henyey-Greenstein phase function `p(cosTheta, g) = (1 - g²) / (4π(1 + g² - 2g*cosTheta)^1.5)`. @ref Henyey & Greenstein 1941. Accumulate: `radiance += transmittance * sigmaS * phaseFunction * lightColor * (1 - shadowOcclusion)`
-- [ ] 2.4 Beer-Lambert extinction for shadow ray: integrate density along shadow ray using fixed-step march (8 steps), compute transmittance as `exp(-sigmaT * integratedDensity)`. Use this as shadow term in step 2.3.
+- [x] 2.1 Create `volume_raymarch_cs.hlsl` — `[numthreads(8,8,1)]` entry `main`. For each pixel: reconstruct world-space ray from depth buffer. Ray/OBB intersection test (transform ray to volume local space, axis-aligned slab test). Clamp ray to [tMin, tMax] from intersection.
+  No compute raymarch: the medium lives in the DXR path tracer. The ray/OBB slab test in the box frame and the `[tMin, tMax]` clamp to the surface distance are `PathVolumeGridInterval` in `pathtracer_volume.hlsli`, used by every proof above (the slab's off-axis chords match analytic).
+- [x] 2.2 Woodcock delta tracking for transmittance: set majorant `mu_t_max = (sigmaA + sigmaS) * volume.maxDensity`. Advance by free path `t += -log(rand) / mu_t_max`. At each sample: read `Texture3D` density, compute `mu_t_real = (sigmaA + sigmaS) * density`. Accept with probability `mu_t_real / mu_t_max` (rejection sampling). Accepted samples contribute in-scattering. @ref Novak 2018 Eq. 13
+  `PathVolumeGridDelta`, no null-collision cap; proven by the slab, ramp, emission and scatter captures and the CPU quadrature tests.
+- [x] 2.3 In-scattering at accepted sample: cast shadow ray toward directional light. Evaluate Henyey-Greenstein phase function `p(cosTheta, g) = (1 - g²) / (4π(1 + g² - 2g*cosTheta)^1.5)`. @ref Henyey & Greenstein 1941. Accumulate: `radiance += transmittance * sigmaS * phaseFunction * lightColor * (1 - shadowOcclusion)`
+  `PathVolumeDirect` with the box's `phaseG` (HG evaluation and sampling), geometry shadow ray plus medium transmittance; the single-scatter capture matches the integral to `.0002`.
+- [x] 2.4 Beer-Lambert extinction for shadow ray: integrate density along shadow ray using fixed-step march (8 steps), compute transmittance as `exp(-sigmaT * integratedDensity)`. Use this as shadow term in step 2.3.
+  Ratio tracking (`PathVolumeGridRatio`, `PathVolumeGridShadow`) instead of an 8-step march: unbiased for the same expectation, used for medium and surface NEE and for absorption-only camera segments.
 - [ ] 2.5 Output: `RWTexture2D<float4> uVolume` stores `float4(scatteredRadiance, transmittance)` per pixel. Build + verify: constant-density sphere volume produces correct forward-scattering cone (brighter in forward direction with g>0).
+  Not done as written: the path tracer accumulates radiance only; no separate radiance/transmittance target exists. The forward-scattering check holds (back-lit cloud brighter than front-lit at `g=.6`; sphere demo halo), but the output contract of this item was not built.
 
 ## Session 3: VolumePass Integration + Temporal Reprojection + Demo
 
 - [ ] 3.1 Create `volume_pass.h/.cpp` — `VolumePass` render graph pass: dispatch `volume_raymarch_cs` at half resolution (for performance). Inputs: scene depth SRV, volume buffer SRV, Texture3D array SRV. Outputs: volume radiance + transmittance at half-res.
+  Not done: a raster half-resolution pass; superseded by the DXR integration (the medium is traced at full resolution inside `PipelinePathTracer`).
 - [ ] 3.2 Upscale + composite: bilinear upsample volume output to full resolution. Composite over scene color: `finalColor = sceneColor * volumeTransmittance + volumeRadiance`. Insert in engine loop after deferred lighting, before bloom/tone map.
+  Not done: no raster composite; the path tracer's resolve is the only lighting write.
 - [ ] 3.3 Temporal reprojection: ping-pong `uPrevVolume` buffer. Reproject previous frame via camera delta: `prevUV = projectWorldPos(worldPos, prevViewProj)`. Blend: `accumulated = lerp(current, prevSample, 0.9)` if reprojection UV is in [0,1] and depth matches. Reset on disocclusion.
-- [ ] 3.4 Demo: create a smoke volume using `GenerateSphereVolume` (radius=200cm, density=0.5). Place directional light on one side. Run `demo.exe --screenshot-stdout --frames 30`. Verify: visible volumetric shadow cone, forward-scattering halo, transmittance fade at volume edges.
+  Not done: the path tracer uses its static accumulation (reset on transport or camera change); no reprojected volume history.
+- [x] 3.4 Demo: create a smoke volume using `GenerateSphereVolume` (radius=200cm, density=0.5). Place directional light on one side. Run `demo.exe --screenshot-stdout --frames 30`. Verify: visible volumetric shadow cone, forward-scattering halo, transmittance fade at volume edges.
+  `builtin:sphere` (`GenerateSphereVolume(64, .9, 1)`) in a 222 cm box with `density_scale .5` (200 cm radius, density .5), sun at 40 degrees, `--frames 40 --screenshot-frames 30` (file output, not stdout): `demo/sphere_30.png` shows the forward-scattering halo, the soft shadow on the ground and the edge fade.
 - [ ] 3.5 Build + verify: volume renders without device removal. GPU timestamp < 3ms for single 128³ volume at 1080p half-res. Temporal reprojection reduces frame-to-frame noise (compare frame 1 vs frame 30 via `--flip`, expect significant noise reduction).
+  No device removal in any run. The 3 ms half-resolution raster budget does not apply: the DXR medium costs `+1.64 ms` per 1080p sample (`.567` -> `2.207 ms`) and converges by accumulation, not reprojection; the temporal-reprojection half of this item was not built.
 
 ## 1. Tail (mandatory — enforced by rulebook v5.3.0)
 - [x] 1.1 Document homogeneous stage 1, its reproduction command, and deferred stages above.

@@ -28,11 +28,32 @@
 #include <cstring>
 #include <memory>
 
-static auto* cv_VolFog = UZ_CVAR_BOOL("r.VolumetricFog", true, "Froxel volumetric fog");
+// Froxel volumetric fog (phase2_froxel-volumetric-fog): a VolumetricFogComponent (or a HeightFogComponent with
+// enableVolumetricFog) fills a 160x90x64 grid with sun / point / spot in-scatter, shadowed by the cascaded and
+// local shadow atlases, temporally filtered, integrated front to back and composited over the lit scene. Default
+// off until the visual review; off, the passes do not run and the height fog is untouched.
+static auto* cv_VolFog = UZ_CVAR_BOOL("r.VolumetricFog", false,
+    "Froxel volumetric fog: sun + local lights in-scatter with volumetric shadows, temporally filtered (needs a VolumetricFogComponent or a HeightFogComponent with enable_volumetric_fog)");
 static auto* cv_VolFogDebug = UZ_CVAR_INT("r.VolumetricFog.Debug", 0,
     "Froxel fog composite debug output (block B.4): 1 = (view depth cm, slice coordinate, transmittance), 2 = (raw depth, in-scatter r, g)", 0, 2);
 static auto* cv_VolFogSunShadow = UZ_CVAR_BOOL("r.VolumetricFog.SunShadow", true,
     "Shadow the sun in-scatter of the froxel fog with the cascaded shadow maps (block B.4; 0 = unshadowed, for A/B runs)");
+static auto* cv_VolFogLocalLights = UZ_CVAR_BOOL("r.VolumetricFog.LocalLights", true,
+    "Inject the frame's point and spot lights into the froxel fog");
+static auto* cv_VolFogLocalShadow = UZ_CVAR_BOOL("r.VolumetricFog.LocalShadow", true,
+    "Shadow the local lights' in-scatter with the local shadow atlas (one tap per froxel)");
+static auto* cv_VolFogTemporal = UZ_CVAR_BOOL("r.VolumetricFog.Temporal", true,
+    "Temporal reprojection of the injected froxel volume (previous unjittered view-projection, EMA, neighbourhood clamp); 0 = each frame on its own");
+static auto* cv_VolFogTemporalAlpha = UZ_CVAR_FLOAT("r.VolumetricFog.TemporalAlpha", 0.05f,
+    "r.VolumetricFog.Temporal: weight of the new frame in the exponential moving average", 0.01f, 1.0f);
+static auto* cv_VolFogTemporalClamp = UZ_CVAR_FLOAT("r.VolumetricFog.TemporalClamp", 1.5f,
+    "r.VolumetricFog.Temporal: history clamp half-width in standard deviations of the current 3x3x3 neighbourhood (0 = no clamp; smaller follows moving lights closer)", 0.0f, 8.0f);
+static auto* cv_VolFogJitter = UZ_CVAR_BOOL("r.VolumetricFog.Jitter", true,
+    "r.VolumetricFog.Temporal: jitter the sample position inside each froxel per frame so the average integrates the froxel");
+static auto* cv_VolFogSkyAmbient = UZ_CVAR_FLOAT("r.VolumetricFog.SkyAmbient", 1.0f,
+    "Scale of the sky-light ambient in-scatter of the froxel fog (the sky irradiance SH L0 x the sky light intensity)", 0.0f, 10.0f);
+static auto* cv_VolFogStage = UZ_CVAR_INT("r.VolumetricFog.Stage", 0,
+    "Incremental verification stage of the froxel fog: 0 = full, 1 = solid checkerboard, 2 = density only (sky ambient), 3 = + sun and local lights (unshadowed), 4 = + volumetric shadows, 5 = + temporal filter (= full)", 0, 5);
 
 namespace uz {
 
@@ -141,6 +162,8 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
     atmoCtx.skyCubemapUav       = m_skyCubemapUav;
     atmoCtx.skyIBLDirty         = &m_skyIBLDirty;
     atmoCtx.skyCubemapFilled    = &m_skyCubemapFilled;
+    static_assert(sizeof(m_skyBakeSignature) / sizeof(float) == kSkyBakeSignatureValues + 1,
+                  "m_skyBakeSignature holds the compared values plus the pass counter");
     atmoCtx.skyBakeSignature    = m_skyBakeSignature;
     atmoCtx.iblBaker            = m_iblBaker.get();
     atmoCtx.iblResult           = &m_iblResult;
@@ -177,32 +200,75 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
     float skyFogB = m_skyIrradianceSH.coeffs[2].w * ctx.perFrame.skyLightIntensity;
 
 
-    // ── Froxel Volumetric Fog (compute, applied before height fog) ─────
-    // Only runs when a HeightFogComponent with enableVolumetricFog=true exists.
-    // Without a component, no fog is rendered (matches UE5 — fog requires an actor).
+    // ── Froxel Volumetric Fog (phase2_froxel-volumetric-fog) ───────────────
+    // The medium comes from a VolumetricFogComponent, else from a HeightFogComponent with
+    // enableVolumetricFog (the pre-existing authoring). Without either, no froxel fog is rendered
+    // (matches UE5 — fog requires an actor). The parameters are resolved here, the passes are
+    // registered AFTER the height fog below: the height fog then starts at the grid's far edge
+    // (no double application) and the composite blends the near froxel fog over it.
+    VolumetricFogCB fogCB{};
+    bool  volFogRuns = false;
+    float volFogDistance = 0.f;   // > 0: the froxel grid covers [start, volFogDistance] this frame
     if (m_showFlags.Get(ShowFlag::Volumetrics) && m_volFogPass && m_volFogPass->IsInitialized()
         && cv_VolFog->value > 0.5f && ctx.bindless && ctx.world) {
 
-        // Find a HeightFogComponent with volumetric fog enabled
-        bool foundVolFog = false;
-        HeightFogComponent const* volFogComp = nullptr;
+        float ambientIntensity = 1.0f;
+        float localLightScattering = 1.0f;
         {
+            auto volView = ctx.world->GetRegistry().view<VolumetricFogComponent>();
+            for (auto enttEntity : volView) {
+                const auto& vc = volView.get<VolumetricFogComponent>(enttEntity);
+                if (!vc.enabled) continue;
+                fogCB.globalDensity      = vc.density * vc.globalDensity;
+                fogCB.heightFalloff      = vc.heightFalloff;
+                fogCB.heightOffset       = vc.heightOffset;
+                fogCB.albedoR            = vc.albedo.x;
+                fogCB.albedoG            = vc.albedo.y;
+                fogCB.albedoB            = vc.albedo.z;
+                fogCB.phaseG             = vc.phaseG;
+                fogCB.extinctionScale    = vc.extinctionScale;
+                fogCB.emissiveR          = vc.emissive.x;
+                fogCB.emissiveG          = vc.emissive.y;
+                fogCB.emissiveB          = vc.emissive.z;
+                fogCB.farZ               = vc.distance;
+                fogCB.fogStartDistance   = vc.startDistance;
+                fogCB.nearFadeInDistance = vc.nearFadeInDistance;
+                ambientIntensity         = vc.ambientIntensity;
+                localLightScattering     = vc.localLightScattering;
+                volFogRuns = true;
+                break;
+            }
+        }
+        if (!volFogRuns) {
+            // Legacy authoring: the volumetric section of a HeightFogComponent.
             auto fogView = ctx.world->GetRegistry().view<HeightFogComponent>();
             for (auto enttEntity : fogView) {
-                auto& fc = fogView.get<HeightFogComponent>(enttEntity);
-                if (fc.enabled && fc.enableVolumetricFog) {
-                    volFogComp = &fc;
-                    foundVolFog = true;
-                    break;
-                }
+                const auto& fc = fogView.get<HeightFogComponent>(enttEntity);
+                if (!fc.enabled || !fc.enableVolumetricFog) continue;
+                fogCB.globalDensity      = fc.density;
+                fogCB.heightFalloff      = fc.heightFalloff;
+                fogCB.heightOffset       = fc.baseHeight;
+                fogCB.albedoR            = fc.volumetricFogAlbedo.x;
+                fogCB.albedoG            = fc.volumetricFogAlbedo.y;
+                fogCB.albedoB            = fc.volumetricFogAlbedo.z;
+                fogCB.phaseG             = fc.volumetricFogScatteringDistribution;
+                fogCB.extinctionScale    = fc.volumetricFogExtinctionScale;
+                fogCB.emissiveR          = fc.volumetricFogEmissive.x;
+                fogCB.emissiveG          = fc.volumetricFogEmissive.y;
+                fogCB.emissiveB          = fc.volumetricFogEmissive.z;
+                fogCB.farZ               = fc.volumetricFogDistance;   // cm, as the component documents
+                fogCB.fogStartDistance   = fc.volumetricFogStartDistance;
+                fogCB.nearFadeInDistance = fc.volumetricFogNearFadeInDistance;
+                volFogRuns = true;
+                break;
             }
         }
 
-        if (foundVolFog && volFogComp) {
-            VolumetricFogCB fogCB{};
+        if (volFogRuns) {
             // Unjittered: the froxel positions must not move with the TAA jitter (block B.4).
             const Mat4 unjitteredInvViewProj = ctx.unjitteredViewProj.Inverse();
             std::memcpy(&fogCB.invViewProj, &unjitteredInvViewProj, 64);
+            std::memcpy(&fogCB.prevViewProj, &ctx.temporal.prevViewProj, 64);
             fogCB.cameraPosX     = ctx.perFrame.cameraPos.x;
             fogCB.cameraPosY     = ctx.perFrame.cameraPos.y;
             fogCB.cameraPosZ     = ctx.perFrame.cameraPos.z;
@@ -219,40 +285,49 @@ void SceneRenderer::RegisterAtmosphereFogCloudPasses(rg::RgBuilder& rgBuilder, F
             fogCB.sunColorR      = ctx.sunColor.x;
             fogCB.sunColorG      = ctx.sunColor.y;
             fogCB.sunColorB      = ctx.sunColor.z;
-            fogCB.temporalAlpha  = 0.05f;
+            fogCB.temporalAlpha  = cv_VolFogTemporalAlpha->value;
+            fogCB.temporalClamp  = cv_VolFogTemporalClamp->value;
             fogCB.depthSrvIdx    = m_gbuffer.depthSRV;
             fogCB.frameIndex     = ctx.frameIndex;
-
-            // All fog params come from the component
-            fogCB.globalDensity     = volFogComp->density;
-            fogCB.heightFalloff     = volFogComp->heightFalloff;
-            fogCB.heightOffset      = volFogComp->baseHeight;
-            fogCB.albedoR           = volFogComp->volumetricFogAlbedo.x;
-            fogCB.albedoG           = volFogComp->volumetricFogAlbedo.y;
-            fogCB.albedoB           = volFogComp->volumetricFogAlbedo.z;
-            fogCB.phaseG            = volFogComp->volumetricFogScatteringDistribution;
-            fogCB.extinctionScale   = volFogComp->volumetricFogExtinctionScale;
-            fogCB.emissiveR         = volFogComp->volumetricFogEmissive.x;
-            fogCB.emissiveG         = volFogComp->volumetricFogEmissive.y;
-            fogCB.emissiveB         = volFogComp->volumetricFogEmissive.z;
-            fogCB.farZ              = volFogComp->volumetricFogDistance;   // cm, as the component documents (x100 before block B.4 sent the grid to 6.4 km)
-            fogCB.fogStartDistance   = volFogComp->volumetricFogStartDistance;
-            fogCB.nearFadeInDistance = volFogComp->volumetricFogNearFadeInDistance;
-
-            m_volFogPass->RegisterPasses(
-                rgBuilder, ctx.hdrRes, ctx.depthRes, ctx.perFrameAlloc,
-                fogCB, *m_cbRing, ctx.pipelines,
-                ctx.bindless, ctx.renderWidth, ctx.renderHeight,
-                ctx.shadowAtlasRes, ctx.shadowAlloc);
+            // Sky ambient: the same SH L0 sky colour the height fog injects, so the two agree at the seam.
+            const float ambientScale = cv_VolFogSkyAmbient->value * ambientIntensity;
+            fogCB.ambientR = skyFogR * ambientScale;
+            fogCB.ambientG = skyFogG * ambientScale;
+            fogCB.ambientB = skyFogB * ambientScale;
+            fogCB.localLightScale    = localLightScattering;
+            fogCB.debugStage         = static_cast<uint32_t>(cv_VolFogStage->value + 0.5f);
+            fogCB.localLightsEnabled = cv_VolFogLocalLights->value > 0.5f ? 1u : 0u;
+            fogCB.localShadowEnabled = cv_VolFogLocalShadow->value > 0.5f ? 1u : 0u;
+            fogCB.jitterEnabled      = cv_VolFogJitter->value > 0.5f ? 1u : 0u;
+            volFogDistance = fogCB.farZ;
         }
     }
+    if (!volFogRuns && m_volFogPass) m_volFogPass->InvalidateHistory();
 
     if (m_showFlags.Get(ShowFlag::Fog) && m_passInspector.IsPassEnabled("fog")) {
         AddHeightFogFromECS(rgBuilder, ctx.hdrRes, ctx.depthRes, ctx.perFrameAlloc,
                             ctx.world, m_cameraManager->GetActiveCamera(), ctx.pipelines, *m_cbRing,
                             m_gbuffer.depthSRV, m_gbuffer.depth,
                             ctx.bindless, ctx.renderWidth, ctx.renderHeight,
-                            skyFogR, skyFogG, skyFogB);
+                            skyFogR, skyFogG, skyFogB, volFogDistance);
+    }
+
+    if (volFogRuns) {
+        VolumetricFogFrameInputs volIn{};
+        volIn.hdrRes              = ctx.hdrRes;
+        volIn.depthRes            = ctx.depthRes;
+        volIn.shadowAtlasRes      = ctx.shadowAtlasRes;
+        volIn.localShadowAtlasRes = ctx.localShadowAtlasRes;
+        volIn.perFrameAlloc       = ctx.perFrameAlloc;
+        volIn.shadowAlloc         = ctx.shadowAlloc;
+        volIn.lightingAlloc       = ctx.lightingAlloc;
+        volIn.bindless            = ctx.bindless;
+        volIn.vpWidth             = ctx.renderWidth;
+        volIn.vpHeight            = ctx.renderHeight;
+        // Stages 1-4 of the incremental verification run each frame on its own; 0 and 5 are the full pipeline.
+        volIn.temporalWanted  = cv_VolFogTemporal->value > 0.5f && (fogCB.debugStage == 0u || fogCB.debugStage >= 5u);
+        volIn.historyReusable = ctx.temporal.matrixValid;
+        m_volFogPass->RegisterPasses(rgBuilder, volIn, fogCB, *m_cbRing, ctx.pipelines);
     }
 
     // ── Volumetric Clouds (compute, composited over HDR) ─────────────

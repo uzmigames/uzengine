@@ -24,6 +24,39 @@ Insomniac, Lumen, and 15+ academic papers.
 
 ---
 
+## 0. Implementation Status (2026-11-19, phase2_ssr-stochastic-refactor)
+
+What of the plan in section 4 actually runs at `3914c13c` (read from the shaders and the pass
+registration, not from the task ticks):
+
+| Plan item | Status in the code |
+|-----------|--------------------|
+| 1 Hi-Z binding | Partial. `hizSrvIdx` is still the full-resolution depth (binary refinement); the trace marches Hi-Z mip 1 (quarter res, `NumSteps/4` steps) then mip 0 (half res, `NumSteps/2`) when `m_hizMipCount >= 2`, linear march otherwise (`ssr_trace_cs.hlsl`). |
+| 2 Temporal IGN | Done. `float2(47,17)*0.695 * (frame % 64)` (64-frame cycle, not the plan's 8). |
+| 3, 4 CVar intensity, bounds checks | Done. |
+| 5 Karis weight | Done as a weight (`rcp(1+L)` per tap, normalised by the weight sum); the inverse step was removed on purpose — it amplified constant input (comment in `ssr_resolve_cs.hlsl`). |
+| 6, 7, 8, 9 Temporal variance clip, velocity threshold, adaptive blend, passthrough 0.04 | Done. The legacy text (`#else` branch of `ssr_temporal_cs.hlsl`) reads the velocity buffer as UV although it is in pixels and places the virtual hit in front of the surface; the corrected filter is the `UZ_SSR_TEMPORAL_FIX` permutation under `r.RayTracing.Reflections.TemporalFix`, **default on**, so the corrected one is what runs. |
+| 10 GGX VNDF | Done — `SampleGGX_VNDF` (Dupuy & Benyoub 2023 spherical caps, `common/sampling.hlsli`), mirror below roughness 0.04. C++ mirror in `brdf_math.h` with known-value / boundary / visibility tests (`test_brdf_parity.cpp`). |
+| 11 STBN texture | Not done; replaced by two IGN evaluations with the temporal rotation. `m_stbnTexture` is a reserved slot, no loader exists. |
+| 12 Virtual hit reprojection | Done in the default-on TemporalFix permutation (thin-lens image behind the surface, `rough_specular_math.hlsli`); the hit distance is a separate R16F texture. |
+| 13 Tile classification | **Dead work.** `SSR_TileClassify` + `SSR_PrepareIndirect` build the ray list and the indirect arguments every frame, but `SSR_Trace` is still a direct 8x8 dispatch and nothing reads the list (0.027 ms of the 0.130 ms SSR total at 1080p). |
+| 14 Elliptical kernel | Done (15 Halton taps, 1:1 to 2.5:1 by roughness). |
+| 15 Exposure correction | Root constant exists, always 1.0 (the previous colour is linear, not pre-exposed). |
+| 16 `(color, confidence, hitDistance, roughness)` output | Not done as one format: colour + confidence in RGBA16F, hit distance in R16F, roughness stays in the g-buffer. |
+| 17 Reflection capture probes | Separate task (`r.ReflectionProbes`, phase3a-3.37.0). |
+| 18 Hybrid SSR + RT dispatch | Done beyond the design: `rt_reflection_cs.hlsl` traces where the screen trace's confidence is below the threshold (`ReflectionNeedsRT`), with the route table `SelectRTReflectionRoute`; default on where DXR exists (Phase B). |
+| 19 World-space probe cache | Phase D surface cache (`r.GI.SurfaceCache`, opt-in, stages 1-4 in progress). |
+
+Also: `r.SSR` defaults **off** (quality presets High/Ultra turn it on; the real-time default
+reflection layer is the ray-traced pass), and `r.SSR.StartMipLevel` / `r.SSR.SlopeToleranceScale`
+reach the trace root constants but are never read by the shader. Measured 2026-11-19 (RTX 5080,
+reflection-reference scene, 1920x1080, frames 200-299): SSR passes 0.130 ms (0.138 ms with every
+texel traced), GPU frame 1.80 ms vs 1.69 ms with SSR off. The YCoCg conversion the temporal pass
+clips in is shared source with its C++ test (`common/color_ycocg.hlsli`,
+`test_color_math_parity.cpp`).
+
+---
+
 ## 1. UzEngine Current SSR — Diagnosed Issues
 
 ### 1.1 Issue Summary Table

@@ -1427,6 +1427,11 @@ int main(int argc, char** argv) {
         config.AddPendingCvarOverride("r.PathTracer.LayeredMaterial", 1.0f);
     if (config.GetBool("nrd", false) || config.GetString("denoiser", "") == "nrd")
         config.AddPendingCvarOverride("r.NRD", 1.0f);
+    if (config.GetString("denoiser", "") == "nrd-sdk") {
+        // NVIDIA NRD SDK (NRD.dll) on top of the stage-2 signal; default off.
+        config.AddPendingCvarOverride("r.NRD", 1.0f);
+        config.AddPendingCvarOverride("r.NRD.SDK", 1.0f);
+    }
 
     // --rt-test: enable RT and the UV test pass via CVar overrides
     if (config.GetBool("rt-test", false)) {

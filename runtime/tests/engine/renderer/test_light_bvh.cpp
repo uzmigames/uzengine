@@ -74,7 +74,9 @@ TEST(LightBVH, StructuredBufferLayouts) {
     EXPECT_EQ(offsetof(LightBVHLight, emission), 64u);
     EXPECT_EQ(offsetof(LightBVHLight, uv0), 80u);
     EXPECT_EQ(offsetof(LightBVHLight, leaf), 104u);
-    EXPECT_EQ(sizeof(uz::LightBVHConfig), 16u);
+    // Stage 4 grew the config by the r.ReSTIR.Readback histogram UAV (+ padding).
+    EXPECT_EQ(sizeof(uz::LightBVHConfig), 32u);
+    EXPECT_EQ(offsetof(uz::LightBVHConfig, histogramUav), 16u);
 }
 
 TEST(LightBVH, NeeAndEmitterHitMISConserveEnergyWithMatchingSelectionPDF) {

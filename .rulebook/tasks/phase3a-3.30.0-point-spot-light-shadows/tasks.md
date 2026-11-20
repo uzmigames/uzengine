@@ -28,13 +28,23 @@
 - [x] 2.5 Screenshot: shadow atlas debug view — tile allocation visible (13 tiles occupied in 4x4 grid).
 - [x] 2.6 Regression: existing directional shadow (CSM) still works — CSM pass logs 4 cascades at 2048x2048 alongside local shadow pass.
 
+### 2.x RTX 5080 validation against analytic ground truth (2026-11-11, `E:/UzmiEngine/_evidence/lighting/point-spot-shadows-finish/report.md`)
+
+Items 2.1-2.5 above were ticked from the log only; this pass measured them. Three single-light fixtures (no sun, no sky), whole-frame linear-HDR dumps, visibility = direct light / the unshadowed capture, every pixel's world point intersected with the exact occluder boxes:
+- Point light at the centre of a closed room with one occluder per cube face, four cameras: umbra pixels on all six faces; interior umbra visibility max 0.0000 (no leaks); interior lit p0.1 = 1.0 (no acne); measured edges within p99 1.7 cm of the analytic edges (= bias + normal offset).
+- Spot (45 deg) over a 9 m bar: both shadow edges within 0.6 cm of the analytic +-16.67 cm at 16 stations across the cone; PCSS 10-90 % penumbra 9.2-10.1 cm vs analytic 8.7 cm; hard 1.7-2.6 cm.
+- Pillars at 1/2/3 m + wall at 5 m: stripe edges within p99 1.4 cm of analytic; no leaks, no acne.
+- Demo scene (`local_shadows_test.uzscene`, 13 tiles, 78 draws) from four cameras: shadows ON vs OFF differ by <= 8/255 codes — its local lights are ~2 orders of magnitude under its sun (asset note, not a shadow defect).
+- FOUND: a bright line along every cube-face seam inside point-light shadows (9-19 % of the analytic-umbra pixels within +-3 cm of a seam read lit, hard and PCSS alike). Root cause: `ShadePointLight` selected the face from the raw pixel while both samplers project the normal-offset receiver; `r.Shadow.Local.NormalOffset 0` removes it. One-line fix (select the face from the same offset receiver) validated: seam-band lit fraction 0.0, every other pixel of the lighting record byte-identical, castShadows=false captures bit-identical — delivered separately as `seam-fix.patch` (not applied to the task tail; the parent decides).
+- Proposal acceptance #4 ("max 4 shadowed point lights") is not met by design: 16 CB entries / 6 faces = 2 point lights per frame (budget documented in the overview).
+
 ## 3. Documentation
 
-- [x] 3.1 Document shadow atlas layout and allocation strategy — docs/analysis/lighting/local-light-shadows.md
-- [x] 3.2 Add point/spot shadow sampling algorithm with UE5 reference — docs/analysis/lighting/local-light-shadows.md §3
-- [x] 3.3 Document shadow importance ranking and performance budget — docs/analysis/lighting/local-light-shadows.md §2, §4
+- [x] 3.1 Document shadow atlas layout and allocation strategy — docs/analysis/lighting/shadows/local-light-overview.md §2 (moved there by e19ec907; rewritten 2026-11-11 against the shipped code, the 2026-03-30 text described a never-built design)
+- [x] 3.2 Add point/spot shadow sampling algorithm with UE5 reference — docs/analysis/lighting/shadows/local-light-overview.md §4, §6 (UE5 reference: point-spot-overview.md)
+- [x] 3.3 Document shadow importance ranking and performance budget — docs/analysis/lighting/shadows/local-light-overview.md §3, §9
 
 ## 5. Tail (mandatory — enforced by rulebook v5.3.0)
-- [ ] 5.1 Update or create documentation covering the implementation
-- [ ] 5.2 Write tests covering the new behavior
-- [ ] 5.3 Run tests and confirm they pass
+- [x] 5.1 Update or create documentation covering the implementation — docs/analysis/lighting/shadows/local-light-overview.md rewritten: atlas + CVars, candidates/importance/budget arithmetic, spot and cube-face projections, CB layout (ShadowDataCB::localShadows[16] at 768, the 6-float4 entry the shader reads), LocalShadowDepth pass and the linear-distance tile, hard PCF + PCSS + softShadowRadius, scene keys, validation numbers, the seam artifact, limits vs the proposal.
+- [x] 5.2 Write tests covering the new behavior — runtime/tests/engine/renderer/test_local_light_shadows.cpp (20 tests, CPU-only): LocalLightShadowData/ShadowDataCB offsets vs the HLSL float4 view; LocalLightShadowAtlas row-major allocation, UV rects, refusal at 16, Reset, Init on the mock device; ExtractLightingFromECS castShadows selection, importance order (intensity * range^2 / distance^2, camera-dependent), spot-first budget (16 - spots) / 6, shadowIndex layout (spots 0.., points 6 consecutive after), 16-spot cap, per-light parameters and the outer-angle clamp; the cube-face table vs the shader's major-axis selection (every direction inside its face, seams covered by both neighbours, opposite faces disjoint); the spot tile (cone boundary = tile edge, vertical up fallback).
+- [x] 5.3 Run tests and confirm they pass — LocalLightShadow* 20/20 on the pinned ReleaseFast build; full suite `GTEST_FILTER=-RuntimeViewportTest.*`: no regression (only the 3 pre-existing VfxEditorSlate failures); `npm run test:layouts` exit 0 (report.md §gates).

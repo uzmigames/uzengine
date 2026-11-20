@@ -236,7 +236,18 @@ static void PopulateHeightFogCB(
     fogCB.directionalInscatteringStartDistance = fogComp.directionalInscatteringStartDistance;
 
     // ── Sky atmosphere injection ────────────────────────────────────────
-    fogCB.skyAtmContribColorScale = {1.0f, 1.0f, 1.0f, 0.0f};
+    // UE5 HeightFogCommon.ush:174-180 (ComputeInscatteringColor):
+    //   SkyAmbient = SkyAtmosphereAmbientContributionColorScale.rgb * SkyAtmosphereHeightFogContribution
+    //              * GetViewDistanceSkyLightColor();   Inscattering += SkyAmbient;
+    // height_fog_ps.hlsl adds skyAtmContribColorScale * heightFogContribution * skyLightColor to the
+    // authored colour the same way; skyLightColor is the sky irradiance SH L0 x the sky light intensity
+    // (frame_atmosphere_passes.cpp), the engine's stand-in for UE5's distant-sky-light LUT. The scale is
+    // the HeightFogComponent property (UE5 ExponentialHeightFogComponent, default white); until
+    // phase3a-3.51.0 it was hardcoded to white here, so the authored value never reached the GPU.
+    // Without a SkyAtmosphereComponent the contribution is 0, as UE5's
+    // SkyAtmosphereHeightFogContribution is without a sky atmosphere (SceneRendering.cpp).
+    const Vec3& skyScale = fogComp.skyAtmosphereAmbientContributionColorScale;
+    fogCB.skyAtmContribColorScale = {skyScale.x, skyScale.y, skyScale.z, 0.0f};
     fogCB.heightFogContribution = skyAtmoPtr ? skyAtmoPtr->heightFogContribution : 0.0f;
 
     fogCB.skyLightColorR = skyLightColorR;
@@ -307,7 +318,8 @@ void AddHeightFogFromECS(
     float vpHeight,
     float skyLightColorR,
     float skyLightColorG,
-    float skyLightColorB)
+    float skyLightColorB,
+    float volumetricFogDistance)
 {
     if (!world) return;
 
@@ -350,6 +362,11 @@ void AddHeightFogFromECS(
         PopulateHeightFogCB(fogCB, fogComp, camera, skyAtmoPtr,
                             skyLightColorR, skyLightColorG, skyLightColorB,
                             sunDir, sunColor, sunIntensity, hasSun);
+        // The froxel volumetric fog covers [0, volumetricFogDistance] this frame: the analytic fog
+        // starts where the grid ends (the shader's start-distance exclusion), as UE5's height fog
+        // does beyond its volumetric fog distance. 0 (froxel fog off) leaves the height fog as is.
+        if (volumetricFogDistance > 0.f)
+            fogCB.fogStartDistance = std::max(fogCB.fogStartDistance, volumetricFogDistance);
 
         // ── Upload to GPU and register render graph pass ────────────────
         CBAllocation fogAlloc = cbRing.Allocate(sizeof(HeightFogCB));

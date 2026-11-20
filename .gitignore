@@ -111,6 +111,9 @@ poc-napi/node_modules/
 # NVIDIA DLSS SDK (proprietary, downloaded via setup.ps1, ~200MB)
 runtime/thirdparty/dlss/
 
+# NVIDIA NRD SDK (cloned by setup.ps1, NRD.dll built by scripts/build_nrd.ps1)
+runtime/thirdparty/nrd/
+
 # Local macOS/Linux thirdparty binaries (Slang SDK dylibs, LuaJIT build output —
 # platform-specific, never committed; Windows/Linux fetch or build their own)
 runtime/thirdparty/slang/bin/*.dylib

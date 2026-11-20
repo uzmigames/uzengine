@@ -7,7 +7,6 @@
 #endif
 #include "../common/sampling.hlsli"
 #include "pathtracer_math.hlsli"
-#include "pathtracer_volume.hlsli"
 #include "nrd_signal.hlsli"
 
 #ifndef RESTIR_COMPUTE
@@ -32,6 +31,8 @@ RaytracingAccelerationStructure tScene : register(t0);
 RWTexture2D<float4> uRadiance : register(u0);
 #endif
 SamplerState linearWrap : register(s0);
+// After the sampler: the grid media sample their Texture3D density with it.
+#include "pathtracer_volume.hlsli"
 
 // Twenty-four DWORDs in the pass-private signature. The dedicated
 // RT signature adds t0 without changing the graphics signature or any CB.

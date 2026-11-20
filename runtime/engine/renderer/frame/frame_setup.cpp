@@ -512,6 +512,9 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     // ── Draw list, instancing, GPU occlusion culling ────────────────────
     SyncDrawListAndInstances(ctx);
 
+    // ── Reflection probe capture (renders the draw list just built) ─────
+    CaptureReflectionProbes(ctx);
+
     // ── Resolve viewport dimensions ────────────────────────────────────
     ctx.vpWidth  = static_cast<float>(ctx.swapChain->GetWidth());
     ctx.vpHeight = static_cast<float>(ctx.swapChain->GetHeight());

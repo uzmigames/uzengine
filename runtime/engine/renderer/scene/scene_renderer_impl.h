@@ -189,9 +189,11 @@
     uint32_t m_skyCubemapSrv = UINT32_MAX;         ///< SRV index for IBL baker input.
     uint32_t m_skyCubemapUav = UINT32_MAX;         ///< UAV index for compute write.
     bool m_skyIBLDirty = true;                     ///< True when sky cubemap needs re-capture.
-    /// Sun direction, sky sun colour, angular radius and passes-since-bake of the last sky IBL
-    /// bake (AtmosphereFrameContext::skyBakeSignature). -1e30 = not baked yet.
-    float m_skyBakeSignature[8] = {-1e30f, -1e30f, -1e30f, -1e30f, -1e30f, -1e30f, -1e30f, 0.f};
+    /// Sun direction (3), sky sun colour (3), angular radius (1), ground albedo (3) and passes-since-bake
+    /// of the last sky IBL bake (AtmosphereFrameContext::skyBakeSignature; kSkyBakeSignatureValues + 1
+    /// floats, pinned where it is handed over). -1e30 = not baked yet.
+    float m_skyBakeSignature[11] = {-1e30f, -1e30f, -1e30f, -1e30f, -1e30f, -1e30f, -1e30f,
+                                    -1e30f, -1e30f, -1e30f, 0.f};
     bool m_skyCubemapFilled = false;               ///< True once the sky cubemap has been captured at least once.
     IBLBaker::BakeResult m_iblResult;              ///< Irradiance + prefiltered SRV indices.
     uint32_t m_brdfLutSrvIndex = UINT32_MAX;       ///< BRDF LUT SRV (baked once at init).
@@ -211,6 +213,7 @@
     // ── HDRI environment override ────────────────────────────────────────
     RHITextureHandle m_hdriCubemap;            ///< Cubemap converted from HDRI equirect (owned, must destroy).
     uint32_t m_hdriCubemapSrv = UINT32_MAX;    ///< SRV for the HDRI cubemap.
+    uint32_t m_hdriCubemapSize = 0;            ///< Face size of m_hdriCubemap in texels (the pass inspector's atmo.hdri_cubemap target).
     uint32_t m_hdriEquirectSrv = UINT32_MAX;   ///< SRV of the raw equirect HDRI (path tracer samples it directly; UINT32_MAX = none, fall back to the cubemap).
     bool m_hdriActive = false;                 ///< True when using external HDRI instead of procedural sky.
     bool m_prefilteredIsPmrem = false;         ///< The bound prefiltered cubemap is a PMREM (Three.js roughness curve), not the engine's linear bake.
@@ -989,6 +992,13 @@
     /// Builds the draw list from ECS, batches instances, uploads instance
     /// data, and sets up GPU occlusion culling buffers. Called from SetupFrameData().
     void SyncDrawListAndInstances(FrameContext& ctx);
+
+    /// Records the scene capture of the highest-priority dirty reflection probe
+    /// (ReflectionProbeRenderer::CaptureIfDirty) once the frame's draw list is
+    /// built and the sky IBL is ready; the probe's bake follows in a later
+    /// frame's PopulatePerFrameConstants(). Called from SetupFrameData() after
+    /// SyncDrawListAndInstances().
+    void CaptureReflectionProbes(FrameContext& ctx);
 
     /// Synchronizes VfxEmitterComponent ECS entities to live ParticleEmitter
     /// instances in m_runtimeEmitters. Creates emitters for new components,

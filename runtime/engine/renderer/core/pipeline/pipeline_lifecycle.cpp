@@ -118,6 +118,8 @@ void PipelineLibrary::Shutdown() {
     destroyPipeline(m_pathTracer);
     destroyPipeline(m_shadowDepth);
     destroyPipeline(m_shadowDepthBindless);
+    destroyPipeline(m_probeCapture[0]);
+    destroyPipeline(m_probeCapture[1]);
     destroyPipeline(m_gbufferInstanced);
     destroyPipeline(m_shadowDepthInstanced);
     destroyPipeline(m_skyAtmosphere);
@@ -180,6 +182,7 @@ void PipelineLibrary::Shutdown() {
 
     destroyShader(m_meshVS);
     destroyShader(m_meshPS);
+    destroyShader(m_probeCapturePS);
     destroyShader(m_translucentPS);
     destroyShader(m_fullscreenVS);
     destroyShader(m_gbufferPS);
@@ -356,6 +359,17 @@ bool PipelineLibrary::EnsureForwardPixelShader() {
         m_meshPS = m_shaderMgr->CreateShader(EngineShader::MeshPS, RHIShaderStage::Pixel);
         if (!m_meshPS.IsValid()) {
             UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile MeshPS");
+            return false;
+        }
+    }
+    return true;
+}
+
+bool PipelineLibrary::EnsureProbeCapturePixelShader() {
+    if (!m_probeCapturePS.IsValid()) {
+        m_probeCapturePS = m_shaderMgr->CreateShader(EngineShader::ProbeCapturePS, RHIShaderStage::Pixel);
+        if (!m_probeCapturePS.IsValid()) {
+            UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile ProbeCapturePS");
             return false;
         }
     }

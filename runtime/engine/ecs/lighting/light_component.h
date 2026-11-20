@@ -330,6 +330,13 @@ public:
     /// Equivalent: SoftSourceRadius. Default: 0.
     float softSourceRadius = 0.f;
 
+    /// PCSS emitter radius in cm for this light's shadow penumbra (r.Shadows.SoftPCSS.Local;
+    /// phase2_omni-pcss-soft-shadows 1.5). The penumbra widens with the blocker-to-receiver
+    /// distance in proportion to this radius. 0 = inherit: `sourceRadius` when positive, else the
+    /// `r.Shadows.SoftPCSS.Local.SourceRadius` CVar (spot lights always the CVar). A negative
+    /// value keeps this light's shadow hard. Scene key: "softShadowRadius". Default: 0.
+    float softShadowRadius = 0.f;
+
     /// Tube/capsule length for elongated area light approximation.
     /// 0 = sphere only. Equivalent: SourceLength. Default: 0.
     float sourceLength = 0.f;

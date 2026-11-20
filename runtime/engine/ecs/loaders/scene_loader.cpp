@@ -394,6 +394,8 @@ void ApplyPointLightFields(PointLightComponent& light,
     light.sourceRadius             = ReadFloat(comp, "sourceRadius", 0.f);
     light.specularScale            = ReadFloat(comp, "specularScale", 1.f);
     light.diffuseScale             = ReadFloat(comp, "diffuseScale", 1.f);
+    // phase2_omni-pcss-soft-shadows 1.5: per-light PCSS emitter radius (0 = inherit).
+    light.softShadowRadius         = ReadFloat(comp, "softShadowRadius", 0.f);
 }
 
 /// Parses a `"spot"` light sub-object into the given component.
@@ -413,6 +415,8 @@ void ApplySpotLightFields(SpotLightComponent& light,
     light.lightFalloffExponent     = ReadFloat(comp, "falloffExponent", 8.f);
     light.specularScale            = ReadFloat(comp, "specularScale", 1.f);
     light.diffuseScale             = ReadFloat(comp, "diffuseScale", 1.f);
+    // phase2_omni-pcss-soft-shadows 1.5: per-light PCSS emitter radius (0 = inherit).
+    light.softShadowRadius         = ReadFloat(comp, "softShadowRadius", 0.f);
 }
 
 /// Parses a `"rect"` (rectangular area) light sub-object into the given component.
@@ -1394,6 +1398,7 @@ nlohmann::json SerializeEntity(const World& world, entt::entity enttEntity) {
         lightJson["sourceRadius"] = light->sourceRadius;
         lightJson["specularScale"] = light->specularScale;
         lightJson["diffuseScale"] = light->diffuseScale;
+        lightJson["softShadowRadius"] = light->softShadowRadius;
         components["light"] = std::move(lightJson);
 
         nlohmann::json transform;
@@ -1440,6 +1445,7 @@ nlohmann::json SerializeEntity(const World& world, entt::entity enttEntity) {
         lightJson["falloffExponent"] = light->lightFalloffExponent;
         lightJson["specularScale"] = light->specularScale;
         lightJson["diffuseScale"] = light->diffuseScale;
+        lightJson["softShadowRadius"] = light->softShadowRadius;
         components["light"] = std::move(lightJson);
 
         nlohmann::json transform;

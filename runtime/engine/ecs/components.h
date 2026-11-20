@@ -21,6 +21,7 @@
 #include "environment/sky_atmosphere_component.h"
 #include "environment/sky_light_component.h"
 #include "environment/height_fog_component.h"
+#include "environment/volumetric_fog_component.h"
 #include "environment/volumetric_clouds_component.h"
 #include "environment/postprocess_volume_component.h"
 #include "environment/spline_component.h"

@@ -997,6 +997,25 @@ pub fn build(b: *std.Build) void {
         runtime_mod.addCMacro("UZ_DLSS_ENABLED", "1");
     }
 
+    // Thirdparty — NVIDIA NRD SDK (Real-time Denoisers, REBLUR/RELAX for the DXR
+    // path tracer). Same pattern as DLSS: only the headers are a build input;
+    // nrd_sdk_denoiser.cpp loads the MSVC-built NRD.dll (scripts/build_nrd.ps1)
+    // via LoadLibrary and resolves its extern "C" exports, so the Zig/mingw
+    // build never links an MSVC library. UZ_NRD_SDK_ENABLED=1 only when both
+    // the headers and the DLL exist; the DLL is deployed next to the exe below.
+    const has_nrd = blk: {
+        if (native_root != null) break :blk false;
+        if (!is_windows) break :blk false;
+        accessAbsolute(b, b.path(tp ++ "nrd/Include/NRD.h").getPath(b)) catch break :blk false;
+        accessAbsolute(b, b.path(tp ++ "nrd/_Bin/Release/NRD.dll").getPath(b)) catch break :blk false;
+        break :blk true;
+    };
+    if (has_nrd) {
+        runtime_mod.addIncludePath(b.path(tp ++ "nrd/Include/"));
+        runtime_mod.addCMacro("UZ_NRD_SDK_ENABLED", "1");
+        std.debug.print("NRD SDK: UZ_NRD_SDK_ENABLED=1 (NRD.dll found)\n", .{});
+    }
+
     // Include paths — runtime root (for "platform/platform_types.h" etc.)
     runtime_mod.addIncludePath(b.path("."));
 
@@ -1566,6 +1585,14 @@ pub fn build(b: *std.Build) void {
         if (has_dlss) {
             b.getInstallStep().dependOn(&b.addInstallBinFile(
                 b.path(tp ++ "dlss/lib/Windows_x86_64/dev/nvngx_dlss.dll"), "nvngx_dlss.dll",
+            ).step);
+        }
+
+        // NVIDIA NRD SDK — NRD.dll (scripts/build_nrd.ps1) is loaded from next to
+        // the exe by nrd_sdk_denoiser.cpp; without it r.NRD.SDK logs and falls back.
+        if (has_nrd) {
+            b.getInstallStep().dependOn(&b.addInstallBinFile(
+                b.path(tp ++ "nrd/_Bin/Release/NRD.dll"), "NRD.dll",
             ).step);
         }
 

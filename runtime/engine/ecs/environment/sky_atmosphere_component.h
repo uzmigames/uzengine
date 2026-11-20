@@ -96,9 +96,17 @@ struct SkyAtmosphereComponent {
 
     // ── Ground ─────────────────────────────────────────────────────────────
 
-    /// Ground albedo — affects sky brightness near horizon.
-    /// Default ground albedo ~0.4 linear (medium-grey Lambertian surface).
-    Vec3 groundAlbedo = {0.4f, 0.4f, 0.4f};
+    /// Ground albedo — the Lambertian planet the sky capture (sky_cubemap_cs.hlsl) renders below the
+    /// horizon, i.e. the sun-lit ground bounce every image-based term sees: the SkyLight SH diffuse, the
+    /// prefiltered specular, the fog's and clouds' sky colour and the escaping GI / RT rays. Scene key
+    /// `ground_albedo`, Lua uz.scene.set_sky_ground_albedo (a change re-captures the sky IBL).
+    /// Default 0.7 linear: the value the capture hardcoded until 2026-11-11 (while this field reached no
+    /// live shader), kept as the default so a scene that authors nothing renders exactly as before - the
+    /// field is now the per-scene knob. Solid-angle weighted, 0.7 puts the captured ground hemisphere at
+    /// about 5x (demo) to 9x (Sponza) the sky hemisphere's luminance; 0.4 (UE5's SkyAtmosphere default,
+    /// whose capture does not render the planet) at 3x, 0.1 (Bruneton 2017's) at 0.75x - a scene wanting
+    /// a darker ground bounce authors it (phase3a-3.51.0 item 2.6). Not read by the sky pass itself.
+    Vec3 groundAlbedo = {0.7f, 0.7f, 0.7f};
 
     // ── Ozone (Other Absorption) ────────────────────────────────────────────
 

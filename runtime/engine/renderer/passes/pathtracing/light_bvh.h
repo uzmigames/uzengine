@@ -43,10 +43,14 @@ struct LightBVHLight {
 };
 struct LightBVHConfig {
     uint32_t nodesSrv, lightsSrv, lightCount, uniformSampling;
+    // r.ReSTIR.Readback diagnostic: UAV index + 1 of a 3 x lightCount uint
+    // buffer the ReSTIR initial pass increments cumulatively per emitter
+    // [BVH candidates | RIS-selected | selected and visible]; 0 = none.
+    uint32_t histogramUav, histogramPadding0, histogramPadding1, histogramPadding2;
 };
 static_assert(sizeof(LightBVHNode) == 64);
 static_assert(sizeof(LightBVHLight) == 112);
-static_assert(sizeof(LightBVHConfig) == 16);
+static_assert(sizeof(LightBVHConfig) == 32);
 
 class LightBVH {
 public:
